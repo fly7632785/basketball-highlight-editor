@@ -71,7 +71,7 @@ def find_refined_crossings(records, rim):
             point for point in balls[max(0, index - 8):index + 1]
             if above["time"] - point["time"] <= 0.5 and point["y"] <= rim_y - 8
         ]
-        if len(previous) < 2:
+        if len(previous) < 1:
             continue
 
         for below in balls[index + 1:]:
@@ -83,7 +83,7 @@ def find_refined_crossings(records, rim):
             if below["y"] < rim_y + 18:
                 continue
             descent = below["y"] - above["y"]
-            if descent < 35 or descent / gap < 60:
+            if descent < 35 or descent / gap < 50:
                 continue
             x_cross = crossing_x_at_y(above, below, rim_y)
             if x_cross is None or not is_rim_crossing(x_cross, rim_left, rim_right, 5):
@@ -94,12 +94,32 @@ def find_refined_crossings(records, rim):
 
             later = [
                 point for point in balls
-                if below["time"] <= point["time"] <= below["time"] + 0.5
+                if below["time"] <= point["time"] <= below["time"] + 1.2
             ]
             below_points = [point for point in later if point["y"] >= rim_y + 10]
             if len(below_points) < 2:
                 continue
             if any(point["y"] < rim_y - 8 for point in later):
+                continue
+
+            previous_y = below["y"]
+            rebounded = False
+            for point in later:
+                if point["time"] <= below["time"]:
+                    continue
+                if point["y"] < previous_y - 10:
+                    rebounded = True
+                    break
+                previous_y = point["y"]
+            if rebounded:
+                continue
+
+            lateral_exit = any(
+                abs(point["x"] - rim["center_x"]) > max(3 * rim["width"], 30)
+                and point["y"] < rim_y + 80
+                for point in later
+            )
+            if lateral_exit:
                 continue
 
             candidates.append({

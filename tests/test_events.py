@@ -27,6 +27,7 @@ class EventsTest(unittest.TestCase):
             {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
             {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [492, 345]}]},
             {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [493, 365]}]},
+            {"time": 1.5, "detections": [{"name": "ball", "confidence": 0.8, "center": [494, 385]}]},
         ]
         candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
         self.assertEqual(len(candidates), 1)
@@ -37,6 +38,28 @@ class EventsTest(unittest.TestCase):
             {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [455, 300]}]},
             {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [520, 345]}]},
             {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [525, 365]}]},
+        ]
+        candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
+        self.assertEqual(candidates, [])
+
+    def test_refined_crossing_rejects_rebound_after_rim_contact(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 345]}]},
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [492, 370]}]},
+            {"time": 1.6, "detections": [{"name": "ball", "confidence": 0.8, "center": [480, 350]}]},
+        ]
+        candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
+        self.assertEqual(candidates, [])
+
+    def test_refined_crossing_rejects_lateral_exit_below_rim(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 345]}]},
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [492, 370]}]},
+            {"time": 1.6, "detections": [{"name": "ball", "confidence": 0.8, "center": [420, 385]}]},
         ]
         candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
         self.assertEqual(candidates, [])
