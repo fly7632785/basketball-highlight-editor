@@ -1,0 +1,13 @@
+.DS_Store
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+.cache/
+build/
+dist/
+data/videos/
+data/labels/*.json
+third_party/
+third_party/*/weights/
+third_party/*/models/
