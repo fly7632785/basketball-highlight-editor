@@ -8,6 +8,7 @@ build/
 dist/
 data/videos/
 data/labels/*.json
+data/artifacts/
 third_party/
 third_party/*/weights/
 third_party/*/models/
