@@ -50,6 +50,14 @@ class ProjectSession {
     return payload;
   }
 
+  Future<JsonMap> updateProjectSettings({String? name, String? themeMode}) {
+    return engine.updateProjectSettings(
+      projectRoot: _requireProjectRoot(),
+      name: name,
+      themeMode: themeMode,
+    );
+  }
+
   Future<List<JsonMap>> loadRecentProjects({
     required String knownRoot,
     int limit = 20,
@@ -81,6 +89,16 @@ class ProjectSession {
     );
     _videoId = _nestedId(payload, 'video');
     return payload;
+  }
+
+  Future<JsonMap> relinkVideo(String videoPath) async {
+    final root = _requireProjectRoot();
+    final videoId = _requireVideoId();
+    return engine.relinkVideo(
+      projectRoot: root,
+      videoId: videoId,
+      videoPath: videoPath,
+    );
   }
 
   Future<JsonMap> extractPreview({int timeMs = 1000}) {
@@ -179,6 +197,10 @@ class ProjectSession {
     );
   }
 
+  Future<JsonMap> retryExport({required String jobId}) {
+    return engine.retryExport(projectRoot: _requireProjectRoot(), jobId: jobId);
+  }
+
   Stream<JsonMap> pollJob({
     required String jobId,
     Duration interval = const Duration(seconds: 1),
@@ -252,6 +274,20 @@ class ProjectSession {
     );
   }
 
+  Future<JsonMap> startExport({
+    String mode = 'separate',
+    String? outputDir,
+    String? outputPath,
+  }) {
+    return engine.startExport(
+      projectRoot: _requireProjectRoot(),
+      videoId: _requireVideoId(),
+      mode: mode,
+      outputDir: outputDir,
+      outputPath: outputPath,
+    );
+  }
+
   Future<JsonMap> getStatistics() {
     return engine.getStatistics(projectRoot: _requireProjectRoot());
   }
@@ -260,6 +296,20 @@ class ProjectSession {
     final payload = await engine.getActiveJobs(
       projectRoot: _requireProjectRoot(),
       videoId: _videoId,
+    );
+    final jobs = payload['jobs'];
+    if (jobs is! List) return <JsonMap>[];
+    return jobs
+        .whereType<Map>()
+        .map((job) => Map<String, dynamic>.from(job))
+        .toList();
+  }
+
+  Future<List<JsonMap>> getActiveExportJobs() async {
+    final payload = await engine.getActiveJobs(
+      projectRoot: _requireProjectRoot(),
+      videoId: _videoId,
+      jobType: 'export',
     );
     final jobs = payload['jobs'];
     if (jobs is! List) return <JsonMap>[];

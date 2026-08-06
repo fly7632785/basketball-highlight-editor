@@ -20,13 +20,17 @@ void main() {
   });
   testWidgets('of(context) returns theme extension', (tester) async {
     late AppColors captured;
-    await tester.pumpWidget(MaterialApp(
-      theme: ThemeData(extensions: [darkAppColors]),
-      home: Builder(builder: (c) {
-        captured = AppColors.of(c);
-        return const SizedBox();
-      }),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(extensions: [darkAppColors]),
+        home: Builder(
+          builder: (c) {
+            captured = AppColors.of(c);
+            return const SizedBox();
+          },
+        ),
+      ),
+    );
     expect(captured.indigo, darkAppColors.indigo);
   });
 }

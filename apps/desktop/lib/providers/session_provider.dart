@@ -36,7 +36,6 @@ String? findRuntimeRoot({
     '${appContents.path}/Resources/runtime',
     currentDir,
     Directory(currentDir).parent.path,
-    '/Users/macmima1234/basketball-highlight-editor',
   ];
   for (final path in candidates) {
     if (Directory('$path/engine/python').existsSync()) return path;

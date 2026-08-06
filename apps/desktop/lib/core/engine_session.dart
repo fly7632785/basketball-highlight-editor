@@ -25,6 +25,18 @@ class EngineSession {
     });
   }
 
+  Future<JsonMap> updateProjectSettings({
+    required String projectRoot,
+    String? name,
+    String? themeMode,
+  }) {
+    return client.request('update_project_settings', <String, dynamic>{
+      'project_root': projectRoot,
+      ...?_optionalEntry('name', name),
+      ...?_optionalEntry('theme_mode', themeMode),
+    });
+  }
+
   Future<JsonMap> openProject({required String projectRoot}) {
     return client.request('open_project', <String, dynamic>{
       'project_root': projectRoot,
@@ -60,6 +72,18 @@ class EngineSession {
   }) {
     return client.request('link_video', <String, dynamic>{
       'project_root': projectRoot,
+      'video_path': videoPath,
+    });
+  }
+
+  Future<JsonMap> relinkVideo({
+    required String projectRoot,
+    required String videoId,
+    required String videoPath,
+  }) {
+    return client.request('relink_video', <String, dynamic>{
+      'project_root': projectRoot,
+      'video_id': videoId,
       'video_path': videoPath,
     });
   }
@@ -172,6 +196,16 @@ class EngineSession {
     });
   }
 
+  Future<JsonMap> retryExport({
+    required String projectRoot,
+    required String jobId,
+  }) {
+    return client.request('retry_export', <String, dynamic>{
+      'project_root': projectRoot,
+      'job_id': jobId,
+    });
+  }
+
   Future<JsonMap> getJob({required String projectRoot, required String jobId}) {
     return client.request('get_job', <String, dynamic>{
       'project_root': projectRoot,
@@ -182,9 +216,11 @@ class EngineSession {
   Future<JsonMap> getActiveJobs({
     required String projectRoot,
     String? videoId,
+    String jobType = 'analysis',
   }) {
     return client.request('get_active_jobs', <String, dynamic>{
       'project_root': projectRoot,
+      ...?_optionalEntry('job_type', jobType == 'analysis' ? null : jobType),
       ...?_optionalEntry('video_id', videoId),
     });
   }
@@ -274,6 +310,22 @@ class EngineSession {
     String? outputPath,
   }) {
     return client.request('export_clips', <String, dynamic>{
+      'project_root': projectRoot,
+      'video_id': videoId,
+      'mode': mode,
+      ...?_optionalEntry('output_dir', outputDir),
+      ...?_optionalEntry('output_path', outputPath),
+    });
+  }
+
+  Future<JsonMap> startExport({
+    required String projectRoot,
+    required String videoId,
+    String mode = 'separate',
+    String? outputDir,
+    String? outputPath,
+  }) {
+    return client.request('start_export', <String, dynamic>{
       'project_root': projectRoot,
       'video_id': videoId,
       'mode': mode,

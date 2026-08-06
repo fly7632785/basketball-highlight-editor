@@ -737,9 +737,10 @@ void main() {
       theme: appTheme(Brightness.dark),
       home: CsCard(child: const Text('hi')),
     ));
-    final container = tester.widget<Container>(find.ancestor(of: find.text('hi'), matching: find.byType(Container)).first);
-    final deco = container.decoration as BoxDecoration;
-    expect(deco.color, darkAppColors.surface);
+    final ac = tester.widget<AnimatedContainer>(
+      find.descendant(of: find.byType(CsCard), matching: find.byType(AnimatedContainer)),
+    );
+    expect((ac.decoration as BoxDecoration).color, darkAppColors.surface);
   });
   testWidgets('onTap wraps tappable + calls back', (tester) async {
     var taps = 0;
@@ -755,7 +756,10 @@ void main() {
       theme: appTheme(Brightness.dark),
       home: CsCard(selectedAccent: true, child: const Text('sel')),
     ));
-    expect(find.byType(CustomPaint), findsOneWidget);
+    expect(
+      find.descendant(of: find.byType(CsCard), matching: find.byType(Container)),
+      findsOneWidget,
+    );
   });
 }
 ```
@@ -1042,7 +1046,144 @@ void main() {
 
 - [ ] **Step 2: 验证失败** → FAIL
 
-- [ ] **Step 3: 实现**(`cs_empty_state.dart` / `cs_skeleton.dart` / `cs_progress_track.dart`,各自一个 StatelessWidget,引用 `AppColors` / `Spacing` / `CsRadius`;skeleton 内用 `AnimationController` + `LinearGradient` shimmer,`disableAnimations` 为 true 时降级为静态块。代码骨架略——执行时按 spec §15 实现完整。)
+- [ ] **Step 3: 实现**(3 个文件逐字落地)
+
+```dart
+// lib/components/cs_empty_state.dart
+import 'package:flutter/material.dart';
+import '../theme/app_colors.dart';
+import '../theme/tokens.dart';
+
+class CsEmptyState extends StatelessWidget {
+  const CsEmptyState({required this.icon, required this.title, this.description, this.action, super.key});
+  final IconData icon;
+  final String title;
+  final String? description;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(Spacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 48, color: c.textTertiary),
+            const SizedBox(height: Spacing.md),
+            Text(title, style: TextStyle(
+              color: c.textPrimary, fontSize: 16, fontWeight: FontWeight.w600,
+            )),
+            if (description != null) ...[
+              const SizedBox(height: Spacing.sm),
+              Text(description!, textAlign: TextAlign.center, style: TextStyle(
+                color: c.textSecondary, fontSize: 13, height: 1.5,
+              )),
+            ],
+            if (action != null) ...[
+              const SizedBox(height: Spacing.lg),
+              action!,
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+```dart
+// lib/components/cs_skeleton.dart
+import 'package:flutter/material.dart';
+import '../theme/app_colors.dart';
+import '../theme/tokens.dart';
+
+class CsSkeleton extends StatefulWidget {
+  const CsSkeleton({required this.width, required this.height, super.key});
+  final double width;
+  final double height;
+
+  @override
+  State<CsSkeleton> createState() => _CsSkeletonState();
+}
+
+class _CsSkeletonState extends State<CsSkeleton> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+      reverseDuration: const Duration(milliseconds: 200),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return Container(
+        width: widget.width,
+        height: widget.height,
+        decoration: BoxDecoration(
+          color: c.surface2,
+          borderRadius: BorderRadius.circular(CsRadius.sm),
+        ),
+      );
+    }
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) => Container(
+        width: widget.width,
+        height: widget.height,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(CsRadius.sm),
+          gradient: LinearGradient(
+            colors: [c.surface2, c.surface3, c.surface2],
+            stops: [0.0, _controller.value, 1.0],
+          ),
+        ),
+      ),
+    );
+  }
+}
+```
+
+```dart
+// lib/components/cs_progress_track.dart
+import 'package:flutter/material.dart';
+import '../theme/app_colors.dart';
+import '../theme/tokens.dart';
+
+class CsProgressTrack extends StatelessWidget {
+  const CsProgressTrack({this.value, this.indeterminate = false, super.key});
+  final double? value;
+  final bool indeterminate;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(CsRadius.full),
+      child: LinearProgressIndicator(
+        value: indeterminate ? null : value,
+        minHeight: 6,
+        backgroundColor: c.surface3,
+        valueColor: AlwaysStoppedAnimation<Color>(c.indigo),
+      ),
+    );
+  }
+}
+```
 
 > 注:`CsProgressTrack` 用 `LinearProgressIndicator`(`minHeight: 6`,`borderRadius: full`,`backgroundColor: surface3`,`color: indigo`,`value: indeterminate ? null : value`)包裹即可。
 
@@ -1060,9 +1201,115 @@ void main() {
 
 **Interfaces:** `CsStepIndicator({steps: List<({String index, String title, IconData icon, bool completed})>, direction: Axis})`;大序号 28px w700 indigo(完成态 → indigo 实心圆 + check),步骤间连接线。
 
-- [ ] **Step 1: 写测试**(渲染三步,断言 "01"/"02"/"03" 文本存在 + 完成态步骤显示 `LucideIcons.check`)
-- [ ] **Step 2: 验证失败**
-- [ ] **Step 3: 实现** — 横向 `Row`,每步 `Column`(序号 + 标题),步间 `Expanded(child: Divider())` 作连接线;完成态序号位 `Container(圆, color: indigo, child: Icon(check))`。完整代码按 spec §15。
+- [ ] **Step 1: 写测试**
+
+```dart
+// test/components/cs_step_indicator_test.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:desktop/components/cs_step_indicator.dart';
+import 'package:desktop/theme/app_theme.dart';
+
+void main() {
+  testWidgets('renders indices for incomplete steps', (tester) async {
+    final steps = <CsStep>[
+      (index: '01', title: '导入', icon: LucideIcons.upload, completed: false),
+      (index: '02', title: '审核', icon: LucideIcons.check, completed: false),
+      (index: '03', title: '导出', icon: LucideIcons.download, completed: false),
+    ];
+    await tester.pumpWidget(MaterialApp(
+      theme: appTheme(Brightness.dark),
+      home: Center(child: CsStepIndicator(steps: steps)),
+    ));
+    expect(find.text('01'), findsOneWidget);
+    expect(find.text('02'), findsOneWidget);
+    expect(find.text('03'), findsOneWidget);
+  });
+  testWidgets('completed step shows check icon', (tester) async {
+    final steps = <CsStep>[
+      (index: '01', title: '导入', icon: LucideIcons.check, completed: true),
+    ];
+    await tester.pumpWidget(MaterialApp(
+      theme: appTheme(Brightness.dark),
+      home: Center(child: CsStepIndicator(steps: steps)),
+    ));
+    expect(find.byIcon(LucideIcons.check), findsOneWidget);
+  });
+}
+```
+
+- [ ] **Step 2: 验证失败** → FAIL
+
+- [ ] **Step 3: 实现**
+
+```dart
+// lib/components/cs_step_indicator.dart
+import 'package:flutter/material.dart';
+import '../theme/app_colors.dart';
+
+typedef CsStep = ({String index, String title, IconData icon, bool completed});
+
+class CsStepIndicator extends StatelessWidget {
+  const CsStepIndicator({required this.steps, this.direction = Axis.horizontal, super.key});
+  final List<CsStep> steps;
+  final Axis direction;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final children = <Widget>[];
+    for (var i = 0; i < steps.length; i++) {
+      children.add(_StepNode(step: steps[i]));
+      if (i < steps.length - 1) {
+        if (direction == Axis.horizontal) {
+          children.add(Expanded(
+            child: Container(height: 2, color: steps[i].completed ? c.indigo : c.border),
+          ));
+        } else {
+          children.add(Container(
+            width: 2, height: 24,
+            color: steps[i].completed ? c.indigo : c.border,
+          ));
+        }
+      }
+    }
+    return switch (direction) {
+      Axis.horizontal => Row(crossAxisAlignment: CrossAxisAlignment.center, children: children),
+      Axis.vertical => Column(crossAxisAlignment: CrossAxisAlignment.center, children: children),
+    };
+  }
+}
+
+class _StepNode extends StatelessWidget {
+  const _StepNode({required this.step});
+  final CsStep step;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    if (step.completed) {
+      return Container(
+        width: 28, height: 28,
+        decoration: BoxDecoration(color: c.indigo, shape: BoxShape.circle),
+        child: Icon(step.icon, size: 14, color: Colors.white),
+      );
+    }
+    return Container(
+      width: 28, height: 28,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: c.borderStrong),
+      ),
+      child: Text(step.index, style: TextStyle(
+        color: c.indigo, fontSize: 13, fontWeight: FontWeight.w700,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      )),
+    );
+  }
+}
+```
 - [ ] **Step 4: 验证通过**
 - [ ] **Step 5: commit** — `feat(components): 增加 CsStepIndicator(大序号 + 连接线)`
 

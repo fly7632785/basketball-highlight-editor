@@ -155,15 +155,55 @@ void main() {
     expect(active['jobs'], isA<List<dynamic>>());
     expect(exports['exports'], isA<List<dynamic>>());
     expect(transport.payloads, [
-      {
-        'project_root': '/tmp/project',
-        'video_id': 'video-1',
-      },
-      {
-        'project_root': '/tmp/project',
-        'limit': 5,
-      },
+      {'project_root': '/tmp/project', 'video_id': 'video-1'},
+      {'project_root': '/tmp/project', 'limit': 5},
     ]);
+  });
+
+  test('EngineSession forwards relink video command', () async {
+    final transport = _FakeEngineTransport()
+      ..responses['relink_video'] = {
+        'video': {'id': 'video-1', 'source_exists': true},
+      };
+    final session = EngineSession(transport);
+
+    final result = await session.relinkVideo(
+      projectRoot: '/tmp/project',
+      videoId: 'video-1',
+      videoPath: '/tmp/replacement.mp4',
+    );
+
+    expect(result['video']['source_exists'], isTrue);
+    expect(transport.commands, ['relink_video']);
+    expect(transport.payloads.single, {
+      'project_root': '/tmp/project',
+      'video_id': 'video-1',
+      'video_path': '/tmp/replacement.mp4',
+    });
+  });
+
+  test('EngineSession forwards asynchronous export command', () async {
+    final transport = _FakeEngineTransport()
+      ..responses['start_export'] = {
+        'job': {'id': 'job-export-1', 'state': 'queued'},
+      };
+    final session = EngineSession(transport);
+
+    final result = await session.startExport(
+      projectRoot: '/tmp/project',
+      videoId: 'video-1',
+      mode: 'merge',
+      outputPath: '/tmp/highlights.mp4',
+    );
+
+    expect(result['job']['id'], 'job-export-1');
+    expect(transport.commands, ['start_export']);
+    expect(transport.payloads.single, {
+      'project_root': '/tmp/project',
+      'video_id': 'video-1',
+      'mode': 'merge',
+      'output_path': '/tmp/highlights.mp4',
+    });
   });
 
   test(

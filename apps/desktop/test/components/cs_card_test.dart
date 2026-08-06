@@ -31,7 +31,13 @@ void main() {
       home: CsCard(selectedAccent: true, child: const Text('sel')),
     ));
     expect(
-      find.descendant(of: find.byType(CsCard), matching: find.byType(Container)),
+      find.descendant(
+        of: find.byType(CsCard),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is Container && widget.constraints?.minWidth == 3.0,
+        ),
+      ),
       findsOneWidget,
     );
   });
