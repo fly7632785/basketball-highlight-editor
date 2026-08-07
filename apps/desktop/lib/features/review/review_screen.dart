@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:media_kit/media_kit.dart';
@@ -30,6 +31,63 @@ class ReviewScreen extends ConsumerStatefulWidget {
 
 class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   int _selectedIndex = 0;
+  String _statusFilter = 'all';
+
+  List<MapEntry<int, Map<String, dynamic>>> _visibleEntries(
+    List<Map<String, dynamic>> candidates,
+  ) {
+    return candidates.asMap().entries.where((entry) {
+      return _statusFilter == 'all' ||
+          entry.value['review_status']?.toString() == _statusFilter;
+    }).toList();
+  }
+
+  void _moveSelection(
+    List<MapEntry<int, Map<String, dynamic>>> visible,
+    int delta,
+  ) {
+    if (visible.isEmpty) return;
+    final current = visible.indexWhere((entry) => entry.key == _selectedIndex);
+    final base = current < 0 ? 0 : current;
+    final next = (base + delta).clamp(0, visible.length - 1).toInt();
+    if (current < 0 || next != base) {
+      setState(() => _selectedIndex = visible[next].key);
+    }
+  }
+
+  Future<void> _reviewAndAdvance(String id, String status) async {
+    final visible = _visibleEntries(ref.read(projectProvider).candidates);
+    final current = visible.indexWhere((entry) => entry.key == _selectedIndex);
+    final next = current >= 0 && current + 1 < visible.length
+        ? visible[current + 1].key
+        : null;
+    await ref.read(projectProvider.notifier).reviewCandidate(id, status);
+    if (!mounted || next == null) return;
+    setState(() => _selectedIndex = next);
+  }
+
+  Future<void> _confirmReanalyze(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('重新分析当前视频？'),
+        content: const Text('新的分析完成后会替换当前候选列表，已有审核结果不会带入新候选。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('重新分析'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ref.read(projectProvider.notifier).startAnalysis();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -42,78 +100,134 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final analyzing = jobState == 'queued' || jobState == 'running';
 
     final candidates = state.candidates;
+    final visible = _visibleEntries(candidates);
     final selectedCandidate =
         (candidates.isEmpty || _selectedIndex >= candidates.length)
         ? null
         : candidates[_selectedIndex];
 
-    return Padding(
-      padding: const EdgeInsets.all(Spacing.lg),
-      child: Column(
-        children: [
-          if (job != null && (analyzing || jobState == 'failed')) ...[
-            _AnalysisStatusCard(
-              state: jobState,
-              stage: stage,
-              progress: progress,
-              errorMessage: job['error_message']?.toString(),
-              onCancel: analyzing ? () => notifier.cancelAnalysis() : null,
-              onRetry: jobState == 'failed' && !state.busy
-                  ? () => notifier.retryAnalysis()
-                  : null,
-            ),
-            const SizedBox(height: Spacing.md),
-          ],
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final wide = constraints.maxWidth >= Breakpoints.md;
-                final preview = _PreviewPanel(
-                  videoPath: state.reviewVideoPath ?? state.videoPath,
-                  jobState: jobState,
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+            _moveSelection(visible, -1),
+        SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+            _moveSelection(visible, 1),
+        SingleActivator(LogicalKeyboardKey.enter): () {
+          final id = selectedCandidate?['id']?.toString();
+          if (id != null) unawaited(_reviewAndAdvance(id, 'goal'));
+        },
+        SingleActivator(LogicalKeyboardKey.backspace): () {
+          final id = selectedCandidate?['id']?.toString();
+          if (id != null) unawaited(_reviewAndAdvance(id, 'excluded'));
+        },
+      },
+      child: Focus(
+        autofocus: true,
+        child: Padding(
+          padding: const EdgeInsets.all(Spacing.lg),
+          child: Column(
+            children: [
+              if (job != null &&
+                  (analyzing ||
+                      jobState == 'failed' ||
+                      jobState == 'completed' ||
+                      jobState == 'cancelled')) ...[
+                _AnalysisStatusCard(
+                  state: jobState,
+                  stage: stage,
                   progress: progress,
-                  candidate: selectedCandidate,
-                  hasPrevious: _selectedIndex > 0,
-                  hasNext: _selectedIndex < candidates.length - 1,
-                  onPrevious: () => setState(() => _selectedIndex--),
-                  onNext: () => setState(() => _selectedIndex++),
-                  onCancel: () => notifier.cancelAnalysis(),
-                  recoverable: job?['recoverable'] == true,
-                  onRetry: state.busy ? null : () => notifier.retryAnalysis(),
-                );
-                final queue = _QueuePanel(
-                  candidates: candidates,
-                  selectedIndex: _selectedIndex,
-                  busy: state.busy,
-                  onSelected: (index) => setState(() => _selectedIndex = index),
-                  onReview: (id, status) =>
-                      notifier.reviewCandidate(id, status),
-                  onUpdateRange: (id, start, end) =>
-                      notifier.updateClipRange(id, start, end),
-                  onExport: () => context.go('/export'),
-                  analyzing: analyzing,
-                );
-                if (wide) {
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(child: preview),
-                      const SizedBox(width: Spacing.md),
-                      SizedBox(width: 390, child: queue),
-                    ],
-                  );
-                }
-                return Column(
-                  children: [
-                    Expanded(child: preview),
-                    const SizedBox(height: Spacing.md),
-                    SizedBox(height: 380, child: queue),
-                  ],
-                );
-              },
-            ),
+                  errorMessage: job['error_message']?.toString(),
+                  onCancel: analyzing ? () => notifier.cancelAnalysis() : null,
+                  onRetry: jobState == 'failed' && !state.busy
+                      ? () => notifier.retryAnalysis()
+                      : null,
+                  onReanalyze: !analyzing && !state.busy
+                      ? () => _confirmReanalyze(context)
+                      : null,
+                ),
+                const SizedBox(height: Spacing.md),
+              ],
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final wide = constraints.maxWidth >= Breakpoints.md;
+                    final preview = _PreviewPanel(
+                      videoPath: state.reviewVideoPath ?? state.videoPath,
+                      jobState: jobState,
+                      progress: progress,
+                      candidate: selectedCandidate,
+                      hasPrevious:
+                          visible.indexWhere(
+                            (entry) => entry.key == _selectedIndex,
+                          ) >
+                          0,
+                      hasNext:
+                          visible.indexWhere(
+                                (entry) => entry.key == _selectedIndex,
+                              ) >=
+                              0 &&
+                          visible.indexWhere(
+                                (entry) => entry.key == _selectedIndex,
+                              ) <
+                              visible.length - 1,
+                      onPrevious: () => _moveSelection(visible, -1),
+                      onNext: () => _moveSelection(visible, 1),
+                      onCancel: () => notifier.cancelAnalysis(),
+                      recoverable: job?['recoverable'] == true,
+                      onRetry: state.busy
+                          ? null
+                          : () => notifier.retryAnalysis(),
+                    );
+                    final queue = _QueuePanel(
+                      candidates: visible.map((entry) => entry.value).toList(),
+                      candidateIndexes: visible
+                          .map((entry) => entry.key)
+                          .toList(),
+                      selectedIndex: _selectedIndex,
+                      busy: state.busy,
+                      onSelected: (index) =>
+                          setState(() => _selectedIndex = index),
+                      filter: _statusFilter,
+                      onFilterChanged: (value) {
+                        setState(() {
+                          _statusFilter = value;
+                          final next = _visibleEntries(
+                            ref.read(projectProvider).candidates,
+                          );
+                          _selectedIndex = next.isEmpty ? 0 : next.first.key;
+                        });
+                      },
+                      onReview: _reviewAndAdvance,
+                      onUpdateNote: notifier.updateCandidateNote,
+                      onUndo: notifier.undoReview,
+                      onUpdateRange: (id, start, end) =>
+                          notifier.updateClipRange(id, start, end),
+                      onExport: () => context.go('/export'),
+                      analyzing: analyzing,
+                    );
+                    if (wide) {
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(child: preview),
+                          const SizedBox(width: Spacing.md),
+                          SizedBox(width: 390, child: queue),
+                        ],
+                      );
+                    }
+                    return Column(
+                      children: [
+                        Expanded(child: preview),
+                        const SizedBox(height: Spacing.md),
+                        SizedBox(height: 380, child: queue),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -128,6 +242,7 @@ class _AnalysisStatusCard extends StatelessWidget {
     required this.errorMessage,
     required this.onCancel,
     required this.onRetry,
+    required this.onReanalyze,
   });
 
   final String state;
@@ -136,6 +251,7 @@ class _AnalysisStatusCard extends StatelessWidget {
   final String? errorMessage;
   final VoidCallback? onCancel;
   final VoidCallback? onRetry;
+  final VoidCallback? onReanalyze;
 
   @override
   Widget build(BuildContext context) {
@@ -152,7 +268,12 @@ class _AnalysisStatusCard extends StatelessWidget {
         border: Border.all(color: accent.withValues(alpha: 0.3)),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(Spacing.md, Spacing.md, Spacing.sm, Spacing.md),
+        padding: const EdgeInsets.fromLTRB(
+          Spacing.md,
+          Spacing.md,
+          Spacing.sm,
+          Spacing.md,
+        ),
         child: Row(
           children: [
             Icon(
@@ -167,13 +288,23 @@ class _AnalysisStatusCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    failed ? '分析失败' : '正在分析视频',
+                    failed
+                        ? '分析失败'
+                        : state == 'completed'
+                        ? '分析已完成'
+                        : state == 'cancelled'
+                        ? '分析已取消'
+                        : '正在分析视频',
                     style: theme.textTheme.titleMedium,
                   ),
                   const SizedBox(height: 2),
                   Text(
                     failed
                         ? (errorMessage ?? '请检查视频、ROI 和本地运行时后重试')
+                        : state == 'completed'
+                        ? '候选片段已生成，可继续审核或重新分析'
+                        : state == 'cancelled'
+                        ? '可以保留现有候选，或重新分析当前视频'
                         : '${_stageLabel(stage)} · ${(value * 100).round()}%',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -182,7 +313,9 @@ class _AnalysisStatusCard extends StatelessWidget {
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
-                  if (!failed) ...[
+                  if (!failed &&
+                      state != 'completed' &&
+                      state != 'cancelled') ...[
                     const SizedBox(height: Spacing.sm),
                     CsProgressTrack(value: value),
                   ],
@@ -190,23 +323,34 @@ class _AnalysisStatusCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: Spacing.sm),
-            if (onCancel != null)
-              CsButton(
-                label: const Text('取消'),
-                icon: LucideIcons.circleStop,
-                variant: CsButtonVariant.secondary,
-                size: CsButtonSize.sm,
-                onPressed: onCancel,
-              ),
-            if (onRetry != null) ...[
-              const SizedBox(width: Spacing.xs),
-              CsButton(
-                label: const Text('重试'),
-                icon: LucideIcons.refreshCw,
-                size: CsButtonSize.sm,
-                onPressed: onRetry,
-              ),
-            ],
+            Wrap(
+              spacing: Spacing.xs,
+              children: [
+                if (onCancel != null)
+                  CsButton(
+                    label: const Text('取消'),
+                    icon: LucideIcons.circleStop,
+                    variant: CsButtonVariant.secondary,
+                    size: CsButtonSize.sm,
+                    onPressed: onCancel,
+                  ),
+                if (onRetry != null)
+                  CsButton(
+                    label: const Text('重试'),
+                    icon: LucideIcons.refreshCw,
+                    size: CsButtonSize.sm,
+                    onPressed: onRetry,
+                  ),
+                if (onReanalyze != null)
+                  CsButton(
+                    label: const Text('重新分析'),
+                    icon: LucideIcons.rotateCcw,
+                    variant: CsButtonVariant.secondary,
+                    size: CsButtonSize.sm,
+                    onPressed: onReanalyze,
+                  ),
+              ],
+            ),
           ],
         ),
       ),
@@ -430,11 +574,10 @@ class _PreviewPanelState extends State<_PreviewPanel> {
                       title: widget.videoPath == null
                           ? '尚未导入视频'
                           : analyzing
-                              ? '正在分析视频'
-                              : '视频加载失败',
-                      description: _playerError ?? (analyzing
-                          ? '分析完成后可在此预览候选片段'
-                          : null),
+                          ? '正在分析视频'
+                          : '视频加载失败',
+                      description:
+                          _playerError ?? (analyzing ? '分析完成后可在此预览候选片段' : null),
                       action: analyzing
                           ? CsButton(
                               label: const Text('取消分析'),
@@ -523,12 +666,7 @@ class _PlayerControls extends StatelessWidget {
     if (player == null) {
       return Column(
         children: [
-          Slider(
-            min: 0,
-            max: 1,
-            value: 0,
-            onChanged: null,
-          ),
+          Slider(min: 0, max: 1, value: 0, onChanged: null),
           Row(
             children: [
               Text(_formatDuration(Duration.zero), style: timeStyle),
@@ -643,11 +781,7 @@ class _PlayerControls extends StatelessWidget {
 
 /// 36×36 导航按钮(上一/播放/下一)。
 class _NavButton extends StatelessWidget {
-  const _NavButton({
-    required this.icon,
-    required this.tooltip,
-    this.onPressed,
-  });
+  const _NavButton({required this.icon, required this.tooltip, this.onPressed});
 
   final IconData icon;
   final String tooltip;
@@ -662,9 +796,7 @@ class _NavButton extends StatelessWidget {
       child: GestureDetector(
         onTap: onPressed,
         child: MouseRegion(
-          cursor: enabled
-              ? SystemMouseCursors.click
-              : MouseCursor.defer,
+          cursor: enabled ? SystemMouseCursors.click : MouseCursor.defer,
           child: Container(
             width: 36,
             height: 36,
@@ -685,20 +817,30 @@ class _NavButton extends StatelessWidget {
 class _QueuePanel extends StatelessWidget {
   const _QueuePanel({
     required this.candidates,
+    required this.candidateIndexes,
     required this.selectedIndex,
     required this.busy,
     required this.onSelected,
+    required this.filter,
+    required this.onFilterChanged,
     required this.onReview,
+    required this.onUpdateNote,
+    required this.onUndo,
     required this.onUpdateRange,
     required this.onExport,
     required this.analyzing,
   });
 
   final List<Map<String, dynamic>> candidates;
+  final List<int> candidateIndexes;
   final int selectedIndex;
   final bool busy;
   final ValueChanged<int> onSelected;
+  final String filter;
+  final ValueChanged<String> onFilterChanged;
   final Future<void> Function(String, String) onReview;
+  final Future<void> Function(String, String) onUpdateNote;
+  final Future<void> Function() onUndo;
   final Future<void> Function(String, int, int) onUpdateRange;
   final VoidCallback onExport;
   final bool analyzing;
@@ -710,29 +852,43 @@ class _QueuePanel extends StatelessWidget {
     final pending = candidates
         .where((item) => item['review_status'] == 'pending')
         .length;
-    final hasGoal = candidates.any(
-      (item) => item['review_status'] == 'goal',
-    );
+    final hasGoal = candidates.any((item) => item['review_status'] == 'goal');
 
     return CsCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: Spacing.xs,
+            runSpacing: Spacing.xs,
             children: [
               Text('候选审核', style: theme.textTheme.titleLarge),
-              const Spacer(),
-              CsStatusChip(
-                status: ReviewStatus.pending,
-                compact: true,
+              DropdownButton<String>(
+                value: filter,
+                underline: const SizedBox.shrink(),
+                items: const [
+                  DropdownMenuItem(value: 'all', child: Text('全部')),
+                  DropdownMenuItem(value: 'pending', child: Text('待审核')),
+                  DropdownMenuItem(value: 'goal', child: Text('已确认')),
+                  DropdownMenuItem(value: 'excluded', child: Text('已排除')),
+                ],
+                onChanged: (value) {
+                  if (value != null) onFilterChanged(value);
+                },
               ),
-              const SizedBox(width: Spacing.xs),
+              CsStatusChip(status: ReviewStatus.pending, compact: true),
               Text(
                 '$pending 待审核',
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: c.textSecondary,
                   fontFeatures: const [FontFeature.tabularFigures()],
                 ),
+              ),
+              TextButton.icon(
+                onPressed: busy ? null : onUndo,
+                icon: const Icon(Icons.undo, size: 16),
+                label: const Text('撤销上一步'),
               ),
             ],
           ),
@@ -748,10 +904,12 @@ class _QueuePanel extends StatelessWidget {
                   )
                 : ListView.separated(
                     itemCount: candidates.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: Spacing.xs),
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(height: Spacing.xs),
                     itemBuilder: (context, index) {
                       final item = candidates[index];
-                      final selected = index == selectedIndex;
+                      final actualIndex = candidateIndexes[index];
+                      final selected = actualIndex == selectedIndex;
                       final status =
                           item['review_status']?.toString() ?? 'pending';
                       final id = item['id']?.toString() ?? '';
@@ -763,10 +921,12 @@ class _QueuePanel extends StatelessWidget {
                         status: status,
                         selected: selected,
                         busy: busy,
-                        onTap: () => onSelected(index),
+                        onTap: () => onSelected(actualIndex),
                         onReview: (s) => onReview(id, s),
                         onEditRange: () =>
                             _editRange(context, item, onUpdateRange),
+                        onEditNote: () =>
+                            _editNote(context, item, onUpdateNote),
                       );
                     },
                   ),
@@ -797,6 +957,7 @@ class _CandidateTile extends StatelessWidget {
     required this.onTap,
     required this.onReview,
     required this.onEditRange,
+    required this.onEditNote,
   });
 
   final int index;
@@ -807,6 +968,7 @@ class _CandidateTile extends StatelessWidget {
   final VoidCallback onTap;
   final Future<void> Function(String) onReview;
   final VoidCallback onEditRange;
+  final VoidCallback onEditNote;
 
   ReviewStatus get _reviewStatus => switch (status) {
     'goal' => ReviewStatus.goal,
@@ -838,7 +1000,10 @@ class _CandidateTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: Spacing.sm),
-              Text(_formatMs(time), style: tnum?.copyWith(color: c.textSecondary)),
+              Text(
+                _formatMs(time),
+                style: tnum?.copyWith(color: c.textSecondary),
+              ),
               const Spacer(),
               CsStatusChip(status: _reviewStatus, compact: true),
             ],
@@ -867,15 +1032,28 @@ class _CandidateTile extends StatelessWidget {
             ],
           ),
           const SizedBox(height: Spacing.xs),
-          SizedBox(
-            width: double.infinity,
-            child: CsButton(
-              label: const Text('调整片段范围'),
-              icon: LucideIcons.slidersHorizontal,
-              variant: CsButtonVariant.ghost,
-              size: CsButtonSize.sm,
-              onPressed: busy ? null : onEditRange,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: CsButton(
+                  label: const Text('编辑片段'),
+                  icon: LucideIcons.slidersHorizontal,
+                  variant: CsButtonVariant.ghost,
+                  size: CsButtonSize.sm,
+                  onPressed: busy ? null : onEditRange,
+                ),
+              ),
+              const SizedBox(width: Spacing.xs),
+              Expanded(
+                child: CsButton(
+                  label: const Text('备注'),
+                  icon: LucideIcons.notebookPen,
+                  variant: CsButtonVariant.ghost,
+                  size: CsButtonSize.sm,
+                  onPressed: busy ? null : onEditNote,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -938,6 +1116,43 @@ Future<void> _editRange(
   if (result != null) {
     await save(item['id'].toString(), result[0], result[1]);
   }
+}
+
+Future<void> _editNote(
+  BuildContext context,
+  Map<String, dynamic> item,
+  Future<void> Function(String, String) save,
+) async {
+  final note = TextEditingController(text: item['note']?.toString() ?? '');
+  final result = await showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('添加审核备注'),
+      content: TextField(
+        controller: note,
+        autofocus: true,
+        maxLines: 4,
+        decoration: const InputDecoration(
+          hintText: '例如：补篮进球、网明显下坠',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        CsButton(
+          label: const Text('取消'),
+          variant: CsButtonVariant.ghost,
+          size: CsButtonSize.sm,
+          onPressed: () => Navigator.pop(context),
+        ),
+        CsButton(
+          label: const Text('保存备注'),
+          size: CsButtonSize.sm,
+          onPressed: () => Navigator.pop(context, note.text.trim()),
+        ),
+      ],
+    ),
+  );
+  if (result != null) await save(item['id'].toString(), result);
 }
 
 int? _candidateTime(Map<String, dynamic>? candidate) {
