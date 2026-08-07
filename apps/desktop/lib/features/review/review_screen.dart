@@ -1067,28 +1067,35 @@ Future<void> _editRange(
   Map<String, dynamic> item,
   Future<void> Function(String, int, int) save,
 ) async {
-  final start = TextEditingController(
-    text: '${item['review_start_ms'] ?? item['default_start_ms'] ?? 0}',
-  );
-  final end = TextEditingController(
-    text: '${item['review_end_ms'] ?? item['default_end_ms'] ?? 0}',
-  );
+  final start = TextEditingController(text: _formatMs(_clipStart(item)));
+  final end = TextEditingController(text: _formatMs(_clipEndFor(item)));
   final result = await showDialog<List<int>>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('调整片段范围（毫秒）'),
+      title: const Text('编辑片段范围'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           TextField(
             controller: start,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: '开始'),
+            keyboardType: TextInputType.datetime,
+            decoration: const InputDecoration(
+              labelText: '开始时间',
+              hintText: '例如 00:06',
+            ),
           ),
           TextField(
             controller: end,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: '结束'),
+            keyboardType: TextInputType.datetime,
+            decoration: const InputDecoration(
+              labelText: '结束时间',
+              hintText: '例如 00:15',
+            ),
+          ),
+          const SizedBox(height: Spacing.xs),
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Text('使用 mm:ss；保存后立即应用到导出片段。'),
           ),
         ],
       ),
@@ -1103,8 +1110,8 @@ Future<void> _editRange(
           label: const Text('保存'),
           size: CsButtonSize.sm,
           onPressed: () {
-            final s = int.tryParse(start.text);
-            final e = int.tryParse(end.text);
+            final s = _parseTimecode(start.text);
+            final e = _parseTimecode(end.text);
             if (s != null && e != null && e > s) {
               Navigator.pop(context, [s, e]);
             }
@@ -1153,6 +1160,30 @@ Future<void> _editNote(
     ),
   );
   if (result != null) await save(item['id'].toString(), result);
+}
+
+int? _parseTimecode(String raw) {
+  final parts = raw.trim().split(':');
+  if (parts.length != 2 && parts.length != 3) return null;
+  final numbers = parts.map(int.tryParse).toList();
+  if (numbers.any((value) => value == null)) return null;
+  if (parts.length == 2) {
+    final minutes = numbers[0]!;
+    final seconds = numbers[1]!;
+    if (minutes < 0 || seconds < 0 || seconds >= 60) return null;
+    return (minutes * 60 + seconds) * 1000;
+  }
+  final hours = numbers[0]!;
+  final minutes = numbers[1]!;
+  final seconds = numbers[2]!;
+  if (hours < 0 ||
+      minutes < 0 ||
+      seconds < 0 ||
+      minutes >= 60 ||
+      seconds >= 60) {
+    return null;
+  }
+  return (hours * 3600 + minutes * 60 + seconds) * 1000;
 }
 
 int? _candidateTime(Map<String, dynamic>? candidate) {
