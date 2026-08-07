@@ -63,9 +63,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     List<Map<String, dynamic>> candidates,
   ) async {
     final index = candidates.indexWhere((candidate) => candidate['id'] == id);
-    await ref
-        .read(projectProvider.notifier)
-        .reviewCandidate(id, status);
+    await ref.read(projectProvider.notifier).reviewCandidate(id, status);
     if (!mounted || status != 'excluded' || candidates.isEmpty) return;
     final nextIndex = (index + 1).clamp(0, candidates.length - 1).toInt();
     final nextId = candidates[nextIndex]['id']?.toString();
@@ -813,31 +811,13 @@ class _CandidatePanel extends StatelessWidget {
               Text('候选片段', style: theme.textTheme.titleSmall),
               const SizedBox(width: Spacing.sm),
               Text(
-                '$includedCount 保留 / ${candidates.length} 个',
+                '已选 $includedCount / ${candidates.length}',
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: c.textSecondary,
                 ),
               ),
-              const Spacer(),
-              const Icon(Icons.schedule, size: 15),
-              const SizedBox(width: 3),
-              Text('按时间', style: theme.textTheme.labelSmall),
             ],
           ),
-          if (candidates.isNotEmpty) ...[
-            const SizedBox(height: Spacing.xs),
-            Row(
-              children: [
-                Text('默认保留', style: theme.textTheme.labelSmall),
-                Text(
-                  ' · 点击封面播放 · 打叉剔除',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: c.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ],
           const SizedBox(height: Spacing.sm),
           Expanded(
             child: candidates.isEmpty
@@ -875,7 +855,7 @@ class _CandidatePanel extends StatelessWidget {
             children: [
               Expanded(
                 child: CsButton(
-                  label: Text('导出 $includedCount 个保留片段'),
+                  label: Text('导出 $includedCount 个片段'),
                   icon: Icons.file_upload_outlined,
                   size: CsButtonSize.sm,
                   onPressed: onExport,
@@ -996,9 +976,12 @@ class _CandidateRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  excluded ? '已排除' : '保留',
+                  _candidateDetails(candidate),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.labelSmall?.copyWith(
-                    color: excluded ? c.textTertiary : c.goal,
+                    color: excluded ? c.textTertiary : c.textSecondary,
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
               ],
@@ -1009,20 +992,34 @@ class _CandidateRow extends StatelessWidget {
             onPressed: busy ? null : onInclude,
             icon: Icon(
               Icons.check_circle,
-              size: 20,
+              size: 25,
               color: excluded ? c.textTertiary : c.goal,
             ),
-            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+            padding: EdgeInsets.zero,
+            style: IconButton.styleFrom(
+              backgroundColor: excluded
+                  ? c.surface3
+                  : c.goal.withValues(alpha: 0.12),
+              foregroundColor: excluded ? c.textTertiary : c.goal,
+            ),
           ),
           IconButton(
             tooltip: '排除片段',
             onPressed: busy ? null : onExclude,
             icon: Icon(
               Icons.cancel_outlined,
-              size: 20,
+              size: 25,
               color: excluded ? c.error : c.textTertiary,
             ),
-            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+            padding: EdgeInsets.zero,
+            style: IconButton.styleFrom(
+              backgroundColor: excluded
+                  ? c.error.withValues(alpha: 0.12)
+                  : c.surface3,
+              foregroundColor: excluded ? c.error : c.textTertiary,
+            ),
           ),
         ],
       ),
@@ -1114,6 +1111,41 @@ int _clipEnd(Map<String, dynamic> candidate) {
 String _candidateSignature(Map<String, dynamic>? candidate) {
   if (candidate == null) return '';
   return '${candidate['id']}|${_clipStart(candidate)}|${_clipEnd(candidate)}';
+}
+
+String _candidateDetails(Map<String, dynamic> candidate) {
+  final start = _clipStart(candidate);
+  final end = _clipEnd(candidate);
+  final duration = end > start ? end - start : 0;
+  final details = <String>[
+    '片段 ${_formatMs(start)} - ${_formatMs(end)}',
+    '时长 ${_formatClipDuration(duration)}',
+  ];
+  final confidence = _candidateConfidence(candidate);
+  if (confidence != null) details.add('置信度 $confidence');
+  return details.join(' · ');
+}
+
+String? _candidateConfidence(Map<String, dynamic> candidate) {
+  final raw = candidate['confidence']?.toString();
+  if (raw != null && raw.isNotEmpty) {
+    return const <String, String>{
+          'high': '高',
+          'review': '复核',
+          'medium': '中',
+          'low': '低',
+        }[raw] ??
+        raw;
+  }
+  final score = candidate['score'];
+  if (score is num) return '${(score.clamp(0, 1) * 100).round()}%';
+  return null;
+}
+
+String _formatClipDuration(int milliseconds) {
+  final seconds = (milliseconds / 1000).round();
+  if (seconds < 60) return '$seconds 秒';
+  return '${seconds ~/ 60} 分 ${seconds % 60} 秒';
 }
 
 String _formatMs(int milliseconds) {

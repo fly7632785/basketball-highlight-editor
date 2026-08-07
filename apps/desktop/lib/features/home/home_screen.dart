@@ -31,12 +31,18 @@ class HomeScreen extends ConsumerWidget {
     final theme = Theme.of(context);
 
     final included = state.candidates
-        .where((it) => it['selection_status']?.toString() != 'excluded' &&
-            it['review_status']?.toString() != 'excluded')
+        .where(
+          (it) =>
+              it['selection_status']?.toString() != 'excluded' &&
+              it['review_status']?.toString() != 'excluded',
+        )
         .length;
     final excluded = state.candidates
-        .where((it) => it['selection_status']?.toString() == 'excluded' ||
-            it['review_status']?.toString() == 'excluded')
+        .where(
+          (it) =>
+              it['selection_status']?.toString() == 'excluded' ||
+              it['review_status']?.toString() == 'excluded',
+        )
         .length;
     final durationMs = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
     final busy = state.busy;
@@ -74,7 +80,10 @@ class HomeScreen extends ConsumerWidget {
           ],
         ),
       );
-      if (confirmed == true) await notifier.deleteProject(root);
+      if (confirmed == true) {
+        await notifier.deleteProject(root);
+        await notifier.loadRecentProjects();
+      }
     }
 
     final steps = <CsStep>[
@@ -333,6 +342,9 @@ class _RecentGrid extends StatelessWidget {
           final cells = <Widget>[];
           for (var j = 0; j < cols; j++) {
             final index = i + j;
+            if (j > 0) {
+              cells.add(const SizedBox(width: Spacing.md));
+            }
             if (index < projects.length) {
               cells.add(
                 Expanded(
@@ -348,7 +360,13 @@ class _RecentGrid extends StatelessWidget {
             }
           }
           rows.add(
-            Row(crossAxisAlignment: CrossAxisAlignment.start, children: cells),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: cells,
+              ),
+            ),
           );
           if (i + cols < projects.length) {
             rows.add(const SizedBox(height: Spacing.md));
@@ -409,16 +427,11 @@ class _ProjectCard extends StatelessWidget {
                 ),
               ),
               if (onDelete != null && root.isNotEmpty)
-                PopupMenuButton<String>(
-                  tooltip: '项目操作',
-                  padding: EdgeInsets.zero,
-                  onSelected: (value) {
-                    if (value == 'delete') onDelete!(item);
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem<String>(value: 'delete', child: Text('删除项目')),
-                  ],
-                  icon: const Icon(LucideIcons.moreVertical, size: 18),
+                IconButton(
+                  tooltip: '删除项目',
+                  onPressed: () => onDelete!(item),
+                  icon: const Icon(LucideIcons.trash2, size: 17),
+                  visualDensity: VisualDensity.compact,
                 ),
               if (goals > 0)
                 const CsStatusChip(status: ReviewStatus.goal, compact: true),
@@ -457,6 +470,9 @@ class _RecentSkeletonGrid extends StatelessWidget {
             : (constraints.maxWidth >= 560 ? 2 : 1);
         final cells = <Widget>[];
         for (var i = 0; i < cols; i++) {
+          if (i > 0) {
+            cells.add(const SizedBox(width: Spacing.md));
+          }
           cells.add(
             Expanded(
               child: Padding(

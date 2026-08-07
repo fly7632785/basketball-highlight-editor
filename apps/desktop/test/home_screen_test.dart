@@ -8,6 +8,7 @@ import 'package:desktop/providers/project_state.dart';
 /// 假 Notifier:返回固定 ProjectState(含最近项目),并记录 openProject 调用。
 class _FakeProjectNotifier extends ProjectNotifier {
   String? openedRoot;
+  String? deletedRoot;
 
   @override
   ProjectState build() => const ProjectState(
@@ -15,14 +16,8 @@ class _FakeProjectNotifier extends ProjectNotifier {
       {
         'project_root': '/tmp/projects/game-1',
         'project': {'name': '周末训练赛'},
-        'video': {
-          'source_path': '/tmp/game.mp4',
-          'duration_ms': 3723000,
-        },
-        'statistics': {
-          'included_count': 4,
-          'candidate_count': 7,
-        },
+        'video': {'source_path': '/tmp/game.mp4', 'duration_ms': 3723000},
+        'statistics': {'included_count': 4, 'candidate_count': 7},
       },
     ],
   );
@@ -30,6 +25,16 @@ class _FakeProjectNotifier extends ProjectNotifier {
   @override
   Future<void> openProject(String root) async {
     openedRoot = root;
+  }
+
+  @override
+  Future<void> deleteProject(String root) async {
+    deletedRoot = root;
+  }
+
+  @override
+  Future<void> loadRecentProjects() async {
+    state = state.copyWith(recentProjects: const []);
   }
 }
 
@@ -77,12 +82,44 @@ void main() {
     expect(fake.openedRoot, '/tmp/projects/game-1');
   });
 
-  testWidgets('shows empty state when there are no recent projects', (tester) async {
+  testWidgets(
+    'deleting a recent project is directly discoverable and confirmed',
+    (tester) async {
+      late _FakeProjectNotifier fake;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            projectProvider.overrideWith(() {
+              fake = _FakeProjectNotifier();
+              return fake;
+            }),
+          ],
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final deleteButton = find.byTooltip('删除项目');
+      expect(deleteButton, findsOneWidget);
+      await tester.ensureVisible(deleteButton);
+      await tester.tap(deleteButton);
+      await tester.pumpAndSettle();
+
+      expect(find.text('删除项目？'), findsOneWidget);
+      await tester.tap(find.text('删除项目').last);
+      await tester.pumpAndSettle();
+
+      expect(fake.deletedRoot, '/tmp/projects/game-1');
+      expect(find.text('周末训练赛'), findsNothing);
+    },
+  );
+
+  testWidgets('shows empty state when there are no recent projects', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [
-          projectProvider.overrideWith(_EmptyProjectNotifier.new),
-        ],
+        overrides: [projectProvider.overrideWith(_EmptyProjectNotifier.new)],
         child: const MaterialApp(home: HomeScreen()),
       ),
     );

@@ -86,13 +86,18 @@ void main() {
             'review_end_ms': 15000,
             'review_status': 'pending',
             'selection_status': 'included',
+            'confidence': 'high',
           },
         ],
       ),
     );
 
     expect(find.text('候选 00:12 · 片段 00:06 - 00:15'), findsOneWidget);
-    expect(find.text('默认保留'), findsOneWidget);
+    expect(find.text('按时间'), findsNothing);
+    expect(find.text('默认保留'), findsNothing);
+    expect(find.text('保留'), findsNothing);
+    expect(find.text('已排除'), findsNothing);
+    expect(find.textContaining('时长 9 秒'), findsOneWidget);
     expect(find.byTooltip('保留片段'), findsOneWidget);
     expect(find.byTooltip('排除片段'), findsOneWidget);
   });
