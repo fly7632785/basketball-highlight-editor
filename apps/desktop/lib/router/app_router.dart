@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../components/cs_scaffold.dart';
+import '../features/export/export_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/import_video/import_video_screen.dart';
+import '../features/review/review_screen.dart';
 import '../providers/project_state.dart';
 
 /// 全局 GoRouter。
@@ -13,7 +15,7 @@ import '../providers/project_state.dart';
 /// /export`),每个 branch 独立导航栈,shell(CsScaffold)持久化。导航通过
 /// `context.go('/review')` 等触发。
 ///
-/// T15:Home / Import 已接入真实 screen;Review / Export 暂用占位(T16)。
+/// 四个 branch 均绑定真实 screen，页面数据统一来自 projectProvider。
 final Provider<GoRouter> appRouterProvider = Provider<GoRouter>(
   (ref) => GoRouter(
     initialLocation: '/home',
@@ -23,10 +25,7 @@ final Provider<GoRouter> appRouterProvider = Provider<GoRouter>(
         branches: <StatefulShellBranch>[
           StatefulShellBranch(
             routes: [
-              GoRoute(
-                path: '/home',
-                builder: (_, _) => const _HomeRoute(),
-              ),
+              GoRoute(path: '/home', builder: (_, _) => const _HomeRoute()),
             ],
           ),
           StatefulShellBranch(
@@ -39,20 +38,12 @@ final Provider<GoRouter> appRouterProvider = Provider<GoRouter>(
           ),
           StatefulShellBranch(
             routes: [
-              GoRoute(
-                path: '/review',
-                builder: (_, _) =>
-                    const _PlaceholderScreen(label: '/review'),
-              ),
+              GoRoute(path: '/review', builder: (_, _) => const _ReviewRoute()),
             ],
           ),
           StatefulShellBranch(
             routes: [
-              GoRoute(
-                path: '/export',
-                builder: (_, _) =>
-                    const _PlaceholderScreen(label: '/export'),
-              ),
+              GoRoute(path: '/export', builder: (_, _) => const _ExportRoute()),
             ],
           ),
         ],
@@ -80,15 +71,25 @@ class _HomeRouteState extends ConsumerState<_HomeRoute> {
   }
 
   @override
-  Widget build(BuildContext context) => const HomeScreen();
+  Widget build(BuildContext context) => HomeScreen(
+    onProjectOpened: () {
+      if (context.mounted) context.go('/review');
+    },
+  );
 }
 
-/// T16 将替换为真实 screen;此处仅占位以打通路由。
-class _PlaceholderScreen extends StatelessWidget {
-  const _PlaceholderScreen({required this.label});
-  final String label;
+/// Review 路由壳:直接渲染 ReviewScreen(ConsumerStatefulWidget 自行 watch provider)。
+class _ReviewRoute extends ConsumerWidget {
+  const _ReviewRoute();
 
   @override
-  Widget build(BuildContext context) =>
-      Scaffold(body: Center(child: Text(label)));
+  Widget build(BuildContext context, WidgetRef ref) => const ReviewScreen();
+}
+
+/// Export 路由壳:直接渲染 ExportScreen(ConsumerWidget 自行 watch provider)。
+class _ExportRoute extends ConsumerWidget {
+  const _ExportRoute();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => const ExportScreen();
 }
