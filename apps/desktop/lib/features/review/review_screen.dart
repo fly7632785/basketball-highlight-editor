@@ -312,7 +312,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       child: Focus(
         autofocus: true,
         child: Padding(
-          padding: const EdgeInsets.all(Spacing.lg),
+          padding: const EdgeInsets.fromLTRB(
+            Spacing.lg,
+            Spacing.sm,
+            Spacing.lg,
+            Spacing.lg,
+          ),
           child: Column(
             children: [
               if (job != null &&
@@ -332,7 +337,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       ? () => _confirmReanalyze(context)
                       : null,
                 ),
-                const SizedBox(height: Spacing.md),
+                const SizedBox(height: Spacing.sm),
               ],
               if (jobState == 'completed') ...[
                 _CompletedStatusBar(
@@ -340,10 +345,10 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       ? () => _confirmReanalyze(context)
                       : null,
                 ),
-                const SizedBox(height: Spacing.sm),
+                const SizedBox(height: Spacing.xs),
               ],
               _ReviewStatsCard(stats: reviewStats),
-              const SizedBox(height: Spacing.sm),
+              const SizedBox(height: Spacing.xs),
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
@@ -370,7 +375,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       onPrevious: () => _moveSelection(visible, -1),
                       onNext: () => _moveSelection(visible, 1),
                       onCancel: () => notifier.cancelAnalysis(),
-                      recoverable: job?['recoverable'] == true,
+                      recoverable: job?['recoverable'] == true && !analyzing,
                       onRetry: state.busy
                           ? null
                           : () => notifier.retryAnalysis(),
@@ -441,7 +446,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                         children: [
                           Expanded(child: preview),
                           const SizedBox(width: Spacing.md),
-                          SizedBox(width: 320, child: queue),
+                          SizedBox(width: 300, child: queue),
                         ],
                       );
                     }
@@ -470,7 +475,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   }
 }
 
-/// 分析状态条:sparkles/circleAlert + 标题 + 阶段+% + CsProgressTrack + 取消/重试。
+/// 紧凑分析状态条:把阶段和进度压在一行，避免挤占审核视频高度。
 class _AnalysisStatusCard extends StatelessWidget {
   const _AnalysisStatusCard({
     required this.state,
@@ -497,6 +502,17 @@ class _AnalysisStatusCard extends StatelessWidget {
     final failed = state == 'failed';
     final value = progress.clamp(0.0, 1.0).toDouble();
     final accent = failed ? c.error : c.indigo;
+    final active = state == 'queued' || state == 'running';
+    final title = failed
+        ? '分析失败'
+        : state == 'cancelled'
+        ? '分析已取消'
+        : '正在分析视频';
+    final detail = failed
+        ? (errorMessage ?? '请检查视频、ROI 和本地运行时后重试')
+        : state == 'cancelled'
+        ? '可以保留现有候选，或重新分析当前视频'
+        : '${_stageLabel(stage)} · ${(value * 100).round()}%';
 
     return Container(
       decoration: BoxDecoration(
@@ -505,18 +521,16 @@ class _AnalysisStatusCard extends StatelessWidget {
         border: Border.all(color: accent.withValues(alpha: 0.3)),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          Spacing.md,
-          Spacing.md,
-          Spacing.sm,
-          Spacing.md,
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.md,
+          vertical: Spacing.sm,
         ),
         child: Row(
           children: [
             Icon(
               failed ? LucideIcons.circleAlert : LucideIcons.sparkles,
               color: accent,
-              size: 22,
+              size: 18,
             ),
             const SizedBox(width: Spacing.sm),
             Expanded(
@@ -524,36 +538,25 @@ class _AnalysisStatusCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    failed
-                        ? '分析失败'
-                        : state == 'completed'
-                        ? '分析已完成'
-                        : state == 'cancelled'
-                        ? '分析已取消'
-                        : '正在分析视频',
-                    style: theme.textTheme.titleMedium,
+                  Row(
+                    children: [
+                      Text(title, style: theme.textTheme.labelLarge),
+                      const SizedBox(width: Spacing.sm),
+                      Expanded(
+                        child: Text(
+                          detail,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: c.textSecondary,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    failed
-                        ? (errorMessage ?? '请检查视频、ROI 和本地运行时后重试')
-                        : state == 'completed'
-                        ? '候选片段已生成，可继续审核或重新分析'
-                        : state == 'cancelled'
-                        ? '可以保留现有候选，或重新分析当前视频'
-                        : '${_stageLabel(stage)} · ${(value * 100).round()}%',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: c.textSecondary,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                  if (!failed &&
-                      state != 'completed' &&
-                      state != 'cancelled') ...[
-                    const SizedBox(height: Spacing.sm),
+                  if (active) ...[
+                    const SizedBox(height: Spacing.xs),
                     CsProgressTrack(value: value),
                   ],
                 ],
@@ -605,7 +608,7 @@ class _CompletedStatusBar extends StatelessWidget {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
     return Container(
-      height: 42,
+      height: 36,
       padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
       decoration: BoxDecoration(
         color: c.surface,
@@ -650,7 +653,7 @@ class _ReviewStatsCard extends StatelessWidget {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
     return CsCard(
-      padding: const EdgeInsets.symmetric(horizontal: Spacing.sm, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
       child: Material(
         color: c.surface,
         borderRadius: BorderRadius.circular(CsRadius.md),
@@ -1133,15 +1136,21 @@ class _PreviewPanelState extends State<_PreviewPanel> {
 
     return CsCard(
       tier: CsCardTier.defaultTier,
+      padding: const EdgeInsets.fromLTRB(
+        Spacing.md,
+        Spacing.sm,
+        Spacing.md,
+        Spacing.sm,
+      ),
       child: Column(
         children: [
-          // 恢复提示条
+          // 仅在分析停止后显示恢复提示；分析中由顶部状态条统一反馈进度。
           if (widget.recoverable) ...[
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(
                 horizontal: Spacing.md,
-                vertical: Spacing.sm,
+                vertical: Spacing.xs,
               ),
               decoration: BoxDecoration(
                 color: c.warning.withValues(alpha: 0.16),
@@ -1170,7 +1179,7 @@ class _PreviewPanelState extends State<_PreviewPanel> {
                 ],
               ),
             ),
-            const SizedBox(height: Spacing.sm),
+            const SizedBox(height: Spacing.xs),
           ],
 
           // 视频容器 / 空态
