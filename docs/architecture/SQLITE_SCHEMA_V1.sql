@@ -85,8 +85,11 @@ CREATE INDEX IF NOT EXISTS idx_candidates_video_time
 CREATE TABLE IF NOT EXISTS candidate_reviews (
     candidate_id TEXT PRIMARY KEY REFERENCES candidates(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'pending',
+    reason TEXT,
     note TEXT,
     reviewed_at TEXT,
+    review_started_at TEXT,
+    review_duration_ms INTEGER,
     updated_at TEXT NOT NULL
 );
 

@@ -22,6 +22,49 @@ def test_create_project_and_statistics(tmp_path: Path):
     assert stats["statistics"]["goal_count"] == 0
 
 
+def test_delete_project_removes_project_files_but_not_source_video(tmp_path: Path):
+    project_root = tmp_path / "project"
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    service = EngineService()
+    created = service.handle(
+        "create_project",
+        {"name": "待删除项目", "root_path": str(project_root)},
+    )
+
+    deleted = service.handle("delete_project", {"project_root": str(project_root)})
+
+    assert deleted == {
+        "deleted": True,
+        "project_root": str(project_root.resolve()),
+        "project_id": created["project"]["id"],
+    }
+    assert not project_root.exists()
+    assert source.read_bytes() == b"source"
+
+
+def test_delete_project_rejects_live_job(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "运行中项目", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    project = store.project()
+    assert project is not None
+    job = store.create_job(project["id"], None, "analysis")
+    release = threading.Event()
+    worker = threading.Thread(target=release.wait, args=(2,), daemon=True)
+    worker.start()
+    service._job_threads[job["id"]] = worker
+
+    with pytest.raises(ProtocolError) as error:
+        service.handle("delete_project", {"project_root": str(project_root)})
+
+    assert error.value.code == "PROJECT_BUSY"
+    assert project_root.exists()
+    release.set()
+    worker.join(timeout=1)
+
+
 def test_list_exports_returns_recent_export_metrics(tmp_path: Path):
     project_root = tmp_path / "project"
     service = EngineService()
@@ -534,7 +577,7 @@ def test_create_proxy_generates_reusable_artifact(tmp_path: Path):
     assert cached["artifact"]["cache_hit"] is True
 
 
-def test_extract_preview_generates_frame(tmp_path: Path):
+def test_extract_preview_generates_frame_and_reuses_cached_frame(tmp_path: Path, monkeypatch):
     source = tmp_path / "source.mp4"
     subprocess.run(
         [
@@ -558,6 +601,16 @@ def test_extract_preview_generates_frame(tmp_path: Path):
 
     assert result["time_ms"] == 200
     assert Path(result["path"]).is_file()
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("cached preview should not invoke ffmpeg")
+
+    monkeypatch.setattr("basketball_engine.service.subprocess.run", fail_if_called)
+    cached = service.handle(
+        "extract_preview",
+        {"project_root": str(project_root), "video_id": video["id"], "time_ms": 200},
+    )
+    assert cached == result
 
 
 def test_persist_candidates_creates_pending_reviews(tmp_path: Path):
@@ -595,6 +648,179 @@ def test_persist_candidates_creates_pending_reviews(tmp_path: Path):
     candidates = store.list_candidates(video["id"])
     assert candidates[0]["id"] == "candidate-1"
     assert candidates[0]["review_status"] == "pending"
+
+
+def test_list_candidates_exposes_default_included_selection(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "默认保留", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    video = store.link_video({
+        "source_path": str(tmp_path / "source.mp4"),
+        "source_size_bytes": 1,
+        "source_mtime_ns": 1,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+    store.replace_candidates(video["id"], [{
+        "id": "included-candidate",
+        "video_id": video["id"],
+        "event_time_ms": 1000,
+        "default_start_ms": 0,
+        "default_end_ms": 4000,
+        "review_start_ms": 0,
+        "review_end_ms": 4000,
+        "detector_version": "test",
+        "score": 0.9,
+        "confidence": "high",
+        "evidence_json": "{}",
+    }])
+
+    candidate = store.list_candidates(video["id"])[0]
+
+    assert candidate["selection_status"] == "included"
+
+
+def test_review_candidate_persists_reason_for_excluded_candidate(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "审核原因", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    video = store.link_video({
+        "source_path": str(tmp_path / "source.mp4"),
+        "source_size_bytes": 1,
+        "source_mtime_ns": 1,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+    row = {
+        "id": "candidate-reason",
+        "video_id": video["id"],
+        "event_time_ms": 1000,
+        "default_start_ms": 0,
+        "default_end_ms": 4000,
+        "review_start_ms": 0,
+        "review_end_ms": 4000,
+        "detector_version": "test",
+        "score": 0.4,
+        "confidence": "review",
+        "evidence_json": "{}",
+    }
+    store.replace_candidates(video["id"], [row])
+
+    service.handle("review_candidate", {
+        "project_root": str(project_root),
+        "candidate_id": row["id"],
+        "status": "excluded",
+        "reason": "rebound",
+        "note": "篮板反弹",
+    })
+
+    candidate = store.list_candidates(video["id"])[0]
+    assert candidate["review_status"] == "excluded"
+    assert candidate["review_reason"] == "rebound"
+    assert candidate["note"] == "篮板反弹"
+
+
+def test_review_candidate_rejects_unknown_reason(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "审核原因校验", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    video = store.link_video({
+        "source_path": str(tmp_path / "source.mp4"),
+        "source_size_bytes": 1,
+        "source_mtime_ns": 1,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+    row = {
+        "id": "candidate-invalid-reason",
+        "video_id": video["id"],
+        "event_time_ms": 1000,
+        "default_start_ms": 0,
+        "default_end_ms": 4000,
+        "review_start_ms": 0,
+        "review_end_ms": 4000,
+        "detector_version": "test",
+        "score": 0.4,
+        "confidence": "review",
+        "evidence_json": "{}",
+    }
+    store.replace_candidates(video["id"], [row])
+
+    with pytest.raises(ProtocolError) as error:
+        service.handle("review_candidate", {
+            "project_root": str(project_root),
+            "candidate_id": row["id"],
+            "status": "excluded",
+            "reason": "not-a-review-reason",
+        })
+
+    assert error.value.code == "INVALID_REQUEST"
+
+
+def test_list_review_history_returns_all_review_actions(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "审核历史", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    video = store.link_video({
+        "source_path": str(tmp_path / "source.mp4"),
+        "source_size_bytes": 1,
+        "source_mtime_ns": 1,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+    row = {
+        "id": "candidate-history",
+        "video_id": video["id"],
+        "event_time_ms": 1000,
+        "default_start_ms": 0,
+        "default_end_ms": 4000,
+        "review_start_ms": 0,
+        "review_end_ms": 4000,
+        "detector_version": "test",
+        "score": 0.4,
+        "confidence": "review",
+        "evidence_json": "{}",
+    }
+    store.replace_candidates(video["id"], [row])
+    review_payload = {
+        "project_root": str(project_root),
+        "candidate_id": row["id"],
+    }
+    service.handle("review_candidate", {
+        **review_payload,
+        "status": "deferred",
+        "reason": "uncertain",
+    })
+    service.handle("review_candidate", {
+        **review_payload,
+        "status": "excluded",
+        "reason": "rebound",
+    })
+
+    result = service.handle("list_review_history", review_payload)
+
+    assert [item["status"] for item in result["history"]] == ["deferred", "excluded"]
+    assert result["history"][0]["reason"] == "uncertain"
 
 
 def test_start_analysis_records_model_failure_without_blocking_request(tmp_path: Path):
@@ -878,4 +1104,53 @@ def test_export_clips_uses_only_goal_reviews(tmp_path: Path):
 
     assert result["export"]["candidate_count"] == 1
     assert len(result["files"]) == 1
+    assert Path(result["files"][0]).is_file()
+
+
+def test_export_clips_includes_unreviewed_candidates_by_default(tmp_path: Path):
+    source = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10",
+            "-t", "2", "-pix_fmt", "yuv420p", str(source),
+        ],
+        check=True,
+    )
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "默认采纳", "root_path": str(project_root)})
+    video = service.handle("link_video", {"project_root": str(project_root), "video_path": str(source)})["video"]
+    store = ProjectStore(project_root)
+    rows = [
+        {
+            "id": "included-1", "video_id": video["id"], "event_time_ms": 500,
+            "default_start_ms": 0, "default_end_ms": 900,
+            "review_start_ms": 0, "review_end_ms": 900,
+            "detector_version": "test", "score": 0.9, "confidence": "high",
+            "evidence_json": "{}",
+        },
+        {
+            "id": "excluded-1", "video_id": video["id"], "event_time_ms": 1200,
+            "default_start_ms": 700, "default_end_ms": 1800,
+            "review_start_ms": 700, "review_end_ms": 1800,
+            "detector_version": "test", "score": 0.3, "confidence": "review",
+            "evidence_json": "{}",
+        },
+    ]
+    store.replace_candidates(video["id"], rows)
+    service.handle("review_candidate", {
+        "project_root": str(project_root),
+        "candidate_id": "excluded-1",
+        "status": "excluded",
+    })
+
+    result = service.handle("export_clips", {
+        "project_root": str(project_root),
+        "video_id": video["id"],
+        "mode": "separate",
+        "output_dir": str(tmp_path / "exports"),
+    })
+
+    assert result["export"]["candidate_count"] == 1
     assert Path(result["files"][0]).is_file()

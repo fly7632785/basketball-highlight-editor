@@ -12,7 +12,7 @@ import '../../providers/project_state.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
 
-/// Export 屏:汇总已确认片段 + 合并/分别导出 CTA + 历史。
+/// Export 屏:汇总当前保留片段 + 合并/分别导出 CTA + 历史。
 ///
 /// 数据来自 [projectProvider];导出走 `ProjectNotifier.export(mode:)`,
 /// 返回审核用 `context.go('/review')`。
@@ -26,11 +26,19 @@ class ExportScreen extends ConsumerWidget {
     final theme = Theme.of(context);
     final c = AppColors.of(context);
 
-    final goalCount = state.candidates
-        .where((item) => item['review_status'] == 'goal')
+    final includedCount = state.candidates
+        .where(
+          (item) =>
+              item['selection_status']?.toString() != 'excluded' &&
+              item['review_status']?.toString() != 'excluded',
+        )
         .length;
     final durationMs = state.candidates
-        .where((item) => item['review_status'] == 'goal')
+        .where(
+          (item) =>
+              item['selection_status']?.toString() != 'excluded' &&
+              item['review_status']?.toString() != 'excluded',
+        )
         .fold<int>(0, _clipDuration);
     final busy = state.busy;
 
@@ -45,7 +53,7 @@ class ExportScreen extends ConsumerWidget {
               Text('导出集锦', style: theme.textTheme.displayMedium),
               const SizedBox(height: Spacing.sm),
               Text(
-                '只导出人工确认的进球片段。',
+                '分析结果默认保留，导出时只排除你打叉的片段。',
                 style: theme.textTheme.bodyLarge?.copyWith(
                   color: c.textSecondary,
                 ),
@@ -57,8 +65,8 @@ class ExportScreen extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     CsMetricTile(
-                      label: '已确认片段',
-                      value: '$goalCount 个',
+                      label: '当前保留',
+                      value: '$includedCount 个',
                       icon: LucideIcons.check,
                     ),
                     CsMetricTile(
@@ -81,7 +89,7 @@ class ExportScreen extends ConsumerWidget {
                       label: const Text('合并导出'),
                       icon: LucideIcons.merge,
                       isLoading: busy,
-                      onPressed: goalCount > 0 && !busy
+                      onPressed: includedCount > 0 && !busy
                           ? () => _chooseMerge(context, notifier)
                           : null,
                     ),
@@ -91,7 +99,7 @@ class ExportScreen extends ConsumerWidget {
                       icon: LucideIcons.files,
                       variant: CsButtonVariant.secondary,
                       isLoading: busy,
-                      onPressed: goalCount > 0 && !busy
+                      onPressed: includedCount > 0 && !busy
                           ? () => _chooseSeparate(context, notifier)
                           : null,
                     ),
@@ -100,7 +108,7 @@ class ExportScreen extends ConsumerWidget {
               ),
               const SizedBox(height: Spacing.md),
               Text(
-                '导出前只会使用"已确认"候选；待审核和已排除片段不会进入输出。',
+                '导出会包含所有当前保留的候选；已排除片段不会进入输出。',
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: c.textSecondary,
                 ),
@@ -184,9 +192,9 @@ class _ExportHistoryCard extends StatelessWidget {
     final time = createdAt == null
         ? ''
         : '${createdAt.month.toString().padLeft(2, '0')}-'
-            '${createdAt.day.toString().padLeft(2, '0')} '
-            '${createdAt.hour.toString().padLeft(2, '0')}:'
-            '${createdAt.minute.toString().padLeft(2, '0')}';
+              '${createdAt.day.toString().padLeft(2, '0')} '
+              '${createdAt.hour.toString().padLeft(2, '0')}:'
+              '${createdAt.minute.toString().padLeft(2, '0')}';
 
     return CsCard(
       child: Row(
@@ -228,10 +236,12 @@ class _ExportHistoryCard extends StatelessWidget {
 }
 
 int _clipDuration(int total, Map<String, dynamic> item) {
-  final start = (item['review_start_ms'] as num?)?.toInt() ??
+  final start =
+      (item['review_start_ms'] as num?)?.toInt() ??
       (item['default_start_ms'] as num?)?.toInt() ??
       0;
-  final end = (item['review_end_ms'] as num?)?.toInt() ??
+  final end =
+      (item['review_end_ms'] as num?)?.toInt() ??
       (item['default_end_ms'] as num?)?.toInt() ??
       0;
   return total + (end > start ? end - start : 0);

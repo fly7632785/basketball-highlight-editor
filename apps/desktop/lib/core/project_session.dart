@@ -50,6 +50,12 @@ class ProjectSession {
     return payload;
   }
 
+  Future<JsonMap> deleteProject(String projectRoot) async {
+    final payload = await engine.deleteProject(projectRoot: projectRoot);
+    if (_projectRoot == projectRoot) reset();
+    return payload;
+  }
+
   Future<JsonMap> updateProjectSettings({String? name, String? themeMode}) {
     return engine.updateProjectSettings(
       projectRoot: _requireProjectRoot(),
@@ -234,16 +240,33 @@ class ProjectSession {
     );
   }
 
+  Future<JsonMap> listReviewHistory(String candidateId) {
+    return engine.listReviewHistory(
+      projectRoot: _requireProjectRoot(),
+      candidateId: candidateId,
+    );
+  }
+
+  Future<JsonMap> startReview(String candidateId, {String? reviewStartedAt}) {
+    return engine.startReview(
+      projectRoot: _requireProjectRoot(),
+      candidateId: candidateId,
+      reviewStartedAt: reviewStartedAt,
+    );
+  }
+
   Future<JsonMap> reviewCandidate(
     String candidateId, {
     required String status,
     String? note,
+    String? reason,
   }) {
     return engine.reviewCandidate(
       projectRoot: _requireProjectRoot(),
       candidateId: candidateId,
       status: status,
       note: note,
+      reason: reason,
     );
   }
 

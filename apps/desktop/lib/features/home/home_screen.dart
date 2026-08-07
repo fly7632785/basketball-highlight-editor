@@ -30,20 +30,19 @@ class HomeScreen extends ConsumerWidget {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
 
-    final goals = state.candidates
-        .where((it) => it['review_status'] == 'goal')
+    final included = state.candidates
+        .where((it) => it['selection_status']?.toString() != 'excluded' &&
+            it['review_status']?.toString() != 'excluded')
         .length;
-    final pending = state.candidates
-        .where((it) => it['review_status'] == 'pending')
+    final excluded = state.candidates
+        .where((it) => it['selection_status']?.toString() == 'excluded' ||
+            it['review_status']?.toString() == 'excluded')
         .length;
     final durationMs = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
     final busy = state.busy;
 
     Future<void> openProject() async {
-      await notifier.chooseOpenProject();
-      if (ref.read(projectProvider).videoPath != null) {
-        onProjectOpened?.call();
-      }
+      if (await notifier.chooseOpenProject()) onProjectOpened?.call();
     }
 
     Future<void> openRecentProject(String root) async {
@@ -51,6 +50,31 @@ class HomeScreen extends ConsumerWidget {
       if (ref.read(projectProvider).videoPath != null) {
         onProjectOpened?.call();
       }
+    }
+
+    Future<void> deleteRecentProject(Map<String, dynamic> item) async {
+      final root = item['project_root']?.toString() ?? '';
+      if (root.isEmpty) return;
+      final project = _map(item['project']);
+      final name = project['name']?.toString() ?? '未命名项目';
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('删除项目？'),
+          content: Text('将删除“$name”的项目数据库、分析缓存和导出文件，原始视频不会被删除。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton.tonal(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('删除项目'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed == true) await notifier.deleteProject(root);
     }
 
     final steps = <CsStep>[
@@ -76,7 +100,7 @@ class HomeScreen extends ConsumerWidget {
         index: '04',
         title: '审核候选',
         icon: LucideIcons.checkCheck,
-        completed: goals > 0,
+        completed: state.candidates.isNotEmpty,
       ),
       (
         index: '05',
@@ -98,7 +122,7 @@ class HomeScreen extends ConsumerWidget {
               Text('把整场比赛，变成你的高光。', style: theme.textTheme.displayLarge),
               const SizedBox(height: Spacing.sm),
               Text(
-                '导入固定机位视频，本地分析候选进球，审核后导出集锦。'
+                '导入固定机位视频，本地分析候选进球，剔除误检后导出集锦。'
                 '所有处理在本机完成，原始视频不会被复制或上传。',
                 style: theme.textTheme.bodyLarge?.copyWith(
                   color: c.textSecondary,
@@ -165,14 +189,14 @@ class HomeScreen extends ConsumerWidget {
                         Text('当前项目', style: theme.textTheme.titleMedium),
                         const SizedBox(height: Spacing.md),
                         CsMetricTile(
-                          label: '已确认进球',
-                          value: '$goals',
+                          label: '当前保留',
+                          value: '$included',
                           icon: LucideIcons.check,
                         ),
                         CsMetricTile(
-                          label: '待审核候选',
-                          value: '$pending',
-                          icon: LucideIcons.hourglass,
+                          label: '已排除',
+                          value: '$excluded',
+                          icon: LucideIcons.x,
                         ),
                         CsMetricTile(
                           label: '视频时长',
@@ -231,6 +255,7 @@ class HomeScreen extends ConsumerWidget {
                 state: state,
                 busy: busy,
                 onOpen: openRecentProject,
+                onDelete: deleteRecentProject,
                 onCreate: () => context.go('/import'),
               ),
               const SizedBox(height: Spacing.xxl),
@@ -254,12 +279,14 @@ class _RecentProjects extends StatelessWidget {
     required this.state,
     required this.busy,
     required this.onOpen,
+    required this.onDelete,
     required this.onCreate,
   });
 
   final ProjectState state;
   final bool busy;
   final Future<void> Function(String root) onOpen;
+  final Future<void> Function(Map<String, dynamic> item) onDelete;
   final VoidCallback onCreate;
 
   @override
@@ -278,15 +305,21 @@ class _RecentProjects extends StatelessWidget {
     return _RecentGrid(
       projects: state.recentProjects,
       onOpen: busy ? null : onOpen,
+      onDelete: busy ? null : onDelete,
     );
   }
 }
 
 class _RecentGrid extends StatelessWidget {
-  const _RecentGrid({required this.projects, required this.onOpen});
+  const _RecentGrid({
+    required this.projects,
+    required this.onOpen,
+    required this.onDelete,
+  });
 
   final List<Map<String, dynamic>> projects;
   final Future<void> Function(String root)? onOpen;
+  final Future<void> Function(Map<String, dynamic> item)? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -303,7 +336,11 @@ class _RecentGrid extends StatelessWidget {
             if (index < projects.length) {
               cells.add(
                 Expanded(
-                  child: _ProjectCard(item: projects[index], onOpen: onOpen),
+                  child: _ProjectCard(
+                    item: projects[index],
+                    onOpen: onOpen,
+                    onDelete: onDelete,
+                  ),
                 ),
               );
             } else {
@@ -324,10 +361,15 @@ class _RecentGrid extends StatelessWidget {
 }
 
 class _ProjectCard extends StatelessWidget {
-  const _ProjectCard({required this.item, required this.onOpen});
+  const _ProjectCard({
+    required this.item,
+    required this.onOpen,
+    required this.onDelete,
+  });
 
   final Map<String, dynamic> item;
   final Future<void> Function(String root)? onOpen;
+  final Future<void> Function(Map<String, dynamic> item)? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -338,7 +380,9 @@ class _ProjectCard extends StatelessWidget {
     final statistics = _map(item['statistics']);
     final root = item['project_root']?.toString() ?? '';
     final name = project['name']?.toString() ?? '未命名项目';
-    final goals = _int(statistics['goal_count']);
+    final goals = statistics['included_count'] == null
+        ? _int(statistics['goal_count'])
+        : _int(statistics['included_count']);
     final candidates = _int(statistics['candidate_count']);
     final duration = _int(video['duration_ms']);
     final source = video['source_path']?.toString();
@@ -364,6 +408,18 @@ class _ProjectCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              if (onDelete != null && root.isNotEmpty)
+                PopupMenuButton<String>(
+                  tooltip: '项目操作',
+                  padding: EdgeInsets.zero,
+                  onSelected: (value) {
+                    if (value == 'delete') onDelete!(item);
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem<String>(value: 'delete', child: Text('删除项目')),
+                  ],
+                  icon: const Icon(LucideIcons.moreVertical, size: 18),
+                ),
               if (goals > 0)
                 const CsStatusChip(status: ReviewStatus.goal, compact: true),
             ],
@@ -380,7 +436,7 @@ class _ProjectCard extends StatelessWidget {
             ),
           const SizedBox(height: Spacing.xs),
           Text(
-            '$goals 进球 · $candidates 候选 · ${_formatDuration(duration)}',
+            '$goals 保留 · $candidates 候选 · ${_formatDuration(duration)}',
             style: theme.textTheme.bodySmall?.copyWith(color: c.textTertiary),
           ),
         ],
@@ -420,7 +476,7 @@ class _RecentSkeletonGrid extends StatelessWidget {
           );
         }
         return Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: cells,
         );
       },

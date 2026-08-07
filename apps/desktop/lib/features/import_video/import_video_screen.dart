@@ -72,7 +72,11 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     final state = ref.watch(projectProvider);
     // 视频切换时重置 ROI 为引擎建议值。
     ref.listen<ProjectState>(projectProvider, (previous, next) {
-      if (previous?.videoPath != next.videoPath) {
+      final videoChanged = previous?.videoPath != next.videoPath;
+      final autoRoiChanged =
+          previous?.suggestedRoi != next.suggestedRoi &&
+          next.roiSource == 'auto';
+      if (videoChanged || autoRoiChanged) {
         setState(() {
           _roi = next.suggestedRoi;
           _roiSaved = next.roiSource != null && next.suggestedRoi != null;
@@ -115,7 +119,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
               const SizedBox(height: Spacing.sm),
               Text(
                 '选择原始视频，系统会优先自动定位篮筐，也可以手动调整检测区域。',
-                style: theme.textTheme.bodyLarge?.copyWith(color: c.textSecondary),
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  color: c.textSecondary,
+                ),
               ),
               const SizedBox(height: Spacing.xl),
 
@@ -136,7 +142,11 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                       ),
                       child: Row(
                         children: [
-                          Icon(LucideIcons.film, size: 18, color: c.textSecondary),
+                          Icon(
+                            LucideIcons.film,
+                            size: 18,
+                            color: c.textSecondary,
+                          ),
                           const SizedBox(width: Spacing.md),
                           Expanded(
                             child: SelectableText(
@@ -177,7 +187,30 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                     const SizedBox(height: Spacing.xl),
 
                     // ── ROI 提示 ──
-                    if (state.roiSource == 'auto' && hasRoi) ...[
+                    if (state.roiDetecting) ...[
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: c.indigo,
+                            ),
+                          ),
+                          const SizedBox(width: Spacing.sm),
+                          Expanded(
+                            child: Text(
+                              '正在自动识别篮筐区域，完成后可以继续调整并保存。',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: c.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: Spacing.sm),
+                    ] else if (state.roiSource == 'auto' && hasRoi) ...[
                       Row(
                         children: [
                           Icon(LucideIcons.sparkles, size: 14, color: c.indigo),
@@ -187,7 +220,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                               state.roiConfidence == null
                                   ? '已自动识别篮筐区域'
                                   : '已自动识别篮筐区域 · 置信度 '
-                                      '${(state.roiConfidence! * 100).round()}%',
+                                        '${(state.roiConfidence! * 100).round()}%',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: c.textSecondary,
                               ),
@@ -210,9 +243,15 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                     _RoiCanvas(
                       enabled: hasVideo,
                       previewPath: state.previewPath,
-                      aspectRatio:
-                          width > 0 && height > 0 ? width / height : 16 / 9,
+                      aspectRatio: width > 0 && height > 0
+                          ? width / height
+                          : 16 / 9,
                       roi: _roi,
+                      onRefreshPreview: state.video != null && !state.busy
+                          ? () => ref
+                                .read(projectProvider.notifier)
+                                .refreshPreview()
+                          : null,
                       onChanged: (value) => setState(() {
                         _roi = value;
                         _roiSaved = false;
@@ -303,6 +342,7 @@ class _RoiCanvas extends StatefulWidget {
     required this.previewPath,
     required this.aspectRatio,
     required this.roi,
+    required this.onRefreshPreview,
     required this.onChanged,
   });
 
@@ -310,6 +350,7 @@ class _RoiCanvas extends StatefulWidget {
   final String? previewPath;
   final double aspectRatio;
   final Rect? roi;
+  final VoidCallback? onRefreshPreview;
   final ValueChanged<Rect> onChanged;
 
   @override
@@ -353,15 +394,24 @@ class _RoiCanvasState extends State<_RoiCanvas> {
               ),
               child: Stack(
                 children: [
-                  if (widget.previewPath != null)
+                  if (widget.previewPath != null &&
+                      File(widget.previewPath!).existsSync())
                     Positioned.fill(
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(CsRadius.lg),
                         child: Image.file(
                           File(widget.previewPath!),
                           fit: BoxFit.contain,
-                          errorBuilder: (context, error, _) => const SizedBox
-                              .shrink(),
+                          errorBuilder: (context, error, _) => Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(Spacing.md),
+                              child: Text(
+                                '预览加载失败，请重新生成。',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: c.error, fontSize: 12),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     )
@@ -373,12 +423,38 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                         description: '选择原始视频后即可框选篮筐区域。',
                       ),
                     )
+                  else if (widget.previewPath != null)
+                    Center(
+                      child: CsEmptyState(
+                        icon: LucideIcons.circleAlert,
+                        title: '预览帧不可用',
+                        description: '视频元数据已读取，可以重新生成预览后继续框选。',
+                        action: widget.onRefreshPreview == null
+                            ? null
+                            : CsButton(
+                                label: const Text('重新生成预览'),
+                                icon: LucideIcons.refreshCw,
+                                variant: CsButtonVariant.secondary,
+                                size: CsButtonSize.sm,
+                                onPressed: widget.onRefreshPreview,
+                              ),
+                      ),
+                    )
                   else
                     Center(
-                      child: Text(
-                        'ROI 预览区域\n拖拽框选篮筐',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: c.textTertiary, fontSize: 13),
+                      child: CsEmptyState(
+                        icon: LucideIcons.film,
+                        title: '正在准备视频预览',
+                        description: '预览准备好后即可拖拽框选篮筐区域。',
+                        action: widget.onRefreshPreview == null
+                            ? null
+                            : CsButton(
+                                label: const Text('生成预览'),
+                                icon: LucideIcons.refreshCw,
+                                variant: CsButtonVariant.secondary,
+                                size: CsButtonSize.sm,
+                                onPressed: widget.onRefreshPreview,
+                              ),
                       ),
                     ),
                   Positioned.fill(

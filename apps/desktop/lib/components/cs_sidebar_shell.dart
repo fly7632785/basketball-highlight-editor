@@ -35,10 +35,10 @@ class CsSidebarShell extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           Padding(
-            padding: const EdgeInsets.fromLTRB(
-              Spacing.md,
+            padding: EdgeInsets.fromLTRB(
+              extended ? Spacing.md : Spacing.xs,
               Spacing.lg,
-              Spacing.md,
+              extended ? Spacing.md : Spacing.xs,
               Spacing.lg,
             ),
             child: Row(

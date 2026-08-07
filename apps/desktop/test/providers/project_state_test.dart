@@ -10,34 +10,36 @@ import 'package:desktop/providers/session_provider.dart';
 
 void main() {
   group('ProjectNotifier.selectVideo', () {
-    test('更新 videoPath/previewPath,自动 ROI 失败时记录 roiSuggestionError,push 成功 notice',
-        () async {
-      final fakeSession = _FakeProjectSession();
-      final container = ProviderContainer(
-        overrides: <Override>[
-          projectSessionProvider.overrideWithValue(fakeSession),
-          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
-        ],
-      );
-      addTearDown(container.dispose);
+    test(
+      '更新 videoPath/previewPath,自动 ROI 失败时记录 roiSuggestionError,push 成功 notice',
+      () async {
+        final fakeSession = _FakeProjectSession();
+        final container = ProviderContainer(
+          overrides: <Override>[
+            projectSessionProvider.overrideWithValue(fakeSession),
+            engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+          ],
+        );
+        addTearDown(container.dispose);
 
-      final notifier = container.read(projectProvider.notifier);
-      await notifier.selectVideo('/path/sample.mp4');
+        final notifier = container.read(projectProvider.notifier);
+        await notifier.selectVideo('/path/sample.mp4');
 
-      final state = container.read(projectProvider);
-      expect(state.videoPath, '/path/sample.mp4');
-      expect(state.previewPath, '/tmp/preview.jpg');
-      expect(state.video?['id'], 'vid-1');
-      // suggestRoi 默认抛错,selectVideo 内部捕获,不应阻塞导入。
-      expect(state.roiSuggestionError, isNotNull);
-      expect(state.roiSource, isNull);
-      expect(state.candidates, isEmpty);
-      // 成功 notice 已 push(取最后一条)。
-      final notices = container.read(noticeProvider);
-      expect(notices, isNotEmpty);
-      expect(notices.last.severity, NoticeSeverity.success);
-      expect(notices.last.title, contains('视频已加载'));
-    });
+        final state = container.read(projectProvider);
+        expect(state.videoPath, '/path/sample.mp4');
+        expect(state.previewPath, '/tmp/preview.jpg');
+        expect(state.video?['id'], 'vid-1');
+        // suggestRoi 默认抛错,selectVideo 内部捕获,不应阻塞导入。
+        expect(state.roiSuggestionError, isNotNull);
+        expect(state.roiSource, isNull);
+        expect(state.candidates, isEmpty);
+        // 成功 notice 已 push(取最后一条)。
+        final notices = container.read(noticeProvider);
+        expect(notices, isNotEmpty);
+        expect(notices.last.severity, NoticeSeverity.success);
+        expect(notices.last.title, contains('视频已加载'));
+      },
+    );
   });
 
   group('ProjectNotifier.reviewCandidate', () {
@@ -67,7 +69,7 @@ void main() {
       expect(state.candidates.first['review_status'], 'goal');
       final notices = container.read(noticeProvider);
       expect(notices.last.severity, NoticeSeverity.success);
-      expect(notices.last.title, '已确认进球');
+      expect(notices.last.title, '已保留片段');
     });
 
     test('reviewCandidate(id,"rejected") push 排除 notice', () async {
@@ -92,18 +94,11 @@ void main() {
       final notices = container.read(noticeProvider);
       expect(notices.last.title, '已排除候选');
     });
-  });
 
-  group('ProjectNotifier.updateClipRange', () {
-    test('updateClipRange 更新候选的 start_ms/end_ms 并 push 片段范围 notice', () async {
+    test('reviewCandidate(id,"deferred") pushes a deferred notice', () async {
       final fakeSession = _FakeProjectSession()
         ..seedCandidates(<JsonMap>[
-          <String, dynamic>{
-            'id': 'c1',
-            'review_status': 'goal',
-            'start_ms': 0,
-            'end_ms': 1000,
-          },
+          <String, dynamic>{'id': 'c3', 'review_status': 'pending'},
         ]);
       final container = ProviderContainer(
         overrides: <Override>[
@@ -115,13 +110,130 @@ void main() {
 
       final notifier = container.read(projectProvider.notifier);
       await notifier.refreshCandidates();
-      await notifier.updateClipRange('c1', 100, 900);
+      await notifier.reviewCandidate('c3', 'deferred', reason: 'uncertain');
 
-      final candidate = container.read(projectProvider).candidates.first;
-      expect(candidate['start_ms'], 100);
-      expect(candidate['end_ms'], 900);
       final notices = container.read(noticeProvider);
-      expect(notices.last.title, '片段范围已更新');
+      expect(notices.last.title, '已暂缓审核');
+    });
+
+    test('loadReviewHistory returns persisted review actions', () async {
+      final fakeSession = _FakeProjectSession()
+        ..reviewHistory = <JsonMap>[
+          <String, dynamic>{
+            'candidate_id': 'c4',
+            'status': 'excluded',
+            'reason': 'rebound',
+          },
+        ];
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final history = await container
+          .read(projectProvider.notifier)
+          .loadReviewHistory('c4');
+
+      expect(history.single['reason'], 'rebound');
+    });
+
+    test(
+      'refreshStatistics stores backend statistics without requiring duration fields',
+      () async {
+        final fakeSession = _FakeProjectSession()
+          ..statistics = <String, dynamic>{'candidate_count': 3};
+        final container = ProviderContainer(
+          overrides: <Override>[
+            projectSessionProvider.overrideWithValue(fakeSession),
+            engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        await container.read(projectProvider.notifier).refreshStatistics();
+
+        expect(container.read(projectProvider).statistics, {
+          'candidate_count': 3,
+        });
+      },
+    );
+
+    test(
+      'startReview caches candidate ids and avoids duplicate engine calls',
+      () async {
+        final fakeSession = _FakeProjectSession();
+        final container = ProviderContainer(
+          overrides: <Override>[
+            projectSessionProvider.overrideWithValue(fakeSession),
+            engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        final notifier = container.read(projectProvider.notifier);
+        await notifier.startReview('c1');
+        await notifier.startReview('c1');
+        await notifier.startReview('c2');
+
+        expect(fakeSession.startReviewCalls, ['c1', 'c2']);
+      },
+    );
+  });
+
+  group('ProjectNotifier.updateClipRange', () {
+    test(
+      'updateClipRange 更新候选的 review_start_ms/review_end_ms 并 push 片段范围 notice',
+      () async {
+        final fakeSession = _FakeProjectSession()
+          ..seedCandidates(<JsonMap>[
+            <String, dynamic>{
+              'id': 'c1',
+              'review_status': 'goal',
+              'review_start_ms': 0,
+              'review_end_ms': 1000,
+            },
+          ]);
+        final container = ProviderContainer(
+          overrides: <Override>[
+            projectSessionProvider.overrideWithValue(fakeSession),
+            engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        final notifier = container.read(projectProvider.notifier);
+        await notifier.refreshCandidates();
+        await notifier.updateClipRange('c1', 100, 900);
+
+        final candidate = container.read(projectProvider).candidates.first;
+        expect(candidate['review_start_ms'], 100);
+        expect(candidate['review_end_ms'], 900);
+        final notices = container.read(noticeProvider);
+        expect(notices.last.title, '片段范围已更新');
+      },
+    );
+  });
+
+  group('ProjectNotifier.deleteProject', () {
+    test('删除项目后保留最近项目列表并提示成功', () async {
+      final fakeSession = _FakeProjectSession();
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container
+          .read(projectProvider.notifier)
+          .deleteProject('/tmp/project');
+
+      expect(fakeSession.deletedRoots, ['/tmp/project']);
+      expect(container.read(noticeProvider).last.title, contains('项目已删除'));
     });
   });
 
@@ -169,6 +281,10 @@ class _FakeProjectSession extends ProjectSession {
   _FakeProjectSession() : super(EngineSession(_NeverTransport()));
 
   final List<JsonMap> _candidates = <JsonMap>[];
+  List<JsonMap> reviewHistory = <JsonMap>[];
+  JsonMap statistics = <String, dynamic>{};
+  final List<String> startReviewCalls = <String>[];
+  final List<String> deletedRoots = <String>[];
   bool throwOnReviewCandidate = false;
 
   void seedCandidates(List<JsonMap> seed) {
@@ -183,32 +299,36 @@ class _FakeProjectSession extends ProjectSession {
     required String rootPath,
     String? projectId,
     String language = 'zh-CN',
-  }) async =>
-      <String, dynamic>{};
+  }) async => <String, dynamic>{};
+
+  @override
+  Future<JsonMap> deleteProject(String projectRoot) async {
+    deletedRoots.add(projectRoot);
+    return <String, dynamic>{'deleted': true};
+  }
 
   @override
   Future<JsonMap> openProject(String projectRoot) async => <String, dynamic>{
-        'project_root': projectRoot,
-        'project': <String, dynamic>{'id': 'proj-1'},
-      };
+    'project_root': projectRoot,
+    'project': <String, dynamic>{'id': 'proj-1'},
+  };
 
   @override
   Future<List<JsonMap>> loadRecentProjects({
     required String knownRoot,
     int limit = 20,
-  }) async =>
-      <JsonMap>[];
+  }) async => <JsonMap>[];
 
   @override
   Future<JsonMap> linkVideo(String videoPath) async => <String, dynamic>{
-        'video': <String, dynamic>{
-          'id': 'vid-1',
-          'source_path': videoPath,
-          'duration_ms': 5000,
-          'width': 1920,
-          'height': 1080,
-        },
-      };
+    'video': <String, dynamic>{
+      'id': 'vid-1',
+      'source_path': videoPath,
+      'duration_ms': 5000,
+      'width': 1920,
+      'height': 1080,
+    },
+  };
 
   @override
   Future<JsonMap> extractPreview({int timeMs = 1000}) async =>
@@ -233,8 +353,7 @@ class _FakeProjectSession extends ProjectSession {
     required num y2,
     String? name,
     JsonMap? calibration,
-  }) async =>
-      <String, dynamic>{};
+  }) async => <String, dynamic>{};
 
   @override
   Future<JsonMap> startAnalysis({
@@ -246,8 +365,7 @@ class _FakeProjectSession extends ProjectSession {
     int? proxyHeight,
     double? proxyFps,
     String? modelPath,
-  }) async =>
-      <String, dynamic>{};
+  }) async => <String, dynamic>{};
 
   @override
   Future<JsonMap> retryAnalysis({
@@ -260,23 +378,44 @@ class _FakeProjectSession extends ProjectSession {
     int? proxyHeight,
     double? proxyFps,
     String? modelPath,
-  }) async =>
-      <String, dynamic>{};
+  }) async => <String, dynamic>{};
 
   @override
-  Future<JsonMap> cancelJob({required String jobId}) async =>
-      <String, dynamic>{'job': <String, dynamic>{'id': jobId, 'state': 'cancelled'}};
+  Future<JsonMap> cancelJob({required String jobId}) async => <String, dynamic>{
+    'job': <String, dynamic>{'id': jobId, 'state': 'cancelled'},
+  };
 
   @override
   Future<JsonMap> listCandidates() async => <String, dynamic>{
-        'candidates': List<JsonMap>.from(_candidates),
-      };
+    'candidates': List<JsonMap>.from(_candidates),
+  };
+
+  @override
+  Future<JsonMap> listReviewHistory(String candidateId) async =>
+      <String, dynamic>{'history': reviewHistory};
+
+  @override
+  Future<JsonMap> getStatistics() async => <String, dynamic>{
+    'statistics': statistics,
+  };
+
+  @override
+  Future<JsonMap> startReview(
+    String candidateId, {
+    String? reviewStartedAt,
+  }) async {
+    startReviewCalls.add(candidateId);
+    return <String, dynamic>{
+      'review_started_at': '2026-08-07T01:00:00.000+00:00',
+    };
+  }
 
   @override
   Future<JsonMap> reviewCandidate(
     String candidateId, {
     required String status,
     String? note,
+    String? reason,
   }) async {
     if (throwOnReviewCandidate) {
       throw StateError('review_candidate failed');
@@ -286,6 +425,7 @@ class _FakeProjectSession extends ProjectSession {
       _candidates[idx] = <String, dynamic>{
         ..._candidates[idx],
         'review_status': status,
+        'review_reason': reason,
         'note': note,
       };
     }
@@ -302,8 +442,8 @@ class _FakeProjectSession extends ProjectSession {
     if (idx >= 0) {
       _candidates[idx] = <String, dynamic>{
         ..._candidates[idx],
-        'start_ms': startMs,
-        'end_ms': endMs,
+        'review_start_ms': startMs,
+        'review_end_ms': endMs,
       };
     }
     return <String, dynamic>{};
@@ -314,10 +454,9 @@ class _FakeProjectSession extends ProjectSession {
     String mode = 'separate',
     String? outputDir,
     String? outputPath,
-  }) async =>
-      <String, dynamic>{
-        'job': <String, dynamic>{'id': 'export-1', 'state': 'running'},
-      };
+  }) async => <String, dynamic>{
+    'job': <String, dynamic>{'id': 'export-1', 'state': 'running'},
+  };
 
   @override
   Future<List<JsonMap>> getActiveJobs({String jobType = 'analysis'}) async =>

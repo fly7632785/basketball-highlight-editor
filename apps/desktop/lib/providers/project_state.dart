@@ -641,6 +641,13 @@ class ProjectNotifier extends Notifier<ProjectState> {
     );
   }
 
+  Future<String?> loadCandidatePreview(int timeMs) async {
+    final preview = await ref
+        .read(projectSessionProvider)
+        .extractPreview(timeMs: timeMs);
+    return preview['path']?.toString();
+  }
+
   Future<void> refreshStatistics() async {
     try {
       final payload = await ref.read(projectSessionProvider).getStatistics();
@@ -686,16 +693,17 @@ class ProjectNotifier extends Notifier<ProjectState> {
                 reason: previous['review_reason']?.toString(),
                 note: previous['note']?.toString(),
               );
+        final engineStatus = status == 'included' ? 'goal' : status;
         await ref
             .read(projectSessionProvider)
-            .reviewCandidate(id, status: status, reason: reason);
+            .reviewCandidate(id, status: engineStatus, reason: reason);
         await refreshCandidates();
         if (snapshot != null) _reviewHistory.add(snapshot);
         unawaited(refreshStatistics());
         succeeded = true;
       },
       successMessage: switch (status) {
-        'goal' => '已确认进球',
+        'goal' || 'included' => '已保留片段',
         'deferred' => '已暂缓审核',
         'second_review' => '已标记二次复核',
         'pending' => '已恢复待审核',

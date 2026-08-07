@@ -81,6 +81,27 @@ def test_candidate_to_row_creates_reviewable_clip_window():
     assert row["video_id"] == "video-1"
 
 
+def test_candidate_to_row_embeds_conservative_review_reason_suggestion():
+    row = candidate_to_row(
+        {
+            "time": 12.5,
+            "score": 0.4,
+            "confidence": "review",
+            "rebound": True,
+        },
+        video_id="video-1",
+        roi_id="roi-1",
+        duration_ms=30_000,
+        before_seconds=6,
+        after_seconds=3,
+        detector_version="python-v1",
+    )
+
+    evidence = json.loads(row["evidence_json"])
+    assert evidence["review_reason_suggestion"]["primary"] == "rebound"
+    assert evidence["review_reason_suggestion"]["confidence"] == "high"
+
+
 def test_run_pipeline_executes_commands_and_reads_refined_output(tmp_path: Path):
     refined = tmp_path / "refined.json"
     script = "from pathlib import Path; Path({!r}).write_text({!r}, encoding='utf-8')".format(

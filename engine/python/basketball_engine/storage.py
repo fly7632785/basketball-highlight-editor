@@ -18,6 +18,55 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex}"
 
 
+def normalize_review_started_at(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("INVALID_REVIEW_STARTED_AT")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("INVALID_REVIEW_STARTED_AT") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def review_duration_ms(started_at: str | None, finished_at: str) -> int:
+    if not started_at:
+        return 0
+    try:
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError):
+        return 0
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    if finished.tzinfo is None:
+        finished = finished.replace(tzinfo=timezone.utc)
+    return max(0, int((finished - started).total_seconds() * 1000))
+
+
+def has_evidence_conflict(evidence_json: str | None) -> bool:
+    try:
+        evidence = json.loads(evidence_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(evidence, dict):
+        return False
+    truthy = lambda value: value is True or str(value).lower() == "true"
+    if truthy(evidence.get("evidence_conflict")) or truthy(evidence.get("conflict")):
+        return True
+    gates = evidence.get("gates") if isinstance(evidence.get("gates"), dict) else {}
+    if truthy(gates.get("evidence_conflict")) or truthy(gates.get("signal_conflict")):
+        return True
+    signals = evidence.get("signals") if isinstance(evidence.get("signals"), dict) else {}
+    try:
+        net_score = float(signals["net_score"])
+        audio_score = float(signals["audio_score"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (net_score >= 0.55) != (audio_score >= 0.65)
+
+
 class ProjectStore:
     def __init__(self, root_path: str | Path):
         self.root = Path(root_path).expanduser().resolve()
@@ -32,6 +81,21 @@ class ProjectStore:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA busy_timeout = 30000")
             connection.executescript(schema_path.read_text(encoding="utf-8"))
+            self._ensure_schema_compatibility(connection)
+
+    @staticmethod
+    def _ensure_schema_compatibility(connection: sqlite3.Connection) -> None:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(candidate_reviews)").fetchall()
+        }
+        for name, definition in (
+            ("reason", "TEXT"),
+            ("review_started_at", "TEXT"),
+            ("review_duration_ms", "INTEGER"),
+        ):
+            if name not in columns:
+                connection.execute(f"ALTER TABLE candidate_reviews ADD COLUMN {name} {definition}")
 
     def connect(self) -> sqlite3.Connection:
         if not self.db_path.exists():
@@ -40,6 +104,7 @@ class ProjectStore:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 30000")
+        self._ensure_schema_compatibility(connection)
         return connection
 
     def create_project(self, project_id: str, name: str, language: str = "zh-CN") -> Dict[str, Any]:
@@ -254,7 +319,11 @@ class ProjectStore:
 
     def list_candidates(self, video_id: str | None = None) -> list[Dict[str, Any]]:
         query = """
-            SELECT c.*, COALESCE(r.status, 'pending') AS review_status, r.note, r.reviewed_at
+            SELECT c.*, COALESCE(r.status, 'pending') AS review_status,
+                   CASE WHEN COALESCE(r.status, 'pending') = 'excluded'
+                        THEN 'excluded' ELSE 'included' END AS selection_status,
+                   r.reason AS review_reason, r.note, r.reviewed_at,
+                   r.review_started_at, r.review_duration_ms
             FROM candidates c
             LEFT JOIN candidate_reviews r ON r.candidate_id = c.id
         """
@@ -272,7 +341,8 @@ class ProjectStore:
             existing_reviews = {
                 row["candidate_id"]: dict(row)
                 for row in connection.execute(
-                    "SELECT candidate_id, status, note, reviewed_at FROM candidate_reviews "
+                    "SELECT candidate_id, status, reason, note, reviewed_at, review_started_at, review_duration_ms "
+                    "FROM candidate_reviews "
                     "WHERE candidate_id IN (SELECT id FROM candidates WHERE video_id = ?)",
                     (video_id,),
                 ).fetchall()
@@ -308,37 +378,166 @@ class ProjectStore:
                 review = existing_reviews.get(row["id"])
                 connection.execute(
                     """
-                    INSERT INTO candidate_reviews (candidate_id, status, note, reviewed_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO candidate_reviews (
+                        candidate_id, status, reason, note, reviewed_at,
+                        review_started_at, review_duration_ms, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         row["id"],
                         review["status"] if review else "pending",
+                        review["reason"] if review else None,
                         review["note"] if review else None,
                         review["reviewed_at"] if review else None,
+                        review["review_started_at"] if review else None,
+                        review["review_duration_ms"] if review else None,
                         timestamp,
                     ),
                 )
 
-    def review_candidate(self, candidate_id: str, status: str, note: str | None = None) -> None:
-        if status not in {"pending", "goal", "excluded"}:
-            raise ValueError("INVALID_REVIEW_STATUS")
-        timestamp = now_iso()
+    def start_review(self, candidate_id: str, review_started_at: str | None = None) -> str:
+        timestamp = normalize_review_started_at(review_started_at) if review_started_at is not None else now_iso()
         with self.connect() as connection:
             if not connection.execute("SELECT 1 FROM candidates WHERE id = ?", (candidate_id,)).fetchone():
                 raise LookupError("CANDIDATE_NOT_FOUND")
+            cursor = connection.execute(
+                """
+                UPDATE candidate_reviews
+                SET review_started_at = ?, review_duration_ms = NULL, updated_at = ?
+                WHERE candidate_id = ?
+                """,
+                (timestamp, now_iso(), candidate_id),
+            )
+            if cursor.rowcount != 1:
+                connection.execute(
+                    """
+                    INSERT INTO candidate_reviews (
+                        candidate_id, status, review_started_at, review_duration_ms, updated_at
+                    ) VALUES (?, 'pending', ?, NULL, ?)
+                    """,
+                    (candidate_id, timestamp, now_iso()),
+                )
+        return timestamp
+
+    def review_candidate(
+        self,
+        candidate_id: str,
+        status: str,
+        note: str | None = None,
+        reason: str | None = None,
+        review_started_at: str | None = None,
+    ) -> None:
+        if status not in {"pending", "goal", "excluded", "deferred", "second_review"}:
+            raise ValueError("INVALID_REVIEW_STATUS")
+        if reason is not None and reason not in {
+            "pass_ball",
+            "no_shot",
+            "rim_out",
+            "rebound",
+            "net_no_motion",
+            "duplicate",
+            "uncertain",
+            "other",
+        }:
+            raise ValueError("INVALID_REVIEW_REASON")
+        timestamp = now_iso()
+        with self.connect() as connection:
+            candidate = connection.execute(
+                """
+                SELECT c.id, v.project_id, r.review_started_at, r.review_duration_ms
+                FROM candidates c
+                JOIN videos v ON v.id = c.video_id
+                LEFT JOIN candidate_reviews r ON r.candidate_id = c.id
+                WHERE c.id = ?
+                """,
+                (candidate_id,),
+            ).fetchone()
+            if not candidate:
+                raise LookupError("CANDIDATE_NOT_FOUND")
+            explicit_started_at = (
+                normalize_review_started_at(review_started_at)
+                if review_started_at is not None
+                else None
+            )
+            if explicit_started_at is not None:
+                effective_started_at = explicit_started_at
+                duration = review_duration_ms(effective_started_at, timestamp)
+            elif candidate["review_duration_ms"] is not None:
+                effective_started_at = candidate["review_started_at"]
+                duration = max(0, int(candidate["review_duration_ms"]))
+            else:
+                effective_started_at = candidate["review_started_at"] or timestamp
+                duration = review_duration_ms(effective_started_at, timestamp)
             connection.execute(
                 """
-                INSERT INTO candidate_reviews (candidate_id, status, note, reviewed_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO candidate_reviews (
+                    candidate_id, status, reason, note, reviewed_at,
+                    review_started_at, review_duration_ms, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(candidate_id) DO UPDATE SET
                     status = excluded.status,
+                    reason = excluded.reason,
                     note = excluded.note,
                     reviewed_at = excluded.reviewed_at,
+                    review_started_at = excluded.review_started_at,
+                    review_duration_ms = excluded.review_duration_ms,
                     updated_at = excluded.updated_at
                 """,
-                (candidate_id, status, note, timestamp, timestamp),
+                (candidate_id, status, reason, note, timestamp, effective_started_at, duration, timestamp),
             )
+            connection.execute(
+                """
+                INSERT INTO audit_events (id, project_id, event_type, payload_json, created_at)
+                VALUES (?, ?, 'review_candidate', ?, ?)
+                """,
+                (
+                    new_id("audit"),
+                    candidate["project_id"],
+                    json.dumps(
+                        {
+                            "candidate_id": candidate_id,
+                            "status": status,
+                            "reason": reason,
+                            "note": note,
+                            "review_started_at": effective_started_at,
+                            "review_duration_ms": duration,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    timestamp,
+                ),
+            )
+
+    def list_review_history(self, candidate_id: str) -> list[Dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json, created_at
+                FROM audit_events
+                WHERE event_type = 'review_candidate'
+                ORDER BY created_at, id
+                """
+            ).fetchall()
+        history: list[Dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict) or payload.get("candidate_id") != candidate_id:
+                continue
+            history.append(
+                {
+                    "candidate_id": candidate_id,
+                    "status": payload.get("status"),
+                    "reason": payload.get("reason"),
+                    "note": payload.get("note"),
+                    "reviewed_at": row["created_at"],
+                    "review_started_at": payload.get("review_started_at"),
+                    "review_duration_ms": payload.get("review_duration_ms"),
+                }
+            )
+        return history
 
     def update_clip_range(self, candidate_id: str, start_ms: int, end_ms: int) -> None:
         if start_ms < 0 or end_ms <= start_ms:
@@ -476,9 +675,34 @@ class ProjectStore:
         with self.connect() as connection:
             project = connection.execute("SELECT * FROM projects LIMIT 1").fetchone()
             video = connection.execute("SELECT * FROM videos ORDER BY created_at DESC LIMIT 1").fetchone()
-            candidates = connection.execute("SELECT COUNT(*) AS count FROM candidates").fetchone()["count"]
-            goals = connection.execute("SELECT COUNT(*) AS count FROM candidate_reviews WHERE status = 'goal'").fetchone()["count"]
-            excluded = connection.execute("SELECT COUNT(*) AS count FROM candidate_reviews WHERE status = 'excluded'").fetchone()["count"]
+            review_rows = connection.execute(
+                """
+                SELECT COALESCE(r.status, 'pending') AS status,
+                       r.reason, r.review_duration_ms, c.evidence_json
+                FROM candidates c
+                LEFT JOIN candidate_reviews r ON r.candidate_id = c.id
+                """
+            ).fetchall()
+            candidates = len(review_rows)
+            goals = sum(row["status"] == "goal" for row in review_rows)
+            excluded = sum(row["status"] == "excluded" for row in review_rows)
+            included = candidates - excluded
+            pending = sum(row["status"] == "pending" for row in review_rows)
+            reviewed = candidates - pending
+            durations = []
+            for row in review_rows:
+                try:
+                    duration = int(row["review_duration_ms"])
+                except (TypeError, ValueError):
+                    continue
+                if duration >= 0:
+                    durations.append(duration)
+            reason_distribution: Dict[str, int] = {}
+            for row in review_rows:
+                reason = row["reason"]
+                if reason:
+                    reason_distribution[reason] = reason_distribution.get(reason, 0) + 1
+            conflict_count = sum(has_evidence_conflict(row["evidence_json"]) for row in review_rows)
             exports = connection.execute(
                 """
                 SELECT COUNT(*) AS count,
@@ -491,8 +715,15 @@ class ProjectStore:
                 "project": dict(project) if project else None,
                 "video": dict(video) if video else None,
                 "candidate_count": candidates,
+                "reviewed_count": reviewed,
+                "included_count": included,
                 "goal_count": goals,
                 "excluded_count": excluded,
+                "pending_count": pending,
+                "confirmation_rate": goals / reviewed if reviewed else 0.0,
+                "avg_review_duration_ms": round(sum(durations) / len(durations)) if durations else 0,
+                "reason_distribution": reason_distribution,
+                "conflict_count": conflict_count,
                 "export_count": exports["count"],
                 "export_duration_ms": exports["duration_ms"],
                 "export_file_size_bytes": exports["file_size_bytes"],

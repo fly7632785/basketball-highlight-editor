@@ -43,6 +43,12 @@ class EngineSession {
     });
   }
 
+  Future<JsonMap> deleteProject({required String projectRoot}) {
+    return client.request('delete_project', <String, dynamic>{
+      'project_root': projectRoot,
+    });
+  }
+
   Future<JsonMap> listRecentProjects({
     required List<String> roots,
     int limit = 20,
@@ -274,17 +280,41 @@ class EngineSession {
     });
   }
 
+  Future<JsonMap> listReviewHistory({
+    required String projectRoot,
+    required String candidateId,
+  }) {
+    return client.request('list_review_history', <String, dynamic>{
+      'project_root': projectRoot,
+      'candidate_id': candidateId,
+    });
+  }
+
+  Future<JsonMap> startReview({
+    required String projectRoot,
+    required String candidateId,
+    String? reviewStartedAt,
+  }) {
+    return client.request('start_review', <String, dynamic>{
+      'project_root': projectRoot,
+      'candidate_id': candidateId,
+      ...?_optionalEntry('review_started_at', reviewStartedAt),
+    });
+  }
+
   Future<JsonMap> reviewCandidate({
     required String projectRoot,
     required String candidateId,
     required String status,
     String? note,
+    String? reason,
   }) {
     return client.request('review_candidate', <String, dynamic>{
       'project_root': projectRoot,
       'candidate_id': candidateId,
       'status': status,
       ...?_optionalEntry('note', note),
+      ...?_optionalEntry('reason', reason),
     });
   }
 

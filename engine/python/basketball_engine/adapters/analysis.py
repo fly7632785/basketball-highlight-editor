@@ -11,6 +11,15 @@ from pathlib import Path
 from typing import Any, Dict, Iterable
 from uuid import uuid5, NAMESPACE_URL
 
+# The desktop runtime puts the engine and the shared analysis package in
+# sibling directories under the bundled runtime root.
+_RUNTIME_ROOT = Path(__file__).resolve().parents[4]
+_SRC_PATH = _RUNTIME_ROOT / "src"
+if _SRC_PATH.is_dir() and str(_SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(_SRC_PATH))
+
+from basketball_highlight.review_reason import suggest_review_reasons
+
 
 class PipelineCancelled(Exception):
     pass
@@ -91,6 +100,8 @@ def candidate_to_row(
     start_ms = max(0, event_time_ms - round(before_seconds * 1000))
     end_ms = min(duration_ms, event_time_ms + round(after_seconds * 1000))
     timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    evidence = dict(match)
+    evidence["review_reason_suggestion"] = suggest_review_reasons(match)
     return {
         "id": f"candidate_{uuid5(NAMESPACE_URL, f'{video_id}:{roi_id}:{detector_version}:{event_time_ms}').hex}",
         "video_id": video_id,
@@ -104,7 +115,7 @@ def candidate_to_row(
         "detector_version": detector_version,
         "score": match.get("score"),
         "confidence": match.get("confidence", "pending"),
-        "evidence_json": json.dumps(match, ensure_ascii=False),
+        "evidence_json": json.dumps(evidence, ensure_ascii=False),
         "created_at": timestamp,
         "updated_at": timestamp,
     }

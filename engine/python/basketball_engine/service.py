@@ -45,6 +45,7 @@ class EngineService:
             "create_project": self.create_project,
             "update_project_settings": self.update_project_settings,
             "open_project": self.open_project,
+            "delete_project": self.delete_project,
             "list_recent_projects": self.list_recent_projects,
             "inspect_video": self.inspect_video,
             "link_video": self.link_video,
@@ -61,7 +62,9 @@ class EngineService:
             "retry_analysis": self.retry_analysis,
             "retry_export": self.retry_export,
             "list_candidates": self.list_candidates,
+            "start_review": self.start_review,
             "review_candidate": self.review_candidate,
+            "list_review_history": self.list_review_history,
             "update_clip_range": self.update_clip_range,
             "export_clips": self.export_clips,
             "start_export": self.start_export,
@@ -130,6 +133,60 @@ class EngineService:
     def open_project(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         _, context = self._existing_store(payload)
         return context
+
+    def delete_project(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        raw_root = payload.get("project_root") or payload.get("root_path")
+        if not isinstance(raw_root, str) or not raw_root.strip():
+            raise ProtocolError("INVALID_REQUEST", "缺少 project_root")
+        candidate = Path(raw_root).expanduser()
+        if candidate.is_symlink():
+            raise ProtocolError("PROJECT_INVALID", "不允许删除符号链接项目")
+        root = candidate.resolve()
+        if root == root.parent or not root.is_dir() or not (root / "project.db").is_file():
+            raise ProtocolError("PROJECT_NOT_FOUND", f"项目不存在: {root}")
+
+        store, context = self._existing_store({"project_root": str(root)})
+        project = context.get("project")
+        project_id = project.get("id") if isinstance(project, dict) else None
+        if not isinstance(project_id, str) or not project_id:
+            raise ProtocolError("PROJECT_INVALID", f"项目数据库无效: {root}")
+
+        with self._job_lock:
+            active_jobs = store.list_jobs(
+                project_id=project_id,
+                states=("queued", "running"),
+            )
+            live_job_ids = [
+                job["id"]
+                for job in active_jobs
+                if (
+                    self._job_threads.get(job["id"]) is not None
+                    and self._job_threads[job["id"]].is_alive()
+                )
+                or (
+                    self._job_processes.get(job["id"]) is not None
+                    and self._job_processes[job["id"]].poll() is None
+                )
+            ]
+            if live_job_ids:
+                raise ProtocolError(
+                    "PROJECT_BUSY",
+                    "项目仍有任务运行，请先取消任务后再删除",
+                    {"job_ids": live_job_ids},
+                )
+
+        try:
+            shutil.rmtree(root)
+        except OSError as exc:
+            raise ProtocolError("PROJECT_DELETE_FAILED", f"项目删除失败: {exc}") from exc
+
+        with self._store_lock:
+            self.stores.pop(str(root), None)
+        return {
+            "deleted": True,
+            "project_root": str(root),
+            "project_id": project_id,
+        }
 
     def update_project_settings(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         store = self._store(payload)
@@ -402,6 +459,8 @@ class EngineService:
         if not output_path.is_absolute():
             output_path = store.root / output_path
         output_path = output_path.resolve()
+        if output_path.is_file() and output_path.stat().st_size > 0:
+            return {"path": str(output_path), "time_ms": time_ms}
         output_path.parent.mkdir(parents=True, exist_ok=True)
         command = [
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
@@ -985,14 +1044,39 @@ class EngineService:
             "review_video_path": review_video_path,
         }
 
+    def start_review(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            started_at = self._store(payload).start_review(
+                payload["candidate_id"],
+                payload.get("review_started_at"),
+            )
+        except KeyError as exc:
+            raise ProtocolError("INVALID_REQUEST", f"缺少字段: {exc.args[0]}") from exc
+        except (ValueError, LookupError) as exc:
+            raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
+        return {"review_started_at": started_at}
+
     def review_candidate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            self._store(payload).review_candidate(payload["candidate_id"], payload["status"], payload.get("note"))
+            self._store(payload).review_candidate(
+                payload["candidate_id"],
+                payload["status"],
+                payload.get("note"),
+                payload.get("reason"),
+                payload.get("review_started_at"),
+            )
         except KeyError as exc:
             raise ProtocolError("INVALID_REQUEST", f"缺少字段: {exc.args[0]}") from exc
         except (ValueError, LookupError) as exc:
             raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
         return {"updated": True}
+
+    def list_review_history(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            history = self._store(payload).list_review_history(payload["candidate_id"])
+        except KeyError as exc:
+            raise ProtocolError("INVALID_REQUEST", f"缺少字段: {exc.args[0]}") from exc
+        return {"history": history}
 
     def update_clip_range(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -1017,7 +1101,7 @@ class EngineService:
         candidates = [
             candidate
             for candidate in store.list_candidates(video_id)
-            if candidate.get("review_status") == "goal"
+            if candidate.get("selection_status") != "excluded"
         ]
         mode = payload.get("mode", "separate")
         raw_output = payload.get("output_dir")

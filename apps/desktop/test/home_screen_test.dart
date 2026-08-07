@@ -19,7 +19,10 @@ class _FakeProjectNotifier extends ProjectNotifier {
           'source_path': '/tmp/game.mp4',
           'duration_ms': 3723000,
         },
-        'statistics': {'goal_count': 4, 'candidate_count': 7},
+        'statistics': {
+          'included_count': 4,
+          'candidate_count': 7,
+        },
       },
     ],
   );
@@ -49,7 +52,7 @@ void main() {
     expect(find.text('把整场比赛，变成你的高光。'), findsOneWidget);
     expect(find.text('最近项目'), findsOneWidget);
     expect(find.text('周末训练赛'), findsOneWidget);
-    expect(find.textContaining('4 进球'), findsOneWidget);
+    expect(find.textContaining('4 保留'), findsOneWidget);
   });
 
   testWidgets('tapping a recent project card opens it', (tester) async {

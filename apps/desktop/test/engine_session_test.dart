@@ -52,6 +52,21 @@ void main() {
     });
   });
 
+  test('EngineSession forwards delete_project', () async {
+    final transport = _FakeEngineTransport()
+      ..responses['delete_project'] = {
+        'deleted': true,
+        'project_root': '/tmp/project',
+      };
+    final session = EngineSession(transport);
+
+    final result = await session.deleteProject(projectRoot: '/tmp/project');
+
+    expect(result['deleted'], isTrue);
+    expect(transport.commands, ['delete_project']);
+    expect(transport.payloads.single, {'project_root': '/tmp/project'});
+  });
+
   test('EngineSession polls get_job until a terminal state', () async {
     final transport = _FakeEngineTransport()
       ..jobResponses.addAll([
@@ -207,6 +222,29 @@ void main() {
   });
 
   test(
+    'EngineSession forwards start review command and candidate id',
+    () async {
+      final transport = _FakeEngineTransport()
+        ..responses['start_review'] = {
+          'review_started_at': '2026-08-07T01:00:00.000+00:00',
+        };
+      final session = EngineSession(transport);
+
+      final result = await session.startReview(
+        projectRoot: '/tmp/project',
+        candidateId: 'candidate-1',
+      );
+
+      expect(result['review_started_at'], isNotNull);
+      expect(transport.commands, ['start_review']);
+      expect(transport.payloads.single, {
+        'project_root': '/tmp/project',
+        'candidate_id': 'candidate-1',
+      });
+    },
+  );
+
+  test(
     'ProjectSession keeps project and video context for workflow calls',
     () async {
       final transport = _FakeEngineTransport()
@@ -330,4 +368,27 @@ void main() {
       throwsA(isA<SessionStateException>()),
     );
   });
+
+  test(
+    'ProjectSession forwards start review with the active project context',
+    () async {
+      final transport = _FakeEngineTransport()
+        ..responses['open_project'] = {
+          'project_root': '/tmp/project',
+          'project': {'id': 'project-1'},
+        }
+        ..responses['start_review'] = {
+          'review_started_at': '2026-08-07T01:00:00.000+00:00',
+        };
+      final session = ProjectSession(EngineSession(transport));
+
+      await session.openProject('/tmp/project');
+      await session.startReview('candidate-1');
+
+      expect(transport.payloads.last, {
+        'project_root': '/tmp/project',
+        'candidate_id': 'candidate-1',
+      });
+    },
+  );
 }

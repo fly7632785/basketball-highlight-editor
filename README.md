@@ -12,7 +12,7 @@
 - 单篮筐
 - 长视频批量扫描
 - 自动生成疑似进球片段
-- 用户审核后合并导出或单独导出
+- 分析结果默认保留，用户只需剔除误检后合并导出或单独导出
 - macOS、Windows 优先，后续适配 iOS、Android
 
 ## 目录
@@ -43,6 +43,12 @@ PATH="$PWD/../../.tooling/flutter/bin:$PATH" flutter build macos --debug
 
 ```bash
 .venv/bin/python scripts/check_runtime.py --root . --python .venv/bin/python
+```
+
+导出人工审核训练数据（默认只导出已审核候选）：
+
+```bash
+.venv/bin/python scripts/export_review_dataset.py /path/to/project --csv
 ```
 
 本地闭环记录见 `docs/LOCAL_E2E_V1.md`。macOS 运行时准备和分发边界见 `docs/MACOS_PACKAGING_V1.md`；当前 Release `.app` 构建成功不等于已经完成可分发打包。

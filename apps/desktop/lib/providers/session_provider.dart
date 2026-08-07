@@ -34,9 +34,16 @@ String? findRuntimeRoot({
       configuredRuntime,
     if (configured != null && configured.isNotEmpty) configured,
     '${appContents.path}/Resources/runtime',
-    currentDir,
-    Directory(currentDir).parent.path,
   ];
+
+  var directory = Directory(currentDir);
+  for (var depth = 0; depth <= 6; depth++) {
+    candidates.add(directory.path);
+    final parent = directory.parent;
+    if (parent.path == directory.path) break;
+    directory = parent;
+  }
+
   for (final path in candidates) {
     if (Directory('$path/engine/python').existsSync()) return path;
   }
