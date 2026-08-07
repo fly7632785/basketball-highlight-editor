@@ -1,62 +1,95 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:desktop/features/home/home_screen.dart';
+import 'package:desktop/providers/project_state.dart';
+
+/// 假 Notifier:返回固定 ProjectState(含最近项目),并记录 openProject 调用。
+class _FakeProjectNotifier extends ProjectNotifier {
+  String? openedRoot;
+
+  @override
+  ProjectState build() => const ProjectState(
+    recentProjects: [
+      {
+        'project_root': '/tmp/projects/game-1',
+        'project': {'name': '周末训练赛'},
+        'video': {
+          'source_path': '/tmp/game.mp4',
+          'duration_ms': 3723000,
+        },
+        'statistics': {'goal_count': 4, 'candidate_count': 7},
+      },
+    ],
+  );
+
+  @override
+  Future<void> openProject(String root) async {
+    openedRoot = root;
+  }
+}
 
 void main() {
-  testWidgets('loads and displays recent project cards', (tester) async {
-    var loadCount = 0;
+  testWidgets('renders slogan and recent project card', (tester) async {
+    late _FakeProjectNotifier fake;
     await tester.pumpWidget(
-      MaterialApp(
-        home: HomeScreen(
-          onNewProject: () {},
-          onReview: () {},
-          onLoadRecentProjects: () async {
-            loadCount += 1;
-          },
-          recentProjects: const [
-            {
-              'project_root': '/tmp/projects/game-1',
-              'project': {'name': '周末训练赛'},
-              'video': {'source_path': '/tmp/game.mp4'},
-              'statistics': {'goal_count': 4, 'candidate_count': 7},
-            },
-          ],
-        ),
+      ProviderScope(
+        overrides: [
+          projectProvider.overrideWith(() {
+            fake = _FakeProjectNotifier();
+            return fake;
+          }),
+        ],
+        child: const MaterialApp(home: HomeScreen()),
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
 
-    expect(loadCount, 1);
+    expect(find.text('把整场比赛，变成你的高光。'), findsOneWidget);
     expect(find.text('最近项目'), findsOneWidget);
     expect(find.text('周末训练赛'), findsOneWidget);
-    expect(find.text('4 个已确认 · 7 个候选'), findsOneWidget);
+    expect(find.textContaining('4 进球'), findsOneWidget);
   });
 
-  testWidgets('opens a recent project card', (tester) async {
-    String? openedRoot;
+  testWidgets('tapping a recent project card opens it', (tester) async {
+    late _FakeProjectNotifier fake;
     await tester.pumpWidget(
-      MaterialApp(
-        home: HomeScreen(
-          onNewProject: () {},
-          onReview: () {},
-          onOpenRecentProject: (root) async {
-            openedRoot = root;
-          },
-          recentProjects: const [
-            {
-              'project_root': '/tmp/projects/game-1',
-              'project': {'name': '周末训练赛'},
-            },
-          ],
-        ),
+      ProviderScope(
+        overrides: [
+          projectProvider.overrideWith(() {
+            fake = _FakeProjectNotifier();
+            return fake;
+          }),
+        ],
+        child: const MaterialApp(home: HomeScreen()),
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
+
     await tester.ensureVisible(find.text('周末训练赛'));
     await tester.tap(find.text('周末训练赛'));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
-    expect(openedRoot, '/tmp/projects/game-1');
+    expect(fake.openedRoot, '/tmp/projects/game-1');
   });
+
+  testWidgets('shows empty state when there are no recent projects', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          projectProvider.overrideWith(_EmptyProjectNotifier.new),
+        ],
+        child: const MaterialApp(home: HomeScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('还没有项目'), findsOneWidget);
+  });
+}
+
+class _EmptyProjectNotifier extends ProjectNotifier {
+  @override
+  ProjectState build() => const ProjectState();
 }
