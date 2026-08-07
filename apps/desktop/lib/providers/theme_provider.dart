@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// 主题模式持久化。
 ///
-/// `build()` 同步返回默认 `ThemeMode.system`,随后异步读 SharedPreferences
+/// `build()` 同步返回默认 `ThemeMode.dark`,随后异步读 SharedPreferences
 /// 校正状态;`set(ThemeMode)` 写回 prefs 并更新 state。键名 `courtside.theme_mode`,
 /// 值为 `ThemeMode.name`(system/light/dark)。
 class ThemeModeNotifier extends Notifier<ThemeMode> {
@@ -14,7 +14,7 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
   @override
   ThemeMode build() {
     _load();
-    return ThemeMode.system;
+    return ThemeMode.dark;
   }
 
   Future<void> _load() async {

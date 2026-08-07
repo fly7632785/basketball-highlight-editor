@@ -4,6 +4,7 @@ import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
 
 enum CsButtonVariant { primary, secondary, ghost, danger }
+
 enum CsButtonSize { sm, md, lg }
 
 class CsButton extends StatelessWidget {
@@ -54,7 +55,9 @@ class CsButton extends StatelessWidget {
             if (isLoading || icon != null) const SizedBox(width: Spacing.sm),
             DefaultTextStyle.merge(
               style: TextStyle(
-                color: fg, fontSize: fontSize, fontWeight: FontWeight.w600,
+                color: fg,
+                fontSize: fontSize,
+                fontWeight: FontWeight.w500,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
               child: label,
@@ -66,8 +69,16 @@ class CsButton extends StatelessWidget {
   }
 
   EdgeInsetsGeometry _padding() {
-    final h = size == CsButtonSize.lg ? 20.0 : size == CsButtonSize.sm ? 12.0 : 16.0;
-    final v = size == CsButtonSize.lg ? 11.0 : size == CsButtonSize.sm ? 7.0 : 9.0;
+    final h = size == CsButtonSize.lg
+        ? 20.0
+        : size == CsButtonSize.sm
+        ? 12.0
+        : 16.0;
+    final v = size == CsButtonSize.lg
+        ? 11.0
+        : size == CsButtonSize.sm
+        ? 7.0
+        : 9.0;
     return EdgeInsets.symmetric(horizontal: h, vertical: v);
   }
 
@@ -85,8 +96,13 @@ class CsButton extends StatelessWidget {
 }
 
 class _Raw extends StatefulWidget {
-  const _Raw({required this.child, required this.background, required this.foreground,
-      required this.enabled, required this.onTap});
+  const _Raw({
+    required this.child,
+    required this.background,
+    required this.foreground,
+    required this.enabled,
+    required this.onTap,
+  });
   final Widget child;
   final Color background, foreground;
   final bool enabled;
@@ -108,7 +124,10 @@ class _RawState extends State<_Raw> {
       border = widget.onTap == null ? c.border : c.borderStrong;
       if (_hover && widget.enabled) bg = c.surface2;
     } else if (_hover && widget.enabled) {
-      bg = Color.alphaBlend(Colors.white.withValues(alpha: 0.10), widget.background);
+      bg = Color.alphaBlend(
+        Colors.white.withValues(alpha: 0.10),
+        widget.background,
+      );
     }
     final disabled = !widget.enabled;
     return MouseRegion(
@@ -122,7 +141,9 @@ class _RawState extends State<_Raw> {
           decoration: BoxDecoration(
             color: disabled ? c.surface3 : bg,
             borderRadius: BorderRadius.circular(CsRadius.md),
-            border: border == Colors.transparent ? null : Border.all(color: border),
+            border: border == Colors.transparent
+                ? null
+                : Border.all(color: border),
           ),
           foregroundDecoration: _focusRing(c),
           child: Opacity(opacity: disabled ? 0.5 : 1, child: widget.child),

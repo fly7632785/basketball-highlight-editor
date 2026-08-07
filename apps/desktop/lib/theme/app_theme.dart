@@ -26,7 +26,7 @@ ThemeData appTheme(Brightness brightness) {
     extensions: [colors],
   );
   return base.copyWith(
-    textTheme: _buildTextTheme(),
+    textTheme: _buildTextTheme(colors),
     cardTheme: CardThemeData(
       color: colors.surface,
       elevation: 0,
@@ -58,30 +58,92 @@ ThemeData appTheme(Brightness brightness) {
     snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
     chipTheme: ChipThemeData(
       backgroundColor: colors.surface3,
-      labelStyle: TextStyle(color: colors.textPrimary, fontSize: 12, fontWeight: FontWeight.w500),
+      labelStyle: TextStyle(
+        color: colors.textPrimary,
+        fontSize: 12,
+        fontWeight: FontWeight.w500,
+      ),
       side: BorderSide.none,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(CsRadius.full)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(CsRadius.full),
+      ),
     ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: colors.surface,
       indicatorColor: colors.indigo.withValues(alpha: 0.15),
-      labelTextStyle: WidgetStatePropertyAll(TextStyle(
-        color: colors.textSecondary, fontSize: 11, fontWeight: FontWeight.w500,
-      )),
+      labelTextStyle: WidgetStatePropertyAll(
+        TextStyle(
+          color: colors.textSecondary,
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
     ),
   );
 }
 
-TextTheme _buildTextTheme() => const TextTheme(
-  displayLarge:  TextStyle(fontFamily: 'Inter', fontSize: 32, fontWeight: FontWeight.w600, height: 1.15, letterSpacing: -0.8),
-  displayMedium: TextStyle(fontFamily: 'Inter', fontSize: 24, fontWeight: FontWeight.w600, height: 1.2, letterSpacing: -0.5),
-  titleLarge:    TextStyle(fontFamily: 'Inter', fontSize: 20, fontWeight: FontWeight.w600, letterSpacing: -0.2),
-  titleMedium:   TextStyle(fontFamily: 'Inter', fontSize: 16, fontWeight: FontWeight.w600),
-  bodyLarge:     TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: FontWeight.w400, height: 1.5),
-  bodyMedium:    TextStyle(fontFamily: 'Inter', fontSize: 13, fontWeight: FontWeight.w400, height: 1.5),
-  labelLarge:    TextStyle(fontFamily: 'Inter', fontSize: 13, fontWeight: FontWeight.w500),
-  labelMedium:   TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: FontWeight.w500),
-  labelSmall:    TextStyle(fontFamily: 'Inter', fontSize: 11, fontWeight: FontWeight.w500),
+TextTheme _buildTextTheme(AppColors colors) => TextTheme(
+  displayLarge: TextStyle(
+    fontFamily: 'Inter',
+    fontSize: 28,
+    fontWeight: FontWeight.w500,
+    height: 1.15,
+    letterSpacing: -0.6,
+    color: colors.textPrimary,
+  ),
+  displayMedium: TextStyle(
+    fontFamily: 'Inter',
+    fontSize: 22,
+    fontWeight: FontWeight.w500,
+    height: 1.2,
+    letterSpacing: -0.35,
+    color: colors.textPrimary,
+  ),
+  titleLarge: TextStyle(
+    fontFamily: 'Inter',
+    fontSize: 18,
+    fontWeight: FontWeight.w500,
+    letterSpacing: -0.15,
+    color: colors.textPrimary,
+  ),
+  titleMedium: TextStyle(
+    fontFamily: 'Inter',
+    fontSize: 15,
+    fontWeight: FontWeight.w500,
+    color: colors.textPrimary,
+  ),
+  bodyLarge: TextStyle(
+    fontFamily: 'Inter',
+    fontSize: 14,
+    fontWeight: FontWeight.w400,
+    height: 1.5,
+    color: colors.textPrimary,
+  ),
+  bodyMedium: TextStyle(
+    fontFamily: 'Inter',
+    fontSize: 13,
+    fontWeight: FontWeight.w400,
+    height: 1.5,
+    color: colors.textPrimary,
+  ),
+  labelLarge: TextStyle(
+    fontFamily: 'Inter',
+    fontSize: 13,
+    fontWeight: FontWeight.w500,
+    color: colors.textPrimary,
+  ),
+  labelMedium: TextStyle(
+    fontFamily: 'Inter',
+    fontSize: 12,
+    fontWeight: FontWeight.w500,
+    color: colors.textPrimary,
+  ),
+  labelSmall: TextStyle(
+    fontFamily: 'Inter',
+    fontSize: 11,
+    fontWeight: FontWeight.w500,
+    color: colors.textPrimary,
+  ),
 );
 
 TextStyle numericTextStyle(TextStyle base) =>

@@ -10,7 +10,7 @@ void main() {
     expect(t.brightness, Brightness.dark);
     expect(t.extensions[AppColors], darkAppColors);
     expect(t.textTheme.displayLarge?.fontFamily, 'Inter');
-    expect(t.textTheme.displayLarge?.fontWeight, FontWeight.w600);
+    expect(t.textTheme.displayLarge?.fontWeight, FontWeight.w500);
   });
   test('numericTextStyle has tabular figures', () {
     final fs = numericTextStyle(const TextStyle());

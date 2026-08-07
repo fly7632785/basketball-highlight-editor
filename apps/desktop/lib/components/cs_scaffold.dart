@@ -31,7 +31,10 @@ class CsScaffold extends ConsumerWidget {
               children: <Widget>[
                 CsSidebarShell(
                   shell: shell,
-                  extended: constraints.maxWidth >= Breakpoints.lg,
+                  // 审核页优先留给视频和候选队列，导航默认收缩为图标栏。
+                  extended:
+                      constraints.maxWidth >= Breakpoints.lg &&
+                      shell.currentIndex != 2,
                 ),
                 Expanded(
                   child: Column(
@@ -93,7 +96,7 @@ class CsTopBar extends ConsumerWidget {
             title,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
               color: c.textPrimary,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w500,
             ),
           ),
           const SizedBox(width: Spacing.md),
@@ -104,9 +107,9 @@ class CsTopBar extends ConsumerWidget {
             const SizedBox(width: Spacing.xs),
             Text(
               '本地处理',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: c.textSecondary,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
             ),
             const SizedBox(width: Spacing.md),
           ],
@@ -122,7 +125,9 @@ class CsTopBar extends ConsumerWidget {
               color: c.textSecondary,
             ),
             onPressed: () {
-              ref.read(themeModeProvider.notifier).set(_nextThemeMode(themeMode));
+              ref
+                  .read(themeModeProvider.notifier)
+                  .set(_nextThemeMode(themeMode));
             },
           ),
         ],

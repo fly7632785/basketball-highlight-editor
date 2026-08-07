@@ -74,6 +74,17 @@ void main() {
       expect(result, runtimeRoot);
     });
 
+    test('从 apps/desktop 嵌套目录向上找到项目根目录', () {
+      final nestedDir = Directory('$runtimeRoot/apps/desktop')
+        ..createSync(recursive: true);
+      final result = findRuntimeRoot(
+        env: const <String, String>{},
+        resolvedExecutable: '/dummy/app',
+        currentDir: nestedDir.path,
+      );
+      expect(result, runtimeRoot);
+    });
+
     test('appContents/Resources/runtime 候选命中时返回该路径', () {
       // 构造 <tmp>/Foo.app/Contents/Resources/runtime/engine/python
       final appDir = Directory('${tmpDir.path}/Foo.app/Contents')
@@ -141,10 +152,7 @@ void main() {
     test('build() 初值为 loading', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      expect(
-        container.read(engineBootstrapProvider).isLoading,
-        isTrue,
-      );
+      expect(container.read(engineBootstrapProvider).isLoading, isTrue);
     });
 
     // ensure() 依赖 Platform.environment/Directory.current,无法在测试中注入;
@@ -170,10 +178,10 @@ void main() {
       SharedPreferences.setMockInitialValues(<String, Object>{});
     });
 
-    test('默认 ThemeMode.system', () {
+    test('默认 ThemeMode.dark', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      expect(container.read(themeModeProvider), ThemeMode.system);
+      expect(container.read(themeModeProvider), ThemeMode.dark);
     });
 
     test('set(dark) 更新 state 并持久化', () async {
