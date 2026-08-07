@@ -165,6 +165,25 @@ class EventsTest(unittest.TestCase):
         self.assertIn("signals", candidates[0])
         self.assertGreaterEqual(candidates[0]["signals"]["net_lower"], 0.8)
 
+    def test_refined_crossing_exposes_overlay_trajectory_and_rim(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [489, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 345]}]},
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [492, 365]}]},
+            {"time": 1.5, "detections": [{"name": "ball", "confidence": 0.8, "center": [493, 385]}]},
+        ]
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20, "height": 20},
+        )
+
+        overlay = candidates[0]["overlay"]
+        self.assertEqual(overlay["rim"]["center_x"], 490)
+        self.assertEqual(overlay["rim"]["rim_y"], 325)
+        self.assertGreaterEqual(len(overlay["trajectory"]), 4)
+        self.assertEqual(overlay["crossing"]["y"], 325)
+        self.assertTrue(overlay["crossing"]["valid"])
+
     def test_recall_review_gate_keeps_broad_candidates_out_of_auto_gate(self):
         gates = calibrated_gates({
             "speed_px_s": 105,

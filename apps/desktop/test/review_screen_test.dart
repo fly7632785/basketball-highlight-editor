@@ -139,6 +139,40 @@ void main() {
     },
   );
 
+  testWidgets('provides a toggle for video annotations', (tester) async {
+    await _pumpReview(
+      tester,
+      ProjectState(
+        video: const {'width': 1920, 'height': 1080},
+        job: const {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+            'review_status': 'pending',
+            'evidence_json': jsonEncode({
+              'overlay': {
+                'rim': {'center_x': 960, 'rim_y': 420, 'width': 100},
+                'trajectory': [
+                  {'time': 11.5, 'x': 900, 'y': 300},
+                  {'time': 12.0, 'x': 950, 'y': 380},
+                ],
+                'crossing': {'time': 12.2, 'x': 960, 'y': 420, 'valid': true},
+              },
+            }),
+          },
+        ],
+      ),
+    );
+
+    expect(find.byTooltip('关闭标注'), findsOneWidget);
+    await tester.tap(find.byTooltip('关闭标注'));
+    await tester.pump();
+    expect(find.byTooltip('显示标注'), findsOneWidget);
+  });
+
   testWidgets('sorts the review list by event time', (tester) async {
     await _pumpReview(
       tester,

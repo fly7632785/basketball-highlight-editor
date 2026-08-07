@@ -175,6 +175,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       key: ValueKey(playbackPath ?? 'no-video'),
                       videoPath: playbackPath,
                       candidate: selected,
+                      frameSize: _videoFrameSize(state.video),
                       hasPrevious: _candidateIndex(candidates, selected) > 0,
                       hasNext:
                           _candidateIndex(candidates, selected) <
@@ -453,6 +454,7 @@ class _VideoPane extends StatefulWidget {
     super.key,
     required this.videoPath,
     required this.candidate,
+    required this.frameSize,
     required this.hasPrevious,
     required this.hasNext,
     required this.onPrevious,
@@ -461,6 +463,7 @@ class _VideoPane extends StatefulWidget {
 
   final String? videoPath;
   final Map<String, dynamic>? candidate;
+  final Size frameSize;
   final bool hasPrevious;
   final bool hasNext;
   final VoidCallback onPrevious;
@@ -477,6 +480,7 @@ class _VideoPaneState extends State<_VideoPane> {
   String? _error;
   bool _ready = false;
   bool _loading = false;
+  bool _showAnnotations = true;
   int _positionMs = 0;
   int? _clipEndMs;
   int _playRequest = 0;
@@ -590,8 +594,11 @@ class _VideoPaneState extends State<_VideoPane> {
               width: double.infinity,
               decoration: const BoxDecoration(color: Colors.black),
               clipBehavior: Clip.hardEdge,
-              child: !hasVideo || controller == null || _error != null
-                  ? CsEmptyState(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (!hasVideo || controller == null || _error != null)
+                    CsEmptyState(
                       icon: _error == null
                           ? Icons.movie_outlined
                           : Icons.error_outline,
@@ -601,25 +608,44 @@ class _VideoPaneState extends State<_VideoPane> {
                           : null,
                       action: null,
                     )
-                  : Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Center(
-                          child: AspectRatio(
-                            aspectRatio: 16 / 9,
-                            child: Video(
+                  else
+                    Center(
+                      child: AspectRatio(
+                        aspectRatio: _videoAspectRatio(widget.frameSize),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Video(
                               controller: controller,
                               controls: NoVideoControls,
                             ),
-                          ),
+                            if (_showAnnotations && widget.candidate != null)
+                              _CandidateAnnotationLayer(
+                                candidate: widget.candidate!,
+                                frameSize: widget.frameSize,
+                                positionMs: _positionMs,
+                              ),
+                          ],
                         ),
-                        if (_loading)
-                          const ColoredBox(
-                            color: Colors.black26,
-                            child: Center(child: CircularProgressIndicator()),
-                          ),
-                      ],
+                      ),
                     ),
+                  if (_loading)
+                    const ColoredBox(
+                      color: Colors.black26,
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  if (widget.candidate != null)
+                    Positioned(
+                      top: Spacing.sm,
+                      right: Spacing.sm,
+                      child: _AnnotationToggle(
+                        enabled: _showAnnotations,
+                        onChanged: (value) =>
+                            setState(() => _showAnnotations = value),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: Spacing.sm),
@@ -659,6 +685,227 @@ class _VideoPaneState extends State<_VideoPane> {
       ),
     );
   }
+}
+
+class _AnnotationToggle extends StatelessWidget {
+  const _AnnotationToggle({required this.enabled, required this.onChanged});
+
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Material(
+      color: c.background.withValues(alpha: 0.82),
+      borderRadius: BorderRadius.circular(CsRadius.md),
+      child: Padding(
+        padding: const EdgeInsets.only(left: Spacing.sm),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('标注', style: TextStyle(color: c.textPrimary, fontSize: 11)),
+            Tooltip(
+              message: enabled ? '关闭标注' : '显示标注',
+              child: Switch(
+                value: enabled,
+                onChanged: onChanged,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CandidateAnnotationLayer extends StatelessWidget {
+  const _CandidateAnnotationLayer({
+    required this.candidate,
+    required this.frameSize,
+    required this.positionMs,
+  });
+
+  final Map<String, dynamic> candidate;
+  final Size frameSize;
+  final int positionMs;
+
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+    child: CustomPaint(
+      painter: _CandidateAnnotationPainter(
+        candidate: candidate,
+        frameSize: frameSize,
+        positionMs: positionMs,
+      ),
+      child: const SizedBox.expand(),
+    ),
+  );
+}
+
+class _CandidateAnnotationPainter extends CustomPainter {
+  _CandidateAnnotationPainter({
+    required this.candidate,
+    required this.frameSize,
+    required this.positionMs,
+  });
+
+  final Map<String, dynamic> candidate;
+  final Size frameSize;
+  final int positionMs;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (frameSize.width <= 0 || frameSize.height <= 0) return;
+    final evidence = _candidateEvidence(candidate);
+    final rawOverlay = evidence['overlay'];
+    if (rawOverlay is! Map) return;
+    final overlay = rawOverlay.cast<String, dynamic>();
+    final rim = overlay['rim'];
+    if (rim is! Map) return;
+
+    final current = positionMs / 1000.0;
+    final centerX = _pointX(rim['center_x'], size.width);
+    final rimY = _pointY(rim['rim_y'], size.height);
+    final rimWidth = _scaledX(rim['width'], size.width);
+    final rimHeight = _scaledY(rim['height'] ?? 12, size.height);
+    final rimPaint = Paint()
+      ..color = const Color(0xFFFFB454)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawRect(
+      Rect.fromCenter(
+        center: Offset(centerX, rimY),
+        width: rimWidth,
+        height: rimHeight.clamp(4.0, 28.0).toDouble(),
+      ),
+      rimPaint,
+    );
+    canvas.drawLine(
+      Offset(centerX - rimWidth / 2, rimY),
+      Offset(centerX + rimWidth / 2, rimY),
+      rimPaint,
+    );
+
+    final rawTrajectory = overlay['trajectory'];
+    final points = rawTrajectory is List
+        ? rawTrajectory
+              .whereType<Map>()
+              .map((point) => point.cast<String, dynamic>())
+              .where((point) => _number(point['time']) <= current + 0.02)
+              .map(
+                (point) => Offset(
+                  _pointX(point['x'], size.width),
+                  _pointY(point['y'], size.height),
+                ),
+              )
+              .toList()
+        : <Offset>[];
+    if (points.length >= 2) {
+      final path = Path()..moveTo(points.first.dx, points.first.dy);
+      for (final point in points.skip(1)) {
+        path.lineTo(point.dx, point.dy);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = const Color(0xFF9AA6FF)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+
+    final crossing = overlay['crossing'];
+    final crossingTime = crossing is Map ? _number(crossing['time']) : -1;
+    final crossingX = crossing is Map
+        ? _pointX(crossing['x'], size.width)
+        : 0.0;
+    final crossingY = crossing is Map
+        ? _pointY(crossing['y'], size.height)
+        : 0.0;
+    final valid = crossing is Map && crossing['valid'] == true;
+    final resultColor = valid
+        ? const Color(0xFF65C982)
+        : const Color(0xFFF17D76);
+
+    if (points.isNotEmpty && crossingTime > current) {
+      final prediction = overlay['prediction'];
+      if (prediction is Map && prediction['landing_x'] != null) {
+        _drawDashedLine(
+          canvas,
+          points.last,
+          Offset(_pointX(prediction['landing_x'], size.width), rimY),
+          Paint()
+            ..color = const Color(0xFF9AA6FF)
+            ..strokeWidth = 2,
+        );
+      }
+    }
+
+    if (points.isNotEmpty) {
+      final ballPaint = Paint()..color = const Color(0xFFE97832);
+      canvas.drawCircle(points.last, 7, ballPaint);
+      canvas.drawCircle(
+        points.last,
+        11,
+        Paint()
+          ..color = const Color(0xFFE97832).withValues(alpha: 0.35)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+      );
+    }
+
+    if (crossingTime >= 0 && current >= crossingTime - 0.2) {
+      final pulse = (1 - ((current - crossingTime).abs() / 0.45))
+          .clamp(0.0, 1.0)
+          .toDouble();
+      canvas.drawCircle(
+        Offset(crossingX, crossingY),
+        10 + 14 * pulse,
+        Paint()
+          ..color = resultColor.withValues(alpha: 0.70 * pulse)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3,
+      );
+      canvas.drawCircle(
+        Offset(crossingX, crossingY),
+        5,
+        Paint()..color = resultColor,
+      );
+    }
+  }
+
+  void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint) {
+    const segments = 10;
+    for (var index = 0; index < segments; index += 2) {
+      final startT = index / segments;
+      final endT = (index + 1) / segments;
+      canvas.drawLine(
+        Offset.lerp(start, end, startT)!,
+        Offset.lerp(start, end, endT)!,
+        paint,
+      );
+    }
+  }
+
+  double _pointX(dynamic value, double width) =>
+      (_number(value) / frameSize.width).clamp(0.0, 1.0) * width;
+
+  double _pointY(dynamic value, double height) =>
+      (_number(value) / frameSize.height).clamp(0.0, 1.0) * height;
+
+  double _scaledX(dynamic value, double width) =>
+      (_number(value) / frameSize.width).clamp(0.0, 1.0) * width;
+
+  double _scaledY(dynamic value, double height) =>
+      (_number(value) / frameSize.height).clamp(0.0, 1.0) * height;
+
+  @override
+  bool shouldRepaint(covariant _CandidateAnnotationPainter oldDelegate) =>
+      oldDelegate.positionMs != positionMs ||
+      oldDelegate.candidate != candidate;
 }
 
 class _VideoControls extends StatelessWidget {
@@ -1279,6 +1526,23 @@ Map<String, dynamic> _candidateEvidence(Map<String, dynamic> candidate) {
   return const <String, dynamic>{};
 }
 
+double _number(dynamic value) {
+  if (value is num) return value.toDouble();
+  return double.tryParse('$value') ?? 0.0;
+}
+
+Size _videoFrameSize(Map<String, dynamic>? video) {
+  final width = _number(video?['width']);
+  final height = _number(video?['height']);
+  if (width <= 0 || height <= 0) return const Size(16, 9);
+  return Size(width, height);
+}
+
+double _videoAspectRatio(Size frameSize) =>
+    frameSize.width > 0 && frameSize.height > 0
+    ? frameSize.width / frameSize.height
+    : 16 / 9;
+
 dynamic _candidateEvidenceValue(
   Map<String, dynamic> candidate,
   Map<String, dynamic> evidence,
@@ -1389,8 +1653,8 @@ String _formatDuration(Duration duration) {
 
 String? _resolvePlaybackPath(ProjectState state, {required bool analyzing}) {
   final paths = analyzing
-      ? <String?>[state.videoPath, state.reviewVideoPath]
-      : <String?>[state.reviewVideoPath, state.videoPath];
+      ? <String?>[state.reviewVideoPath, state.videoPath]
+      : <String?>[state.videoPath, state.reviewVideoPath];
   for (final path in paths) {
     if (path != null && path.isNotEmpty && File(path).existsSync()) {
       return path;

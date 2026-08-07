@@ -360,6 +360,55 @@ def find_candidate_crossings(records, rim, max_gap_sec=2.5, margin=16, dedupe_se
     return candidates
 
 
+def _crossing_time_at_y(above, below, rim_y):
+    denominator = below["y"] - above["y"]
+    if denominator == 0:
+        return round((above["time"] + below["time"]) / 2.0, 4)
+    ratio = (rim_y - above["y"]) / denominator
+    return round(above["time"] + ratio * (below["time"] - above["time"]), 4)
+
+
+def _overlay_data(track, rim, above, below, x_cross, event_time, prediction):
+    points = [
+        point
+        for point in track
+        if event_time - 1.2 <= point["time"] <= event_time + 0.8
+    ]
+    if len(points) > 24:
+        step = max(1, len(points) // 24)
+        points = points[::step][:24]
+
+    return {
+        "rim": {
+            "center_x": round(float(rim["center_x"]), 3),
+            "rim_y": round(float(rim["rim_y"]), 3),
+            "width": round(float(rim["width"]), 3),
+            "height": round(float(rim.get("height", 20.0)), 3),
+        },
+        "trajectory": [
+            {
+                "time": round(float(point["time"]), 4),
+                "x": round(float(point["x"]), 3),
+                "y": round(float(point["y"]), 3),
+                "confidence": round(float(point.get("confidence", 0.0)), 4),
+            }
+            for point in points
+        ],
+        "crossing": {
+            "time": _crossing_time_at_y(above, below, rim["rim_y"]),
+            "x": round(float(x_cross), 3),
+            "y": round(float(rim["rim_y"]), 3),
+            "valid": True,
+        },
+        "prediction": None if not prediction else {
+            "landing_x": round(float(prediction["predict_x"]), 3),
+            "landing_y": round(float(rim["rim_y"]), 3),
+            "fit_r2": prediction.get("fit_r2"),
+            "predict_score": prediction.get("predict_score"),
+        },
+    }
+
+
 def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=2.0):
     """Find and score rim crossings using geometry, tracking and net zones.
 
@@ -478,6 +527,9 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=2.0):
                     **normalized_geometry,
                     "signals": signals,
                     "prediction": prediction,
+                    "overlay": _overlay_data(
+                        track, rim, above, below, x_cross, event_time, prediction,
+                    ),
                     "score": score,
                     "gates": gates,
                     "confidence": _confidence_label(score, signals, gates),
