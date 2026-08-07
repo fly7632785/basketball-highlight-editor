@@ -57,19 +57,10 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     }
   }
 
-  Future<void> _setCandidateStatus(
-    String id,
-    String status,
-    List<Map<String, dynamic>> candidates,
-  ) async {
-    final index = candidates.indexWhere((candidate) => candidate['id'] == id);
+  Future<void> _setCandidateStatus(String id, String status) async {
     await ref
         .read(projectProvider.notifier)
         .reviewCandidate(id, status, showNotice: false);
-    if (!mounted || status != 'excluded' || candidates.isEmpty) return;
-    final nextIndex = (index + 1).clamp(0, candidates.length - 1).toInt();
-    final nextId = candidates[nextIndex]['id']?.toString();
-    if (nextId != null) setState(() => _selectedCandidateId = nextId);
   }
 
   Future<void> _confirmReanalyze() async {
@@ -124,13 +115,13 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         SingleActivator(LogicalKeyboardKey.keyX): () {
           final id = selected?['id']?.toString();
           if (id != null) {
-            unawaited(_setCandidateStatus(id, 'excluded', candidates));
+            unawaited(_setCandidateStatus(id, 'excluded'));
           }
         },
         SingleActivator(LogicalKeyboardKey.keyC): () {
           final id = selected?['id']?.toString();
           if (id != null) {
-            unawaited(_setCandidateStatus(id, 'included', candidates));
+            unawaited(_setCandidateStatus(id, 'included'));
           }
         },
       },
@@ -194,7 +185,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       hasVideo: state.videoPath != null,
                       onSelect: _selectCandidate,
                       onSetStatus: (id, status) =>
-                          _setCandidateStatus(id, status, candidates),
+                          _setCandidateStatus(id, status),
                       onLoadCover: state.video == null
                           ? null
                           : (id, timeMs) =>
@@ -1276,7 +1267,11 @@ class _CandidatePanel extends StatelessWidget {
                     itemBuilder: (context, index) {
                       final candidate = candidates[index];
                       final id = candidate['id']?.toString() ?? '';
+                      final coverFuture = onLoadCover == null
+                          ? null
+                          : onLoadCover!(id, _candidateTime(candidate));
                       return _CandidateRow(
+                        key: ValueKey(id),
                         candidate: candidate,
                         index: index,
                         selected: id == selectedId,
@@ -1285,9 +1280,7 @@ class _CandidatePanel extends StatelessWidget {
                         onTap: () => onSelect(candidate),
                         onInclude: () => unawaited(onSetStatus(id, 'included')),
                         onExclude: () => unawaited(onSetStatus(id, 'excluded')),
-                        onLoadCover: onLoadCover == null
-                            ? null
-                            : () => onLoadCover!(id, _candidateTime(candidate)),
+                        coverFuture: coverFuture,
                       );
                     },
                   ),
@@ -1378,7 +1371,8 @@ class _CandidateRow extends StatelessWidget {
     required this.onTap,
     required this.onInclude,
     required this.onExclude,
-    required this.onLoadCover,
+    required this.coverFuture,
+    super.key,
   });
 
   final Map<String, dynamic> candidate;
@@ -1389,7 +1383,7 @@ class _CandidateRow extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onInclude;
   final VoidCallback onExclude;
-  final Future<String?> Function()? onLoadCover;
+  final Future<String?>? coverFuture;
 
   @override
   Widget build(BuildContext context) {
@@ -1397,99 +1391,114 @@ class _CandidateRow extends StatelessWidget {
     final theme = Theme.of(context);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
+      child: AnimatedContainer(
+        duration: DurationD.fast,
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.xs,
+          vertical: 4,
+        ),
+        decoration: BoxDecoration(
+          color: selected ? c.indigo.withValues(alpha: 0.10) : null,
           borderRadius: BorderRadius.circular(CsRadius.sm),
-          child: AnimatedContainer(
-            duration: DurationD.fast,
-            padding: const EdgeInsets.symmetric(
-              horizontal: Spacing.xs,
-              vertical: 6,
-            ),
-            decoration: BoxDecoration(
-              color: selected ? c.indigo.withValues(alpha: 0.10) : null,
-              borderRadius: BorderRadius.circular(CsRadius.sm),
-              border: selected
-                  ? Border.all(color: c.indigo.withValues(alpha: 0.45))
-                  : null,
-            ),
-            child: Row(
-              children: [
-                _CandidateCover(load: onLoadCover, excluded: excluded),
-                const SizedBox(width: Spacing.sm),
-                Expanded(
-                  child: Text(
-                    '${index + 1}. ${_formatMs(_candidateTime(candidate))}',
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      color: excluded ? c.textTertiary : c.textPrimary,
-                      fontFeatures: const [FontFeature.tabularFigures()],
+          border: selected
+              ? Border.all(color: c.indigo.withValues(alpha: 0.45))
+              : null,
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: onTap,
+                  borderRadius: BorderRadius.circular(CsRadius.sm),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        _CandidateCover(
+                          future: coverFuture,
+                          excluded: excluded,
+                        ),
+                        const SizedBox(width: Spacing.sm),
+                        Expanded(
+                          child: Text(
+                            '${index + 1}. ${_formatMs(_candidateTime(candidate))}',
+                            style: theme.textTheme.labelLarge?.copyWith(
+                              color: excluded ? c.textTertiary : c.textPrimary,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                SizedBox(
-                  width: 112,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: IconButton(
-                          tooltip: '保留片段',
-                          onPressed: busy ? null : onInclude,
-                          icon: Icon(
-                            Icons.check_circle,
-                            size: 25,
-                            color: excluded ? c.textTertiary : c.goal,
-                          ),
-                          constraints: const BoxConstraints.tightFor(
-                            width: 52,
-                            height: 44,
-                          ),
-                          padding: EdgeInsets.zero,
-                          style: IconButton.styleFrom(
-                            backgroundColor: excluded
-                                ? c.surface3
-                                : c.goal.withValues(alpha: 0.12),
-                            foregroundColor: excluded ? c.textTertiary : c.goal,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(CsRadius.sm),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: Spacing.xs),
-                      Expanded(
-                        child: IconButton(
-                          tooltip: '排除片段',
-                          onPressed: busy ? null : onExclude,
-                          icon: Icon(
-                            Icons.cancel_outlined,
-                            size: 25,
-                            color: excluded ? c.error : c.textTertiary,
-                          ),
-                          constraints: const BoxConstraints.tightFor(
-                            width: 52,
-                            height: 44,
-                          ),
-                          padding: EdgeInsets.zero,
-                          style: IconButton.styleFrom(
-                            backgroundColor: excluded
-                                ? c.error.withValues(alpha: 0.12)
-                                : c.surface3,
-                            foregroundColor: excluded
-                                ? c.error
-                                : c.textTertiary,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(CsRadius.sm),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
+            const SizedBox(width: Spacing.xs),
+            _DecisionButton(
+              tooltip: '保留片段',
+              icon: Icons.check_rounded,
+              active: !excluded,
+              color: c.goal,
+              enabled: !busy,
+              onPressed: onInclude,
+            ),
+            const SizedBox(width: Spacing.xs),
+            _DecisionButton(
+              tooltip: '排除片段',
+              icon: Icons.close_rounded,
+              active: excluded,
+              color: c.error,
+              enabled: !busy,
+              onPressed: onExclude,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DecisionButton extends StatelessWidget {
+  const _DecisionButton({
+    required this.tooltip,
+    required this.icon,
+    required this.active,
+    required this.color,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final bool active;
+  final Color color;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final background = active
+        ? color.withValues(alpha: 0.16)
+        : c.surface3.withValues(alpha: 0.72);
+    final foreground = active ? color : c.textTertiary;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: background,
+        borderRadius: BorderRadius.circular(CsRadius.sm),
+        child: InkWell(
+          onTap: enabled ? onPressed : null,
+          borderRadius: BorderRadius.circular(CsRadius.sm),
+          child: SizedBox(
+            width: 52,
+            height: 40,
+            child: Icon(icon, size: 21, color: foreground),
           ),
         ),
       ),
@@ -1498,9 +1507,9 @@ class _CandidateRow extends StatelessWidget {
 }
 
 class _CandidateCover extends StatefulWidget {
-  const _CandidateCover({required this.load, required this.excluded});
+  const _CandidateCover({required this.future, required this.excluded});
 
-  final Future<String?> Function()? load;
+  final Future<String?>? future;
   final bool excluded;
 
   @override
@@ -1513,14 +1522,14 @@ class _CandidateCoverState extends State<_CandidateCover> {
   @override
   void initState() {
     super.initState();
-    _future = widget.load == null ? Future.value(null) : widget.load!();
+    _future = widget.future ?? Future.value(null);
   }
 
   @override
   void didUpdateWidget(covariant _CandidateCover oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.load != widget.load) {
-      _future = widget.load == null ? Future.value(null) : widget.load!();
+    if (oldWidget.future != widget.future) {
+      _future = widget.future ?? Future.value(null);
     }
   }
 

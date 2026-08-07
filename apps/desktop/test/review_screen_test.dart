@@ -203,6 +203,74 @@ void main() {
     expect(second, findsOneWidget);
     expect(tester.getTopLeft(first).dy, lessThan(tester.getTopLeft(second).dy));
   });
+
+  testWidgets('decision buttons do not switch the selected candidate', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'late',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+            'review_status': 'pending',
+          },
+          {
+            'id': 'early',
+            'event_time_ms': 3000,
+            'default_start_ms': 0,
+            'default_end_ms': 6000,
+            'review_status': 'pending',
+          },
+        ],
+      ),
+    );
+
+    expect(find.text('候选 00:03'), findsOneWidget);
+    await tester.tap(find.byTooltip('保留片段').at(1));
+    await tester.pump();
+
+    expect(find.text('候选 00:03'), findsOneWidget);
+    expect(find.text('候选 00:12'), findsNothing);
+  });
+
+  testWidgets('excluding a candidate keeps the current preview', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'late',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+            'review_status': 'pending',
+          },
+          {
+            'id': 'early',
+            'event_time_ms': 3000,
+            'default_start_ms': 0,
+            'default_end_ms': 6000,
+            'review_status': 'pending',
+          },
+        ],
+      ),
+    );
+
+    expect(find.text('候选 00:03'), findsOneWidget);
+    await tester.tap(find.byTooltip('排除片段').first);
+    await tester.pump();
+
+    expect(find.text('候选 00:03'), findsOneWidget);
+    expect(find.text('候选 00:12'), findsNothing);
+  });
 }
 
 Future<void> _pumpReview(
@@ -229,4 +297,19 @@ class _ReviewNotifier extends ProjectNotifier {
 
   @override
   ProjectState build() => initialState;
+
+  @override
+  Future<bool> reviewCandidate(
+    String id,
+    String status, {
+    String? reason,
+    bool showNotice = true,
+  }) async {
+    final candidates = state.candidates.map((candidate) {
+      if (candidate['id']?.toString() != id) return candidate;
+      return <String, dynamic>{...candidate, 'selection_status': status};
+    }).toList();
+    state = state.copyWith(candidates: candidates);
+    return true;
+  }
 }
