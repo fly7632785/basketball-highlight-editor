@@ -10,7 +10,6 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../components/cs_button.dart';
-import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../components/cs_progress_track.dart';
 import '../../providers/project_state.dart';
@@ -138,7 +137,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       child: Focus(
         autofocus: true,
         child: Padding(
-          padding: const EdgeInsets.only(top: Spacing.sm, bottom: Spacing.lg),
+          padding: const EdgeInsets.only(top: Spacing.xs, bottom: Spacing.sm),
           child: Column(
             children: [
               if (analyzing ||
@@ -183,6 +182,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       onPrevious: () => _moveCandidate(candidates, -1),
                       onNext: () => _moveCandidate(candidates, 1),
                     );
+                    final queueWidth = (constraints.maxWidth * 0.28)
+                        .clamp(296.0, 360.0)
+                        .toDouble();
                     final queue = _CandidatePanel(
                       candidates: candidates,
                       selectedId: selected?['id']?.toString(),
@@ -209,9 +211,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       return Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Expanded(flex: 7, child: video),
-                          const SizedBox(width: Spacing.md),
-                          SizedBox(width: 312, child: queue),
+                          Expanded(child: video),
+                          const SizedBox(width: Spacing.sm),
+                          SizedBox(width: queueWidth, child: queue),
                         ],
                       );
                     }
@@ -585,8 +587,13 @@ class _VideoPaneState extends State<_VideoPane> {
     final controller = _controller;
     final hasVideo = widget.videoPath != null && widget.videoPath!.isNotEmpty;
 
-    return CsCard(
-      padding: EdgeInsets.zero,
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: c.surface,
+        border: Border.all(color: c.border),
+        borderRadius: BorderRadius.circular(CsRadius.md),
+      ),
       child: Column(
         children: [
           Expanded(
@@ -648,7 +655,7 @@ class _VideoPaneState extends State<_VideoPane> {
               ),
             ),
           ),
-          const SizedBox(height: Spacing.sm),
+          const SizedBox(height: Spacing.xs),
           _VideoControls(
             player: player,
             positionMs: _positionMs,
@@ -935,7 +942,7 @@ class _VideoControls extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
-    if (player == null) return const SizedBox(height: 36);
+    if (player == null) return const SizedBox(height: 32);
     return StreamBuilder<Duration>(
       stream: player!.stream.duration,
       initialData: player!.state.duration,
@@ -943,67 +950,103 @@ class _VideoControls extends StatelessWidget {
         final duration = durationSnapshot.data ?? Duration.zero;
         final max = duration.inMilliseconds;
         final value = max <= 0 ? 0.0 : positionMs.clamp(0, max).toDouble();
-        return Column(
-          children: [
-            Slider(
-              min: 0,
-              max: max > 0 ? max.toDouble() : 1,
-              value: value,
-              onChanged: !enabled || max <= 0
-                  ? null
-                  : (next) => onSeek(Duration(milliseconds: next.round())),
-            ),
-            Row(
-              children: [
-                Text(
-                  '${_formatDuration(Duration(milliseconds: positionMs))} / '
-                  '${_formatDuration(duration)}',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: c.textSecondary,
-                    fontFeatures: const [FontFeature.tabularFigures()],
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
+          child: Column(
+            children: [
+              SizedBox(
+                height: 22,
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 2,
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 4,
+                    ),
+                    overlayShape: SliderComponentShape.noOverlay,
+                  ),
+                  child: Slider(
+                    min: 0,
+                    max: max > 0 ? max.toDouble() : 1,
+                    value: value,
+                    onChanged: !enabled || max <= 0
+                        ? null
+                        : (next) =>
+                              onSeek(Duration(milliseconds: next.round())),
                   ),
                 ),
-                const Spacer(),
-                IconButton(
-                  tooltip: '上一个候选',
-                  onPressed: enabled && hasPrevious ? onPrevious : null,
-                  icon: const Icon(Icons.skip_previous, size: 19),
-                  visualDensity: VisualDensity.compact,
-                ),
-                StreamBuilder<bool>(
-                  stream: player!.stream.playing,
-                  initialData: false,
-                  builder: (context, snapshot) => IconButton(
-                    tooltip: snapshot.data == true ? '暂停' : '播放',
-                    onPressed: !enabled
-                        ? null
-                        : () => snapshot.data == true
-                              ? player!.pause()
-                              : player!.play(),
-                    icon: Icon(
-                      snapshot.data == true ? Icons.pause : Icons.play_arrow,
-                      size: 22,
+              ),
+              Row(
+                children: [
+                  Text(
+                    '${_formatDuration(Duration(milliseconds: positionMs))} / '
+                    '${_formatDuration(duration)}',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: c.textSecondary,
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: '上一个候选',
+                    onPressed: enabled && hasPrevious ? onPrevious : null,
+                    icon: const Icon(Icons.skip_previous, size: 19),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 34,
+                      height: 34,
+                    ),
+                    padding: EdgeInsets.zero,
                     visualDensity: VisualDensity.compact,
                   ),
-                ),
-                IconButton(
-                  tooltip: '下一个候选',
-                  onPressed: enabled && hasNext ? onNext : null,
-                  icon: const Icon(Icons.skip_next, size: 19),
-                  visualDensity: VisualDensity.compact,
-                ),
-                IconButton(
-                  tooltip: '重播当前片段',
-                  onPressed: enabled
-                      ? () => unawaited(onReplayCandidate())
-                      : null,
-                  icon: const Icon(Icons.replay, size: 18),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
-            ),
-          ],
+                  StreamBuilder<bool>(
+                    stream: player!.stream.playing,
+                    initialData: false,
+                    builder: (context, snapshot) => IconButton(
+                      tooltip: snapshot.data == true ? '暂停' : '播放',
+                      onPressed: !enabled
+                          ? null
+                          : () => snapshot.data == true
+                                ? player!.pause()
+                                : player!.play(),
+                      icon: Icon(
+                        snapshot.data == true ? Icons.pause : Icons.play_arrow,
+                        size: 22,
+                      ),
+                      constraints: const BoxConstraints.tightFor(
+                        width: 36,
+                        height: 36,
+                      ),
+                      padding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '下一个候选',
+                    onPressed: enabled && hasNext ? onNext : null,
+                    icon: const Icon(Icons.skip_next, size: 19),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 34,
+                      height: 34,
+                    ),
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  IconButton(
+                    tooltip: '重播当前片段',
+                    onPressed: enabled
+                        ? () => unawaited(onReplayCandidate())
+                        : null,
+                    icon: const Icon(Icons.replay, size: 18),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 34,
+                      height: 34,
+                    ),
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+            ],
+          ),
         );
       },
     );
@@ -1048,7 +1091,7 @@ class _CandidateEvidencePanel extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      height: 72,
+      height: 58,
       decoration: BoxDecoration(
         color: c.surface2,
         border: Border(top: BorderSide(color: c.border)),
@@ -1057,7 +1100,7 @@ class _CandidateEvidencePanel extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(
           horizontal: Spacing.sm,
-          vertical: 7,
+          vertical: 5,
         ),
         child: Row(
           children: [
@@ -1070,37 +1113,37 @@ class _CandidateEvidencePanel extends StatelessWidget {
             _EvidenceCell(
               label: '置信度',
               value: _candidateConfidence(candidate) ?? '—',
-              width: 84,
+              width: 72,
               color: c.textPrimary,
             ),
             _EvidenceCell(
               label: '轨迹穿框',
               value: _formatCrossing(trajectory),
-              width: 92,
+              width: 82,
               color: _boolColor(c, trajectory),
             ),
             _EvidenceCell(
               label: '篮网运动',
               value: _formatSignal(net),
-              width: 92,
+              width: 82,
               color: _signalColor(c, net),
             ),
             _EvidenceCell(
               label: '音频支持',
               value: _formatSignal(audio),
-              width: 92,
+              width: 82,
               color: _signalColor(c, audio),
             ),
             _EvidenceCell(
               label: '反弹判断',
               value: _formatRebound(rebound),
-              width: 92,
+              width: 82,
               color: _reboundColor(c, rebound),
             ),
             _EvidenceCell(
               label: '系统说明',
               value: _reviewReasonLabel(reason),
-              width: 170,
+              width: 135,
               color: c.textSecondary,
             ),
           ],
@@ -1134,15 +1177,15 @@ class _EvidenceCell extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: TextStyle(color: c.textTertiary, fontSize: 10)),
-            const SizedBox(height: 3),
+            Text(label, style: TextStyle(color: c.textTertiary, fontSize: 9)),
+            const SizedBox(height: 2),
             Text(
               value,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: color,
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: FontWeight.w500,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
@@ -1187,10 +1230,16 @@ class _CandidatePanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
-    return CsCard(
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: c.surface,
+        border: Border.all(color: c.border),
+        borderRadius: BorderRadius.circular(CsRadius.md),
+      ),
       padding: const EdgeInsets.fromLTRB(
         Spacing.sm,
-        Spacing.sm,
+        Spacing.xs,
         Spacing.sm,
         Spacing.xs,
       ),
@@ -1209,7 +1258,7 @@ class _CandidatePanel extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: Spacing.sm),
+          const SizedBox(height: Spacing.xs),
           Expanded(
             child: candidates.isEmpty
                 ? _EmptyCandidates(
@@ -1220,8 +1269,10 @@ class _CandidatePanel extends StatelessWidget {
                   )
                 : ListView.separated(
                     itemCount: candidates.length,
-                    separatorBuilder: (_, _) =>
-                        const SizedBox(height: Spacing.xs),
+                    separatorBuilder: (_, _) => Divider(
+                      height: 1,
+                      color: c.border.withValues(alpha: 0.7),
+                    ),
                     itemBuilder: (context, index) {
                       final candidate = candidates[index];
                       final id = candidate['id']?.toString() ?? '';
@@ -1241,7 +1292,7 @@ class _CandidatePanel extends StatelessWidget {
                     },
                   ),
           ),
-          const SizedBox(height: Spacing.sm),
+          const SizedBox(height: Spacing.xs),
           Row(
             children: [
               Expanded(
@@ -1344,83 +1395,103 @@ class _CandidateRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
-    return CsCard(
-      tier: selected ? CsCardTier.selected : CsCardTier.defaultTier,
-      selectedAccent: selected,
-      onTap: onTap,
-      padding: const EdgeInsets.all(Spacing.xs),
-      child: Row(
-        children: [
-          _CandidateCover(load: onLoadCover, excluded: excluded),
-          const SizedBox(width: Spacing.sm),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  '${index + 1}. ${_formatMs(_candidateTime(candidate))}',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: excluded ? c.textTertiary : c.textPrimary,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(CsRadius.sm),
+          child: AnimatedContainer(
+            duration: DurationD.fast,
+            padding: const EdgeInsets.symmetric(
+              horizontal: Spacing.xs,
+              vertical: 6,
             ),
-          ),
-          SizedBox(
-            width: 104,
+            decoration: BoxDecoration(
+              color: selected ? c.indigo.withValues(alpha: 0.10) : null,
+              borderRadius: BorderRadius.circular(CsRadius.sm),
+              border: selected
+                  ? Border.all(color: c.indigo.withValues(alpha: 0.45))
+                  : null,
+            ),
             child: Row(
               children: [
+                _CandidateCover(load: onLoadCover, excluded: excluded),
+                const SizedBox(width: Spacing.sm),
                 Expanded(
-                  child: IconButton(
-                    tooltip: '保留片段',
-                    onPressed: busy ? null : onInclude,
-                    icon: Icon(
-                      Icons.check_circle,
-                      size: 25,
-                      color: excluded ? c.textTertiary : c.goal,
-                    ),
-                    constraints: const BoxConstraints.tightFor(
-                      width: 48,
-                      height: 48,
-                    ),
-                    padding: EdgeInsets.zero,
-                    style: IconButton.styleFrom(
-                      backgroundColor: excluded
-                          ? c.surface3
-                          : c.goal.withValues(alpha: 0.12),
-                      foregroundColor: excluded ? c.textTertiary : c.goal,
+                  child: Text(
+                    '${index + 1}. ${_formatMs(_candidateTime(candidate))}',
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: excluded ? c.textTertiary : c.textPrimary,
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
                 ),
-                const SizedBox(width: Spacing.xs),
-                Expanded(
-                  child: IconButton(
-                    tooltip: '排除片段',
-                    onPressed: busy ? null : onExclude,
-                    icon: Icon(
-                      Icons.cancel_outlined,
-                      size: 25,
-                      color: excluded ? c.error : c.textTertiary,
-                    ),
-                    constraints: const BoxConstraints.tightFor(
-                      width: 48,
-                      height: 48,
-                    ),
-                    padding: EdgeInsets.zero,
-                    style: IconButton.styleFrom(
-                      backgroundColor: excluded
-                          ? c.error.withValues(alpha: 0.12)
-                          : c.surface3,
-                      foregroundColor: excluded ? c.error : c.textTertiary,
-                    ),
+                SizedBox(
+                  width: 112,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: IconButton(
+                          tooltip: '保留片段',
+                          onPressed: busy ? null : onInclude,
+                          icon: Icon(
+                            Icons.check_circle,
+                            size: 25,
+                            color: excluded ? c.textTertiary : c.goal,
+                          ),
+                          constraints: const BoxConstraints.tightFor(
+                            width: 52,
+                            height: 44,
+                          ),
+                          padding: EdgeInsets.zero,
+                          style: IconButton.styleFrom(
+                            backgroundColor: excluded
+                                ? c.surface3
+                                : c.goal.withValues(alpha: 0.12),
+                            foregroundColor: excluded ? c.textTertiary : c.goal,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(CsRadius.sm),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: Spacing.xs),
+                      Expanded(
+                        child: IconButton(
+                          tooltip: '排除片段',
+                          onPressed: busy ? null : onExclude,
+                          icon: Icon(
+                            Icons.cancel_outlined,
+                            size: 25,
+                            color: excluded ? c.error : c.textTertiary,
+                          ),
+                          constraints: const BoxConstraints.tightFor(
+                            width: 52,
+                            height: 44,
+                          ),
+                          padding: EdgeInsets.zero,
+                          style: IconButton.styleFrom(
+                            backgroundColor: excluded
+                                ? c.error.withValues(alpha: 0.12)
+                                : c.surface3,
+                            foregroundColor: excluded
+                                ? c.error
+                                : c.textTertiary,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(CsRadius.sm),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
