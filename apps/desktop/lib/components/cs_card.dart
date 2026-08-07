@@ -72,16 +72,12 @@ class _CardBoxState extends State<_CardBox> {
             borderRadius: BorderRadius.circular(CsRadius.lg),
             border: Border.all(color: widget.border),
           ),
-          child: IntrinsicWidth(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (widget.accent != null)
-                  Container(width: 3, color: widget.accent),
-                Flexible(child: widget.child),
-              ],
-            ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (widget.accent != null) Container(width: 3, color: widget.accent),
+              Expanded(child: widget.child),
+            ],
           ),
         ),
       ),

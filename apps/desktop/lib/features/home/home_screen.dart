@@ -19,7 +19,9 @@ import '../../theme/tokens.dart';
 /// 所有数据来自 [projectProvider];导航用 `context.go`,打开项目走
 /// `ProjectNotifier.chooseOpenProject` / `openProject`(目录选择器在 notifier 内)。
 class HomeScreen extends ConsumerWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({this.onProjectOpened, super.key});
+
+  final VoidCallback? onProjectOpened;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -36,6 +38,20 @@ class HomeScreen extends ConsumerWidget {
         .length;
     final durationMs = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
     final busy = state.busy;
+
+    Future<void> openProject() async {
+      await notifier.chooseOpenProject();
+      if (ref.read(projectProvider).videoPath != null) {
+        onProjectOpened?.call();
+      }
+    }
+
+    Future<void> openRecentProject(String root) async {
+      await notifier.openProject(root);
+      if (ref.read(projectProvider).videoPath != null) {
+        onProjectOpened?.call();
+      }
+    }
 
     final steps = <CsStep>[
       (
@@ -84,7 +100,9 @@ class HomeScreen extends ConsumerWidget {
               Text(
                 '导入固定机位视频，本地分析候选进球，审核后导出集锦。'
                 '所有处理在本机完成，原始视频不会被复制或上传。',
-                style: theme.textTheme.bodyLarge?.copyWith(color: c.textSecondary),
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  color: c.textSecondary,
+                ),
               ),
               const SizedBox(height: Spacing.xxl),
 
@@ -99,7 +117,11 @@ class HomeScreen extends ConsumerWidget {
                       children: [
                         Row(
                           children: [
-                            Icon(LucideIcons.sparkles, size: 20, color: c.indigo),
+                            Icon(
+                              LucideIcons.sparkles,
+                              size: 20,
+                              color: c.indigo,
+                            ),
                             const SizedBox(width: Spacing.sm),
                             Text('从视频开始', style: theme.textTheme.titleLarge),
                           ],
@@ -128,9 +150,7 @@ class HomeScreen extends ConsumerWidget {
                               label: const Text('打开项目'),
                               icon: LucideIcons.folderOpen,
                               variant: CsButtonVariant.secondary,
-                              onPressed: busy
-                                  ? null
-                                  : () => notifier.chooseOpenProject(),
+                              onPressed: busy ? null : openProject,
                             ),
                           ],
                         ),
@@ -210,7 +230,7 @@ class HomeScreen extends ConsumerWidget {
               _RecentProjects(
                 state: state,
                 busy: busy,
-                onOpen: (root) => notifier.openProject(root),
+                onOpen: openRecentProject,
                 onCreate: () => context.go('/import'),
               ),
               const SizedBox(height: Spacing.xxl),
@@ -291,7 +311,7 @@ class _RecentGrid extends StatelessWidget {
             }
           }
           rows.add(
-            Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: cells),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: cells),
           );
           if (i + cols < projects.length) {
             rows.add(const SizedBox(height: Spacing.md));
@@ -352,7 +372,9 @@ class _ProjectCard extends StatelessWidget {
           if (videoName != null)
             Text(
               videoName,
-              style: theme.textTheme.bodySmall?.copyWith(color: c.textSecondary),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: c.textSecondary,
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),

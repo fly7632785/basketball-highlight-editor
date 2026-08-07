@@ -7,7 +7,7 @@ void main() {
     await tester.pumpWidget(
       const BasketballHighlightApp(enableStartupProjectScan: false),
     );
-    expect(find.text('篮球集锦编辑器'), findsOneWidget);
-    expect(find.text('新建项目'), findsOneWidget);
+    expect(find.text('把整场比赛，变成你的高光。'), findsOneWidget);
+    expect(find.text('新建项目'), findsWidgets);
   });
 }

@@ -61,9 +61,14 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final next = current >= 0 && current + 1 < visible.length
         ? visible[current + 1].key
         : null;
+    final previous = current > 0 ? visible[current - 1].key : null;
     await ref.read(projectProvider.notifier).reviewCandidate(id, status);
-    if (!mounted || next == null) return;
-    setState(() => _selectedIndex = next);
+    if (!mounted) return;
+    if (next != null) {
+      setState(() => _selectedIndex = next);
+    } else if (_statusFilter == 'pending' && previous != null) {
+      setState(() => _selectedIndex = previous);
+    }
   }
 
   Future<void> _confirmReanalyze(BuildContext context) async {
@@ -101,10 +106,13 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
 
     final candidates = state.candidates;
     final visible = _visibleEntries(candidates);
-    final selectedCandidate =
-        (candidates.isEmpty || _selectedIndex >= candidates.length)
-        ? null
-        : candidates[_selectedIndex];
+    Map<String, dynamic>? selectedCandidate;
+    for (final entry in visible) {
+      if (entry.key == _selectedIndex) {
+        selectedCandidate = entry.value;
+        break;
+      }
+    }
 
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
@@ -202,6 +210,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       onUndo: notifier.undoReview,
                       onUpdateRange: (id, start, end) =>
                           notifier.updateClipRange(id, start, end),
+                      onReanalyze: !analyzing && !state.busy
+                          ? () => _confirmReanalyze(context)
+                          : null,
                       onExport: () => context.go('/export'),
                       analyzing: analyzing,
                     );
@@ -827,6 +838,7 @@ class _QueuePanel extends StatelessWidget {
     required this.onUpdateNote,
     required this.onUndo,
     required this.onUpdateRange,
+    required this.onReanalyze,
     required this.onExport,
     required this.analyzing,
   });
@@ -842,6 +854,7 @@ class _QueuePanel extends StatelessWidget {
   final Future<void> Function(String, String) onUpdateNote;
   final Future<void> Function() onUndo;
   final Future<void> Function(String, int, int) onUpdateRange;
+  final VoidCallback? onReanalyze;
   final VoidCallback onExport;
   final bool analyzing;
 
@@ -940,6 +953,19 @@ class _QueuePanel extends StatelessWidget {
               onPressed: hasGoal ? onExport : null,
             ),
           ),
+          if (onReanalyze != null && candidates.isNotEmpty) ...[
+            const SizedBox(height: Spacing.xs),
+            SizedBox(
+              width: double.infinity,
+              child: CsButton(
+                label: const Text('重新分析当前视频'),
+                icon: LucideIcons.rotateCcw,
+                variant: CsButtonVariant.ghost,
+                size: CsButtonSize.sm,
+                onPressed: onReanalyze,
+              ),
+            ),
+          ],
         ],
       ),
     );

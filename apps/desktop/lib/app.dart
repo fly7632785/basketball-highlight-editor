@@ -21,3 +21,15 @@ class CourtsideApp extends ConsumerWidget {
     );
   }
 }
+
+/// 兼容旧启动入口，避免旧的桌面测试和外部启动脚本在 UI 路由迁移期间失效。
+class BasketballHighlightApp extends StatelessWidget {
+  const BasketballHighlightApp({this.enableStartupProjectScan = true, super.key});
+
+  final bool enableStartupProjectScan;
+
+  @override
+  Widget build(BuildContext context) {
+    return const ProviderScope(child: CourtsideApp());
+  }
+}

@@ -16,24 +16,34 @@ class CsNoticeOverlay extends ConsumerWidget {
       children: [
         child,
         Positioned(
-          bottom: Spacing.lg,
-          right: Spacing.lg,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: notices
-                .map(
-                  (m) => Padding(
-                    padding: const EdgeInsets.only(bottom: Spacing.sm),
-                    child: CsNotice(
-                      key: ValueKey(m.id),
-                      message: m,
-                      onDismiss: () =>
-                          ref.read(noticeProvider.notifier).dismiss(m.id),
-                    ),
-                  ),
-                )
-                .toList(),
+          top: Spacing.lg,
+          left: Spacing.md,
+          right: Spacing.md,
+          child: Align(
+            alignment: Alignment.topRight,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 320),
+              child: SizedBox(
+                width: double.infinity,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: notices
+                      .map(
+                        (m) => Padding(
+                          padding: const EdgeInsets.only(bottom: Spacing.sm),
+                          child: CsNotice(
+                            key: ValueKey(m.id),
+                            message: m,
+                            onDismiss: () =>
+                                ref.read(noticeProvider.notifier).dismiss(m.id),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            ),
           ),
         ),
       ],

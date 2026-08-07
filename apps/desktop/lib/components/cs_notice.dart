@@ -22,16 +22,14 @@ class _CsNoticeState extends State<CsNotice>
 
   Duration get _effectiveDuration =>
       widget.message.severity == NoticeSeverity.error
-          ? const Duration(seconds: 6)
-          : widget.message.duration;
+      ? const Duration(seconds: 6)
+      : widget.message.duration;
 
   @override
   void initState() {
     super.initState();
-    _anim = AnimationController(
-      vsync: this,
-      duration: DurationD.normal,
-    )..forward();
+    _anim = AnimationController(vsync: this, duration: DurationD.normal)
+      ..forward();
     _startTimer();
   }
 
@@ -69,7 +67,7 @@ class _CsNoticeState extends State<CsNotice>
           child: Material(
             color: Colors.transparent,
             child: Container(
-              width: 360,
+              width: double.infinity,
               padding: const EdgeInsets.all(Spacing.md),
               decoration: BoxDecoration(
                 color: c.surface,
