@@ -25,6 +25,28 @@ void main() {
     },
   );
 
+  testWidgets('does not show a stale analysis job as still running', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {
+          'state': 'running',
+          'stage': 'prepare_proxy',
+          'progress': 0,
+          'runtime_state': 'stale',
+          'recovery_state': 'stale_recoverable',
+          'recoverable': true,
+        },
+      ),
+    );
+
+    expect(find.text('正在分析视频'), findsNothing);
+    expect(find.textContaining('上次分析没有完成'), findsOneWidget);
+    expect(find.text('重试分析'), findsOneWidget);
+  });
+
   testWidgets('uses a scrollable workbench on a narrow window', (tester) async {
     tester.view.physicalSize = const Size(612, 927);
     tester.view.devicePixelRatio = 1;

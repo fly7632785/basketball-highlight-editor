@@ -260,7 +260,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       ),
     );
     if (confirmed == true) {
-      await ref.read(projectProvider.notifier).startAnalysis();
+      final job = ref.read(projectProvider).job;
+      if (job?['recoverable'] == true) {
+        await ref.read(projectProvider.notifier).retryAnalysis();
+      } else {
+        await ref.read(projectProvider.notifier).startAnalysis();
+      }
     }
   }
 
@@ -272,7 +277,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final jobState = job?['state']?.toString() ?? '';
     final progress = (job?['progress'] as num?)?.toDouble() ?? 0;
     final stage = job?['stage']?.toString() ?? '';
-    final analyzing = jobState == 'queued' || jobState == 'running';
+    // get_active_jobs 会给进程重启后的任务附加 recovery_state。没有实际
+    // worker 的 stale/queued 任务不能继续显示为“正在分析”。
+    final recoveryState = job?['recovery_state']?.toString();
+    final analyzing =
+        (jobState == 'queued' || jobState == 'running') &&
+        (recoveryState == null || recoveryState == 'worker_attached');
     final queueBusy = state.busy || _batchBusy;
     final playbackPath = _resolvePlaybackPath(state, analyzing: analyzing);
 
