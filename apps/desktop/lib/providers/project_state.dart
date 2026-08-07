@@ -21,7 +21,7 @@ final Provider<ProjectSession> projectSessionProvider =
 /// 可观察字段(_themeMode/_section/_engineReady/_error 不在此处):
 /// - _video/_videoPath/_reviewVideoPath/_previewPath
 /// - _suggestedRoi/_roiSource/_roiConfidence/_roiSuggestionError
-/// - _job/_exportJob/_candidates/_recentProjects/_exportHistory
+/// - _job/_exportJob/_statistics/_candidates/_recentProjects/_exportHistory
 /// - _busy/_recentProjectsLoading/_recentProjectsError/_knownProjectsRoot
 class ProjectState {
   const ProjectState({
@@ -33,8 +33,10 @@ class ProjectState {
     this.roiSource,
     this.roiConfidence,
     this.roiSuggestionError,
+    this.roiDetecting = false,
     this.job,
     this.exportJob,
+    this.statistics,
     this.candidates = const <JsonMap>[],
     this.recentProjects = const <JsonMap>[],
     this.exportHistory = const <JsonMap>[],
@@ -52,8 +54,10 @@ class ProjectState {
   final String? roiSource;
   final double? roiConfidence;
   final String? roiSuggestionError;
+  final bool roiDetecting;
   final JsonMap? job;
   final JsonMap? exportJob;
+  final JsonMap? statistics;
   final List<JsonMap> candidates;
   final List<JsonMap> recentProjects;
   final List<JsonMap> exportHistory;
@@ -73,8 +77,10 @@ class ProjectState {
     Object? roiSource = _unset,
     Object? roiConfidence = _unset,
     Object? roiSuggestionError = _unset,
+    bool? roiDetecting,
     Object? job = _unset,
     Object? exportJob = _unset,
+    Object? statistics = _unset,
     Object? recentError = _unset,
     Object? knownProjectsRoot = _unset,
     List<JsonMap>? candidates,
@@ -106,10 +112,14 @@ class ProjectState {
       roiSuggestionError: identical(roiSuggestionError, _unset)
           ? this.roiSuggestionError
           : roiSuggestionError as String?,
+      roiDetecting: roiDetecting ?? this.roiDetecting,
       job: identical(job, _unset) ? this.job : job as JsonMap?,
       exportJob: identical(exportJob, _unset)
           ? this.exportJob
           : exportJob as JsonMap?,
+      statistics: identical(statistics, _unset)
+          ? this.statistics
+          : statistics as JsonMap?,
       candidates: candidates ?? this.candidates,
       recentProjects: recentProjects ?? this.recentProjects,
       exportHistory: exportHistory ?? this.exportHistory,
@@ -132,11 +142,13 @@ class _ReviewSnapshot {
   const _ReviewSnapshot({
     required this.candidateId,
     required this.status,
+    required this.reason,
     required this.note,
   });
 
   final String candidateId;
   final String status;
+  final String? reason;
   final String? note;
 }
 
@@ -153,6 +165,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
   ProjectState build() => const ProjectState();
 
   final List<_ReviewSnapshot> _reviewHistory = <_ReviewSnapshot>[];
+  final Set<String> _startedReviewCandidateIds = <String>{};
   final Set<String> _pollingJobIds = <String>{};
   int _projectLoadGeneration = 0;
   int _noticeCounter = 0;
@@ -178,6 +191,24 @@ class ProjectNotifier extends Notifier<ProjectState> {
       final preview = await session.extractPreview(
         timeMs: duration > 1000 ? 1000 : duration,
       );
+      final linkedVideo = (linked['video'] as Map?)?.cast<String, dynamic>();
+      state = state.copyWith(
+        knownProjectsRoot: knownRoot,
+        videoPath: path,
+        reviewVideoPath: null,
+        previewPath: preview['path']?.toString(),
+        suggestedRoi: null,
+        roiSource: null,
+        roiConfidence: null,
+        roiSuggestionError: null,
+        roiDetecting: true,
+        video: linkedVideo,
+        job: null,
+        exportJob: null,
+        statistics: null,
+        candidates: const <JsonMap>[],
+        exportHistory: const <JsonMap>[],
+      );
       Rect? suggestedRoi;
       String? roiSource;
       double? roiConfidence;
@@ -190,7 +221,6 @@ class ProjectNotifier extends Notifier<ProjectState> {
           confidence: 0.05,
         );
         final roi = (suggestion['roi'] as Map?)?.cast<String, dynamic>();
-        final linkedVideo = (linked['video'] as Map?)?.cast<String, dynamic>();
         if (roi != null && linkedVideo != null) {
           suggestedRoi = _normalizeRoi(roi, linkedVideo);
           final calibration = (suggestion['calibration'] as Map?)
@@ -210,28 +240,66 @@ class ProjectNotifier extends Notifier<ProjectState> {
         roiSuggestionError = error.toString();
       }
       state = state.copyWith(
-        knownProjectsRoot: knownRoot,
-        videoPath: path,
-        reviewVideoPath: null,
-        previewPath: preview['path']?.toString(),
         suggestedRoi: suggestedRoi,
         roiSource: roiSource,
         roiConfidence: roiConfidence,
         roiSuggestionError: roiSuggestionError,
-        video: (linked['video'] as Map?)?.cast<String, dynamic>(),
-        job: null,
-        exportJob: null,
-        candidates: <JsonMap>[],
-        exportHistory: <JsonMap>[],
+        roiDetecting: false,
       );
       _reviewHistory.clear();
+      _startedReviewCandidateIds.clear();
     }, successMessage: '视频已加载，已优先尝试自动识别篮筐区域');
   }
 
+  Future<void> refreshPreview() async {
+    final video = state.video;
+    if (video == null) return;
+    await _runBusy(() async {
+      final duration = (video['duration_ms'] as num?)?.toInt() ?? 1000;
+      final preview = await ref
+          .read(projectSessionProvider)
+          .extractPreview(timeMs: duration > 1000 ? 1000 : duration);
+      state = state.copyWith(previewPath: preview['path']?.toString());
+    }, successMessage: '视频预览已刷新');
+  }
+
   /// 等价 app.dart:_chooseOpenProject(297)。
-  Future<void> chooseOpenProject() async {
+  Future<bool> chooseOpenProject() async {
     final root = await getDirectoryPath(confirmButtonText: '打开项目');
-    if (root != null) await openProject(root);
+    if (root == null) return false;
+    await openProject(root);
+    return ref.read(projectSessionProvider).projectRoot == root;
+  }
+
+  Future<void> deleteProject(String root) async {
+    final session = ref.read(projectSessionProvider);
+    final wasCurrentProject = session.projectRoot == root;
+    await _runBusy(() async {
+      await session.deleteProject(root);
+      final remaining = state.recentProjects
+          .where((project) => project['project_root']?.toString() != root)
+          .toList();
+      if (wasCurrentProject) {
+        state = ProjectState(
+          recentProjects: remaining,
+          knownProjectsRoot: Directory(root).parent.path,
+        );
+      } else {
+        state = state.copyWith(recentProjects: remaining);
+      }
+    }, successMessage: '项目已删除（原始视频未删除）');
+  }
+
+  /// 关闭当前项目但不删除磁盘上的项目数据和原始视频。
+  void closeProject() {
+    _projectLoadGeneration++;
+    _reviewHistory.clear();
+    _startedReviewCandidateIds.clear();
+    ref.read(projectSessionProvider).reset();
+    state = ProjectState(
+      recentProjects: state.recentProjects,
+      knownProjectsRoot: state.knownProjectsRoot,
+    );
   }
 
   /// 等价 app.dart:_openProject(302)。
@@ -247,8 +315,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
         roiSource: null,
         roiConfidence: null,
         roiSuggestionError: null,
+        roiDetecting: false,
         job: null,
         exportJob: null,
+        statistics: null,
         candidates: const <JsonMap>[],
         exportHistory: const <JsonMap>[],
       );
@@ -305,6 +375,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         exportHistory: const <JsonMap>[],
       );
       _reviewHistory.clear();
+      _startedReviewCandidateIds.clear();
       if (sourceMissing) {
         _pushNotice('原始视频已移动，请重新定位后再开始分析或导出。', NoticeSeverity.error);
       } else if (video != null && payload['video'] != null) {
@@ -321,40 +392,48 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   Future<void> _hydrateOpenedProject(JsonMap video, int generation) async {
+    final session = ref.read(projectSessionProvider);
+    final duration = (video['duration_ms'] as num?)?.toInt() ?? 1000;
     try {
-      final duration = (video['duration_ms'] as num?)?.toInt() ?? 1000;
+      final preview = await session.extractPreview(
+        timeMs: duration > 1000 ? 1000 : duration,
+      );
+      if (generation == _projectLoadGeneration) {
+        state = state.copyWith(previewPath: preview['path']?.toString());
+      }
+    } catch (error) {
+      _pushNotice('视频预览加载失败：$error', NoticeSeverity.error);
+    }
+
+    try {
       final results = await Future.wait<Object?>([
-        ref
-            .read(projectSessionProvider)
-            .extractPreview(timeMs: duration > 1000 ? 1000 : duration),
-        ref.read(projectSessionProvider).listCandidates(),
-        ref.read(projectSessionProvider).listExports(limit: 5),
-        ref.read(projectSessionProvider).getActiveJobs(),
-        ref.read(projectSessionProvider).getActiveExportJobs(),
+        session.listCandidates(),
+        session.listExports(limit: 5),
+        session.getActiveJobs(),
+        session.getActiveExportJobs(),
       ]);
-      final preview = results[0] as JsonMap;
-      final candidatePayload = results[1] as JsonMap;
+      final candidatePayload = results[0] as JsonMap;
       final candidates =
           ((candidatePayload['candidates'] as List?) ?? const <dynamic>[])
               .whereType<Map>()
               .map((item) => item.cast<String, dynamic>())
               .toList();
       final reviewPath = candidatePayload['review_video_path']?.toString();
-      final analysisJobs = results[3] as List<JsonMap>;
-      final exportJobs = results[4] as List<JsonMap>;
+      final analysisJobs = results[2] as List<JsonMap>;
+      final exportJobs = results[3] as List<JsonMap>;
       final analysisJob = analysisJobs.isEmpty ? null : analysisJobs.last;
       final exportJob = exportJobs.isEmpty ? null : exportJobs.last;
       if (generation != _projectLoadGeneration) return;
       state = state.copyWith(
-        previewPath: preview['path']?.toString(),
         reviewVideoPath: reviewPath == null || reviewPath.isEmpty
             ? null
             : reviewPath,
         candidates: candidates,
-        exportHistory: results[2] as List<JsonMap>,
+        exportHistory: results[1] as List<JsonMap>,
         job: analysisJob,
         exportJob: exportJob,
       );
+      unawaited(refreshStatistics());
       final analysisId = analysisJob?['id'];
       if (analysisJob?['recovery_state'] == 'worker_attached' &&
           analysisId is String) {
@@ -436,7 +515,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
         job: (result['job'] as Map?)?.cast<String, dynamic>(),
         candidates: const <JsonMap>[],
         reviewVideoPath: null,
+        statistics: null,
       );
+      _startedReviewCandidateIds.clear();
       _pushNotice('分析已开始，候选会在处理过程中陆续更新', NoticeSeverity.success);
       final jobId = state.job?['id'];
       if (jobId is! String) return;
@@ -447,10 +528,12 @@ class ProjectNotifier extends Notifier<ProjectState> {
   /// 等价 app.dart:_pollJob(476)。Stream 监听逻辑原样迁移。
   Future<void> pollJob(String jobId) async {
     if (!_pollingJobIds.add(jobId)) return;
+    final projectGeneration = _projectLoadGeneration;
     try {
       var refreshed = false;
       await for (final payload
           in ref.read(projectSessionProvider).pollJob(jobId: jobId)) {
+        if (projectGeneration != _projectLoadGeneration) break;
         final nextJob = (payload['job'] as Map?)?.cast<String, dynamic>();
         final previousState = state.job?['state']?.toString();
         state = state.copyWith(job: nextJob);
@@ -461,6 +544,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
             nextState == 'cancelled';
         if (terminal && !refreshed) {
           await refreshCandidates();
+          await refreshStatistics();
           refreshed = true;
         }
         if (nextState != previousState) {
@@ -476,7 +560,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
           }
         }
       }
-      if (!refreshed) await refreshCandidates();
+      if (!refreshed) {
+        await refreshCandidates();
+        await refreshStatistics();
+      }
       await refreshExportHistory();
     } catch (error) {
       _pushNotice(error.toString(), NoticeSeverity.error);
@@ -512,7 +599,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
           );
       state = state.copyWith(
         job: (result['job'] as Map?)?.cast<String, dynamic>(),
+        statistics: null,
       );
+      _startedReviewCandidateIds.clear();
       _pushNotice('已重新开始分析', NoticeSeverity.success);
       final newJobId = state.job?['id'];
       if (newJobId is String) unawaited(pollJob(newJobId));
@@ -552,27 +641,68 @@ class ProjectNotifier extends Notifier<ProjectState> {
     );
   }
 
-  /// 等价 app.dart:_reviewCandidate(567)。
-  Future<void> reviewCandidate(String id, String status) async {
-    await _runBusy(() async {
-      final previous = state.candidates.cast<JsonMap?>().firstWhere(
-        (item) => item?['id']?.toString() == id,
-        orElse: () => null,
+  Future<void> refreshStatistics() async {
+    try {
+      final payload = await ref.read(projectSessionProvider).getStatistics();
+      final raw = payload['statistics'];
+      state = state.copyWith(
+        statistics: raw is Map
+            ? Map<String, dynamic>.from(raw)
+            : const <String, dynamic>{},
       );
-      if (previous != null) {
-        _reviewHistory.add(
-          _ReviewSnapshot(
-            candidateId: id,
-            status: previous['review_status']?.toString() ?? 'pending',
-            note: previous['note']?.toString(),
-          ),
+    } catch (_) {
+      // 统计是辅助展示，旧版 Engine 不支持时不阻塞审核流程。
+    }
+  }
+
+  Future<void> startReview(String id) async {
+    if (id.isEmpty || !_startedReviewCandidateIds.add(id)) return;
+    try {
+      await ref.read(projectSessionProvider).startReview(id);
+    } catch (error) {
+      _startedReviewCandidateIds.remove(id);
+      _pushNotice('开始记录审核耗时失败：$error', NoticeSeverity.error);
+    }
+  }
+
+  /// 等价 app.dart:_reviewCandidate(567)。
+  Future<bool> reviewCandidate(
+    String id,
+    String status, {
+    String? reason,
+  }) async {
+    var succeeded = false;
+    await _runBusy(
+      () async {
+        final previous = state.candidates.cast<JsonMap?>().firstWhere(
+          (item) => item?['id']?.toString() == id,
+          orElse: () => null,
         );
-      }
-      await ref
-          .read(projectSessionProvider)
-          .reviewCandidate(id, status: status);
-      await refreshCandidates();
-    }, successMessage: status == 'goal' ? '已确认进球' : '已排除候选');
+        final snapshot = previous == null
+            ? null
+            : _ReviewSnapshot(
+                candidateId: id,
+                status: previous['review_status']?.toString() ?? 'pending',
+                reason: previous['review_reason']?.toString(),
+                note: previous['note']?.toString(),
+              );
+        await ref
+            .read(projectSessionProvider)
+            .reviewCandidate(id, status: status, reason: reason);
+        await refreshCandidates();
+        if (snapshot != null) _reviewHistory.add(snapshot);
+        unawaited(refreshStatistics());
+        succeeded = true;
+      },
+      successMessage: switch (status) {
+        'goal' => '已确认进球',
+        'deferred' => '已暂缓审核',
+        'second_review' => '已标记二次复核',
+        'pending' => '已恢复待审核',
+        _ => '已排除候选',
+      },
+    );
+    return succeeded;
   }
 
   /// 等价 app.dart:_updateCandidateNote(587)。
@@ -583,27 +713,42 @@ class ProjectNotifier extends Notifier<ProjectState> {
         orElse: () => null,
       );
       final status = candidate?['review_status']?.toString() ?? 'pending';
+      final reason = candidate?['review_reason']?.toString();
       await ref
           .read(projectSessionProvider)
-          .reviewCandidate(id, status: status, note: note);
+          .reviewCandidate(id, status: status, reason: reason, note: note);
       await refreshCandidates();
     }, successMessage: '备注已保存');
+  }
+
+  Future<List<JsonMap>> loadReviewHistory(String id) async {
+    final payload = await ref
+        .read(projectSessionProvider)
+        .listReviewHistory(id);
+    return ((payload['history'] as List?) ?? const <dynamic>[])
+        .whereType<Map>()
+        .map((item) => item.cast<String, dynamic>())
+        .toList();
   }
 
   /// 等价 app.dart:_undoReview(599)。
   Future<void> undoReview() async {
     if (_reviewHistory.isEmpty) return;
-    final snapshot = _reviewHistory.removeLast();
+    final snapshot = _reviewHistory.last;
+    var succeeded = false;
     await _runBusy(() async {
       await ref
           .read(projectSessionProvider)
           .reviewCandidate(
             snapshot.candidateId,
             status: snapshot.status,
+            reason: snapshot.reason,
             note: snapshot.note,
           );
       await refreshCandidates();
+      succeeded = true;
     }, successMessage: '已撤销上一次审核');
+    if (succeeded) _reviewHistory.removeLast();
   }
 
   /// 等价 app.dart:_updateClipRange(612)。
@@ -650,6 +795,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         );
       }
       await refreshExportHistory();
+      await refreshStatistics();
       final jobState = state.exportJob?['state']?.toString();
       if (jobState == 'completed') {
         _pushNotice('导出完成', NoticeSeverity.success);

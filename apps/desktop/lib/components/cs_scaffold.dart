@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../providers/session_provider.dart';
+import '../providers/project_state.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
@@ -102,6 +103,12 @@ class CsTopBar extends ConsumerWidget {
           const SizedBox(width: Spacing.md),
           _EngineStatusChip(async: engineAsync),
           const Spacer(),
+          if (shell.currentIndex != 0)
+            IconButton(
+              tooltip: '关闭当前项目',
+              icon: Icon(LucideIcons.folderX, size: 17, color: c.textSecondary),
+              onPressed: () => _confirmCloseProject(context, ref, shell),
+            ),
           if (!compact) ...<Widget>[
             Icon(LucideIcons.shield, size: 12, color: c.textSecondary),
             const SizedBox(width: Spacing.xs),
@@ -145,6 +152,49 @@ class CsTopBar extends ConsumerWidget {
         return ThemeMode.system;
     }
   }
+}
+
+Future<void> _confirmCloseProject(
+  BuildContext context,
+  WidgetRef ref,
+  StatefulNavigationShell shell,
+) async {
+  final state = ref.read(projectProvider);
+  final session = ref.read(projectSessionProvider);
+  if (session.projectRoot == null && state.video == null) {
+    shell.goBranch(0);
+    return;
+  }
+
+  final analyzing =
+      state.job?['state'] == 'queued' || state.job?['state'] == 'running';
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(analyzing ? '分析仍在进行' : '关闭当前项目？'),
+      content: Text(
+        analyzing
+            ? '关闭项目会先取消当前分析，项目数据和原始视频不会被删除。'
+            : '项目数据和原始视频会保留，下次可以从项目列表重新打开。',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('返回'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: Text(analyzing ? '取消分析并关闭' : '关闭项目'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+  if (analyzing) {
+    await ref.read(projectProvider.notifier).cancelAnalysis();
+  }
+  ref.read(projectProvider.notifier).closeProject();
+  shell.goBranch(0);
 }
 
 class _EngineStatusChip extends StatelessWidget {
