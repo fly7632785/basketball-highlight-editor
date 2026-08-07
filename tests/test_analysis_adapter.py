@@ -1,0 +1,160 @@
+from pathlib import Path
+import json
+import sys
+import time
+
+import pytest
+
+from engine.python.basketball_engine.adapters.analysis import (
+    PipelineCancelled,
+    build_pipeline_commands,
+    candidate_to_row,
+    flatten_refined_matches,
+    scale_roi_to_proxy,
+    run_pipeline,
+)
+
+
+def test_scale_roi_to_proxy_preserves_relative_coordinates():
+    assert scale_roi_to_proxy({"x1": 100, "y1": 200, "x2": 500, "y2": 800}, 1920, 960) == [50, 100, 250, 400]
+
+
+def test_flatten_refined_matches_deduplicates_by_event_time():
+    data = {
+        "results": [
+            {"refined": [{"time": 10.0, "score": 0.4}, {"time": 20.0, "score": 0.5}]},
+            {"refined": [{"time": 10.8, "score": 0.8}]},
+        ]
+    }
+    matches = flatten_refined_matches(data, dedupe_seconds=2.0)
+    assert [match["time"] for match in matches] == [10.8, 20.0]
+
+
+def test_pipeline_commands_use_existing_scripts(tmp_path: Path):
+    commands = build_pipeline_commands(
+        repo_root=tmp_path,
+        source_video=Path("source.mp4"),
+        proxy_video=Path("proxy.mp4"),
+        model_path=Path("model.pt"),
+        coarse_detections=Path("coarse.json"),
+        coarse_candidates=Path("candidates.json"),
+        refined_output=Path("refined.json"),
+        proxy_roi=[10, 20, 100, 200],
+        source_roi=[20, 40, 200, 400],
+        cache_dir=Path("cache"),
+    )
+    assert commands[0][1].endswith("create_proxy.py")
+    assert commands[1][1].endswith("scan_video.py")
+    assert commands[2][1].endswith("generate_candidates.py")
+    assert commands[3][1].endswith("refine_dynamic_candidates.py")
+
+
+def test_pipeline_commands_normalize_float_roi_arguments(tmp_path: Path):
+    commands = build_pipeline_commands(
+        repo_root=tmp_path,
+        source_video=Path("source.mp4"),
+        proxy_video=Path("proxy.mp4"),
+        model_path=Path("model.pt"),
+        coarse_detections=Path("coarse.json"),
+        coarse_candidates=Path("candidates.json"),
+        refined_output=Path("refined.json"),
+        proxy_roi=[10.0, 20.0, 100.0, 200.0],
+        source_roi=[20.0, 40.0, 200.0, 400.0],
+        cache_dir=Path("cache"),
+    )
+    assert commands[3][commands[3].index("--roi") + 1:commands[3].index("--proxy-scale")] == ["20", "40", "200", "400"]
+
+
+def test_candidate_to_row_creates_reviewable_clip_window():
+    row = candidate_to_row(
+        {"time": 12.5, "score": 0.82, "confidence": "high", "gates": {"review": True}},
+        video_id="video-1",
+        roi_id="roi-1",
+        duration_ms=30_000,
+        before_seconds=6,
+        after_seconds=3,
+        detector_version="python-v1",
+    )
+    assert row["event_time_ms"] == 12_500
+    assert row["review_start_ms"] == 6_500
+    assert row["review_end_ms"] == 15_500
+    assert row["video_id"] == "video-1"
+
+
+def test_run_pipeline_executes_commands_and_reads_refined_output(tmp_path: Path):
+    refined = tmp_path / "refined.json"
+    script = "from pathlib import Path; Path({!r}).write_text({!r}, encoding='utf-8')".format(
+        str(refined), json.dumps({"results": []})
+    )
+    stages = []
+    result = run_pipeline([[sys.executable, "-c", script]], refined, lambda stage, _: stages.append(stage))
+    assert result["refined"] == {"results": []}
+    assert stages == ["prepare_proxy", "persist_candidates"]
+
+
+def test_run_pipeline_honors_cancellation_before_start(tmp_path: Path):
+    refined = tmp_path / "refined.json"
+    with pytest.raises(PipelineCancelled, match="JOB_CANCELLED"):
+        run_pipeline([[sys.executable, "-c", "raise SystemExit(1)"]], refined, cancel_check=lambda: True)
+
+
+def test_run_pipeline_surfaces_stderr_for_failed_step(tmp_path: Path):
+    refined = tmp_path / "refined.json"
+    with pytest.raises(RuntimeError, match="pipeline step 执行失败: boom"):
+        run_pipeline(
+            [[sys.executable, "-c", "import sys; print('boom', file=sys.stderr); sys.exit(1)"]],
+            refined,
+        )
+
+
+def test_run_pipeline_terminates_running_step_when_cancelled(tmp_path: Path):
+    refined = tmp_path / "refined.json"
+    started = time.monotonic()
+    with pytest.raises(PipelineCancelled, match="JOB_CANCELLED"):
+        run_pipeline(
+            [[sys.executable, "-c", "import time; time.sleep(30)"]],
+            refined,
+            cancel_check=lambda: time.monotonic() - started > 0.15,
+        )
+    assert time.monotonic() - started < 3
+
+
+def test_run_pipeline_drains_large_child_output_without_deadlocking(tmp_path: Path):
+    refined = tmp_path / "refined.json"
+    script = (
+        "import json, sys; "
+        "sys.stderr.write('x' * 200000); sys.stderr.flush(); "
+        "open(%r, 'w', encoding='utf-8').write(json.dumps({'results': []}))"
+    ) % str(refined)
+    result = run_pipeline([[sys.executable, "-c", script]], refined)
+    assert result["refined"] == {"results": []}
+    assert result["logs"]
+
+
+def test_run_pipeline_reuses_completed_manifest_stage(tmp_path: Path):
+    refined = tmp_path / "refined.json"
+    proxy = tmp_path / "proxy.mp4"
+    manifest = tmp_path / "manifest.json"
+    proxy.write_bytes(b"proxy")
+    refined.write_text(json.dumps({"results": []}), encoding="utf-8")
+    manifest.write_text(
+        json.dumps({
+            "version": 1,
+            "stages": {
+                "prepare_proxy": {
+                    "state": "completed",
+                    "output": str(proxy),
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    script = "raise SystemExit('stage should have been reused')"
+    result = run_pipeline(
+        [[sys.executable, "-c", script]],
+        refined,
+        manifest_path=manifest,
+        stage_outputs=[proxy],
+    )
+    assert result["cache_hits"] == 1
+    assert "reused" in result["logs"][0]

@@ -13,7 +13,7 @@
 | 内存 | 16 GB | 足够做单任务离线扫描；不建议同时跑多个模型任务 |
 | FFmpeg | 8.1 | 已安装 |
 | FFmpeg 硬件能力 | `videotoolbox`、`h264_videotoolbox`、`hevc_videotoolbox` | 当前机器具备硬件解码/编码路径 |
-| Python 推理环境 | 当前系统 Python 3.9.6；`torch`、`ultralytics`、`onnxruntime` 未安装 | 尚未完成本机推理基准 |
+| Python 推理环境 | 项目 `.venv` 使用 Python 3.11.14；`torch`、`ultralytics`、`opencv`、`numpy` 已安装；`onnxruntime` 未安装 | 当前 Python Engine 可运行，ONNX 仍不是 V1 依赖 |
 
 证据来自当前机器的 `uname -a`、`system_profiler SPHardwareDataType`、`ffmpeg -hwaccels` 和 Python 导入检查。硬件编码器可用不等于整条视频处理链自动硬件加速，仍需按实际命令验证。
 
