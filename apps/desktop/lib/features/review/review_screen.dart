@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -63,7 +64,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     List<Map<String, dynamic>> candidates,
   ) async {
     final index = candidates.indexWhere((candidate) => candidate['id'] == id);
-    await ref.read(projectProvider.notifier).reviewCandidate(id, status);
+    await ref
+        .read(projectProvider.notifier)
+        .reviewCandidate(id, status, showNotice: false);
     if (!mounted || status != 'excluded' || candidates.isEmpty) return;
     final nextIndex = (index + 1).clamp(0, candidates.length - 1).toInt();
     final nextId = candidates[nextIndex]['id']?.toString();
@@ -135,12 +138,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       child: Focus(
         autofocus: true,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            Spacing.lg,
-            Spacing.sm,
-            Spacing.lg,
-            Spacing.lg,
-          ),
+          padding: const EdgeInsets.only(top: Spacing.sm, bottom: Spacing.lg),
           child: Column(
             children: [
               if (analyzing ||
@@ -212,7 +210,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                         children: [
                           Expanded(flex: 7, child: video),
                           const SizedBox(width: Spacing.md),
-                          SizedBox(width: 340, child: queue),
+                          SizedBox(width: 312, child: queue),
                         ],
                       );
                     }
@@ -584,18 +582,14 @@ class _VideoPaneState extends State<_VideoPane> {
     final hasVideo = widget.videoPath != null && widget.videoPath!.isNotEmpty;
 
     return CsCard(
-      padding: const EdgeInsets.all(Spacing.sm),
+      padding: EdgeInsets.zero,
       child: Column(
         children: [
           Expanded(
             child: Container(
               width: double.infinity,
-              decoration: BoxDecoration(
-                color: Colors.black,
-                borderRadius: BorderRadius.circular(CsRadius.md),
-                border: Border.all(color: c.border),
-              ),
-              clipBehavior: Clip.antiAlias,
+              decoration: const BoxDecoration(color: Colors.black),
+              clipBehavior: Clip.hardEdge,
               child: !hasVideo || controller == null || _error != null
                   ? CsEmptyState(
                       icon: _error == null
@@ -641,19 +635,25 @@ class _VideoPaneState extends State<_VideoPane> {
             onReplayCandidate: _playCandidate,
           ),
           if (widget.candidate != null) ...[
-            const SizedBox(height: Spacing.xs),
             Align(
               alignment: Alignment.centerLeft,
-              child: Text(
-                '候选 ${_formatMs(_candidateTime(widget.candidate!))} · '
-                '片段 ${_formatMs(_clipStart(widget.candidate!))} - '
-                '${_formatMs(_clipEnd(widget.candidate!))}',
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: c.textSecondary,
-                  fontFeatures: const [FontFeature.tabularFigures()],
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  Spacing.sm,
+                  0,
+                  Spacing.sm,
+                  Spacing.xs,
+                ),
+                child: Text(
+                  '候选 ${_formatMs(_candidateTime(widget.candidate!))}',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: c.textSecondary,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
               ),
             ),
+            _CandidateEvidencePanel(candidate: widget.candidate!),
           ],
         ],
       ),
@@ -759,6 +759,150 @@ class _VideoControls extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _CandidateEvidencePanel extends StatelessWidget {
+  const _CandidateEvidencePanel({required this.candidate});
+
+  final Map<String, dynamic> candidate;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final evidence = _candidateEvidence(candidate);
+    final trajectory = _candidateEvidenceValue(candidate, evidence, const [
+      ['verification', 'trajectory_cross'],
+      ['trajectory_cross'],
+    ]);
+    final net = _candidateEvidenceValue(candidate, evidence, const [
+      ['signals', 'net_score'],
+      ['net_score'],
+      ['net_motion_score'],
+    ]);
+    final audio = _candidateEvidenceValue(candidate, evidence, const [
+      ['signals', 'audio_score'],
+      ['audio_score'],
+      ['audio_support'],
+    ]);
+    final rebound = _candidateEvidenceValue(candidate, evidence, const [
+      ['verification', 'rebound'],
+      ['rim_rebound'],
+      ['rebound'],
+    ]);
+    final reason = _candidateEvidenceValue(candidate, evidence, const [
+      ['review_reason_suggestion', 'primary'],
+      ['review_reason'],
+    ]);
+    final clip =
+        '片段 ${_formatMs(_clipStart(candidate))} - ${_formatMs(_clipEnd(candidate))} · '
+        '时长 ${_formatClipDuration(_clipEnd(candidate) - _clipStart(candidate))}';
+
+    return Container(
+      width: double.infinity,
+      height: 72,
+      decoration: BoxDecoration(
+        color: c.surface2,
+        border: Border(top: BorderSide(color: c.border)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.sm,
+          vertical: 7,
+        ),
+        child: Row(
+          children: [
+            _EvidenceCell(
+              label: '片段',
+              value: clip,
+              width: 190,
+              color: c.textPrimary,
+            ),
+            _EvidenceCell(
+              label: '置信度',
+              value: _candidateConfidence(candidate) ?? '—',
+              width: 84,
+              color: c.textPrimary,
+            ),
+            _EvidenceCell(
+              label: '轨迹穿框',
+              value: _formatCrossing(trajectory),
+              width: 92,
+              color: _boolColor(c, trajectory),
+            ),
+            _EvidenceCell(
+              label: '篮网运动',
+              value: _formatSignal(net),
+              width: 92,
+              color: _signalColor(c, net),
+            ),
+            _EvidenceCell(
+              label: '音频支持',
+              value: _formatSignal(audio),
+              width: 92,
+              color: _signalColor(c, audio),
+            ),
+            _EvidenceCell(
+              label: '反弹判断',
+              value: _formatRebound(rebound),
+              width: 92,
+              color: _reboundColor(c, rebound),
+            ),
+            _EvidenceCell(
+              label: '系统说明',
+              value: _reviewReasonLabel(reason),
+              width: 170,
+              color: c.textSecondary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EvidenceCell extends StatelessWidget {
+  const _EvidenceCell({
+    required this.label,
+    required this.value,
+    required this.width,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final double width;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return SizedBox(
+      width: width,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: TextStyle(color: c.textTertiary, fontSize: 10)),
+            const SizedBox(height: 3),
+            Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -974,51 +1118,59 @@ class _CandidateRow extends StatelessWidget {
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  _candidateDetails(candidate),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: excluded ? c.textTertiary : c.textSecondary,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
               ],
             ),
           ),
-          IconButton(
-            tooltip: '保留片段',
-            onPressed: busy ? null : onInclude,
-            icon: Icon(
-              Icons.check_circle,
-              size: 25,
-              color: excluded ? c.textTertiary : c.goal,
-            ),
-            constraints: const BoxConstraints.tightFor(width: 44, height: 44),
-            padding: EdgeInsets.zero,
-            style: IconButton.styleFrom(
-              backgroundColor: excluded
-                  ? c.surface3
-                  : c.goal.withValues(alpha: 0.12),
-              foregroundColor: excluded ? c.textTertiary : c.goal,
-            ),
-          ),
-          IconButton(
-            tooltip: '排除片段',
-            onPressed: busy ? null : onExclude,
-            icon: Icon(
-              Icons.cancel_outlined,
-              size: 25,
-              color: excluded ? c.error : c.textTertiary,
-            ),
-            constraints: const BoxConstraints.tightFor(width: 44, height: 44),
-            padding: EdgeInsets.zero,
-            style: IconButton.styleFrom(
-              backgroundColor: excluded
-                  ? c.error.withValues(alpha: 0.12)
-                  : c.surface3,
-              foregroundColor: excluded ? c.error : c.textTertiary,
+          SizedBox(
+            width: 104,
+            child: Row(
+              children: [
+                Expanded(
+                  child: IconButton(
+                    tooltip: '保留片段',
+                    onPressed: busy ? null : onInclude,
+                    icon: Icon(
+                      Icons.check_circle,
+                      size: 25,
+                      color: excluded ? c.textTertiary : c.goal,
+                    ),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 48,
+                      height: 48,
+                    ),
+                    padding: EdgeInsets.zero,
+                    style: IconButton.styleFrom(
+                      backgroundColor: excluded
+                          ? c.surface3
+                          : c.goal.withValues(alpha: 0.12),
+                      foregroundColor: excluded ? c.textTertiary : c.goal,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: Spacing.xs),
+                Expanded(
+                  child: IconButton(
+                    tooltip: '排除片段',
+                    onPressed: busy ? null : onExclude,
+                    icon: Icon(
+                      Icons.cancel_outlined,
+                      size: 25,
+                      color: excluded ? c.error : c.textTertiary,
+                    ),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 48,
+                      height: 48,
+                    ),
+                    padding: EdgeInsets.zero,
+                    style: IconButton.styleFrom(
+                      backgroundColor: excluded
+                          ? c.error.withValues(alpha: 0.12)
+                          : c.surface3,
+                      foregroundColor: excluded ? c.error : c.textTertiary,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -1113,18 +1265,85 @@ String _candidateSignature(Map<String, dynamic>? candidate) {
   return '${candidate['id']}|${_clipStart(candidate)}|${_clipEnd(candidate)}';
 }
 
-String _candidateDetails(Map<String, dynamic> candidate) {
-  final start = _clipStart(candidate);
-  final end = _clipEnd(candidate);
-  final duration = end > start ? end - start : 0;
-  final details = <String>[
-    '片段 ${_formatMs(start)} - ${_formatMs(end)}',
-    '时长 ${_formatClipDuration(duration)}',
-  ];
-  final confidence = _candidateConfidence(candidate);
-  if (confidence != null) details.add('置信度 $confidence');
-  return details.join(' · ');
+Map<String, dynamic> _candidateEvidence(Map<String, dynamic> candidate) {
+  final raw = candidate['evidence_json'] ?? candidate['evidence'];
+  if (raw is Map) return raw.cast<String, dynamic>();
+  if (raw is String && raw.trim().isNotEmpty) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return decoded.cast<String, dynamic>();
+    } on FormatException {
+      return const <String, dynamic>{};
+    }
+  }
+  return const <String, dynamic>{};
 }
+
+dynamic _candidateEvidenceValue(
+  Map<String, dynamic> candidate,
+  Map<String, dynamic> evidence,
+  List<List<String>> paths,
+) {
+  for (final path in paths) {
+    final fromEvidence = _readEvidencePath(evidence, path);
+    if (fromEvidence != null) return fromEvidence;
+    final fromCandidate = _readEvidencePath(candidate, path);
+    if (fromCandidate != null) return fromCandidate;
+  }
+  return null;
+}
+
+dynamic _readEvidencePath(Map<String, dynamic> source, List<String> path) {
+  dynamic current = source;
+  for (final key in path) {
+    if (current is! Map || !current.containsKey(key)) return null;
+    current = current[key];
+  }
+  return current;
+}
+
+String _formatCrossing(dynamic value) {
+  if (value is bool) return value ? '通过' : '未通过';
+  return '—';
+}
+
+String _formatSignal(dynamic value) {
+  if (value is bool) return value ? '有支持' : '不足';
+  if (value is num) {
+    if (value >= 0.65) return '明显';
+    if (value >= 0.15) return '有运动';
+    return '不足';
+  }
+  return '—';
+}
+
+String _formatRebound(dynamic value) {
+  if (value is bool) return value ? '检测到' : '未发现';
+  return '—';
+}
+
+String _reviewReasonLabel(dynamic value) =>
+    const <String, String>{
+      'pass_ball': '可能传球',
+      'no_shot': '可能未形成投篮',
+      'rim_out': '可能擦框/弹出',
+      'rebound': '可能反弹',
+      'net_no_motion': '篮网运动不足',
+      'uncertain': '证据不确定',
+    }[value?.toString()] ??
+    '—';
+
+Color _boolColor(AppColors c, dynamic value) => value is bool
+    ? value
+          ? c.success
+          : c.warning
+    : c.textSecondary;
+
+Color _signalColor(AppColors c, dynamic value) =>
+    value is num && value >= 0.65 ? c.success : c.textSecondary;
+
+Color _reboundColor(AppColors c, dynamic value) =>
+    value is bool && value ? c.warning : c.textSecondary;
 
 String? _candidateConfidence(Map<String, dynamic> candidate) {
   final raw = candidate['confidence']?.toString();

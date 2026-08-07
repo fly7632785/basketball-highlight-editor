@@ -59,7 +59,7 @@ class _CsNoticeState extends State<CsNotice>
       onExit: (_) => _startTimer(),
       child: SlideTransition(
         position: Tween<Offset>(
-          begin: const Offset(1, 0),
+          begin: const Offset(0, -0.25),
           end: Offset.zero,
         ).animate(CurvedAnimation(parent: _anim, curve: Curves.easeOut)),
         child: FadeTransition(

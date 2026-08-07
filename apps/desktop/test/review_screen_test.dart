@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:convert';
 
 import 'package:desktop/features/review/review_screen.dart';
 import 'package:desktop/providers/project_state.dart';
@@ -92,7 +93,7 @@ void main() {
       ),
     );
 
-    expect(find.text('候选 00:12 · 片段 00:06 - 00:15'), findsOneWidget);
+    expect(find.text('候选 00:12'), findsOneWidget);
     expect(find.text('按时间'), findsNothing);
     expect(find.text('默认保留'), findsNothing);
     expect(find.text('保留'), findsNothing);
@@ -101,6 +102,42 @@ void main() {
     expect(find.byTooltip('保留片段'), findsOneWidget);
     expect(find.byTooltip('排除片段'), findsOneWidget);
   });
+
+  testWidgets(
+    'shows candidate evidence below the video without crowding the row',
+    (tester) async {
+      await _pumpReview(
+        tester,
+        ProjectState(
+          job: const {'state': 'completed'},
+          candidates: [
+            {
+              'id': 'candidate-1',
+              'event_time_ms': 12000,
+              'default_start_ms': 6000,
+              'default_end_ms': 15000,
+              'review_status': 'pending',
+              'evidence_json': jsonEncode({
+                'verification': {'trajectory_cross': true},
+                'signals': {'net_score': 0.82, 'audio_score': 0.71},
+                'rim_rebound': false,
+                'review_reason_suggestion': {'primary': 'uncertain'},
+              }),
+            },
+          ],
+        ),
+      );
+
+      expect(find.text('轨迹穿框'), findsOneWidget);
+      expect(find.text('篮网运动'), findsOneWidget);
+      expect(find.text('音频支持'), findsOneWidget);
+      expect(find.text('反弹判断'), findsOneWidget);
+      expect(find.text('系统说明'), findsOneWidget);
+      expect(find.text('候选 00:12'), findsOneWidget);
+      expect(find.text('片段 00:06 - 00:15 · 时长 9 秒'), findsOneWidget);
+      expect(find.text('00:06 - 00:15 · 时长 9 秒 · 置信度'), findsNothing);
+    },
+  );
 
   testWidgets('sorts the review list by event time', (tester) async {
     await _pumpReview(

@@ -20,13 +20,13 @@ class CsNoticeOverlay extends ConsumerWidget {
           left: Spacing.md,
           right: Spacing.md,
           child: Align(
-            alignment: Alignment.topRight,
+            alignment: Alignment.topCenter,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 320),
               child: SizedBox(
                 width: double.infinity,
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   mainAxisSize: MainAxisSize.min,
                   children: notices
                       .map(

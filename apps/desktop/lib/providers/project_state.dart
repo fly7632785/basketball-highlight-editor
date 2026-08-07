@@ -677,6 +677,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     String id,
     String status, {
     String? reason,
+    bool showNotice = true,
   }) async {
     var succeeded = false;
     await _runBusy(
@@ -702,13 +703,15 @@ class ProjectNotifier extends Notifier<ProjectState> {
         unawaited(refreshStatistics());
         succeeded = true;
       },
-      successMessage: switch (status) {
-        'goal' || 'included' => '已保留片段',
-        'deferred' => '已暂缓审核',
-        'second_review' => '已标记二次复核',
-        'pending' => '已恢复待审核',
-        _ => '已排除候选',
-      },
+      successMessage: !showNotice
+          ? null
+          : switch (status) {
+              'goal' || 'included' => '已保留片段',
+              'deferred' => '已暂缓审核',
+              'second_review' => '已标记二次复核',
+              'pending' => '已恢复待审核',
+              _ => '已排除候选',
+            },
     );
     return succeeded;
   }
