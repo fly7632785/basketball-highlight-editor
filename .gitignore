@@ -13,3 +13,12 @@ data/artifacts/
 third_party/
 third_party/*/weights/
 third_party/*/models/
+
+# Local agent instructions and generated UI preview state.
+apps/desktop/.claude/
+apps/desktop/.codex/
+.superpowers/brainstorm/.last-*
+.superpowers/brainstorm/*/state/
+.superpowers/brainstorm/*/content/*.html
+!.superpowers/brainstorm/68926-1786089783/content/review-real-v6.html
+!.superpowers/brainstorm/68926-1786089783/content/review-real-v7.html
