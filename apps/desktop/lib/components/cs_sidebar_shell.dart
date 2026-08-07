@@ -6,7 +6,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
 
-/// 桌面侧栏:`≥ md(900)` 时显示,`≥ lg(1280)` 时展开(232)否则折叠(76)。
+/// 桌面侧栏:`≥ md(900)` 时显示；展开/收缩由用户控制，宽度不足时自动使用折叠态。
 ///
 /// Logo(Courtside)+ 4 CsSidebarItem + 底部隐私徽章。导航通过
 /// `shell.goBranch(index)` 切换 StatefulNavigationShell 的当前 branch。
@@ -14,11 +14,13 @@ class CsSidebarShell extends StatelessWidget {
   const CsSidebarShell({
     required this.shell,
     required this.extended,
+    required this.onToggle,
     super.key,
   });
 
   final StatefulNavigationShell shell;
   final bool extended;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -47,15 +49,35 @@ class CsSidebarShell extends StatelessWidget {
                 Icon(LucideIcons.volleyball, size: 22, color: c.orange),
                 if (extended) ...<Widget>[
                   const SizedBox(width: Spacing.sm),
-                  Text(
-                    'Courtside',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: c.textPrimary,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.2,
+                  Expanded(
+                    child: Text(
+                      'Courtside',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: c.textPrimary,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.2,
+                      ),
                     ),
                   ),
                 ],
+                const SizedBox(width: Spacing.xs),
+                SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: IconButton(
+                    tooltip: extended ? '收缩侧栏' : '展开侧栏',
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: onToggle,
+                    icon: Icon(
+                      extended
+                          ? LucideIcons.chevronLeft
+                          : LucideIcons.chevronRight,
+                      size: 16,
+                      color: c.textSecondary,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -103,9 +125,9 @@ class CsSidebarShell extends StatelessWidget {
                   const SizedBox(width: Spacing.xs),
                   Text(
                     '本地处理',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: c.textTertiary,
-                    ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: c.textTertiary),
                   ),
                 ],
               ),
@@ -114,7 +136,11 @@ class CsSidebarShell extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(bottom: Spacing.lg),
               child: Center(
-                child: Icon(LucideIcons.shield, size: 12, color: c.textTertiary),
+                child: Icon(
+                  LucideIcons.shield,
+                  size: 12,
+                  color: c.textTertiary,
+                ),
               ),
             ),
         ],
@@ -224,9 +250,7 @@ class CsSidebarItem extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: extended
-          ? withMarker
-          : Tooltip(message: label, child: withMarker),
+      child: extended ? withMarker : Tooltip(message: label, child: withMarker),
     );
   }
 }

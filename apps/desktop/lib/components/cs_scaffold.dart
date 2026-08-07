@@ -6,6 +6,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../providers/session_provider.dart';
 import '../providers/project_state.dart';
+import '../providers/sidebar_provider.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
@@ -15,27 +16,45 @@ import 'cs_sidebar_shell.dart';
 /// 自适应 shell:宽窗(≥ md)侧栏 + 内容;窄窗内容 + 底栏。
 ///
 /// LayoutBuilder 切换两种布局。两种布局均在内容顶部保留 CsTopBar(标题 +
-/// Engine 状态胶囊 + 隐私徽章 + 主题切换)。
-class CsScaffold extends ConsumerWidget {
+/// Engine 状态胶囊 + 隐私徽章 + 主题切换)。侧栏状态会持久化，创建项目后默认收缩。
+class CsScaffold extends ConsumerStatefulWidget {
   const CsScaffold({required this.shell, super.key});
 
   final StatefulNavigationShell shell;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CsScaffold> createState() => _CsScaffoldState();
+}
+
+class _CsScaffoldState extends ConsumerState<CsScaffold> {
+  int? _lastBranch;
+
+  @override
+  Widget build(BuildContext context) {
+    final shell = widget.shell;
+    final previousBranch = _lastBranch;
+    _lastBranch = shell.currentIndex;
+    if (previousBranch == 0 && shell.currentIndex == 1) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref.read(sidebarExtendedProvider.notifier).collapseForProjectCreation();
+      });
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= Breakpoints.md;
         if (wide) {
+          final sidebarExtended = ref.watch(sidebarExtendedProvider);
           return Scaffold(
             body: Row(
               children: <Widget>[
                 CsSidebarShell(
                   shell: shell,
-                  // 审核页优先留给视频和候选队列，导航默认收缩为图标栏。
                   extended:
-                      constraints.maxWidth >= Breakpoints.lg &&
-                      shell.currentIndex != 2,
+                      constraints.maxWidth >= Breakpoints.lg && sidebarExtended,
+                  onToggle: () =>
+                      ref.read(sidebarExtendedProvider.notifier).toggle(),
                 ),
                 Expanded(
                   child: Column(
