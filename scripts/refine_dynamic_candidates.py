@@ -17,7 +17,8 @@ from cache_io import read_json_cache, write_json_cache
 from refine_candidates import scan_window
 
 
-ALGORITHM_VERSION = "python-v2.5-complete-crossing-net-support"
+DETECTION_CACHE_VERSION = "python-v2.4-weighted-progress-normalized-coarse"
+ALGORITHM_VERSION = "python-v2.6-reviewable-crossing-recovery"
 REFINED_SCHEMA_VERSION = 3
 
 
@@ -203,6 +204,7 @@ def main(args):
     records_by_index = {}
     rims_by_index = {}
     cache_paths_by_index = {}
+    legacy_cache_paths_by_index = {}
     missing_indices = []
     cache_hits = 0
     for index, coarse in enumerate(candidates):
@@ -214,7 +216,7 @@ def main(args):
         cache_path = None
         if args.cache_dir:
             cache_key = json.dumps({
-                "algorithm_version": ALGORITHM_VERSION,
+                "algorithm_version": DETECTION_CACHE_VERSION,
                 "schema_version": REFINED_SCHEMA_VERSION,
                 "video": video_fingerprint,
                 "model": model_fingerprint,
@@ -229,13 +231,47 @@ def main(args):
                 "signal_version": 3,
             }, sort_keys=True).encode()
             cache_path = args.cache_dir / (hashlib.sha256(cache_key).hexdigest() + ".json")
+            legacy_cache_paths_by_index[index] = []
+            for legacy_version in (
+                "python-v2.5-complete-crossing-net-support",
+                DETECTION_CACHE_VERSION,
+            ):
+                if legacy_version == DETECTION_CACHE_VERSION:
+                    continue
+                legacy_cache_key = json.dumps({
+                    "algorithm_version": legacy_version,
+                    "schema_version": REFINED_SCHEMA_VERSION,
+                    "video": video_fingerprint,
+                    "model": model_fingerprint,
+                    "roi": args.roi,
+                    "time": round(float(coarse["time"]), 4),
+                    "window": args.window,
+                    "sample_fps": args.sample_fps,
+                    "scale": args.scale,
+                    "conf": args.conf,
+                    "batch": args.batch,
+                    "rim": rim,
+                    "signal_version": 3,
+                }, sort_keys=True).encode()
+                legacy_cache_paths_by_index[index].append(args.cache_dir / (
+                    hashlib.sha256(legacy_cache_key).hexdigest() + ".json"
+                ))
         cache_paths_by_index[index] = cache_path
-        if cache_path and cache_path.exists():
-            cached = read_json_cache(cache_path, lambda value: isinstance(value, list))
-            if cached is not None:
-                records_by_index[index] = cached
-                cache_hits += 1
-                continue
+        candidate_cache_paths = [cache_path, *legacy_cache_paths_by_index.get(index, [])]
+        cached = None
+        cache_source = None
+        for candidate_cache_path in candidate_cache_paths:
+            if candidate_cache_path and candidate_cache_path.exists():
+                cached = read_json_cache(candidate_cache_path, lambda value: isinstance(value, list))
+                if cached is not None:
+                    cache_source = candidate_cache_path
+                    break
+        if cached is not None:
+            records_by_index[index] = cached
+            cache_hits += 1
+            if cache_source != cache_path and cache_path:
+                write_json_cache(cache_path, cached)
+            continue
         if index not in records_by_index:
             missing_indices.append(index)
 

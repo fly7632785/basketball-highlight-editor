@@ -99,7 +99,7 @@ def resolve_verdict(
         evidence["rebound"] or
         evidence["lateral_exit"] or
         (net_evidence_present and net_no_motion) or
-        not complete_crossing and not prediction_review
+        (not complete_crossing and not prediction_review and net_evidence_present)
     )
     if strong_negative:
         verdict = "missed"

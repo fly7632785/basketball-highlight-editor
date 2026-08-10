@@ -763,13 +763,22 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=1.0):
                     prediction["landing_center"] >= 0.5 and
                     prediction["predict_score"] >= 0.8
                 )
-                if len(below_points) < 2 and not prediction_review:
+                if len(below_points) < 1 and not prediction_review:
                     continue
 
                 crossing_evidence = _complete_rim_crossing(
                     track, above, below, rim,
                 )
-                if not crossing_evidence["complete_crossing"] and not prediction_review:
+                transition_points = crossing_evidence["transition_points"]
+                transition_ratio = (
+                    crossing_evidence["transition_corridor_points"] / transition_points
+                    if transition_points else 1.0
+                )
+                reviewable_crossing = (
+                    crossing_evidence["crossing_inside_rim"] and
+                    (not transition_points or transition_ratio >= 0.50)
+                )
+                if not reviewable_crossing and not prediction_review:
                     continue
 
                 previous_y = below["y"]

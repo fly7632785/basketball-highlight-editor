@@ -29,7 +29,7 @@ from .protocol import ProtocolError
 from .storage import ProjectStore, new_id
 
 
-ANALYSIS_ALGORITHM_VERSION = "python-v2.5-complete-crossing-net-support"
+ANALYSIS_ALGORITHM_VERSION = "python-v2.6-reviewable-crossing-recovery"
 
 
 class EngineService:
