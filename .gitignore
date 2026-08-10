@@ -15,6 +15,7 @@ third_party/*/weights/
 third_party/*/models/
 
 # Local agent instructions and generated UI preview state.
+.agents/
 apps/desktop/.claude/
 apps/desktop/.codex/
 .superpowers/brainstorm/.last-*
