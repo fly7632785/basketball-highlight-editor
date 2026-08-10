@@ -59,3 +59,24 @@ def test_resolve_verdict_keeps_weak_evidence_ambiguous():
     )
 
     assert result["verdict"] == "ambiguous"
+
+
+def test_resolve_verdict_rejects_reliable_zero_net_motion():
+    track = [
+        {"time": 1.1, "x": 490, "y": 300},
+        {"time": 1.4, "x": 491, "y": 345},
+        {"time": 1.55, "x": 492, "y": 365},
+        {"time": 1.7, "x": 493, "y": 390},
+    ]
+    candidate = _candidate(
+        signals={
+            "net_score": 0.0,
+            "net_signal_available": True,
+            "net_no_motion": True,
+        },
+    )
+
+    result = resolve_verdict(candidate, track, RIM)
+
+    assert result["verdict"] == "missed"
+    assert result["net_no_motion"] is True

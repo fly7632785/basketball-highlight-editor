@@ -12,7 +12,22 @@ from ultralytics import YOLO
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from basketball_highlight.events import find_refined_crossings
+from basketball_highlight.ranking import dedupe_candidates
+from cache_io import read_json_cache, write_json_cache
 from refine_candidates import scan_window
+
+
+ALGORITHM_VERSION = "python-v2.5-complete-crossing-net-support"
+REFINED_SCHEMA_VERSION = 3
+
+
+def file_fingerprint(path):
+    stat = path.stat()
+    return {
+        "path": str(path.resolve()),
+        "size_bytes": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
 
 
 def parse_args():
@@ -31,7 +46,7 @@ def parse_args():
                         help="Optional directory for per-window detection caches.")
     parser.add_argument("--min-score", type=float, default=0.0,
                         help="Keep only crossings at or above this multi-signal score.")
-    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps"))
+    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda"))
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -39,6 +54,8 @@ def parse_args():
 def select_device(requested):
     if requested != "auto":
         return requested
+    if torch.cuda.is_available():
+        return "cuda"
     return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
@@ -56,18 +73,69 @@ def scale_rim(rim, factor, correct_plane=True):
     }
 
 
-def merge_scan_windows(centers, window):
-    """Merge overlapping candidate windows for one sequential video pass."""
+def _compatible_rims(left, right):
+    width = max(1.0, float(left["width"]), float(right["width"]))
+    height = max(1.0, float(left.get("height", 20)), float(right.get("height", 20)))
+    width_ratio = float(left["width"]) / max(1.0, float(right["width"]))
+    return (
+        abs(float(left["center_x"]) - float(right["center_x"])) <= width * 0.5
+        and abs(float(left["rim_y"]) - float(right["rim_y"])) <= height
+        and 0.75 <= width_ratio <= 1.34
+    )
+
+
+def _net_compatible_rims(left, right):
+    width = max(1.0, float(left["width"]), float(right["width"]))
+    height = max(1.0, float(left.get("height", 20)), float(right.get("height", 20)))
+    width_ratio = float(left["width"]) / max(1.0, float(right["width"]))
+    return (
+        abs(float(left["center_x"]) - float(right["center_x"])) <= width * 0.18
+        and abs(float(left["rim_y"]) - float(right["rim_y"])) <= max(4.0, height * 0.35)
+        and 0.85 <= width_ratio <= 1.18
+    )
+
+
+def build_scan_windows(centers, window, rims=None):
+    """Merge overlapping windows when they share the same physical hoop."""
+    entries = sorted(
+        (
+            max(0.0, float(center) - window),
+            float(center) + window,
+            index,
+        )
+        for index, center in enumerate(centers)
+    )
     groups = []
-    for index, center in sorted(enumerate(centers), key=lambda item: item[1]):
-        start = max(0.0, float(center) - window)
-        end = float(center) + window
-        if not groups or start > groups[-1]["end"]:
-            groups.append({"indices": [index], "start": start, "end": end})
-        else:
+    for start, end, index in entries:
+        rim = rims[index] if rims else None
+        if (
+            groups
+            and start <= groups[-1]["end"]
+            and (
+                rim is None
+                or groups[-1]["rim"] is None
+                or _compatible_rims(groups[-1]["rim"], rim)
+            )
+        ):
             groups[-1]["indices"].append(index)
             groups[-1]["end"] = max(groups[-1]["end"], end)
+            continue
+        groups.append({
+            "indices": [index],
+            "start": start,
+            "end": end,
+            "rim": rim,
+        })
     return groups
+
+
+def _records_for_rim(records, scan_rim, decision_rim):
+    if _net_compatible_rims(scan_rim, decision_rim):
+        return records
+    return [
+        {**record, "net_measurement_valid": False}
+        for record in records
+    ]
 
 
 def estimate_local_rim(records, fallback):
@@ -89,16 +157,28 @@ def estimate_local_rim(records, fallback):
         if not 0.45 * fallback["height"] <= height * 0.45 <= 1.9 * fallback["height"]:
             continue
         hoops.append(item)
-    if not hoops:
+    if len(hoops) < 3:
         return fallback
     centers_x = [item["center"][0] for item in hoops]
     widths = [item["xyxy"][2] - item["xyxy"][0] for item in hoops]
     heights = [item["xyxy"][3] - item["xyxy"][1] for item in hoops]
     raw_top_adjusted_y = [item["center"][1] - (item["xyxy"][3] - item["xyxy"][1]) * 0.28 for item in hoops]
+    center_x = statistics.median(centers_x)
+    rim_y = statistics.median(raw_top_adjusted_y)
+    width = statistics.median(widths)
+    center_mad = statistics.median(abs(value - center_x) for value in centers_x)
+    rim_y_mad = statistics.median(abs(value - rim_y) for value in raw_top_adjusted_y)
+    width_mad = statistics.median(abs(value - width) for value in widths)
+    if (
+        center_mad > max(4.0, fallback["width"] * 0.18)
+        or rim_y_mad > max(4.0, fallback["height"] * 0.35)
+        or width_mad > max(3.0, width * 0.22)
+    ):
+        return fallback
     return {
-        "center_x": round(statistics.median(centers_x), 2),
-        "rim_y": round(statistics.median(raw_top_adjusted_y), 2),
-        "width": round(statistics.median(widths), 2),
+        "center_x": round(center_x, 2),
+        "rim_y": round(rim_y, 2),
+        "width": round(width, 2),
         "height": round(statistics.median(heights) * 0.45, 2),
         "source": "local_hoop_track",
         "detections": len(hoops),
@@ -106,16 +186,20 @@ def estimate_local_rim(records, fallback):
 
 
 def main(args):
-    video = Path(args.video)
+    video = Path(args.video).resolve()
+    model_path = Path(args.model).resolve()
+    video_fingerprint = file_fingerprint(video)
+    model_fingerprint = file_fingerprint(model_path)
     coarse_data = json.loads(Path(args.coarse).read_text(encoding="utf-8"))
     device = select_device(args.device)
-    model = YOLO(str(args.model))
+    model = YOLO(str(model_path))
     started = time.perf_counter()
     results = []
     if args.cache_dir:
         args.cache_dir.mkdir(parents=True, exist_ok=True)
 
     candidates = coarse_data["candidates"]
+    print("progress=0.0", flush=True)
     records_by_index = {}
     rims_by_index = {}
     cache_paths_by_index = {}
@@ -130,27 +214,35 @@ def main(args):
         cache_path = None
         if args.cache_dir:
             cache_key = json.dumps({
-                "video": str(video.resolve()),
-                "model": str(Path(args.model).resolve()),
+                "algorithm_version": ALGORITHM_VERSION,
+                "schema_version": REFINED_SCHEMA_VERSION,
+                "video": video_fingerprint,
+                "model": model_fingerprint,
                 "roi": args.roi,
                 "time": round(float(coarse["time"]), 4),
                 "window": args.window,
                 "sample_fps": args.sample_fps,
                 "scale": args.scale,
                 "conf": args.conf,
-                "scan_version": 2,
+                "batch": args.batch,
+                "rim": rim,
+                "signal_version": 3,
             }, sort_keys=True).encode()
             cache_path = args.cache_dir / (hashlib.sha256(cache_key).hexdigest() + ".json")
         cache_paths_by_index[index] = cache_path
         if cache_path and cache_path.exists():
-            records_by_index[index] = json.loads(cache_path.read_text(encoding="utf-8"))
-            cache_hits += 1
-        else:
+            cached = read_json_cache(cache_path, lambda value: isinstance(value, list))
+            if cached is not None:
+                records_by_index[index] = cached
+                cache_hits += 1
+                continue
+        if index not in records_by_index:
             missing_indices.append(index)
 
     missing_centers = [float(candidates[index]["time"]) for index in missing_indices]
-    scan_groups = merge_scan_windows(missing_centers, args.window)
-    for group in scan_groups:
+    missing_rims = [rims_by_index[index][0] for index in missing_indices]
+    scan_groups = build_scan_windows(missing_centers, args.window, missing_rims)
+    for group_index, group in enumerate(scan_groups, 1):
         group_indices = [missing_indices[item] for item in group["indices"]]
         group_rim = rims_by_index[group_indices[0]][0]
         merged_records = scan_window(
@@ -177,27 +269,28 @@ def main(args):
             records_by_index[index] = records
             cache_path = cache_paths_by_index[index]
             if cache_path:
-                cache_path.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
+                write_json_cache(cache_path, records)
+        scan_progress = 0.5 * group_index / max(1, len(scan_groups))
+        print(f"progress={scan_progress:.4f}", flush=True)
 
     for index, coarse in enumerate(candidates):
         rim, legacy_rim = rims_by_index[index]
         records = records_by_index[index]
         local_rim = estimate_local_rim(records, rim)
-        local_matches = find_refined_crossings(records, local_rim)
-        legacy_matches = find_refined_crossings(records, legacy_rim)
-        tagged_matches = (
-            [(match, "local_track") for match in local_matches] +
-            [(match, "box_center_fallback") for match in legacy_matches]
-        )
-        merged = []
-        for match, source in sorted(tagged_matches, key=lambda item: item[0]["time"]):
-            match = dict(match)
-            match["rim_source"] = source
-            if merged and match["time"] - merged[-1]["time"] <= 1.0:
-                if match["score"] > merged[-1]["score"]:
-                    merged[-1] = match
-            else:
-                merged.append(match)
+        local_records = _records_for_rim(records, rim, local_rim)
+        local_matches = find_refined_crossings(local_records, local_rim)
+        if local_matches:
+            tagged_matches = [
+                {**match, "rim_source": "local_track"}
+                for match in local_matches
+            ]
+        else:
+            legacy_records = _records_for_rim(records, rim, legacy_rim)
+            tagged_matches = [
+                {**match, "rim_source": "box_center_fallback"}
+                for match in find_refined_crossings(legacy_records, legacy_rim)
+            ]
+        merged = dedupe_candidates(tagged_matches, 1.0)
         matches = [match for match in merged if match.get("score", 0.0) >= args.min_score]
         results.append({
             "index": index + 1,
@@ -207,15 +300,27 @@ def main(args):
             "rim_legacy": legacy_rim,
             "refined": matches,
             "sampled_frames": len(records),
-            "ball_frames": sum(bool(record["detections"]) for record in records),
+            "ball_frames": sum(
+                any(
+                    str(detection.get("name", "")).lower() == "ball"
+                    for detection in record.get("detections", [])
+                )
+                for record in records
+            ),
         })
+        refine_progress = 0.5 + 0.5 * (index + 1) / max(1, len(candidates))
+        print(f"progress={refine_progress:.4f}", flush=True)
         print(f"{index:03d} coarse={coarse['time']:.2f}s refined={len(matches)}", flush=True)
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({
+        "schema_version": REFINED_SCHEMA_VERSION,
+        "algorithm_version": ALGORITHM_VERSION,
         "video": str(video),
-        "model": str(args.model),
+        "video_fingerprint": video_fingerprint,
+        "model": str(model_path),
+        "model_fingerprint": model_fingerprint,
         "device": device,
         "roi": args.roi,
         "proxy_scale": args.proxy_scale,

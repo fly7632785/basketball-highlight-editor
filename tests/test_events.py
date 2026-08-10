@@ -70,6 +70,120 @@ class EventsTest(unittest.TestCase):
         candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
         self.assertEqual(candidates, [])
 
+    def test_refined_crossing_rejects_side_entry_with_interpolated_x_inside_rim(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [477, 300]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [478, 310]}]},
+            {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [505, 345]}]},
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [510, 365]}]},
+            {"time": 1.5, "detections": [{"name": "ball", "confidence": 0.8, "center": [515, 385]}]},
+        ]
+        candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
+        self.assertEqual(candidates, [])
+
+    def test_refined_crossing_requires_two_points_below_rim(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 345]}]},
+        ]
+        candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
+        self.assertEqual(candidates, [])
+
+    def test_prediction_keeps_single_below_point_as_review_candidate(self):
+        records = []
+        ys = [280, 285, 295, 305, 315, 345]
+        for index, y in enumerate(ys):
+            records.append({
+                "time": index * 0.1,
+                "detections": [{
+                    "name": "ball",
+                    "confidence": 0.8,
+                    "center": [490 + index * 0.2, y],
+                }],
+            })
+
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20, "height": 20},
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertTrue(candidates[0]["gates"]["prediction_review"])
+        self.assertFalse(candidates[0]["complete_crossing"])
+        self.assertEqual(candidates[0]["verdict"], "ambiguous")
+
+    def test_refined_crossing_rejects_intermediate_side_deviation(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 310]}]},
+            {"time": 1.2, "detections": [{"name": "ball", "confidence": 0.8, "center": [530, 320]}]},
+            {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 345]}]},
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 365]}]},
+        ]
+
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20, "height": 20},
+        )
+
+        self.assertEqual(candidates, [])
+
+    def test_refined_gate_uses_rim_relative_geometry(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.5, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 360]}]},
+            {"time": 1.6, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 380]}]},
+        ]
+
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 60, "height": 20},
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertTrue(candidates[0]["gates"]["strict_low_speed"])
+
+    def test_missing_net_measurement_is_not_treated_as_zero_motion(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 345]}]},
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [492, 365]}]},
+            {"time": 1.5, "detections": [{"name": "ball", "confidence": 0.8, "center": [493, 385]}]},
+        ]
+        for record in records:
+            record["net_lower_motion_score"] = 0.0
+            record["net_below_motion_score"] = 0.0
+
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20, "height": 20},
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertFalse(candidates[0]["verification"]["net_signal_available"])
+
+    def test_valid_zero_net_measurement_is_negative_evidence(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 345]}]},
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [492, 365]}]},
+            {"time": 1.5, "detections": [{"name": "ball", "confidence": 0.8, "center": [493, 385]}]},
+        ]
+        for record in records:
+            record.update({
+                "net_measurement_valid": True,
+                "net_lower_motion_score": 0.0,
+                "net_below_motion_score": 0.0,
+            })
+
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20, "height": 20},
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertTrue(candidates[0]["verification"]["net_signal_available"])
+        self.assertTrue(candidates[0]["verification"]["net_no_motion"])
+        self.assertFalse(candidates[0]["gates"]["high_precision"])
+
     def test_refined_crossing_rejects_extreme_vertical_flyover(self):
         records = [
             {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 250]}]},
@@ -164,6 +278,112 @@ class EventsTest(unittest.TestCase):
         self.assertIn("score", candidates[0])
         self.assertIn("signals", candidates[0])
         self.assertGreaterEqual(candidates[0]["signals"]["net_lower"], 0.8)
+
+    def test_net_motion_requires_lower_to_below_sequence_for_support(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.3, "net_lower_motion_score": 0.8, "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 345]}]},
+            {"time": 1.4, "net_lower_motion_score": 0.9, "net_below_motion_score": 0.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [492, 365]}]},
+            {"time": 1.5, "net_below_motion_score": 0.8, "detections": [{"name": "ball", "confidence": 0.8, "center": [493, 385]}]},
+        ]
+        for record in records:
+            record["net_measurement_valid"] = True
+        candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["signals"]["net_motion_order"], "lower_to_below")
+        self.assertTrue(candidates[0]["verification"]["net_support"])
+
+    def test_reliable_no_net_motion_is_rejected(self):
+        records = [
+            {"time": 1.0, "net_lower_motion_score": 0.0, "net_below_motion_score": 0.0,
+             "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "net_lower_motion_score": 0.0, "net_below_motion_score": 0.0,
+             "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.3, "net_lower_motion_score": 0.0, "net_below_motion_score": 0.0,
+             "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 345]}]},
+            {"time": 1.4, "net_lower_motion_score": 0.0, "net_below_motion_score": 0.0,
+             "detections": [{"name": "ball", "confidence": 0.8, "center": [492, 365]}]},
+            {"time": 1.5, "net_lower_motion_score": 0.0, "net_below_motion_score": 0.0,
+             "detections": [{"name": "ball", "confidence": 0.8, "center": [493, 385]}]},
+        ]
+        for record in records:
+            record["net_measurement_valid"] = True
+        candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
+        self.assertEqual(len(candidates), 1)
+        self.assertFalse(candidates[0]["gates"]["automatic_goal"])
+        self.assertEqual(candidates[0]["verdict"], "missed")
+
+    def test_lower_net_motion_without_sequence_stays_reviewable(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.3, "net_lower_motion_score": 0.9, "net_below_motion_score": 0.0,
+             "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 345]}]},
+            {"time": 1.4, "net_lower_motion_score": 0.8, "net_below_motion_score": 0.0,
+             "detections": [{"name": "ball", "confidence": 0.8, "center": [492, 365]}]},
+            {"time": 1.5, "net_lower_motion_score": 0.7, "net_below_motion_score": 0.0,
+             "detections": [{"name": "ball", "confidence": 0.8, "center": [493, 385]}]},
+        ]
+        for record in records:
+            record["net_measurement_valid"] = True
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20},
+        )
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["signals"]["net_motion_order"], "lower_only")
+        self.assertFalse(candidates[0]["verification"]["net_support"])
+        self.assertEqual(candidates[0]["verdict"], "ambiguous")
+
+    def test_strong_same_frame_net_motion_supports_clean_crossing(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.3, "net_lower_motion_score": 0.9, "net_below_motion_score": 0.8,
+             "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 345]}]},
+            {"time": 1.4, "net_lower_motion_score": 0.8, "net_below_motion_score": 0.7,
+             "detections": [{"name": "ball", "confidence": 0.8, "center": [492, 365]}]},
+            {"time": 1.5, "net_lower_motion_score": 0.7, "net_below_motion_score": 0.6,
+             "detections": [{"name": "ball", "confidence": 0.8, "center": [493, 385]}]},
+        ]
+        for record in records:
+            record["net_measurement_valid"] = True
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20},
+        )
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["signals"]["net_motion_order"], "same_frame")
+        self.assertTrue(candidates[0]["verification"]["net_support"])
+        self.assertEqual(candidates[0]["verdict"], "made")
+
+    def test_refined_crossing_continues_after_incomplete_early_below_pair(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.2, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 345]}]},
+            {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [520, 350]}]},
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 365]}]},
+            {"time": 1.5, "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 385]}]},
+        ]
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20},
+        )
+        self.assertEqual(len(candidates), 1)
+        self.assertAlmostEqual(candidates[0]["below"]["time"], 1.4)
+
+    def test_refined_event_time_uses_interpolated_rim_crossing_time(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 345]}]},
+            {"time": 1.5, "detections": [{"name": "ball", "confidence": 0.8, "center": [492, 365]}]},
+            {"time": 1.6, "detections": [{"name": "ball", "confidence": 0.8, "center": [493, 385]}]},
+        ]
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20},
+        )
+        self.assertEqual(len(candidates), 1)
+        self.assertAlmostEqual(candidates[0]["time"], 1.27, places=2)
 
     def test_refined_crossing_exposes_overlay_trajectory_and_rim(self):
         records = [

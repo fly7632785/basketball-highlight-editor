@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from basketball_highlight.events import calibrated_gates
+from basketball_highlight.ranking import dedupe_candidates
 
 
 def parse_args():
@@ -36,6 +37,9 @@ def is_automatic_goal(match):
     verdict = match.get("verdict")
     if verdict is not None and verdict != "made":
         return False
+    persisted_gates = match.get("gates")
+    if isinstance(persisted_gates, dict) and "automatic_goal" in persisted_gates:
+        return bool(persisted_gates["automatic_goal"])
     return bool(calibrated_gates(match).get("automatic_goal"))
 
 
@@ -47,14 +51,7 @@ def unique_matches(data, dedupe_sec, auto_only=False):
     ]
     if auto_only:
         matches = [match for match in matches if is_automatic_goal(match)]
-    matches.sort(key=lambda item: float(item["time"]))
-    unique = []
-    for match in matches:
-        if not unique or float(match["time"]) - float(unique[-1]["time"]) > dedupe_sec:
-            unique.append(match)
-        elif float(match.get("score", 0.0)) > float(unique[-1].get("score", 0.0)):
-            unique[-1] = match
-    return unique
+    return dedupe_candidates(matches, dedupe_sec)
 
 
 def main(args):

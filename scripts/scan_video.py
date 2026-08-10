@@ -8,6 +8,8 @@ import cv2
 import torch
 from ultralytics import YOLO
 
+from cache_io import read_json_cache, write_json_cache
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Scan a basketball video with an existing YOLO model.")
@@ -20,7 +22,7 @@ def parse_args():
     parser.add_argument("--scale", type=int, default=4)
     parser.add_argument("--batch", type=int, default=8)
     parser.add_argument("--conf", type=float, default=0.15)
-    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps"))
+    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda"))
     parser.add_argument("--cache-dir", type=Path,
                         help="Optional directory for reusable coarse detection logs.")
     parser.add_argument("--output", required=True)
@@ -30,6 +32,8 @@ def parse_args():
 def select_device(requested):
     if requested != "auto":
         return requested
+    if torch.cuda.is_available():
+        return "cuda"
     return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
@@ -60,11 +64,17 @@ def scan_video(args):
         args.cache_dir.mkdir(parents=True, exist_ok=True)
         cache_path = args.cache_dir / f"{cache_key}.json"
         if cache_path.exists():
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(cache_path.read_text(encoding="utf-8"), encoding="utf-8")
-            print(f"cache_hit={cache_path}")
-            print(f"output={output}")
-            return
+            cached = read_json_cache(
+                cache_path,
+                lambda value: isinstance(value, dict) and isinstance(value.get("records"), list),
+            )
+            if cached is not None:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(json.dumps(cached, ensure_ascii=False), encoding="utf-8")
+                print(f"cache_hit={cache_path}")
+                print("progress=1.0", flush=True)
+                print(f"output={output}")
+                return
 
     model = YOLO(str(model_path))
     cap = cv2.VideoCapture(str(video))
@@ -81,6 +91,8 @@ def scan_video(args):
 
     pending_crops = []
     pending_meta = []
+    last_progress_report = started
+    progress_total = max_frames or frame_count
 
     def flush_batch():
         if not pending_crops:
@@ -144,10 +156,16 @@ def scan_video(args):
         })
         if len(pending_crops) >= args.batch:
             flush_batch()
+        now = time.perf_counter()
+        if now - last_progress_report >= 0.5:
+            progress = frame_index / max(1, progress_total)
+            print(f"progress={min(1.0, progress):.4f}", flush=True)
+            last_progress_report = now
         frame_index += 1
 
     flush_batch()
     cap.release()
+    print("progress=1.0", flush=True)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({
         "video": str(video),
@@ -165,7 +183,7 @@ def scan_video(args):
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }, ensure_ascii=False), encoding="utf-8")
     if cache_path:
-        cache_path.write_text(output.read_text(encoding="utf-8"), encoding="utf-8")
+        write_json_cache(cache_path, json.loads(output.read_text(encoding="utf-8")))
 
 
 if __name__ == "__main__":

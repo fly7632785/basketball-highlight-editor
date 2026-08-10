@@ -68,17 +68,34 @@ def suggest_review_reasons(candidate: dict) -> dict:
     net_motion_score = _number(candidate.get("net_motion_score"), -1.0)
     net_changed_ratio = _number(candidate.get("net_changed_ratio"), -1.0)
     net_score = _number(_first(candidate, "signals", "net_score", -1.0), -1.0)
-    audio_score = _number(_first(candidate, "signals", "audio_score", -1.0), -1.0)
-    audio_support = _flag(candidate.get("audio_support"), verification.get("audio_support"))
-    positive_audio = audio_support or audio_score >= 0.65
+    net_inside_score = _number(
+        _first(candidate, "signals", "net_inside_motion_score", -1.0),
+        -1.0,
+    )
+    net_sequence = _number(
+        _first(candidate, "signals", "net_sequence_score", -1.0),
+        -1.0,
+    )
+    net_below_peak = _number(
+        _first(candidate, "signals", "net_below_peak", -1.0),
+        -1.0,
+    )
     positive_net = (
+        (
+            net_inside_score >= 0.35
+            and net_sequence >= 0.80
+            and net_below_peak >= 0.25
+        )
+        or
         net_score >= 0.55
         or net_motion_score >= 0.75
         or net_changed_ratio >= 0.129
     )
     weak_net = (
-        (net_score >= 0.0 and net_score < 0.15)
-        and (net_motion_score < 0.0 or net_motion_score < 0.20)
+        (net_inside_score >= 0.0 and net_inside_score < 0.20)
+        or (net_score >= 0.0 and net_score < 0.15)
+    ) and (
+        (net_motion_score < 0.0 or net_motion_score < 0.20)
         and (net_changed_ratio < 0.0 or net_changed_ratio < 0.05)
     )
 
@@ -137,12 +154,7 @@ def suggest_review_reasons(candidate: dict) -> dict:
         tags.append("net_motion")
     elif weak_net:
         tags.append("net_no_motion")
-    if positive_audio:
-        tags.append("audio_support")
-
-    conflict = rebound and (positive_net or positive_audio)
-    if not conflict and lateral_exit and positive_net and positive_audio:
-        conflict = True
+    conflict = rebound and positive_net
 
     primary = "uncertain"
     confidence = "low"
@@ -150,13 +162,13 @@ def suggest_review_reasons(candidate: dict) -> dict:
         tags.append("uncertain")
     elif rebound:
         primary, confidence = "rebound", "high"
-    elif lateral_exit and horizontal_ratio >= 0.65 and not positive_net and not positive_audio:
+    elif lateral_exit and horizontal_ratio >= 0.65 and not positive_net:
         primary, confidence = "pass_ball", "high"
-    elif lateral_exit and near_rim and weak_descent and not positive_net and not positive_audio:
+    elif lateral_exit and near_rim and weak_descent and not positive_net:
         primary, confidence = "rim_out", "medium"
     elif weak_trajectory and (crossing_known_invalid or not valid_crossing) and not positive_net:
         primary, confidence = "no_shot", "medium"
-    elif weak_net and valid_crossing and not positive_audio:
+    elif weak_net and valid_crossing and not positive_net:
         primary, confidence = "net_no_motion", "low"
     else:
         tags.append("uncertain")
@@ -166,11 +178,12 @@ def suggest_review_reasons(candidate: dict) -> dict:
         "lateral_exit": lateral_exit,
         "horizontal_ratio": None if horizontal_ratio < 0.0 else horizontal_ratio,
         "net_score": None if net_score < 0.0 else net_score,
+        "net_inside_motion_score": None if net_inside_score < 0.0 else net_inside_score,
+        "net_sequence_score": None if net_sequence < 0.0 else net_sequence,
+        "net_below_peak": None if net_below_peak < 0.0 else net_below_peak,
         "net_motion_score": None if net_motion_score < 0.0 else net_motion_score,
         "net_changed_ratio": None if net_changed_ratio < 0.0 else net_changed_ratio,
-        "audio_score": None if audio_score < 0.0 else audio_score,
         "positive_net": positive_net,
-        "positive_audio": positive_audio,
         "weak_trajectory": weak_trajectory,
         "valid_crossing": valid_crossing,
         "gates": dict(gates),

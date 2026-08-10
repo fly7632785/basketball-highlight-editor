@@ -19,23 +19,25 @@ def _post_crossing_evidence(track, below, rim, verification_window):
     later = _later_points(track, below["time"], end_time)
     rim_y = float(rim["rim_y"])
     rim_height = float(rim.get("height", 20.0))
+    rim_width = max(1.0, float(rim.get("width", 20.0)))
+    below_depth = max(rim_width * 0.35, rim_height * 0.5)
     persistence_points = [
-        point for point in later if point["y"] >= rim_y + 10.0
+        point for point in later if point["y"] >= rim_y + below_depth
     ]
     previous_y = below["y"]
     rebound = False
     for point in later:
         if point["time"] <= below["time"]:
             continue
-        if point["y"] < previous_y - max(8.0, rim_height * 0.18):
+        if point["y"] < previous_y - max(rim_width * 0.25, rim_height * 0.18):
             rebound = True
             break
         previous_y = point["y"]
 
     half_width = max(1.0, float(rim.get("width", 20.0)) / 2.0)
     lateral_exit = any(
-        abs(point["x"] - float(rim["center_x"])) > max(3.0 * half_width, 45.0)
-        and point["y"] < rim_y + 80.0
+        abs(point["x"] - float(rim["center_x"])) > 3.0 * half_width
+        and point["y"] <= rim_y + max(4.0 * rim_height, 4.0 * rim_width)
         for point in later
     )
     return {
@@ -68,19 +70,37 @@ def resolve_verdict(
     gates = candidate.get("gates", {})
     signals = candidate.get("signals", {})
     net_score = float(signals.get("net_score", 0.0))
-    audio_score = float(signals.get("audio_score", 0.0))
+    net_inside_score = float(signals.get("net_inside_motion_score", net_score))
+    net_sequence = float(signals.get("net_sequence_score", 1.0))
+    net_evidence_present = bool(signals.get("net_signal_available", False))
+    net_no_motion = bool(signals.get("net_no_motion", False))
+    net_support = (
+        net_inside_score >= 0.35
+        and net_sequence >= 0.80
+        and float(signals.get("net_below_peak", 0.0)) >= 0.25
+    )
+    complete_crossing = candidate.get("complete_crossing", True) is True
+    prediction_review = gates.get("prediction_review") is True
     persistence = evidence["ball_persistence"]
+    if net_evidence_present:
+        positive_gate = net_support
+    else:
+        positive_gate = (
+            gates.get("high_precision") is True or
+            net_score >= 0.55 or
+            float(candidate.get("score", 0.0)) >= 0.72
+        )
     strong_positive = (
         persistence >= 0.67
-        and (
-            gates.get("high_precision") is True
-            or gates.get("prediction_review") is True
-            or net_score >= 0.55
-            or audio_score >= 0.65
-            or float(candidate.get("score", 0.0)) >= 0.72
-        )
+        and complete_crossing
+        and positive_gate
     )
-    strong_negative = evidence["rebound"] or evidence["lateral_exit"]
+    strong_negative = (
+        evidence["rebound"] or
+        evidence["lateral_exit"] or
+        (net_evidence_present and net_no_motion) or
+        not complete_crossing and not prediction_review
+    )
     if strong_negative:
         verdict = "missed"
     elif strong_positive:
@@ -91,9 +111,14 @@ def resolve_verdict(
     return {
         "state": "confirmed",
         "verdict": verdict,
-        "trajectory_cross": True,
-        "net_swish": net_score >= 0.55,
-        "audio_support": audio_score >= 0.65,
+        "trajectory_cross": complete_crossing,
+        "complete_crossing": complete_crossing,
+        "net_swish": net_support,
+        "net_inside_motion_score": round(net_inside_score, 3),
+        "net_sequence_score": round(net_sequence, 3),
+        "net_support": net_support,
+        "net_signal_available": net_evidence_present,
+        "net_no_motion": net_no_motion,
         "rim_rebound": evidence["rebound"],
         "lateral_exit": evidence["lateral_exit"],
         "event_time_source": "rim_crossing_interpolated",

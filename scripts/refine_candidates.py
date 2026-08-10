@@ -26,7 +26,7 @@ def parse_args():
     parser.add_argument("--scale", type=int, default=4)
     parser.add_argument("--conf", type=float, default=0.2)
     parser.add_argument("--batch", type=int, default=8)
-    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps"))
+    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda"))
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -34,6 +34,8 @@ def parse_args():
 def select_device(requested):
     if requested != "auto":
         return requested
+    if torch.cuda.is_available():
+        return "cuda"
     return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
@@ -68,12 +70,9 @@ def _net_zones(rim, frame_width, frame_height):
     }
 
 
-def _zone_signal(frame, background_gray, bounds):
-    x0, y0, x1, y1 = bounds
-    if x1 <= x0 or y1 <= y0:
+def _zone_signal(gray, hsv, background_gray):
+    if gray.size == 0 or hsv.size == 0:
         return 0.0, 0.0, 0.0
-    gray = cv2.cvtColor(frame[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
-    hsv = cv2.cvtColor(frame[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
     orange = cv2.inRange(hsv, (0, 45, 35), (25, 255, 255)) > 0
     if background_gray is None or background_gray.shape != gray.shape:
         return 0.0, 0.0, 0.0
@@ -112,6 +111,16 @@ def scan_window(
         net_y2 = min(y2, int(rim["rim_y"] + 3.5 * rim.get("height", 20)))
     else:
         net_x1 = net_x2 = net_y1 = net_y2 = 0
+    signal_bounds = [*zones.values()]
+    if net_x2 > net_x1 and net_y2 > net_y1:
+        signal_bounds.append((net_x1, net_y1, net_x2, net_y2))
+    if signal_bounds:
+        signal_x1 = min(bounds[0] for bounds in signal_bounds)
+        signal_y1 = min(bounds[1] for bounds in signal_bounds)
+        signal_x2 = max(bounds[2] for bounds in signal_bounds)
+        signal_y2 = max(bounds[3] for bounds in signal_bounds)
+    else:
+        signal_x1 = signal_x2 = signal_y1 = signal_y2 = 0
 
     pending_crops = []
     pending_meta = []
@@ -170,6 +179,7 @@ def scan_window(
         net_motion_score = 0.0
         net_changed_ratio = 0.0
         zone_values = {
+            "net_measurement_valid": False,
             "net_upper_motion_score": 0.0,
             "net_lower_motion_score": 0.0,
             "net_below_motion_score": 0.0,
@@ -179,32 +189,49 @@ def scan_window(
             "net_whole_signal_score": 0.0,
         }
         if rim and net_x2 > net_x1 and net_y2 > net_y1:
-            net = cv2.cvtColor(frame[net_y1:net_y2, net_x1:net_x2], cv2.COLOR_BGR2GRAY)
+            signal_frame = frame[signal_y1:signal_y2, signal_x1:signal_x2]
+            signal_gray = cv2.cvtColor(signal_frame, cv2.COLOR_BGR2GRAY)
+            signal_hsv = cv2.cvtColor(signal_frame, cv2.COLOR_BGR2HSV)
+            net = signal_gray[
+                net_y1 - signal_y1:net_y2 - signal_y1,
+                net_x1 - signal_x1:net_x2 - signal_x1,
+            ]
             if previous_net is not None and previous_net.shape == net.shape:
                 diff = cv2.absdiff(previous_net, net)
                 net_motion_score = float(diff.mean())
                 net_changed_ratio = float((diff > 15).mean())
             previous_net = net
             signals = []
+            zone_measurements_valid = True
             for zone_name, bounds in zones.items():
                 x0, y0, xz1, yz1 = bounds
-                current_gray = cv2.cvtColor(frame[y0:yz1, x0:xz1], cv2.COLOR_BGR2GRAY) if xz1 > x0 and yz1 > y0 else None
+                current_gray = signal_gray[
+                    y0 - signal_y1:yz1 - signal_y1,
+                    x0 - signal_x1:xz1 - signal_x1,
+                ]
+                current_hsv = signal_hsv[
+                    y0 - signal_y1:yz1 - signal_y1,
+                    x0 - signal_x1:xz1 - signal_x1,
+                ]
                 history = zone_history[zone_name]
                 background = None
                 if len(history) >= 5:
                     background = cv2.medianBlur(
                         np.median(np.stack(history), axis=0).astype("uint8"), 3,
                     )
+                else:
+                    zone_measurements_valid = False
                 gray_motion, changed_ratio, orange_motion = _zone_signal(
-                    frame, background, bounds,
+                    current_gray, current_hsv, background,
                 )
-                if current_gray is not None:
+                if current_gray.size > 0:
                     history.append(current_gray)
                 zone_values[f"net_{zone_name}_motion_score"] = round(gray_motion, 4)
                 zone_values[f"net_{zone_name}_changed_ratio"] = round(changed_ratio, 4)
                 zone_values[f"net_{zone_name}_orange_score"] = round(orange_motion, 4)
                 signals.append(gray_motion)
                 signals.append(orange_motion)
+            zone_values["net_measurement_valid"] = zone_measurements_valid
             zone_values["net_whole_signal_score"] = round(
                 _clamp01(max(signals, default=0.0)), 4,
             )
