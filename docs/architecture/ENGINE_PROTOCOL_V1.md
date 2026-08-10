@@ -66,7 +66,6 @@
 | `link_video` | 引用原始视频 |
 | `relink_video` | 原始视频被移动后，更新已有视频的引用路径并重新读取元数据 |
 | `extract_preview` | 从原始视频提取 ROI 页面预览帧 |
-| `create_proxy` | 生成代理视频 |
 | `save_roi` | 保存篮筐区域和校准数据 |
 | `start_analysis` | 异步启动代理、粗扫、候选生成和精筛任务 |
 | `get_job` | 查询任务状态 |
@@ -78,7 +77,6 @@
 | `review_candidate` | 写入确认 / 排除 / 暂缓状态、原因和备注，并结算审核耗时 |
 | `list_review_history` | 查询候选的审核操作历史 |
 | `update_clip_range` | 修改片段起止时间 |
-| `export_clips` | 导出所有未排除的候选，支持单独或合并导出 |
 | `start_export` | 异步导出所有未排除的候选，返回可由 `get_job` 查询的任务 |
 | `retry_export` | 使用上次导出参数重新启动失败或取消的导出任务 |
 | `list_exports` | 查询项目最近的导出记录和耗时统计 |
@@ -279,4 +277,4 @@ JOB_CANCELLED
 
 安全边界：`roots` 必须由调用方显式提供；Engine 只检查每个 root 自身及其一级子目录中的 `project.db`，不递归扫描用户目录，也不跟随一级子目录中的符号链接。结果按项目数据库最近修改时间倒序排列。
 
-当前已可运行的最小闭环命令：`hello`、`create_project`、`update_project_settings`、`open_project`、`delete_project`、`list_recent_projects`、`inspect_video`、`link_video`、`relink_video`、`extract_preview`、`create_proxy`、`save_roi`、`start_analysis`、`retry_analysis`、`cancel_job`、`get_job`、`get_active_jobs`、`list_candidates`、`start_review`、`review_candidate`、`list_review_history`、`update_clip_range`、`export_clips`、`start_export`、`retry_export`、`get_statistics`、`set_telemetry_consent`、`cleanup_artifacts`。
+当前已可运行的最小闭环命令：`hello`、`create_project`、`update_project_settings`、`open_project`、`delete_project`、`list_recent_projects`、`inspect_video`、`link_video`、`relink_video`、`extract_preview`、`save_roi`、`start_analysis`、`retry_analysis`、`cancel_job`、`get_job`、`get_active_jobs`、`list_candidates`、`start_review`、`review_candidate`、`list_review_history`、`update_clip_range`、`start_export`、`retry_export`、`get_statistics`、`set_telemetry_consent`、`cleanup_artifacts`。

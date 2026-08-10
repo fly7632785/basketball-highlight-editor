@@ -43,6 +43,102 @@ def test_delete_project_removes_project_files_but_not_source_video(tmp_path: Pat
     assert source.read_bytes() == b"source"
 
 
+def test_stale_read_does_not_recreate_deleted_project(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle(
+        "create_project",
+        {"name": "待删除项目", "root_path": str(project_root)},
+    )
+    service.handle("delete_project", {"project_root": str(project_root)})
+
+    with pytest.raises(ProtocolError) as error:
+        service.handle("get_statistics", {"project_root": str(project_root)})
+
+    assert error.value.code == "PROJECT_NOT_FOUND"
+    assert not project_root.exists()
+
+
+def test_delete_project_rejects_source_video_inside_project(tmp_path: Path):
+    project_root = tmp_path / "project"
+    source = project_root / "source.mp4"
+    service = EngineService()
+    service.handle(
+        "create_project",
+        {"name": "保护原视频", "root_path": str(project_root)},
+    )
+    source.write_bytes(b"source")
+    store = ProjectStore(project_root)
+    project = store.project()
+    assert project is not None
+    store.link_video(
+        {
+            "source_path": str(source),
+            "source_size_bytes": source.stat().st_size,
+            "source_mtime_ns": source.stat().st_mtime_ns,
+            "duration_ms": 1_000,
+            "width": 960,
+            "height": 720,
+            "fps": 30.0,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+        }
+    )
+
+    with pytest.raises(ProtocolError) as error:
+        service.handle("delete_project", {"project_root": str(project_root)})
+
+    assert error.value.code == "PROJECT_SOURCE_INSIDE_PROJECT"
+    assert project_root.is_dir()
+    assert source.read_bytes() == b"source"
+
+
+def test_delete_project_resolves_relative_source_against_project_root(tmp_path: Path):
+    project_root = tmp_path / "project"
+    source = project_root / "source.mp4"
+    service = EngineService()
+    service.handle(
+        "create_project",
+        {"name": "相对路径保护", "root_path": str(project_root)},
+    )
+    source.write_bytes(b"source")
+    store = ProjectStore(project_root)
+    store.link_video({
+        "source_path": "source.mp4",
+        "source_size_bytes": source.stat().st_size,
+        "source_mtime_ns": source.stat().st_mtime_ns,
+        "duration_ms": 1_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+
+    with pytest.raises(ProtocolError) as error:
+        service.handle("delete_project", {"project_root": str(project_root)})
+
+    assert error.value.code == "PROJECT_SOURCE_INSIDE_PROJECT"
+    assert source.exists()
+
+
+def test_delete_project_rejects_database_active_job_without_live_thread(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "陈旧任务保护", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    project = store.project()
+    assert project is not None
+    job = store.create_job(project["id"], None, "analysis")
+    store.update_job(job["id"], state="running", stage="refine")
+
+    with pytest.raises(ProtocolError) as error:
+        service.handle("delete_project", {"project_root": str(project_root)})
+
+    assert error.value.code == "PROJECT_BUSY"
+    assert project_root.exists()
+
+
 def test_delete_project_rejects_live_job(tmp_path: Path):
     project_root = tmp_path / "project"
     service = EngineService()
@@ -63,6 +159,53 @@ def test_delete_project_rejects_live_job(tmp_path: Path):
     assert project_root.exists()
     release.set()
     worker.join(timeout=1)
+
+
+def test_cleanup_artifacts_rejects_live_job_and_preserves_files(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "清理保护", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    project = store.project()
+    assert project is not None
+    artifact = project_root / "artifacts" / "review_clips" / "candidate.mp4"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_bytes(b"clip")
+    job = store.create_job(project["id"], None, "analysis")
+    store.update_job(job["id"], state="running", stage="refine")
+    release = threading.Event()
+    worker = threading.Thread(target=release.wait, args=(2,), daemon=True)
+    worker.start()
+    service._job_threads[job["id"]] = worker
+
+    with pytest.raises(ProtocolError) as error:
+        service.handle("cleanup_artifacts", {"project_root": str(project_root)})
+
+    assert error.value.code == "PROJECT_BUSY"
+    assert artifact.read_bytes() == b"clip"
+    release.set()
+    worker.join(timeout=1)
+
+
+def test_cleanup_artifacts_removes_requested_artifacts_when_idle(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "清理空闲", "root_path": str(project_root)})
+    review_clip = project_root / "artifacts" / "review_clips" / "candidate.mp4"
+    export = project_root / "artifacts" / "exports" / "highlights.mp4"
+    review_clip.parent.mkdir(parents=True, exist_ok=True)
+    export.parent.mkdir(parents=True, exist_ok=True)
+    review_clip.write_bytes(b"clip")
+    export.write_bytes(b"export")
+
+    result = service.handle(
+        "cleanup_artifacts",
+        {"project_root": str(project_root), "include_exports": True},
+    )
+
+    assert result["removed"]
+    assert not review_clip.exists()
+    assert not export.exists()
 
 
 def test_list_exports_returns_recent_export_metrics(tmp_path: Path):
@@ -92,6 +235,50 @@ def test_list_exports_returns_recent_export_metrics(tmp_path: Path):
     assert result["exports"][0]["metadata"] == {"files": ["highlights.mp4"]}
 
 
+def test_export_rejects_overwriting_source_video(tmp_path: Path):
+    project_root = tmp_path / "project"
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    service = EngineService()
+    service.handle("create_project", {"name": "禁止覆盖", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    video = store.link_video({
+        "source_path": str(source),
+        "source_size_bytes": source.stat().st_size,
+        "source_mtime_ns": source.stat().st_mtime_ns,
+        "duration_ms": 1_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+    store.replace_candidates(video["id"], [{
+        "id": "candidate-1", "video_id": video["id"], "event_time_ms": 500,
+        "default_start_ms": 0, "default_end_ms": 900,
+        "review_start_ms": 0, "review_end_ms": 900,
+        "detector_version": "test", "score": 0.9, "confidence": "high",
+        "evidence_json": "{}",
+    }])
+
+    started = service.handle(
+        "start_export",
+        {
+            "project_root": str(project_root),
+            "video_id": video["id"],
+            "mode": "merge",
+            "output_path": str(source),
+        },
+    )
+    service._job_threads[started["job"]["id"]].join(timeout=2)
+    job = store.get_job(started["job"]["id"])
+
+    assert job is not None
+    assert job["state"] == "failed"
+    assert job["error_code"] == "EXPORT_SOURCE_CONFLICT"
+    assert source.read_bytes() == b"source"
+
+
 def test_start_analysis_rejects_existing_stale_job(tmp_path: Path):
     project_root = tmp_path / "project"
     service = EngineService()
@@ -109,7 +296,7 @@ def test_start_analysis_rejects_existing_stale_job(tmp_path: Path):
         "audio_codec": "aac",
     })
     store.save_roi(video["id"], {"x1": 10, "y1": 20, "x2": 100, "y2": 120})
-    job = service.handle("create_analysis_job", {
+    job = service._create_analysis_job({
         "project_root": str(project_root),
         "video_id": video["id"],
     })["job"]
@@ -122,6 +309,107 @@ def test_start_analysis_rejects_existing_stale_job(tmp_path: Path):
         })
 
     assert error.value.code == "JOB_RECOVERY_REQUIRED"
+
+
+def test_start_export_rejects_existing_stale_export_job(tmp_path: Path):
+    project_root = tmp_path / "project"
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    service = EngineService()
+    service.handle("create_project", {"name": "避免重复导出", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    project = store.project()
+    assert project is not None
+    video = store.link_video({
+        "source_path": str(source),
+        "source_size_bytes": source.stat().st_size,
+        "source_mtime_ns": source.stat().st_mtime_ns,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+    job = store.create_job(project["id"], video["id"], "export")
+    store.update_job(job["id"], state="running", stage="encode")
+
+    with pytest.raises(ProtocolError) as error:
+        service.handle(
+            "start_export",
+            {"project_root": str(project_root), "video_id": video["id"]},
+        )
+
+    assert error.value.code == "JOB_RECOVERY_REQUIRED"
+
+
+def test_retry_analysis_rejects_export_job(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "任务类型", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    project = store.project()
+    assert project is not None
+    job = store.create_job(project["id"], None, "export")
+    store.update_job(job["id"], state="failed", stage="export")
+
+    with pytest.raises(ProtocolError) as error:
+        service.handle(
+            "retry_analysis",
+            {"project_root": str(project_root), "job_id": job["id"]},
+        )
+
+    assert error.value.code == "JOB_NOT_FOUND"
+
+
+def test_retry_analysis_accepts_failed_job(tmp_path: Path, monkeypatch):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "失败后重试", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    video = store.link_video({
+        "source_path": str(tmp_path / "source.mp4"),
+        "source_size_bytes": 1,
+        "source_mtime_ns": 1,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+    store.save_roi(video["id"], {"x1": 10, "y1": 20, "x2": 100, "y2": 120})
+    job = service._create_analysis_job({
+        "project_root": str(project_root),
+        "video_id": video["id"],
+        "sample_fps": 10,
+    })["job"]
+    store.update_job(
+        job["id"],
+        state="failed",
+        stage="coarse_scan",
+        error_code="ANALYSIS_FAILED",
+        error_message="模拟失败",
+    )
+    started_payload = {}
+
+    def fake_start_analysis(payload):
+        started_payload.update(payload)
+        return {"job": {"id": "retry-job", "state": "queued"}}
+
+    monkeypatch.setattr(service, "start_analysis", fake_start_analysis)
+
+    result = service.handle("retry_analysis", {
+        "project_root": str(project_root),
+        "video_id": video["id"],
+        "job_id": job["id"],
+    })
+
+    assert result["job"]["id"] == "retry-job"
+    assert started_payload["sample_fps"] == 10
+    replaced = store.get_job(job["id"])
+    assert replaced["state"] == "cancelled"
+    assert replaced["error_code"] == "JOB_RETRIED"
 
 
 def test_jsonl_hello(tmp_path: Path):
@@ -177,7 +465,7 @@ def test_get_active_jobs_exposes_checkpoint_and_stale_recovery_state(tmp_path: P
         "audio_codec": "aac",
     })
     store.save_roi(video["id"], {"x1": 10, "y1": 20, "x2": 100, "y2": 120})
-    job = service.handle("create_analysis_job", {
+    job = service._create_analysis_job({
         "project_root": str(project_root),
         "video_id": video["id"],
         "sample_fps": 8,
@@ -225,7 +513,7 @@ def test_get_active_jobs_does_not_start_duplicate_work_and_marks_live_worker(tmp
         "audio_codec": "aac",
     })
     store.save_roi(video["id"], {"x1": 10, "y1": 20, "x2": 100, "y2": 120})
-    job = service.handle("create_analysis_job", {
+    job = service._create_analysis_job({
         "project_root": str(project_root),
         "video_id": video["id"],
     })["job"]
@@ -359,6 +647,64 @@ def test_relink_video_updates_media_reference_and_keeps_video_id(tmp_path: Path)
     assert result["video"]["source_exists"] is True
 
 
+def test_relink_video_invalidates_analysis_when_media_fingerprint_changes(tmp_path: Path):
+    project_root = tmp_path / "project"
+    old_source = tmp_path / "old.mp4"
+    new_source = tmp_path / "new.mp4"
+    old_source.write_bytes(b"old")
+    new_source.write_bytes(b"new-media")
+    service = EngineService()
+    service.handle("create_project", {"name": "换视频清理分析", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    video = store.link_video({
+        "source_path": str(old_source),
+        "source_size_bytes": old_source.stat().st_size,
+        "source_mtime_ns": old_source.stat().st_mtime_ns,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+    roi = store.save_roi(video["id"], {"x1": 100, "y1": 100, "x2": 300, "y2": 300})
+    store.replace_candidates(video["id"], [{
+        "id": "candidate-1",
+        "video_id": video["id"],
+        "roi_id": roi["id"],
+        "event_time_ms": 10_000,
+        "default_start_ms": 4_000,
+        "default_end_ms": 13_000,
+        "review_start_ms": 4_000,
+        "review_end_ms": 13_000,
+        "detector_version": "test",
+        "score": 0.8,
+        "confidence": "review",
+        "evidence_json": "{}",
+    }])
+    service.inspect_video = lambda payload: {
+        "source_path": str(new_source.resolve()),
+        "source_size_bytes": new_source.stat().st_size,
+        "source_mtime_ns": new_source.stat().st_mtime_ns,
+        "duration_ms": 30_000,
+        "width": 1920,
+        "height": 1080,
+        "fps": 60.0,
+        "video_codec": "hevc",
+        "audio_codec": "aac",
+    }
+
+    result = service.handle("relink_video", {
+        "project_root": str(project_root),
+        "video_id": video["id"],
+        "video_path": str(new_source),
+    })
+
+    assert result["video"]["analysis_invalidated"] is True
+    assert store.list_candidates(video["id"]) == []
+    assert store.active_roi(video["id"]) is None
+
+
 def test_statistics_includes_export_totals(tmp_path: Path):
     project_root = tmp_path / "project"
     service = EngineService()
@@ -400,7 +746,14 @@ def test_start_export_runs_as_recoverable_job(tmp_path: Path):
         "video_codec": "h264",
         "audio_codec": "aac",
     })
-    service._execute_export = lambda payload, progress_callback=None: {
+    store.replace_candidates(video["id"], [{
+        "id": "candidate-1", "video_id": video["id"], "event_time_ms": 1_000,
+        "default_start_ms": 0, "default_end_ms": 4_000,
+        "review_start_ms": 0, "review_end_ms": 4_000,
+        "detector_version": "test", "score": 0.8, "confidence": "review",
+        "evidence_json": "{}",
+    }])
+    service._execute_export = lambda payload, **_kwargs: {
         "export": {"id": "export-1"},
         "files": ["/tmp/highlights.mp4"],
     }
@@ -522,59 +875,14 @@ def test_roi_is_required_before_analysis(tmp_path: Path):
     )
     payload = {"project_root": str(project_root), "video_id": video["id"]}
     try:
-        service.handle("create_analysis_job", payload)
+        service._create_analysis_job(payload)
     except Exception as exc:
         assert "ROI" in str(exc)
     else:
         raise AssertionError("analysis must require ROI")
     service.handle("save_roi", {**payload, "x1": 10, "y1": 20, "x2": 100, "y2": 120})
-    job = service.handle("create_analysis_job", payload)["job"]
+    job = service._create_analysis_job(payload)["job"]
     assert job["state"] == "queued"
-
-
-def test_create_proxy_generates_reusable_artifact(tmp_path: Path):
-    source = tmp_path / "source.mp4"
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-            "-f", "lavfi", "-i", "color=c=black:s=320x240:r=10",
-            "-t", "1", "-pix_fmt", "yuv420p", str(source),
-        ],
-        check=True,
-    )
-    project_root = tmp_path / "project"
-    service = EngineService()
-    service.handle("create_project", {"name": "测试项目", "root_path": str(project_root)})
-    video = service.handle(
-        "link_video", {"project_root": str(project_root), "video_path": str(source)}
-    )["video"]
-
-    result = service.handle(
-        "create_proxy",
-        {
-            "project_root": str(project_root),
-            "video_id": video["id"],
-            "width": 160,
-            "height": 120,
-            "fps": 5,
-        },
-    )
-
-    assert Path(result["artifact"]["path"]).is_file()
-    assert result["job"]["state"] == "completed"
-    assert not list((project_root / "artifacts" / "proxies").glob("*.part*"))
-
-    cached = service.handle(
-        "create_proxy",
-        {
-            "project_root": str(project_root),
-            "video_id": video["id"],
-            "width": 160,
-            "height": 120,
-            "fps": 5,
-        },
-    )
-    assert cached["artifact"]["cache_hit"] is True
 
 
 def test_extract_preview_generates_frame_and_reuses_cached_frame(tmp_path: Path, monkeypatch):
@@ -828,10 +1136,12 @@ def test_start_analysis_records_model_failure_without_blocking_request(tmp_path:
     service = EngineService()
     service.handle("create_project", {"name": "测试项目", "root_path": str(project_root)})
     store = ProjectStore(project_root)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"fixture")
     video = store.link_video({
-        "source_path": str(tmp_path / "source.mp4"),
-        "source_size_bytes": 1,
-        "source_mtime_ns": 1,
+        "source_path": str(source),
+        "source_size_bytes": source.stat().st_size,
+        "source_mtime_ns": source.stat().st_mtime_ns,
         "duration_ms": 20_000,
         "width": 960,
         "height": 720,
@@ -913,7 +1223,7 @@ def test_cancel_job_persists_cancelled_state(tmp_path: Path):
         "audio_codec": "aac",
     })
     store.save_roi(video["id"], {"x1": 10, "y1": 20, "x2": 100, "y2": 120})
-    job = service.handle("create_analysis_job", {
+    job = service._create_analysis_job({
         "project_root": str(project_root), "video_id": video["id"],
     })["job"]
     cancelled = service.handle("cancel_job", {
@@ -923,15 +1233,36 @@ def test_cancel_job_persists_cancelled_state(tmp_path: Path):
     assert cancelled["error_code"] == "JOB_CANCELLED"
 
 
+def test_cancel_live_job_reports_cancelling_until_worker_stops(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "测试项目", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    project = store.project()
+    assert project is not None
+    job = store.create_job(project["id"], None, "analysis")
+    service._job_cancel_events[job["id"]] = threading.Event()
+
+    cancelling = service.handle("cancel_job", {
+        "project_root": str(project_root), "job_id": job["id"],
+    })["job"]
+
+    assert cancelling["state"] == "queued"
+    assert cancelling["stage"] == "cancelling"
+    assert service._job_cancel_events[job["id"]].is_set()
+
+
 def test_unexpected_analysis_error_is_persisted_as_failed(tmp_path: Path, monkeypatch):
     project_root = tmp_path / "project"
     service = EngineService()
     service.handle("create_project", {"name": "测试项目", "root_path": str(project_root)})
     store = ProjectStore(project_root)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"fixture")
     video = store.link_video({
-        "source_path": str(tmp_path / "source.mp4"),
-        "source_size_bytes": 1,
-        "source_mtime_ns": 1,
+        "source_path": str(source),
+        "source_size_bytes": source.stat().st_size,
+        "source_mtime_ns": source.stat().st_mtime_ns,
         "duration_ms": 20_000,
         "width": 960,
         "height": 720,
@@ -963,7 +1294,7 @@ def test_unexpected_analysis_error_is_persisted_as_failed(tmp_path: Path, monkey
     assert "unexpected pipeline failure" in current["error_message"]
 
 
-def test_engine_rejects_invalid_roi_and_proxy_parameters(tmp_path: Path):
+def test_engine_rejects_invalid_roi(tmp_path: Path):
     project_root = tmp_path / "project"
     service = EngineService()
     service.handle("create_project", {"name": "测试项目", "root_path": str(project_root)})
@@ -983,10 +1314,6 @@ def test_engine_rejects_invalid_roi_and_proxy_parameters(tmp_path: Path):
         service.handle("save_roi", {
             "project_root": str(project_root), "video_id": video["id"],
             "x1": 100, "y1": 20, "x2": 10, "y2": 120,
-        })
-    with pytest.raises(ProtocolError, match="代理视频参数"):
-        service.handle("create_proxy", {
-            "project_root": str(project_root), "video_id": video["id"], "fps": "invalid",
         })
 
 
@@ -1060,7 +1387,7 @@ def test_replace_candidates_preserves_existing_review_for_stable_id(tmp_path: Pa
     assert candidate["note"] == "确认"
 
 
-def test_export_clips_uses_only_goal_reviews(tmp_path: Path):
+def test_start_export_uses_only_goal_reviews(tmp_path: Path):
     source = tmp_path / "source.mp4"
     subprocess.run(
         [
@@ -1095,19 +1422,25 @@ def test_export_clips_uses_only_goal_reviews(tmp_path: Path):
     service.handle("review_candidate", {"project_root": str(project_root), "candidate_id": "goal-1", "status": "goal"})
     service.handle("review_candidate", {"project_root": str(project_root), "candidate_id": "excluded-1", "status": "excluded"})
 
-    result = service.handle("export_clips", {
+    started = service.handle("start_export", {
         "project_root": str(project_root),
         "video_id": video["id"],
         "mode": "separate",
         "output_dir": str(tmp_path / "exports"),
     })
+    service._job_threads[started["job"]["id"]].join(timeout=10)
+    job = store.get_job(started["job"]["id"])
+    project = store.project()
+    exports = store.list_exports(project["id"]) if project else []
 
-    assert result["export"]["candidate_count"] == 1
-    assert len(result["files"]) == 1
-    assert Path(result["files"][0]).is_file()
+    assert job is not None
+    assert job["state"] == "completed"
+    assert exports[0]["candidate_count"] == 1
+    assert len(exports[0]["metadata"]["files"]) == 1
+    assert Path(exports[0]["metadata"]["files"][0]).is_file()
 
 
-def test_export_clips_includes_unreviewed_candidates_by_default(tmp_path: Path):
+def test_start_export_includes_unreviewed_candidates_by_default(tmp_path: Path):
     source = tmp_path / "source.mp4"
     subprocess.run(
         [
@@ -1145,12 +1478,18 @@ def test_export_clips_includes_unreviewed_candidates_by_default(tmp_path: Path):
         "status": "excluded",
     })
 
-    result = service.handle("export_clips", {
+    started = service.handle("start_export", {
         "project_root": str(project_root),
         "video_id": video["id"],
         "mode": "separate",
         "output_dir": str(tmp_path / "exports"),
     })
+    service._job_threads[started["job"]["id"]].join(timeout=10)
+    job = store.get_job(started["job"]["id"])
+    project = store.project()
+    exports = store.list_exports(project["id"]) if project else []
 
-    assert result["export"]["candidate_count"] == 1
-    assert Path(result["files"][0]).is_file()
+    assert job is not None
+    assert job["state"] == "completed"
+    assert exports[0]["candidate_count"] == 1
+    assert Path(exports[0]["metadata"]["files"][0]).is_file()

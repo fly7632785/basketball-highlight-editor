@@ -28,12 +28,13 @@ if [[ "$(uname -s)" == "Darwin" && "${BHE_ALLOW_EXTERNAL_FFMPEG:-0}" != "1" ]]; 
 fi
 
 rm -rf "$OUT"
-mkdir -p "$OUT"/bin "$OUT"/python "$OUT"/engine "$OUT"/scripts "$OUT"/src "$OUT"/third_party/basketball-shot-detection
+mkdir -p "$OUT"/bin "$OUT"/python "$OUT"/engine "$OUT"/scripts "$OUT"/src "$OUT"/docs/architecture "$OUT"/third_party/basketball-shot-detection
 
 cp -R "$PYTHON_RUNTIME"/. "$OUT/python/"
 cp -R "$ROOT/engine/python" "$OUT/engine/"
 cp -R "$ROOT/scripts"/. "$OUT/scripts/"
 cp -R "$ROOT/src"/. "$OUT/src/"
+cp "$ROOT/docs/architecture/SQLITE_SCHEMA_V1.sql" "$OUT/docs/architecture/"
 cp "$ROOT/third_party/basketball-shot-detection/bball_model.pt" "$OUT/third_party/basketball-shot-detection/"
 cp "$FFMPEG" "$OUT/bin/ffmpeg"
 cp "$FFPROBE" "$OUT/bin/ffprobe"

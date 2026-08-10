@@ -58,13 +58,7 @@ def has_evidence_conflict(evidence_json: str | None) -> bool:
     gates = evidence.get("gates") if isinstance(evidence.get("gates"), dict) else {}
     if truthy(gates.get("evidence_conflict")) or truthy(gates.get("signal_conflict")):
         return True
-    signals = evidence.get("signals") if isinstance(evidence.get("signals"), dict) else {}
-    try:
-        net_score = float(signals["net_score"])
-        audio_score = float(signals["audio_score"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    return (net_score >= 0.55) != (audio_score >= 0.65)
+    return False
 
 
 class ProjectStore:
@@ -159,6 +153,13 @@ class ProjectStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def video_source_paths(self) -> list[str]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT source_path FROM videos WHERE source_path IS NOT NULL"
+            ).fetchall()
+        return [str(row["source_path"]) for row in rows]
+
     def context(self) -> Dict[str, Any]:
         project = self.project()
         if not project:
@@ -219,10 +220,21 @@ class ProjectStore:
         return dict(row) if row else None
 
     def relink_video(self, video_id: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Replace only the external source reference; keep candidates and reviews."""
+        """Replace the source reference and invalidate analysis for changed media."""
         source_path = metadata.get("source_path")
         if not isinstance(source_path, str) or not source_path.strip():
             raise ValueError("VIDEO_PATH_INVALID")
+        previous = self.video(video_id)
+        if not previous:
+            raise LookupError("VIDEO_NOT_FOUND")
+        fingerprint_fields = (
+            "source_size_bytes", "duration_ms", "width",
+            "height", "fps", "video_codec", "audio_codec",
+        )
+        analysis_invalidated = any(
+            previous.get(field) != metadata.get(field)
+            for field in fingerprint_fields
+        )
         timestamp = now_iso()
         with self.connect() as connection:
             cursor = connection.execute(
@@ -249,11 +261,20 @@ class ProjectStore:
             )
             if cursor.rowcount != 1:
                 raise LookupError("VIDEO_NOT_FOUND")
+            if analysis_invalidated:
+                connection.execute("DELETE FROM candidates WHERE video_id = ?", (video_id,))
+                connection.execute("DELETE FROM rois WHERE video_id = ?", (video_id,))
+        if analysis_invalidated:
+            preview_dir = self.root / "artifacts" / "previews"
+            if preview_dir.is_dir():
+                for preview in preview_dir.glob(f"{video_id}_*.jpg"):
+                    preview.unlink(missing_ok=True)
         video = self.video(video_id)
         if not video:
             raise LookupError("VIDEO_NOT_FOUND")
         video["source_exists"] = True
         video["source_status"] = "linked"
+        video["analysis_invalidated"] = analysis_invalidated
         return video
 
     def save_roi(self, video_id: str, roi: Dict[str, Any]) -> Dict[str, Any]:
@@ -400,11 +421,17 @@ class ProjectStore:
         with self.connect() as connection:
             if not connection.execute("SELECT 1 FROM candidates WHERE id = ?", (candidate_id,)).fetchone():
                 raise LookupError("CANDIDATE_NOT_FOUND")
+            existing = connection.execute(
+                "SELECT review_started_at FROM candidate_reviews WHERE candidate_id = ?",
+                (candidate_id,),
+            ).fetchone()
+            if existing and existing["review_started_at"]:
+                return str(existing["review_started_at"])
             cursor = connection.execute(
                 """
                 UPDATE candidate_reviews
                 SET review_started_at = ?, review_duration_ms = NULL, updated_at = ?
-                WHERE candidate_id = ?
+                WHERE candidate_id = ? AND review_started_at IS NULL
                 """,
                 (timestamp, now_iso(), candidate_id),
             )
@@ -788,7 +815,7 @@ class ProjectStore:
         return exports
 
     def cleanup_artifacts(self, include_exports: bool = False) -> Dict[str, Any]:
-        names = ["proxies", "detections", "review_clips"]
+        names = ["proxies", "detections", "review_clips", "previews"]
         if include_exports:
             names.append("exports")
         removed = []

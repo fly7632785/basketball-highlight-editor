@@ -19,6 +19,16 @@ def test_scale_roi_to_proxy_preserves_relative_coordinates():
     assert scale_roi_to_proxy({"x1": 100, "y1": 200, "x2": 500, "y2": 800}, 1920, 960) == [50, 100, 250, 400]
 
 
+def test_scale_roi_to_proxy_uses_fit_scale_for_non_matching_aspect_ratio():
+    assert scale_roi_to_proxy(
+        {"x1": 100, "y1": 200, "x2": 500, "y2": 800},
+        1080,
+        960,
+        source_height=1920,
+        proxy_height=720,
+    ) == [38, 75, 188, 300]
+
+
 def test_flatten_refined_matches_deduplicates_by_event_time():
     data = {
         "results": [
@@ -28,6 +38,19 @@ def test_flatten_refined_matches_deduplicates_by_event_time():
     }
     matches = flatten_refined_matches(data, dedupe_seconds=2.0)
     assert [match["time"] for match in matches] == [10.8, 20.0]
+
+
+def test_flatten_refined_matches_prefers_made_over_higher_score_ambiguous():
+    matches = flatten_refined_matches({
+        "results": [{
+            "refined": [
+                {"time": 1.0, "score": 0.6, "verdict": "made"},
+                {"time": 1.5, "score": 0.95, "verdict": "ambiguous"},
+            ],
+        }],
+    })
+
+    assert matches == [{"time": 1.0, "score": 0.6, "verdict": "made"}]
 
 
 def test_pipeline_commands_use_existing_scripts(tmp_path: Path):
@@ -63,6 +86,28 @@ def test_pipeline_commands_normalize_float_roi_arguments(tmp_path: Path):
         cache_dir=Path("cache"),
     )
     assert commands[3][commands[3].index("--roi") + 1:commands[3].index("--proxy-scale")] == ["20", "40", "200", "400"]
+
+
+def test_pipeline_commands_forward_refine_window(tmp_path: Path):
+    commands = build_pipeline_commands(
+        repo_root=tmp_path,
+        source_video=Path("source.mp4"),
+        proxy_video=Path("proxy.mp4"),
+        model_path=Path("model.pt"),
+        coarse_detections=Path("coarse.json"),
+        coarse_candidates=Path("candidates.json"),
+        refined_output=Path("refined.json"),
+        proxy_roi=[10, 20, 100, 200],
+        source_roi=[20, 40, 200, 400],
+        cache_dir=Path("cache"),
+        window_seconds=4.0,
+    )
+    assert commands[3][commands[3].index("--window") + 1] == "4.0"
+
+
+def test_pipeline_proxy_preserves_source_aspect_ratio(tmp_path: Path):
+    script = Path(__file__).parents[1] / "scripts" / "create_proxy.py"
+    assert "force_original_aspect_ratio=decrease" in script.read_text(encoding="utf-8")
 
 
 def test_candidate_to_row_creates_reviewable_clip_window():
@@ -152,6 +197,27 @@ def test_run_pipeline_drains_large_child_output_without_deadlocking(tmp_path: Pa
     assert result["logs"]
 
 
+def test_run_pipeline_streams_child_output_to_progress_callback(tmp_path: Path):
+    refined = tmp_path / "refined.json"
+    script = (
+        "import json, time; "
+        "print('progress=0.25', flush=True); "
+        "time.sleep(0.02); "
+        "open(%r, 'w', encoding='utf-8').write(json.dumps({'results': []}))"
+    ) % str(refined)
+    output = []
+    progress = []
+    result = run_pipeline(
+        [[sys.executable, "-c", script]],
+        refined,
+        stage_callback=lambda stage, value: progress.append((stage, value)),
+        output_callback=lambda stage, line: output.append((stage, line)),
+    )
+    assert result["refined"] == {"results": []}
+    assert ("prepare_proxy", "progress=0.25") in output
+    assert ("prepare_proxy", 0.245) in progress
+
+
 def test_run_pipeline_reuses_completed_manifest_stage(tmp_path: Path):
     refined = tmp_path / "refined.json"
     proxy = tmp_path / "proxy.mp4"
@@ -179,3 +245,36 @@ def test_run_pipeline_reuses_completed_manifest_stage(tmp_path: Path):
     )
     assert result["cache_hits"] == 1
     assert "reused" in result["logs"][0]
+
+
+def test_run_pipeline_ignores_manifest_from_another_algorithm_version(tmp_path: Path):
+    refined = tmp_path / "refined.json"
+    proxy = tmp_path / "proxy.mp4"
+    manifest = tmp_path / "manifest.json"
+    proxy.write_bytes(b"proxy")
+    manifest.write_text(
+        json.dumps({
+            "version": "old-algorithm",
+            "stages": {
+                "prepare_proxy": {
+                    "state": "completed",
+                    "output": str(proxy),
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    script = "from pathlib import Path; Path({!r}).write_text({!r}, encoding='utf-8')".format(
+        str(refined), json.dumps({"results": []})
+    )
+
+    result = run_pipeline(
+        [[sys.executable, "-c", script]],
+        refined,
+        manifest_path=manifest,
+        manifest_version="new-algorithm",
+        stage_outputs=[proxy],
+    )
+
+    assert result["cache_hits"] == 0
+    assert result["refined"] == {"results": []}

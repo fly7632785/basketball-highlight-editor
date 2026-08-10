@@ -19,6 +19,7 @@ if _SRC_PATH.is_dir() and str(_SRC_PATH) not in sys.path:
     sys.path.insert(0, str(_SRC_PATH))
 
 from basketball_highlight.review_reason import suggest_review_reasons
+from basketball_highlight.ranking import dedupe_candidates
 
 
 class PipelineCancelled(Exception):
@@ -60,31 +61,42 @@ def terminate_process(process: subprocess.Popen) -> None:
         process.wait(timeout=2)
 
 
-def scale_roi_to_proxy(roi: Dict[str, Any], source_width: int, proxy_width: int) -> list[int]:
+def scale_roi_to_proxy(
+    roi: Dict[str, Any],
+    source_width: int,
+    proxy_width: int,
+    *,
+    source_height: int | None = None,
+    proxy_height: int | None = None,
+) -> list[int]:
     if source_width <= 0 or proxy_width <= 0:
         raise ValueError("VIDEO_DIMENSION_INVALID")
-    ratio = proxy_width / source_width
+    if (source_height is None) != (proxy_height is None):
+        raise ValueError("VIDEO_DIMENSION_INVALID")
+    if source_height is not None and proxy_height is not None:
+        if source_height <= 0 or proxy_height <= 0:
+            raise ValueError("VIDEO_DIMENSION_INVALID")
+        ratio = min(proxy_width / source_width, proxy_height / source_height)
+    else:
+        ratio = proxy_width / source_width
     return [
         round(float(roi[key]) * ratio)
         for key in ("x1", "y1", "x2", "y2")
     ]
 
 
-def flatten_refined_matches(data: Dict[str, Any], dedupe_seconds: float = 2.0) -> list[Dict[str, Any]]:
+def flatten_refined_matches(data: Dict[str, Any], dedupe_seconds: float = 1.0) -> list[Dict[str, Any]]:
     matches = [
         dict(match)
         for result in data.get("results", [])
         for match in result.get("refined", [])
-        if isinstance(match, dict) and "time" in match
+        if (
+            isinstance(match, dict)
+            and "time" in match
+            and match.get("verdict") != "missed"
+        )
     ]
-    matches.sort(key=lambda item: float(item["time"]))
-    unique: list[Dict[str, Any]] = []
-    for match in matches:
-        if not unique or float(match["time"]) - float(unique[-1]["time"]) > dedupe_seconds:
-            unique.append(match)
-        elif float(match.get("score", 0.0)) >= float(unique[-1].get("score", 0.0)):
-            unique[-1] = match
-    return unique
+    return dedupe_candidates(matches, dedupe_seconds)
 
 
 def candidate_to_row(
@@ -145,6 +157,7 @@ def build_pipeline_commands(
     refine_scale: int = 2,
     batch: int = 8,
     conf: float = 0.10,
+    window_seconds: float = 2.5,
 ) -> list[list[str]]:
     proxy_roi_args = [str(round(float(value))) for value in proxy_roi]
     source_roi_args = [str(round(float(value))) for value in source_roi]
@@ -172,6 +185,7 @@ def build_pipeline_commands(
             "--video", str(source_video), "--model", str(model_path),
             "--coarse", str(coarse_candidates), "--roi", *source_roi_args,
             "--proxy-scale", str(proxy_scale), "--sample-fps", str(refine_sample_fps),
+            "--window", str(window_seconds),
             "--scale", str(refine_scale), "--conf", str(conf),
             "--batch", str(batch), "--cache-dir", str(cache_dir / "refine"),
             "--output", str(refined_output),
@@ -183,23 +197,42 @@ def run_pipeline(
     commands: list[list[str]],
     refined_output: Path,
     stage_callback=None,
+    output_callback=None,
     cancel_check=None,
     process_callback=None,
     manifest_path: Path | None = None,
     stage_outputs: Iterable[Path | None] | None = None,
+    manifest_version: str | int = 1,
 ) -> Dict[str, Any]:
     stages = ("prepare_proxy", "coarse_scan", "generate_candidates", "refine_candidates")
+    if len(commands) == 4:
+        stage_ranges = (
+            (0.01, 0.14),
+            (0.14, 0.44),
+            (0.44, 0.46),
+            (0.46, 0.95),
+        )
+    else:
+        stage_width = 0.94 / max(1, len(commands))
+        stage_ranges = tuple(
+            (0.01 + index * stage_width, 0.01 + (index + 1) * stage_width)
+            for index in range(len(commands))
+        )
     logs: list[str] = []
     cache_hits = 0
     outputs = list(stage_outputs or [None] * len(commands))
     if len(outputs) != len(commands):
         raise ValueError("PIPELINE_STAGE_OUTPUTS_INVALID")
 
-    manifest: Dict[str, Any] = {"version": 1, "stages": {}}
+    manifest: Dict[str, Any] = {"version": manifest_version, "stages": {}}
     if manifest_path and manifest_path.is_file():
         try:
             loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict) and isinstance(loaded.get("stages"), dict):
+            if (
+                isinstance(loaded, dict)
+                and loaded.get("version") == manifest_version
+                and isinstance(loaded.get("stages"), dict)
+            ):
                 manifest.update(loaded)
         except (OSError, json.JSONDecodeError):
             # A truncated manifest must not make an otherwise recoverable run
@@ -244,10 +277,10 @@ def run_pipeline(
             cache_hits += 1
             logs.append(f"{stage}: reused {output}")
             if stage_callback:
-                stage_callback(stage, (index + 1) / len(commands))
+                stage_callback(stage, stage_ranges[index][1])
             continue
         if stage_callback:
-            stage_callback(stage, index / len(commands))
+            stage_callback(stage, stage_ranges[index][0])
         manifest.setdefault("stages", {})[stage] = {
             "state": "running",
             "started_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
@@ -267,20 +300,56 @@ def run_pipeline(
         if process_callback:
             process_callback(process)
         try:
-            result: dict[str, tuple[str | None, str | None]] = {}
+            stdout_lines: list[str] = []
+            stderr_lines: list[str] = []
 
-            def communicate() -> None:
-                result["output"] = process.communicate()
+            def read_stream(stream, lines: list[str]) -> None:
+                for line in iter(stream.readline, ""):
+                    lines.append(line)
+                    stripped = line.strip()
+                    if stripped.startswith("progress=") and stage_callback:
+                        try:
+                            local_progress = float(stripped.split("=", 1)[1])
+                        except ValueError:
+                            local_progress = None
+                        if local_progress is not None:
+                            start_progress, end_progress = stage_ranges[index]
+                            global_progress = start_progress + (
+                                end_progress - start_progress
+                            ) * max(0.0, min(1.0, local_progress))
+                            stage_callback(stage, max(0.01, global_progress))
+                    if output_callback:
+                        output_callback(stage, stripped)
+                stream.close()
 
-            reader = threading.Thread(target=communicate, name=f"pipeline-io-{index}")
-            reader.start()
-            while reader.is_alive():
+            stdout_reader = threading.Thread(
+                target=read_stream,
+                args=(process.stdout, stdout_lines),
+                name=f"pipeline-stdout-{index}",
+                daemon=True,
+            )
+            stderr_reader = threading.Thread(
+                target=read_stream,
+                args=(process.stderr, stderr_lines),
+                name=f"pipeline-stderr-{index}",
+                daemon=True,
+            )
+            stdout_reader.start()
+            stderr_reader.start()
+            while process.poll() is None:
                 if cancel_check and cancel_check():
                     terminate_process(process)
-                    reader.join(timeout=3)
+                    stdout_reader.join(timeout=3)
+                    stderr_reader.join(timeout=3)
                     raise PipelineCancelled("JOB_CANCELLED")
-                reader.join(timeout=0.05)
-            stdout, stderr = result.get("output", ("", ""))
+                time.sleep(0.05)
+            process.wait()
+            stdout_reader.join(timeout=3)
+            stderr_reader.join(timeout=3)
+            stdout = "".join(stdout_lines)
+            stderr = "".join(stderr_lines)
+            if cancel_check and cancel_check():
+                raise PipelineCancelled("JOB_CANCELLED")
             if process.returncode != 0:
                 details = (stderr or stdout or "").strip()
                 if len(details) > 1200:
@@ -331,7 +400,7 @@ def run_pipeline(
     if cancel_check and cancel_check():
         raise PipelineCancelled("JOB_CANCELLED")
     if stage_callback:
-        stage_callback("persist_candidates", 1.0)
+        stage_callback("persist_candidates", 0.95)
     return {
         "refined": json.loads(refined_output.read_text(encoding="utf-8")),
         "logs": logs,

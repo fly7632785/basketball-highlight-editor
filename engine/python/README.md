@@ -5,7 +5,7 @@ V1 Engine 是独立的 JSON Lines 进程。Flutter 只通过 stdin/stdout 协议
 ## 启动
 
 ```bash
-cd /Users/macmima1234/basketball-highlight-editor
+cd /path/to/basketball-highlight-editor
 PYTHONPATH=engine/python .venv/bin/python -m basketball_engine
 ```
 
@@ -23,7 +23,6 @@ PYTHONPATH=engine/python .venv/bin/python -m basketball_engine
 - `link_video`
 - `save_roi`
 - `start_analysis`（异步运行现有分析脚本）
-- `create_analysis_job`（内部兼容命令）
 - `get_job`
 - `get_active_jobs`
 - `retry_analysis`（对中断任务重试，并复用已完成阶段的产物）
@@ -35,4 +34,6 @@ PYTHONPATH=engine/python .venv/bin/python -m basketball_engine
 - `set_telemetry_consent`
 - `cleanup_artifacts`
 
-`create_proxy` 已通过现有 `scripts/create_proxy.py` 生成代理视频并写入任务记录。`start_analysis` 会异步调用现有代理、粗扫、候选生成和动态精筛脚本，完成后把候选写入 SQLite；UI 通过 `get_job` 查询进度和错误。每次分析会在 `artifacts/detections/<video_id>_<analysis_key>/manifest.json` 记录四个阶段的状态；重试时只重跑未完成或产物失效的阶段。
+`start_analysis` 会在统一异步任务中调用 `scripts/create_proxy.py`、粗扫、候选生成和动态精筛脚本，完成后把候选写入 SQLite；UI 通过 `get_job` 查询进度和错误。每次分析会在 `artifacts/detections/<video_id>_<analysis_key>/manifest.json` 记录四个阶段的状态；重试时只重跑未完成或产物失效的阶段。代理生成和导出不再提供绕过任务生命周期的同步协议入口。
+
+发布运行时必须同时携带 `docs/architecture/SQLITE_SCHEMA_V1.sql`。Engine 首次初始化项目数据库时会从运行时根目录读取该文件；缺失会导致项目无法创建。

@@ -72,6 +72,8 @@ def main() -> int:
         "ok": (root / "src" / "basketball_highlight").is_dir(),
         "path": str(root / "src"),
     }
+    schema = root / "docs" / "architecture" / "SQLITE_SCHEMA_V1.sql"
+    checks["sqlite_schema"] = {"ok": schema.is_file(), "path": str(schema)}
     missing_scripts = [name for name in REQUIRED_SCRIPTS if not (root / "scripts" / name).is_file()]
     checks["scripts"] = {"ok": not missing_scripts, "missing": missing_scripts}
     checks["model"] = {"ok": model.is_file(), "path": str(model)}

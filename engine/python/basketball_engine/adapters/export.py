@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Dict
 from uuid import uuid4
 
+from .analysis import PipelineCancelled, terminate_process
+
 
 def preferred_video_codec() -> str:
     return "h264_videotoolbox" if platform.system() == "Darwin" else "libx264"
@@ -16,6 +18,16 @@ def concat_manifest_entry(path: Path) -> str:
     """Render a path safely for the ffmpeg concat demuxer on macOS and Windows."""
     normalized = path.resolve().as_posix().replace("'", "'\\''")
     return f"file '{normalized}'\n"
+
+
+def available_output_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    for index in range(2, 10_000):
+        candidate = path.with_name(f"{path.stem}_{index}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+    raise OSError(f"无法生成不冲突的导出文件名: {path}")
 
 
 def build_clip_command(
@@ -56,6 +68,7 @@ def validate_media_file(path: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
+        timeout=15,
     )
     try:
         duration = float(result.stdout.strip())
@@ -65,14 +78,39 @@ def validate_media_file(path: Path) -> None:
         raise OSError(f"导出文件时长为零: {path}")
 
 
-def run_atomic_ffmpeg(command: list[str], output_path: Path) -> None:
+def run_atomic_ffmpeg(
+    command: list[str],
+    output_path: Path,
+    cancel_check=None,
+    process_callback=None,
+) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_path.with_name(
         f".{output_path.stem}.{uuid4().hex}.part{output_path.suffix}"
     )
     atomic_command = [*command[:-1], str(temporary)]
     try:
-        subprocess.run(atomic_command, check=True)
+        popen_kwargs = {}
+        if platform.system() == "Windows":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_kwargs["start_new_session"] = True
+        process = subprocess.Popen(atomic_command, **popen_kwargs)
+        if process_callback:
+            process_callback(process)
+        try:
+            while process.poll() is None:
+                if cancel_check and cancel_check():
+                    terminate_process(process)
+                    raise PipelineCancelled("JOB_CANCELLED")
+                time.sleep(0.05)
+            if cancel_check and cancel_check():
+                raise PipelineCancelled("JOB_CANCELLED")
+            if process.returncode != 0:
+                raise subprocess.CalledProcessError(process.returncode, atomic_command)
+        finally:
+            if process_callback:
+                process_callback(None)
         validate_media_file(temporary)
         temporary.replace(output_path)
     finally:
@@ -86,6 +124,8 @@ def export_goal_clips(
     mode: str,
     output_path: Path | None = None,
     progress_callback=None,
+    cancel_check=None,
+    process_callback=None,
 ) -> Dict[str, Any]:
     if mode not in {"separate", "merge"}:
         raise ValueError("INVALID_EXPORT_MODE")
@@ -95,25 +135,45 @@ def export_goal_clips(
     created_files: list[Path] = []
     try:
         for index, candidate in enumerate(candidates, 1):
-            path = output_dir / f"goal_{index:03d}_{candidate['event_time_ms'] / 1000:.2f}s.mp4"
-            existed = path.exists()
-            run_atomic_ffmpeg(
-                build_clip_command(
-                    source_video,
-                    int(candidate["review_start_ms"]),
-                    int(candidate["review_end_ms"]),
-                    path,
-                ),
-                path,
+            path = available_output_path(
+                output_dir / f"goal_{index:03d}_{candidate['event_time_ms'] / 1000:.2f}s.mp4"
             )
-            if not existed:
-                created_files.append(path)
+            codec = preferred_video_codec()
+            try:
+                run_atomic_ffmpeg(
+                    build_clip_command(
+                        source_video,
+                        int(candidate["review_start_ms"]),
+                        int(candidate["review_end_ms"]),
+                        path,
+                        codec,
+                    ),
+                    path,
+                    cancel_check=cancel_check,
+                    process_callback=process_callback,
+                )
+            except subprocess.CalledProcessError:
+                if codec == "libx264":
+                    raise
+                run_atomic_ffmpeg(
+                    build_clip_command(
+                        source_video,
+                        int(candidate["review_start_ms"]),
+                        int(candidate["review_end_ms"]),
+                        path,
+                        "libx264",
+                    ),
+                    path,
+                    cancel_check=cancel_check,
+                    process_callback=process_callback,
+                )
+            created_files.append(path)
             files.append(path)
             if progress_callback:
                 progress_callback("export_clips", index / max(1, len(candidates)))
         merged_path = None
         if mode == "merge" and files:
-            merged_path = output_path or (output_dir / "highlights.mp4")
+            merged_path = output_path or available_output_path(output_dir / "highlights.mp4")
             merged_existed = merged_path.exists()
             concat_file = output_dir / "concat.txt"
             concat_file.write_text(
@@ -126,7 +186,12 @@ def export_goal_clips(
                 "-c", "copy", str(merged_path),
             ]
             try:
-                run_atomic_ffmpeg(merge_command, merged_path)
+                run_atomic_ffmpeg(
+                    merge_command,
+                    merged_path,
+                    cancel_check=cancel_check,
+                    process_callback=process_callback,
+                )
             except (OSError, subprocess.CalledProcessError):
                 # Separate clips use a common encoder, so stream-copy is the
                 # fast path. Re-encode only when timestamps/codecs prevent a
@@ -140,6 +205,8 @@ def export_goal_clips(
                         str(merged_path),
                     ],
                     merged_path,
+                    cancel_check=cancel_check,
+                    process_callback=process_callback,
                 )
             if not merged_existed:
                 created_files.append(merged_path)

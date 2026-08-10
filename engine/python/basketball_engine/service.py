@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import math
+import os
 import sqlite3
 import shutil
 import subprocess
@@ -28,6 +29,9 @@ from .protocol import ProtocolError
 from .storage import ProjectStore, new_id
 
 
+ANALYSIS_ALGORITHM_VERSION = "python-v2.5-complete-crossing-net-support"
+
+
 class EngineService:
     _MIN_WORKING_SPACE_BYTES = 512 * 1024 * 1024
 
@@ -38,6 +42,41 @@ class EngineService:
         self._job_processes: dict[str, subprocess.Popen] = {}
         self._store_lock = threading.Lock()
         self._job_lock = threading.Lock()
+
+    def shutdown(self, timeout: float = 5.0) -> None:
+        with self._job_lock:
+            thread_items = list(self._job_threads.items())
+            cancel_events = list(self._job_cancel_events.values())
+            processes = list(self._job_processes.values())
+        for event in cancel_events:
+            event.set()
+        for process in processes:
+            terminate_process(process)
+        deadline = time.monotonic() + max(0.0, timeout)
+        for _, thread in thread_items:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            thread.join(remaining)
+        unfinished = {
+            job_id
+            for job_id, thread in thread_items
+            if thread.is_alive()
+        }
+        if unfinished:
+            with self._store_lock:
+                stores = list(self.stores.values())
+            for store in stores:
+                for job_id in unfinished:
+                    job = store.get_job(job_id)
+                    if job and job.get("state") in {"queued", "running"}:
+                        store.update_job(
+                            job_id,
+                            state="cancelled",
+                            stage="engine_shutdown",
+                            error_code="JOB_CANCELLED",
+                            error_message="应用关闭，任务已取消",
+                        )
 
     def _handlers(self) -> dict[str, Any]:
         return {
@@ -53,9 +92,7 @@ class EngineService:
             "extract_preview": self.extract_preview,
             "suggest_roi": self.suggest_roi,
             "save_roi": self.save_roi,
-            "create_proxy": self.create_proxy,
             "start_analysis": self.start_analysis,
-            "create_analysis_job": self.create_analysis_job,
             "cancel_job": self.cancel_job,
             "get_job": self.get_job,
             "get_active_jobs": self.get_active_jobs,
@@ -66,7 +103,6 @@ class EngineService:
             "review_candidate": self.review_candidate,
             "list_review_history": self.list_review_history,
             "update_clip_range": self.update_clip_range,
-            "export_clips": self.export_clips,
             "start_export": self.start_export,
             "list_exports": self.list_exports,
             "get_statistics": self.get_statistics,
@@ -85,7 +121,7 @@ class EngineService:
             "engine_version": __version__,
             "protocol_version": "1.0",
             "capabilities": list(self._handlers()),
-            "analysis_runtime": "python-v1-existing-script-adapter",
+            "analysis_runtime": ANALYSIS_ALGORITHM_VERSION,
         }
 
     def _store(self, payload: Dict[str, Any]) -> ProjectStore:
@@ -116,6 +152,9 @@ class EngineService:
         with self._store_lock:
             self.stores[str(store.root)] = store
         return store, context
+
+    def _require_store(self, payload: Dict[str, Any]) -> ProjectStore:
+        return self._existing_store(payload)[0]
 
     def create_project(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         name = payload.get("name")
@@ -151,28 +190,31 @@ class EngineService:
         if not isinstance(project_id, str) or not project_id:
             raise ProtocolError("PROJECT_INVALID", f"项目数据库无效: {root}")
 
+        for raw_source_path in store.video_source_paths():
+            source_path = Path(raw_source_path).expanduser()
+            if not source_path.is_absolute():
+                source_path = root / source_path
+            source_path = source_path.resolve()
+            try:
+                source_path.relative_to(root)
+            except ValueError:
+                continue
+            raise ProtocolError(
+                "PROJECT_SOURCE_INSIDE_PROJECT",
+                "原始视频位于项目目录内，已拒绝删除项目以保护原始视频",
+                {"source_path": str(source_path)},
+            )
+
         with self._job_lock:
             active_jobs = store.list_jobs(
                 project_id=project_id,
                 states=("queued", "running"),
             )
-            live_job_ids = [
-                job["id"]
-                for job in active_jobs
-                if (
-                    self._job_threads.get(job["id"]) is not None
-                    and self._job_threads[job["id"]].is_alive()
-                )
-                or (
-                    self._job_processes.get(job["id"]) is not None
-                    and self._job_processes[job["id"]].poll() is None
-                )
-            ]
-            if live_job_ids:
+            if active_jobs:
                 raise ProtocolError(
                     "PROJECT_BUSY",
                     "项目仍有任务运行，请先取消任务后再删除",
-                    {"job_ids": live_job_ids},
+                    {"job_ids": [job["id"] for job in active_jobs]},
                 )
 
         try:
@@ -189,7 +231,7 @@ class EngineService:
         }
 
     def update_project_settings(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        store = self._store(payload)
+        store = self._require_store(payload)
         project = store.project()
         if not project:
             raise ProtocolError("PROJECT_INVALID", "项目尚未初始化")
@@ -270,9 +312,20 @@ class EngineService:
             str(path),
         ]
         try:
-            completed = subprocess.run(command, check=True, capture_output=True, text=True)
+            completed = subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
             probe = json.loads(completed.stdout)
-        except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        except (
+            OSError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            json.JSONDecodeError,
+        ) as exc:
             raise ProtocolError("VIDEO_OPEN_FAILED", f"无法读取视频元数据: {exc}") from exc
         streams = probe.get("streams", [])
         video_stream = next((item for item in streams if item.get("codec_type") == "video"), None)
@@ -323,16 +376,36 @@ class EngineService:
                 },
             )
 
+    @staticmethod
+    def _validated_source(video: Dict[str, Any]) -> Path:
+        source = Path(video["source_path"])
+        if not source.is_file():
+            raise ProtocolError("VIDEO_NOT_FOUND", f"原始视频不存在: {source}")
+        stat = source.stat()
+        stored_size = video.get("source_size_bytes")
+        stored_mtime = video.get("source_mtime_ns")
+        if (
+            stored_size is not None
+            and stored_mtime is not None
+            and (
+                int(stored_size) != stat.st_size
+                or int(stored_mtime) != stat.st_mtime_ns
+            )
+        ):
+            raise ProtocolError(
+                "VIDEO_SOURCE_CHANGED",
+                "原视频内容已变化，请重新导入视频并校准篮筐区域",
+            )
+        return source
+
     def suggest_roi(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Find a stable hoop in a short full-frame scan and suggest a ball ROI."""
-        store = self._store(payload)
+        store = self._require_store(payload)
         video_id = payload.get("video_id")
         video = store.video(video_id) if isinstance(video_id, str) else None
         if not video:
             raise ProtocolError("VIDEO_NOT_FOUND", "自动 ROI 任务缺少有效视频")
-        source = Path(video["source_path"])
-        if not source.is_file():
-            raise ProtocolError("VIDEO_NOT_FOUND", f"原始视频不存在: {source}")
+        source = self._validated_source(video)
 
         repo_root = Path(__file__).resolve().parents[3]
         model_path = Path(
@@ -382,9 +455,20 @@ class EngineService:
             str(confidence),
         ]
         try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
+            subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
             result = json.loads(output.read_text(encoding="utf-8"))
-        except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        except (
+            OSError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            json.JSONDecodeError,
+        ) as exc:
             raise ProtocolError("ROI_DETECTION_FAILED", f"自动 ROI 检测失败: {exc}") from exc
 
         if not result.get("success") or not isinstance(result.get("roi"), dict):
@@ -419,7 +503,7 @@ class EngineService:
 
     def link_video(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         metadata = self.inspect_video(payload)
-        store = self._store(payload)
+        store = self._require_store(payload)
         return {"video": store.link_video(metadata)}
 
     def relink_video(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -429,9 +513,24 @@ class EngineService:
             raise ProtocolError("INVALID_REQUEST", "缺少 video_id")
         if not isinstance(raw_path, str) or not raw_path.strip():
             raise ProtocolError("INVALID_REQUEST", "缺少 video_path")
-        store = self._store(payload)
+        store = self._require_store(payload)
         if not store.video(video_id):
             raise ProtocolError("VIDEO_NOT_FOUND", "视频不存在")
+        project = store.project()
+        if not project:
+            raise ProtocolError("PROJECT_INVALID", "项目尚未初始化")
+        with self._job_lock:
+            active = store.list_jobs(
+                project_id=project["id"],
+                states=("queued", "running"),
+                video_id=video_id,
+            )
+            if active:
+                raise ProtocolError(
+                    "PROJECT_BUSY",
+                    "视频仍有分析或导出任务运行，请先取消任务后再重新关联",
+                    {"job_ids": [job["id"] for job in active]},
+                )
         metadata = self.inspect_video({"video_path": raw_path})
         try:
             video = store.relink_video(video_id, metadata)
@@ -440,21 +539,19 @@ class EngineService:
         return {"video": video}
 
     def extract_preview(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        store = self._store(payload)
+        store = self._require_store(payload)
         video_id = payload.get("video_id")
         video = store.video(video_id) if isinstance(video_id, str) else None
         if not video:
             raise ProtocolError("VIDEO_NOT_FOUND", "预览任务缺少有效视频")
-        source = Path(video["source_path"])
-        if not source.is_file():
-            raise ProtocolError("VIDEO_NOT_FOUND", f"原始视频不存在: {source}")
+        source = self._latest_proxy_video(store, video_id) or self._validated_source(video)
         try:
             time_ms = max(0, min(int(payload.get("time_ms", 1000)), int(video.get("duration_ms") or 1000)))
         except (TypeError, ValueError) as exc:
             raise ProtocolError("INVALID_REQUEST", "预览时间格式无效") from exc
         output = payload.get("output_path")
         output_path = Path(output).expanduser() if isinstance(output, str) and output.strip() else (
-            store.root / "artifacts" / "previews" / f"{video_id}_{time_ms}ms.jpg"
+            self._preview_path(store, video, time_ms)
         )
         if not output_path.is_absolute():
             output_path = store.root / output_path
@@ -462,18 +559,145 @@ class EngineService:
         if output_path.is_file() and output_path.stat().st_size > 0:
             return {"path": str(output_path), "time_ms": time_ms}
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = output_path.with_name(
+            f".{output_path.stem}.{os.getpid()}.tmp{output_path.suffix}"
+        )
         command = [
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
             "-ss", f"{time_ms / 1000:.3f}", "-i", str(source),
-            "-frames:v", "1", "-q:v", "2", str(output_path),
+            "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3", str(temporary_path),
         ]
         try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
-        except (OSError, subprocess.CalledProcessError) as exc:
+            subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            temporary_path.replace(output_path)
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            temporary_path.unlink(missing_ok=True)
             raise ProtocolError("VIDEO_OPEN_FAILED", f"无法提取预览帧: {exc}") from exc
         if not output_path.is_file():
             raise ProtocolError("VIDEO_OPEN_FAILED", "预览帧未生成")
         return {"path": str(output_path), "time_ms": time_ms}
+
+    def _latest_proxy_video(self, store: ProjectStore, video_id: str) -> Path | None:
+        project = store.project()
+        if not project:
+            return None
+        jobs = store.list_jobs(
+            project_id=project["id"],
+            job_type="analysis",
+            states=("completed",),
+            video_id=video_id,
+        )
+        for job in reversed(jobs):
+            candidate = self._decode_checkpoint(job).get("proxy_video")
+            if not isinstance(candidate, str) or not candidate:
+                continue
+            path = Path(candidate).expanduser()
+            if path.is_file() and path.stat().st_size > 0:
+                return path.resolve()
+        return None
+
+    @staticmethod
+    def _preview_path(
+        store: ProjectStore,
+        video: Dict[str, Any],
+        time_ms: int,
+    ) -> Path:
+        fingerprint = hashlib.sha256(
+            f"{video.get('source_size_bytes')}:{video.get('source_mtime_ns')}".encode("utf-8")
+        ).hexdigest()[:12]
+        return (
+            store.root
+            / "artifacts"
+            / "previews"
+            / f"{video['id']}_{fingerprint}_{max(0, int(time_ms))}ms.jpg"
+        )
+
+    def _prepare_candidate_previews(
+        self,
+        *,
+        store: ProjectStore,
+        source: Path,
+        video: Dict[str, Any],
+        video_id: str,
+        rows: list[Dict[str, Any]],
+        job_id: str,
+        cancel_event: threading.Event | None,
+    ) -> Dict[str, int]:
+        preview_dir = store.root / "artifacts" / "previews"
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        generated = 0
+        reused = 0
+        failed = 0
+        total = max(1, len(rows))
+        for index, row in enumerate(rows):
+            if cancel_event and cancel_event.is_set():
+                raise PipelineCancelled("JOB_CANCELLED")
+            time_ms = max(0, int(row["event_time_ms"]))
+            output_path = self._preview_path(store, video, time_ms)
+            if output_path.is_file() and output_path.stat().st_size > 0:
+                reused += 1
+            else:
+                temporary_path = output_path.with_name(
+                    f".{output_path.stem}.{job_id}.tmp{output_path.suffix}"
+                )
+                command = [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-ss", f"{time_ms / 1000:.3f}", "-i", str(source),
+                    "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3",
+                    str(temporary_path),
+                ]
+                popen_kwargs: Dict[str, Any] = {
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.PIPE,
+                    "text": True,
+                }
+                if os.name == "nt":
+                    popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+                else:
+                    popen_kwargs["start_new_session"] = True
+                process = subprocess.Popen(command, **popen_kwargs)
+                self._set_job_process(job_id, process)
+                try:
+                    while True:
+                        try:
+                            _, stderr = process.communicate(timeout=0.1)
+                            break
+                        except subprocess.TimeoutExpired:
+                            if cancel_event and cancel_event.is_set():
+                                terminate_process(process)
+                                process.communicate()
+                                raise PipelineCancelled("JOB_CANCELLED")
+                    if (
+                        process.returncode == 0
+                        and temporary_path.is_file()
+                        and temporary_path.stat().st_size > 0
+                    ):
+                        temporary_path.replace(output_path)
+                        generated += 1
+                    else:
+                        temporary_path.unlink(missing_ok=True)
+                        failed += 1
+                        if stderr:
+                            print(
+                                f"candidate preview failed at {time_ms}ms: {stderr[-500:]}",
+                                file=sys.stderr,
+                            )
+                finally:
+                    temporary_path.unlink(missing_ok=True)
+                    self._set_job_process(job_id, None)
+            store.update_job(
+                job_id,
+                state="running",
+                stage="prepare_review_previews",
+                progress=0.96 + 0.035 * ((index + 1) / total),
+            )
+        return {"generated": generated, "reused": reused, "failed": failed}
 
     def save_roi(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         required = ("video_id", "x1", "y1", "x2", "y2")
@@ -481,117 +705,13 @@ class EngineService:
         if missing:
             raise ProtocolError("INVALID_REQUEST", f"缺少字段: {', '.join(missing)}")
         try:
-            roi = self._store(payload).save_roi(payload["video_id"], payload)
+            roi = self._require_store(payload).save_roi(payload["video_id"], payload)
         except (KeyError, LookupError, ValueError) as exc:
             raise ProtocolError("ROI_INVALID", str(exc)) from exc
         return {"roi": roi}
 
-    def create_proxy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        store = self._store(payload)
-        video_id = payload.get("video_id")
-        video = store.video(video_id) if isinstance(video_id, str) else None
-        project = store.project()
-        if not project or not video:
-            raise ProtocolError("VIDEO_NOT_FOUND", "代理任务缺少有效视频")
-        try:
-            width = int(payload.get("width", 960))
-            height = int(payload.get("height", 720))
-            fps = float(payload.get("fps", 5))
-        except (TypeError, ValueError) as exc:
-            raise ProtocolError("INVALID_REQUEST", "代理视频参数格式无效") from exc
-        if width <= 0 or height <= 0 or not math.isfinite(fps) or fps <= 0:
-            raise ProtocolError("INVALID_REQUEST", "代理视频参数必须为正数")
-        source = Path(video["source_path"])
-        if not source.is_file():
-            raise ProtocolError("VIDEO_NOT_FOUND", f"原始视频不存在: {source}")
-        self._ensure_disk_space(store.root, source)
-        output = payload.get("output_path")
-        output_path = Path(output).expanduser() if isinstance(output, str) and output.strip() else (
-            store.root / "artifacts" / "proxies" / f"{video_id}_{width}x{height}_{fps:g}fps.mp4"
-        )
-        if not output_path.is_absolute():
-            output_path = store.root / output_path
-        output_path = output_path.resolve()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        metadata_path = output_path.with_suffix(output_path.suffix + ".json")
-        job = store.create_job(project["id"], video_id, "proxy", {
-            "source_path": str(source),
-            "output_path": str(output_path),
-            "width": width,
-            "height": height,
-            "fps": fps,
-        })
-        if output_path.is_file() and output_path.stat().st_size > 0 and metadata_path.is_file():
-            try:
-                cached = json.loads(metadata_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                cached = None
-            try:
-                cached_fps = float(cached.get("fps", 0)) if isinstance(cached, dict) else 0.0
-            except (TypeError, ValueError):
-                cached_fps = 0.0
-            if (
-                isinstance(cached, dict)
-                and cached.get("source_video") == str(source)
-                and cached.get("source_size_bytes") == source.stat().st_size
-                and cached.get("source_mtime_ns") == source.stat().st_mtime_ns
-                and cached.get("width") == width
-                and cached.get("height") == height
-                and cached_fps == fps
-            ):
-                completed = store.update_job(
-                    job["id"],
-                    state="completed",
-                    stage="prepare_proxy",
-                    progress=1.0,
-                    checkpoint={"artifact": {
-                        "kind": "proxy_video",
-                        "path": str(output_path),
-                        "metadata_path": str(metadata_path),
-                        "size_bytes": output_path.stat().st_size,
-                        "cache_hit": True,
-                    }},
-                )
-                return {
-                    "job": completed,
-                    "artifact": {
-                        "kind": "proxy_video",
-                        "path": str(output_path),
-                        "metadata_path": str(metadata_path),
-                        "size_bytes": output_path.stat().st_size,
-                        "cache_hit": True,
-                    },
-                }
-        store.update_job(job["id"], state="running", stage="prepare_proxy", progress=0.05)
-        script = Path(__file__).resolve().parents[3] / "scripts" / "create_proxy.py"
-        command = [
-            sys.executable, str(script), "--video", str(source), "--output", str(output_path),
-            "--width", str(width), "--height", str(height), "--fps", str(fps),
-        ]
-        try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
-            if not output_path.is_file():
-                raise OSError(f"代理视频未生成: {output_path}")
-        except (OSError, subprocess.CalledProcessError) as exc:
-            failed = store.update_job(
-                job["id"], state="failed", stage="prepare_proxy", progress=0.05,
-                error_code="ANALYSIS_FAILED", error_message=str(exc),
-            )
-            raise ProtocolError("ANALYSIS_FAILED", "代理视频生成失败", {"job": failed}) from exc
-        artifact = {
-            "kind": "proxy_video",
-            "path": str(output_path),
-            "metadata_path": str(metadata_path),
-            "size_bytes": output_path.stat().st_size,
-        }
-        completed = store.update_job(
-            job["id"], state="completed", stage="prepare_proxy", progress=1.0,
-            checkpoint={"artifact": artifact},
-        )
-        return {"job": completed, "artifact": artifact}
-
-    def create_analysis_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        store = self._store(payload)
+    def _create_analysis_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        store = self._require_store(payload)
         project = store.project()
         if not project:
             raise ProtocolError("INVALID_REQUEST", "项目尚未初始化")
@@ -622,9 +742,23 @@ class EngineService:
             "window_seconds": window_seconds,
             "before_seconds": before_seconds,
             "after_seconds": after_seconds,
-            "algorithm_version": "python-v1",
+            "algorithm_version": ANALYSIS_ALGORITHM_VERSION,
         }
         return {"job": store.create_job(project["id"], video_id, "analysis", checkpoint)}
+
+    @staticmethod
+    def _unfinished_heavy_jobs(
+        store: ProjectStore,
+        project_id: str,
+    ) -> list[Dict[str, Any]]:
+        return [
+            job
+            for job in store.list_jobs(
+                project_id=project_id,
+                states=("queued", "running"),
+            )
+            if job.get("type") in {"analysis", "export"}
+        ]
 
     def start_analysis(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         with self._job_lock:
@@ -635,22 +769,17 @@ class EngineService:
             }
             if self._job_threads:
                 raise ProtocolError("JOB_ALREADY_RUNNING", "已有重型任务正在运行")
-            store = self._store(payload)
+            store = self._require_store(payload)
             project = store.project()
-            video_id = payload.get("video_id")
-            if project and isinstance(video_id, str):
-                active = store.list_jobs(
-                    project_id=project["id"],
-                    job_type="analysis",
-                    states=("queued", "running"),
-                    video_id=video_id,
-                )
+            if project:
+                active = self._unfinished_heavy_jobs(store, project["id"])
                 if active:
                     raise ProtocolError(
                         "JOB_RECOVERY_REQUIRED",
-                        "已有未完成的分析任务，请恢复运行中的任务或重试已中断任务",
+                        "项目存在未完成的分析或导出任务，请先恢复、重试或取消该任务",
+                        {"job_ids": [item["id"] for item in active]},
                     )
-            result = self.create_analysis_job(payload)
+            result = self._create_analysis_job(payload)
             job_id = result["job"]["id"]
             thread = threading.Thread(
                 target=self._run_analysis,
@@ -664,7 +793,8 @@ class EngineService:
                 thread.start()
             except RuntimeError as exc:
                 self._job_threads.pop(job_id, None)
-                self._store(payload).update_job(
+                self._job_cancel_events.pop(job_id, None)
+                self._require_store(payload).update_job(
                     job_id, state="failed", stage="analysis",
                     error_code="ANALYSIS_FAILED", error_message=str(exc),
                 )
@@ -672,7 +802,7 @@ class EngineService:
             return result
 
     def retry_analysis(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        store = self._store(payload)
+        store = self._require_store(payload)
         job_id = payload.get("job_id")
         if not isinstance(job_id, str) or not job_id:
             raise ProtocolError("INVALID_REQUEST", "缺少 job_id")
@@ -681,8 +811,10 @@ class EngineService:
             if thread and thread.is_alive():
                 raise ProtocolError("JOB_ALREADY_RUNNING", "该分析任务仍在运行")
             job = store.get_job(job_id)
-            if not job or job.get("state") not in {"queued", "running"}:
-                raise ProtocolError("JOB_NOT_FOUND", "没有可重试的中断分析任务")
+            if not job or job.get("type") != "analysis" or job.get("state") not in {
+                "queued", "running", "failed", "cancelled",
+            }:
+                raise ProtocolError("JOB_NOT_FOUND", "没有可重试的分析任务")
             previous_checkpoint = self._decode_checkpoint(job)
             store.update_job(
                 job_id,
@@ -709,7 +841,7 @@ class EngineService:
         return self.start_analysis(retry_payload)
 
     def retry_export(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        store = self._store(payload)
+        store = self._require_store(payload)
         job_id = payload.get("job_id")
         if not isinstance(job_id, str) or not job_id:
             raise ProtocolError("INVALID_REQUEST", "缺少 job_id")
@@ -743,13 +875,14 @@ class EngineService:
         return self.start_export(retry_payload)
 
     def _run_analysis(self, payload: Dict[str, Any], job_id: str) -> None:
-        store = self._store(payload)
+        store = self._require_store(payload)
         try:
             video_id = payload["video_id"]
             video = store.video(video_id)
             roi = store.active_roi(video_id)
             if not video or not roi:
                 raise ProtocolError("VIDEO_NOT_FOUND", "分析任务数据已失效")
+            source_video = self._validated_source(video)
             repo_root = Path(__file__).resolve().parents[3]
             model_path = Path(payload.get("model_path") or (repo_root / "third_party" / "basketball-shot-detection" / "bball_model.pt")).expanduser().resolve()
             if not model_path.is_file():
@@ -757,11 +890,26 @@ class EngineService:
             proxy_width = int(payload.get("proxy_width", 960))
             proxy_height = int(payload.get("proxy_height", 720))
             proxy_fps = float(payload.get("proxy_fps", 5))
-            proxy_scale = float(video.get("width") or proxy_width) / proxy_width
+            source_width = int(video.get("width") or 0)
+            source_height = int(video.get("height") or 0)
+            if source_width <= 0 or source_height <= 0:
+                raise ProtocolError("VIDEO_DIMENSION_INVALID", "视频分辨率无效")
+            proxy_fit_scale = min(
+                proxy_width / source_width,
+                proxy_height / source_height,
+            )
+            proxy_scale = 1.0 / proxy_fit_scale
             source_roi = [roi[key] for key in ("x1", "y1", "x2", "y2")]
-            proxy_roi = scale_roi_to_proxy(roi, int(video.get("width") or proxy_width), proxy_width)
+            proxy_roi = scale_roi_to_proxy(
+                roi,
+                source_width,
+                proxy_width,
+                source_height=source_height,
+                proxy_height=proxy_height,
+            )
             analysis_parameters = {
-                "source_path": video["source_path"],
+                "algorithm_version": ANALYSIS_ALGORITHM_VERSION,
+                "source_path": str(source_video),
                 "source_size_bytes": video.get("source_size_bytes"),
                 "source_mtime_ns": video.get("source_mtime_ns"),
                 "model_path": str(model_path),
@@ -770,6 +918,7 @@ class EngineService:
                 "proxy_width": proxy_width,
                 "proxy_height": proxy_height,
                 "proxy_fps": proxy_fps,
+                "window_seconds": float(payload.get("window_seconds", 2.5)),
                 "coarse_scale": int(payload.get("coarse_scale", 4)),
                 "sample_fps": float(payload.get("sample_fps", 10)),
                 "refine_scale": int(payload.get("refine_scale", 2)),
@@ -790,7 +939,7 @@ class EngineService:
             cache_dir = run_root / "cache"
             commands = build_pipeline_commands(
                 repo_root=repo_root,
-                source_video=Path(video["source_path"]),
+                source_video=source_video,
                 proxy_video=proxy_video,
                 model_path=model_path,
                 coarse_detections=coarse_detections,
@@ -807,6 +956,7 @@ class EngineService:
                 refine_sample_fps=float(payload.get("sample_fps", 10)),
                 refine_scale=int(payload.get("refine_scale", 2)),
                 conf=float(payload.get("conf", 0.10)),
+                window_seconds=float(payload.get("window_seconds", 2.5)),
             )
 
             checkpoint = {
@@ -844,6 +994,7 @@ class EngineService:
                 process_callback=lambda process: self._set_job_process(job_id, process),
                 manifest_path=manifest_path,
                 stage_outputs=[proxy_video, coarse_detections, coarse_candidates, refined_output],
+                manifest_version=ANALYSIS_ALGORITHM_VERSION,
             )
             if cancel_event and cancel_event.is_set():
                 raise PipelineCancelled("JOB_CANCELLED")
@@ -857,7 +1008,7 @@ class EngineService:
                     duration_ms=int(video.get("duration_ms") or 0),
                     before_seconds=float(payload.get("before_seconds", 6)),
                     after_seconds=float(payload.get("after_seconds", 3)),
-                    detector_version="python-v1",
+                    detector_version=ANALYSIS_ALGORITHM_VERSION,
                 )
                 for match in matches
             ]
@@ -867,11 +1018,31 @@ class EngineService:
                     "分析完成但未检测到篮球，请扩大 ROI 或检查视频画面",
                     {"detection_counts": detection_counts},
                 )
+            store.update_job(
+                job_id,
+                state="running",
+                stage="prepare_review_previews",
+                progress=0.96,
+            )
+            eager_preview_rows = rows[:12]
+            preview_counts = self._prepare_candidate_previews(
+                store=store,
+                source=proxy_video,
+                video=video,
+                video_id=video_id,
+                rows=eager_preview_rows,
+                job_id=job_id,
+                cancel_event=cancel_event,
+            )
+            preview_counts["deferred"] = len(rows) - len(eager_preview_rows)
+            if cancel_event and cancel_event.is_set():
+                raise PipelineCancelled("JOB_CANCELLED")
             store.replace_candidates(video_id, rows)
             checkpoint = {
                 **checkpoint,
                 "candidate_count": len(rows),
                 "detection_counts": detection_counts,
+                "preview_counts": preview_counts,
                 "logs": pipeline["logs"],
                 "cache_hits": pipeline.get("cache_hits", 0),
             }
@@ -915,7 +1086,7 @@ class EngineService:
         return counts
 
     def cancel_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        store = self._store(payload)
+        store = self._require_store(payload)
         job_id = payload.get("job_id")
         if not isinstance(job_id, str) or not job_id:
             raise ProtocolError("INVALID_REQUEST", "缺少 job_id")
@@ -934,7 +1105,13 @@ class EngineService:
         # worker needs the same lock to clear its process handle in finally.
         if process:
             terminate_process(process)
-        if should_persist:
+        if cancel_event or process:
+            job = store.update_job(
+                job_id,
+                state=job["state"],
+                stage="cancelling",
+            )
+        elif should_persist:
             job = store.update_job(
                 job_id,
                 state="cancelled",
@@ -945,7 +1122,7 @@ class EngineService:
         return {"job": store.get_job(job_id) or job}
 
     def get_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        store = self._store(payload)
+        store = self._require_store(payload)
         job = store.get_job(payload.get("job_id", ""))
         if not job:
             raise ProtocolError("JOB_NOT_FOUND", "任务不存在")
@@ -1021,24 +1198,21 @@ class EngineService:
         store, context = self._existing_store(payload)
         video_id = payload.get("video_id")
         candidates = store.list_candidates(video_id)
+        video = store.video(video_id) if isinstance(video_id, str) else None
+        if video:
+            for candidate in candidates:
+                preview_path = self._preview_path(
+                    store,
+                    video,
+                    int(candidate.get("event_time_ms") or 0),
+                )
+                if preview_path.is_file() and preview_path.stat().st_size > 0:
+                    candidate["preview_path"] = str(preview_path)
         review_video_path = None
-        project = context.get("project")
-        if project and isinstance(video_id, str) and video_id:
-            jobs = store.list_jobs(
-                project_id=project["id"],
-                job_type="analysis",
-                states=("completed",),
-                video_id=video_id,
-            )
-            for job in reversed(jobs):
-                checkpoint = self._decode_checkpoint(job)
-                candidate_path = checkpoint.get("proxy_video")
-                if not isinstance(candidate_path, str) or not candidate_path:
-                    continue
-                path = Path(candidate_path).expanduser()
-                if path.is_file():
-                    review_video_path = str(path.resolve())
-                    break
+        if context.get("project") and isinstance(video_id, str) and video_id:
+            proxy = self._latest_proxy_video(store, video_id)
+            if proxy is not None:
+                review_video_path = str(proxy)
         return {
             "candidates": candidates,
             "review_video_path": review_video_path,
@@ -1046,7 +1220,7 @@ class EngineService:
 
     def start_review(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            started_at = self._store(payload).start_review(
+            started_at = self._require_store(payload).start_review(
                 payload["candidate_id"],
                 payload.get("review_started_at"),
             )
@@ -1058,7 +1232,7 @@ class EngineService:
 
     def review_candidate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            self._store(payload).review_candidate(
+            self._require_store(payload).review_candidate(
                 payload["candidate_id"],
                 payload["status"],
                 payload.get("note"),
@@ -1073,36 +1247,45 @@ class EngineService:
 
     def list_review_history(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            history = self._store(payload).list_review_history(payload["candidate_id"])
+            history = self._require_store(payload).list_review_history(payload["candidate_id"])
         except KeyError as exc:
             raise ProtocolError("INVALID_REQUEST", f"缺少字段: {exc.args[0]}") from exc
         return {"history": history}
 
     def update_clip_range(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            self._store(payload).update_clip_range(payload["candidate_id"], int(payload["start_ms"]), int(payload["end_ms"]))
+            self._require_store(payload).update_clip_range(payload["candidate_id"], int(payload["start_ms"]), int(payload["end_ms"]))
         except KeyError as exc:
             raise ProtocolError("INVALID_REQUEST", f"缺少字段: {exc.args[0]}") from exc
         except (ValueError, LookupError) as exc:
             raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
         return {"updated": True}
 
-    def _execute_export(self, payload: Dict[str, Any], progress_callback=None) -> Dict[str, Any]:
-        store = self._store(payload)
+    def _execute_export(
+        self,
+        payload: Dict[str, Any],
+        progress_callback=None,
+        cancel_check=None,
+        process_callback=None,
+    ) -> Dict[str, Any]:
+        store = self._require_store(payload)
         project = store.project()
         video_id = payload.get("video_id")
         video = store.video(video_id) if isinstance(video_id, str) else None
         if not project or not video:
             raise ProtocolError("VIDEO_NOT_FOUND", "导出任务缺少有效视频")
-        source = Path(video["source_path"])
-        if not source.is_file():
-            raise ProtocolError("VIDEO_NOT_FOUND", f"原始视频不存在: {source}")
+        source = self._validated_source(video)
         self._ensure_disk_space(store.root, source)
+        raw_snapshot = payload.get("candidate_snapshot")
+        if not isinstance(raw_snapshot, list):
+            raise ProtocolError("EXPORT_SNAPSHOT_MISSING", "导出任务缺少候选快照")
         candidates = [
-            candidate
-            for candidate in store.list_candidates(video_id)
-            if candidate.get("selection_status") != "excluded"
+            dict(candidate)
+            for candidate in raw_snapshot
+            if isinstance(candidate, dict)
         ]
+        if not candidates:
+            raise ProtocolError("NO_EXPORT_CANDIDATES", "没有可导出的候选片段")
         mode = payload.get("mode", "separate")
         raw_output = payload.get("output_dir")
         output_dir = Path(raw_output).expanduser() if isinstance(raw_output, str) and raw_output.strip() else (
@@ -1118,6 +1301,12 @@ class EngineService:
             if not merged_output.is_absolute():
                 merged_output = store.root / merged_output
             merged_output = merged_output.resolve()
+        if merged_output is not None and merged_output == source.resolve():
+            raise ProtocolError(
+                "EXPORT_SOURCE_CONFLICT",
+                "导出目标不能覆盖原始视频",
+                {"source_path": str(source.resolve())},
+            )
         try:
             result = export_goal_clips(
                 source,
@@ -1126,9 +1315,27 @@ class EngineService:
                 mode,
                 merged_output,
                 progress_callback=progress_callback,
+                cancel_check=cancel_check,
+                process_callback=process_callback,
             )
         except (OSError, ValueError, subprocess.CalledProcessError) as exc:
             raise ProtocolError("EXPORT_FAILED", f"导出失败: {exc}") from exc
+        if cancel_check and cancel_check():
+            for path in {
+                *result.get("files", []),
+                *result.get("clip_files", []),
+            }:
+                Path(path).unlink(missing_ok=True)
+            raise PipelineCancelled("JOB_CANCELLED")
+        try:
+            self._validated_source(video)
+        except ProtocolError:
+            for path in {
+                *result.get("files", []),
+                *result.get("clip_files", []),
+            }:
+                Path(path).unlink(missing_ok=True)
+            raise
         file_size = sum(Path(path).stat().st_size for path in result["files"] if Path(path).is_file())
         export_path = result["files"][0] if len(result["files"]) == 1 else str(output_dir)
         exported_info: Dict[str, Any] = {}
@@ -1151,24 +1358,19 @@ class EngineService:
             "audio_codec": exported_info.get("audio_codec"),
             "processing_ms": result["processing_ms"],
             "export_ms": result["processing_ms"],
-            "algorithm_version": "python-v1",
+            "algorithm_version": ANALYSIS_ALGORITHM_VERSION,
             "metadata": {"files": result["files"], "clip_files": result["clip_files"]},
         })
         return {"export": export, "files": result["files"]}
 
-    def export_clips(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._execute_export(payload)
-
     def start_export(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        store = self._store(payload)
+        store = self._require_store(payload)
         project = store.project()
         video_id = payload.get("video_id")
         video = store.video(video_id) if isinstance(video_id, str) else None
         if not project or not video:
             raise ProtocolError("VIDEO_NOT_FOUND", "导出任务缺少有效视频")
-        source = Path(video["source_path"])
-        if not source.is_file():
-            raise ProtocolError("VIDEO_NOT_FOUND", f"原始视频不存在: {source}")
+        source = self._validated_source(video)
         self._ensure_disk_space(store.root, source)
         with self._job_lock:
             self._job_threads = {
@@ -1178,16 +1380,41 @@ class EngineService:
             }
             if self._job_threads:
                 raise ProtocolError("JOB_ALREADY_RUNNING", "已有重型任务正在运行")
+            active = self._unfinished_heavy_jobs(store, project["id"])
+            if active:
+                raise ProtocolError(
+                    "JOB_RECOVERY_REQUIRED",
+                    "项目存在未完成的分析或导出任务，请先恢复、重试或取消该任务",
+                    {"job_ids": [item["id"] for item in active]},
+                )
+            candidate_snapshot = [
+                {
+                    "id": candidate["id"],
+                    "event_time_ms": int(candidate["event_time_ms"]),
+                    "review_start_ms": int(candidate["review_start_ms"]),
+                    "review_end_ms": int(candidate["review_end_ms"]),
+                }
+                for candidate in store.list_candidates(video_id)
+                if candidate.get("selection_status") != "excluded"
+            ]
+            if not candidate_snapshot:
+                raise ProtocolError("NO_EXPORT_CANDIDATES", "没有可导出的候选片段")
             checkpoint = {
                 "mode": payload.get("mode", "separate"),
                 "output_dir": payload.get("output_dir"),
                 "output_path": payload.get("output_path"),
+                "candidate_snapshot": candidate_snapshot,
+                "candidate_count": len(candidate_snapshot),
             }
             job = store.create_job(project["id"], video_id, "export", checkpoint)
             job_id = job["id"]
+            worker_payload = {
+                **payload,
+                "candidate_snapshot": candidate_snapshot,
+            }
             thread = threading.Thread(
                 target=self._run_export,
-                args=(dict(payload), job_id),
+                args=(worker_payload, job_id),
                 name=f"export-{job_id}",
                 daemon=True,
             )
@@ -1209,7 +1436,7 @@ class EngineService:
         return {"job": job}
 
     def _run_export(self, payload: Dict[str, Any], job_id: str) -> None:
-        store = self._store(payload)
+        store = self._require_store(payload)
         cancel_event = self._job_cancel_events.get(job_id)
 
         def on_progress(stage: str, progress: float) -> None:
@@ -1224,7 +1451,12 @@ class EngineService:
 
         try:
             store.update_job(job_id, state="running", stage="export_clips", progress=0.01)
-            result = self._execute_export(payload, progress_callback=on_progress)
+            result = self._execute_export(
+                payload,
+                progress_callback=on_progress,
+                cancel_check=cancel_event.is_set if cancel_event else None,
+                process_callback=lambda process: self._set_job_process(job_id, process),
+            )
             if cancel_event and cancel_event.is_set():
                 raise PipelineCancelled("JOB_CANCELLED")
             store.update_job(
@@ -1264,10 +1496,10 @@ class EngineService:
                 self._job_cancel_events.pop(job_id, None)
 
     def get_statistics(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return {"statistics": self._store(payload).statistics()}
+        return {"statistics": self._require_store(payload).statistics()}
 
     def list_exports(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        store = self._store(payload)
+        store = self._require_store(payload)
         project = store.project()
         if not project:
             raise ProtocolError("PROJECT_INVALID", "项目尚未初始化")
@@ -1283,7 +1515,7 @@ class EngineService:
 
     def set_telemetry_consent(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            self._store(payload).set_telemetry_consent(payload["status"])
+            self._require_store(payload).set_telemetry_consent(payload["status"])
         except KeyError as exc:
             raise ProtocolError("INVALID_REQUEST", f"缺少字段: {exc.args[0]}") from exc
         except ValueError as exc:
@@ -1291,4 +1523,19 @@ class EngineService:
         return {"updated": True}
 
     def cleanup_artifacts(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._store(payload).cleanup_artifacts(bool(payload.get("include_exports", False)))
+        store = self._require_store(payload)
+        project = store.project()
+        if not project:
+            raise ProtocolError("PROJECT_INVALID", "项目尚未初始化")
+        with self._job_lock:
+            active_jobs = store.list_jobs(
+                project_id=project["id"],
+                states=("queued", "running"),
+            )
+            if active_jobs:
+                raise ProtocolError(
+                    "PROJECT_BUSY",
+                    "项目仍有任务运行，请先取消任务后再清理缓存",
+                    {"job_ids": [job["id"] for job in active_jobs]},
+                )
+        return store.cleanup_artifacts(bool(payload.get("include_exports", False)))
