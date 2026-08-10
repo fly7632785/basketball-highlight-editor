@@ -1,6 +1,7 @@
 import unittest
 
 from basketball_highlight.events import (
+    _net_inside_motion_features,
     calibrated_gates,
     find_candidate_crossings,
     find_refined_crossings,
@@ -10,6 +11,27 @@ from basketball_highlight.trajectory import fit_descent, prediction_score
 
 
 class EventsTest(unittest.TestCase):
+    def test_net_motion_uses_local_baseline_before_calling_inside_motion(self):
+        records = [
+            {"time": 0.2, "net_measurement_valid": True,
+             "net_lower_motion_score": 0.8, "net_below_motion_score": 0.8},
+            {"time": 0.3, "net_measurement_valid": True,
+             "net_lower_motion_score": 0.82, "net_below_motion_score": 0.79},
+            {"time": 0.95, "net_measurement_valid": True,
+             "net_lower_motion_score": 0.81, "net_below_motion_score": 0.8},
+            {"time": 1.05, "net_measurement_valid": True,
+             "net_lower_motion_score": 0.83, "net_below_motion_score": 0.82},
+            {"time": 1.15, "net_measurement_valid": True,
+             "net_lower_motion_score": 0.8, "net_below_motion_score": 0.81},
+        ]
+
+        signals = _net_inside_motion_features(records, 1.0)
+
+        self.assertEqual(signals["net_motion_order"], "none")
+        self.assertFalse(signals["net_no_motion"])
+        self.assertLess(signals["net_lower_peak"], 0.12)
+        self.assertLess(signals["net_below_peak"], 0.12)
+
     def test_normalized_gate_preserves_geometry_across_rim_scale(self):
         small = {
             "speed_px_s": 60.0,
@@ -205,6 +227,22 @@ class EventsTest(unittest.TestCase):
         candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
         self.assertEqual(candidates, [])
 
+    def test_refined_crossing_skips_association_switch_after_early_below_point(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 270]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 280]}]},
+            {"time": 1.2, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 350]}]},
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 330]}]},
+            {"time": 1.5, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 370]}]},
+            {"time": 1.6, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 400]}]},
+        ]
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20},
+        )
+        self.assertEqual(len(candidates), 1)
+        self.assertAlmostEqual(candidates[0]["below"]["time"], 1.5)
+
     def test_refined_crossing_rejects_lateral_exit_below_rim(self):
         records = [
             {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
@@ -215,6 +253,21 @@ class EventsTest(unittest.TestCase):
         ]
         candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
         self.assertEqual(candidates, [])
+
+    def test_refined_crossing_keeps_deep_lateral_drift_reviewable(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+            {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [491, 345]}]},
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [420, 365]}]},
+            {"time": 1.5, "detections": [{"name": "ball", "confidence": 0.8, "center": [420, 385]}]},
+        ]
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20, "height": 20},
+        )
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["verdict"], "ambiguous")
+        self.assertFalse(candidates[0]["verification"]["lateral_exit"])
 
     def test_refined_crossing_accepts_fast_low_confidence_single_below_point(self):
         records = [
@@ -259,6 +312,29 @@ class EventsTest(unittest.TestCase):
         candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
         self.assertEqual(len(candidates), 1)
         self.assertAlmostEqual(candidates[0]["above"]["x"], 490)
+
+    def test_recovery_stitches_split_track_without_following_distractor(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [520, 270]}]},
+            {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [505, 295]}]},
+            {"time": 1.2, "detections": []},
+            {"time": 1.4, "detections": [
+                {"name": "ball", "confidence": 0.8, "center": [490, 350]},
+                {"name": "ball", "confidence": 0.9, "center": [620, 345]},
+            ]},
+            {"time": 1.5, "detections": [
+                {"name": "ball", "confidence": 0.8, "center": [491, 375]},
+                {"name": "ball", "confidence": 0.9, "center": [630, 365]},
+            ]},
+        ]
+
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20, "height": 20},
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["verdict"], "ambiguous")
+        self.assertAlmostEqual(candidates[0]["below"]["x"], 490)
 
     def test_refined_crossing_exposes_multi_signal_decision(self):
         records = [
@@ -335,7 +411,7 @@ class EventsTest(unittest.TestCase):
         self.assertFalse(candidates[0]["verification"]["net_support"])
         self.assertEqual(candidates[0]["verdict"], "ambiguous")
 
-    def test_strong_same_frame_net_motion_supports_clean_crossing(self):
+    def test_same_frame_net_motion_stays_reviewable_without_direction(self):
         records = [
             {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
             {"time": 1.1, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
@@ -354,7 +430,7 @@ class EventsTest(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["signals"]["net_motion_order"], "same_frame")
         self.assertTrue(candidates[0]["verification"]["net_support"])
-        self.assertEqual(candidates[0]["verdict"], "made")
+        self.assertEqual(candidates[0]["verdict"], "ambiguous")
 
     def test_refined_crossing_continues_after_incomplete_early_below_pair(self):
         records = [

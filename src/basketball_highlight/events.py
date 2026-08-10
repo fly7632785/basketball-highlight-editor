@@ -261,16 +261,24 @@ def _net_inside_motion_features(records, event_time):
         and record.get("net_measurement_valid") is True
     ]
     signal_available = len(active) >= 2 and len(baseline) >= 1
+    baseline_by_zone = {}
+    for zone in ("upper", "lower", "below"):
+        values = [_zone_signal_value(record, zone) for record in baseline]
+        baseline_by_zone[zone] = median(values) if values else 0.0
+
+    def activated_value(record, zone):
+        return max(0.0, _zone_signal_value(record, zone) - baseline_by_zone[zone])
+
     threshold = 0.25
-    lower_peak = max((_zone_signal_value(record, "lower") for record in active), default=0.0)
-    below_peak = max((_zone_signal_value(record, "below") for record in active), default=0.0)
+    lower_peak = max((activated_value(record, "lower") for record in active), default=0.0)
+    below_peak = max((activated_value(record, "below") for record in active), default=0.0)
     lower_hits = [
         record["time"] for record in active
-        if _zone_signal_value(record, "lower") >= threshold
+        if activated_value(record, "lower") >= threshold
     ]
     below_hits = [
         record["time"] for record in active
-        if _zone_signal_value(record, "below") >= threshold
+        if activated_value(record, "below") >= threshold
     ]
     if lower_hits and below_hits:
         first_lower = min(lower_hits)
@@ -298,8 +306,8 @@ def _net_inside_motion_features(records, event_time):
         sequence = 0.0
         order = "none"
     active_count = sum(
-        _zone_signal_value(record, "lower") >= threshold or
-        _zone_signal_value(record, "below") >= threshold
+        activated_value(record, "lower") >= threshold or
+        activated_value(record, "below") >= threshold
         for record in active
     )
     persistence = min(1.0, active_count / 3.0)
@@ -309,6 +317,8 @@ def _net_inside_motion_features(records, event_time):
     )
     no_motion = bool(
         signal_available
+        and baseline_by_zone["lower"] < 0.35
+        and baseline_by_zone["below"] < 0.35
         and lower_peak < 0.12
         and below_peak < 0.12
         and inside_score < 0.12
@@ -322,16 +332,210 @@ def _net_inside_motion_features(records, event_time):
         "net_sequence_gap_s": None if sequence_gap is None else round(sequence_gap, 3),
         "net_lower_peak": round(lower_peak, 3),
         "net_below_peak": round(below_peak, 3),
+        "net_lower_baseline": round(baseline_by_zone["lower"], 3),
+        "net_below_baseline": round(baseline_by_zone["below"], 3),
+        "net_baseline_quiet": bool(
+            baseline_by_zone["lower"] < 0.35
+            and baseline_by_zone["below"] < 0.35
+        ),
     }
 
 
 def _point_in_rim_corridor(point, rim, tolerance_ratio=0.15):
     half_width = max(1.0, float(rim["width"]) / 2.0)
     ball_half_width = max(2.0, float(point.get("width", 4.0)) / 2.0)
-    tolerance = min(half_width * tolerance_ratio, ball_half_width * 0.5)
+    tolerance = min(half_width * tolerance_ratio, ball_half_width)
     left = float(rim["center_x"]) - half_width - tolerance
     right = float(rim["center_x"]) + half_width + tolerance
     return left <= float(point["x"]) <= right
+
+
+def _continuous_post_points(track, below, rim, horizon=0.8):
+    """Stop a track at the first implausible post-crossing jump.
+
+    Greedy association can switch to another visible ball after the real ball
+    enters the net.  Treating that switch as a rebound or lateral exit both
+    rejects real makes and pollutes the overlay trajectory.
+    """
+    rim_width = max(1.0, float(rim["width"]))
+    points = [below]
+    previous = below
+    for point in sorted(track, key=lambda item: item["time"]):
+        if point["time"] <= below["time"]:
+            continue
+        if point["time"] > below["time"] + horizon:
+            break
+        gap = point["time"] - previous["time"]
+        if gap <= 0:
+            continue
+        if (
+            previous["y"] - point["y"] > max(2.0, float(rim.get("height", 20.0)) * 0.30)
+            and abs(point["x"] - previous["x"]) > 1.5 * rim_width
+        ):
+            break
+        distance = ((point["x"] - previous["x"]) ** 2 +
+                    (point["y"] - previous["y"]) ** 2) ** 0.5
+        gate = max(
+            1.75 * rim_width,
+            min(
+                12.0 * rim_width,
+                45.0 * rim_width * gap
+                + 2.0 * max(previous["width"], point["width"],
+                             previous["height"], point["height"]),
+            ),
+        )
+        if distance > gate:
+            break
+        points.append(point)
+        previous = point
+    return points
+
+
+def _post_corridor_points(records, below, rim, horizon=0.8):
+    """Follow the first post-crossing detections inside a broad rim corridor.
+
+    Recovery is only used when the main tracker switched to another ball. It
+    must not inspect every ball in the window: a nearby player's ball can look
+    like a lateral exit and make us discard a real crossing.
+    """
+    rim_width = max(1.0, float(rim["width"]))
+    points = [below]
+    previous = below
+    for record in sorted(records, key=lambda item: item["time"]):
+        if record["time"] <= below["time"]:
+            continue
+        if record["time"] > below["time"] + horizon:
+            break
+        detections = _ball_detections(record, min_conf=0.1)
+        if not detections:
+            if record["time"] - previous["time"] <= 0.25:
+                continue
+            break
+        gap = record["time"] - previous["time"]
+        if len(points) >= 2:
+            prior = points[-2]
+            dt = max(0.001, previous["time"] - prior["time"])
+            velocity = {
+                "x": (previous["x"] - prior["x"]) / dt,
+                "y": (previous["y"] - prior["y"]) / dt,
+            }
+            predicted = {
+                "x": previous["x"] + velocity["x"] * gap,
+                "y": previous["y"] + velocity["y"] * gap,
+            }
+        else:
+            predicted = previous
+        gate = max(
+            1.75 * rim_width,
+            min(
+                12.0 * rim_width,
+                45.0 * rim_width * max(gap, 0.001)
+                + 2.0 * max(previous["width"], previous["height"]),
+            ),
+        )
+        viable = [
+            point for point in detections
+            if _point_in_rim_corridor(point, rim, tolerance_ratio=0.35)
+            and ((point["x"] - predicted["x"]) ** 2
+                 + (point["y"] - predicted["y"]) ** 2) ** 0.5 <= gate
+        ]
+        if not viable:
+            break
+        previous = min(
+            viable,
+            key=lambda point: (
+                (point["x"] - predicted["x"]) ** 2
+                + (point["y"] - predicted["y"]) ** 2,
+                -point["confidence"],
+            ),
+        )
+        points.append(previous)
+    return points
+
+
+def _recovery_tracks(records, tracks, rim, max_cross_gap_sec):
+    points = sorted(
+        [
+            point
+            for record in records
+            for point in _ball_detections(record, min_conf=0.1)
+        ],
+        key=lambda item: item["time"],
+    )
+    if not points:
+        return []
+    rim_y = float(rim["rim_y"])
+    rim_width = max(1.0, float(rim["width"]))
+    rim_height = max(1.0, float(rim.get("height", 20.0)))
+    above_y = rim_y - 0.6 * rim_height
+    below_y = rim_y + 0.9 * rim_height
+    below_depth = max(rim_width * 0.35, rim_height * 0.5)
+    rim_left = float(rim["center_x"]) - rim_width / 2.0
+    rim_right = float(rim["center_x"]) + rim_width / 2.0
+    recovery = []
+
+    for track in tracks:
+        for above in track:
+            if above["y"] > above_y:
+                continue
+            candidates = []
+            for below in points:
+                gap = below["time"] - above["time"]
+                if gap <= 0 or gap > max_cross_gap_sec:
+                    continue
+                if below["y"] < below_y or not _point_in_rim_corridor(
+                    below, rim, tolerance_ratio=0.25,
+                ):
+                    continue
+                if any(
+                    abs(point["time"] - below["time"]) < 0.0001
+                    and abs(point["x"] - below["x"]) < 0.1
+                    and abs(point["y"] - below["y"]) < 0.1
+                    for point in track
+                    if point["time"] > above["time"]
+                ):
+                    continue
+                x_cross = crossing_x_at_y(above, below, rim_y)
+                if x_cross is None or not is_rim_crossing(
+                    x_cross, rim_left, rim_right, rim_width * 0.1,
+                ):
+                    continue
+                post = [
+                    point for point in _post_corridor_points(records, below, rim)
+                    if point["y"] >= rim_y + below_depth
+                ]
+                if len(post) < 2:
+                    continue
+                candidates.append((
+                    abs(x_cross - float(rim["center_x"])),
+                    -len(post),
+                    gap,
+                    below,
+                    post,
+                ))
+            if not candidates:
+                continue
+            _, _, _, below, post = min(candidates, key=lambda item: item[:3])
+            transition = [
+                point for point in points
+                if above["time"] <= point["time"] <= below["time"]
+                and rim_y - 1.5 * rim_height <= point["y"] <= rim_y + 0.5 * rim_height
+                and _point_in_rim_corridor(point, rim, tolerance_ratio=0.25)
+            ]
+            stitched = [
+                point for point in track if point["time"] <= above["time"]
+            ] + transition + post
+            unique = []
+            seen = set()
+            for point in sorted(stitched, key=lambda item: item["time"]):
+                key = (round(point["time"], 4), round(point["x"], 1), round(point["y"], 1))
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(point)
+            if len(unique) >= 3:
+                recovery.append(unique)
+                break
+    return recovery
 
 
 def _complete_rim_crossing(track, above, below, rim):
@@ -342,15 +546,15 @@ def _complete_rim_crossing(track, above, below, rim):
         if point["time"] <= above["time"]
         and rim_y - 1.8 * rim_height <= point["y"] <= rim_y
     ]
-    later = [
-        point for point in track
-        if below["time"] <= point["time"] <= below["time"] + 0.8
-    ]
+    later = _continuous_post_points(track, below, rim)
     post_rim = [
         point for point in later
         if point["y"] >= rim_y + max(float(rim["width"]) * 0.35, rim_height * 0.5)
     ]
-    post_inside = [point for point in post_rim if _point_in_rim_corridor(point, rim)]
+    post_inside = [
+        point for point in post_rim
+        if _point_in_rim_corridor(point, rim, tolerance_ratio=0.35)
+    ]
     transition_points = [
         point for point in track
         if above["time"] <= point["time"] <= below["time"]
@@ -368,7 +572,8 @@ def _complete_rim_crossing(track, above, below, rim):
     )
     post_sample = post_rim[:3]
     post_inside_count = sum(
-        _point_in_rim_corridor(point, rim) for point in post_sample
+        _point_in_rim_corridor(point, rim, tolerance_ratio=0.35)
+        for point in post_sample
     )
     complete = bool(
         crossing_inside
@@ -699,7 +904,7 @@ def _overlay_data(
     }
 
 
-def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=1.0):
+def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=2.0):
     """Find and score rim crossings using geometry, tracking and net zones.
 
     The result intentionally keeps ambiguous crossings as ``low`` or
@@ -715,6 +920,7 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=1.0):
     )
     if len(legacy_track) >= 2:
         tracks.append(legacy_track)
+    tracks.extend(_recovery_tracks(records, tracks, rim, max_cross_gap_sec))
     rim_y = rim["rim_y"]
     rim_half_w = max(1.0, rim["width"] / 2.0)
     rim_height = max(1.0, float(rim.get("height", 20)))
@@ -743,10 +949,17 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=1.0):
                 if x_cross is None or not is_rim_crossing(x_cross, rim_left, rim_right, gate_margin):
                     continue
 
-                later = [
-                    point for point in track
-                    if below["time"] <= point["time"] <= below["time"] + 0.8
-                ]
+                intermediate_side_deviation = any(
+                    above["time"] < point["time"] < below["time"]
+                    and rim_y - 1.5 * rim_height <= point["y"] <= rim_y + 0.5 * rim_height
+                    and not _point_in_rim_corridor(point, rim, tolerance_ratio=0.15)
+                    and abs(point["x"] - float(rim["center_x"])) <= rim_width * 4.0
+                    for point in track
+                )
+                if intermediate_side_deviation:
+                    break
+
+                later = _continuous_post_points(track, below, rim)
                 below_depth = max(rim_width * 0.35, float(rim.get("height", 20)) * 0.5)
                 below_points = [
                     point for point in later
@@ -763,7 +976,7 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=1.0):
                     prediction["landing_center"] >= 0.5 and
                     prediction["predict_score"] >= 0.8
                 )
-                if len(below_points) < 1 and not prediction_review:
+                if len(below_points) < 2 and not prediction_review:
                     continue
 
                 crossing_evidence = _complete_rim_crossing(
@@ -776,7 +989,7 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=1.0):
                 )
                 reviewable_crossing = (
                     crossing_evidence["crossing_inside_rim"] and
-                    (not transition_points or transition_ratio >= 0.50)
+                    (not transition_points or transition_ratio >= 0.75)
                 )
                 if not reviewable_crossing and not prediction_review:
                     continue
@@ -794,7 +1007,7 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=1.0):
                         break
                     previous_y = point["y"]
                 if rebounded:
-                    break
+                    continue
 
                 lateral_exit = any(
                     abs(point["x"] - rim["center_x"]) > 3.0 * rim_half_w
@@ -804,8 +1017,20 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=1.0):
                     )
                     for point in later
                 )
-                if lateral_exit:
-                    break
+                deep_corridor_points = [
+                    point
+                    for point in later
+                    if point["y"] >= rim_y + below_depth
+                    and _point_in_rim_corridor(point, rim)
+                ]
+                post_crossing_lateral_recovery = (
+                    lateral_exit
+                    and len(below_points) >= 3
+                    and len(deep_corridor_points) == 1
+                    and not rebounded
+                )
+                if lateral_exit and not post_crossing_lateral_recovery:
+                    continue
 
                 event_time = _crossing_time_at_y(above, below, rim_y)
                 if event_time is None:
@@ -873,6 +1098,7 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=1.0):
                     "score": score,
                     "gates": gates,
                     "confidence": _confidence_label(score, signals, gates),
+                    "post_crossing_lateral_recovery": post_crossing_lateral_recovery,
                     "above": above,
                     "below": below,
                 }

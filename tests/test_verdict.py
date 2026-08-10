@@ -80,3 +80,25 @@ def test_resolve_verdict_rejects_reliable_zero_net_motion():
 
     assert result["verdict"] == "missed"
     assert result["net_no_motion"] is True
+
+
+def test_resolve_verdict_keeps_post_crossing_lateral_recovery_reviewable():
+    track = [
+        {"time": 1.1, "x": 490, "y": 300},
+        {"time": 1.4, "x": 491, "y": 345},
+        {"time": 1.55, "x": 492, "y": 365},
+        {"time": 1.7, "x": 560, "y": 390},
+    ]
+
+    result = resolve_verdict(
+        _candidate(
+            complete_crossing=False,
+            post_crossing_lateral_recovery=True,
+            signals={"net_signal_available": True, "net_no_motion": False},
+        ),
+        track,
+        RIM,
+    )
+
+    assert result["verdict"] == "ambiguous"
+    assert result["lateral_exit"] is True

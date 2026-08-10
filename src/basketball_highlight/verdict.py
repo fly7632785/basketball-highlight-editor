@@ -6,17 +6,45 @@ enough to call ``made``. Uncertain events remain reviewable as ``ambiguous``.
 """
 
 
-def _later_points(track, start_time, end_time):
-    return [
-        point
-        for point in track
-        if start_time <= point["time"] <= end_time
-    ]
+def _continuous_later_points(track, below, rim, verification_window):
+    rim_width = max(1.0, float(rim.get("width", 20.0)))
+    rim_height = max(1.0, float(rim.get("height", 20.0)))
+    points = [below]
+    previous = below
+    for point in sorted(track, key=lambda item: item["time"]):
+        if point["time"] <= below["time"]:
+            continue
+        if point["time"] > below["time"] + verification_window:
+            break
+        gap = point["time"] - previous["time"]
+        if gap <= 0:
+            continue
+        if (
+            previous["y"] - point["y"] > max(2.0, rim_height * 0.30)
+            and abs(point["x"] - previous["x"]) > 1.5 * rim_width
+        ):
+            break
+        distance = ((point["x"] - previous["x"]) ** 2 +
+                    (point["y"] - previous["y"]) ** 2) ** 0.5
+        gate = max(
+            1.75 * rim_width,
+            min(
+                12.0 * rim_width,
+                45.0 * rim_width * gap
+                + 2.0 * max(previous.get("width", 0.0), point.get("width", 0.0),
+                             previous.get("height", 0.0), point.get("height", 0.0)),
+            ),
+        )
+        if distance > gate:
+            break
+        points.append(point)
+        previous = point
+    return points
 
 
 def _post_crossing_evidence(track, below, rim, verification_window):
     end_time = below["time"] + verification_window
-    later = _later_points(track, below["time"], end_time)
+    later = _continuous_later_points(track, below, rim, verification_window)
     rim_y = float(rim["rim_y"])
     rim_height = float(rim.get("height", 20.0))
     rim_width = max(1.0, float(rim.get("width", 20.0)))
@@ -40,6 +68,13 @@ def _post_crossing_evidence(track, below, rim, verification_window):
         and point["y"] <= rim_y + max(4.0 * rim_height, 4.0 * rim_width)
         for point in later
     )
+    deep_corridor_points = [
+        point
+        for point in persistence_points
+        if abs(point["x"] - float(rim["center_x"])) <= half_width
+    ]
+    if lateral_exit and len(persistence_points) >= 3 and len(deep_corridor_points) == 1 and not rebound:
+        lateral_exit = False
     return {
         "verification_window_s": verification_window,
         "decision_time": round(end_time, 3),
@@ -79,7 +114,12 @@ def resolve_verdict(
         and net_sequence >= 0.80
         and float(signals.get("net_below_peak", 0.0)) >= 0.25
     )
+    net_directional_support = net_support and net_sequence >= 0.99
     complete_crossing = candidate.get("complete_crossing", True) is True
+    post_crossing_lateral_recovery = candidate.get(
+        "post_crossing_lateral_recovery",
+        False,
+    ) is True
     prediction_review = gates.get("prediction_review") is True
     persistence = evidence["ball_persistence"]
     if net_evidence_present:
@@ -94,12 +134,12 @@ def resolve_verdict(
         persistence >= 0.67
         and complete_crossing
         and positive_gate
+        and (not net_evidence_present or net_directional_support)
     )
     strong_negative = (
         evidence["rebound"] or
-        evidence["lateral_exit"] or
-        (net_evidence_present and net_no_motion) or
-        (not complete_crossing and not prediction_review and net_evidence_present)
+        (evidence["lateral_exit"] and not post_crossing_lateral_recovery) or
+        (net_evidence_present and net_no_motion)
     )
     if strong_negative:
         verdict = "missed"

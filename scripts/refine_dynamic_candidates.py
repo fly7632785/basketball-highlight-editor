@@ -18,7 +18,7 @@ from refine_candidates import scan_window
 
 
 DETECTION_CACHE_VERSION = "python-v2.4-weighted-progress-normalized-coarse"
-ALGORITHM_VERSION = "python-v2.6-reviewable-crossing-recovery"
+ALGORITHM_VERSION = "python-v2.9.2-track-split-recovery"
 REFINED_SCHEMA_VERSION = 3
 
 
@@ -326,7 +326,7 @@ def main(args):
                 {**match, "rim_source": "box_center_fallback"}
                 for match in find_refined_crossings(legacy_records, legacy_rim)
             ]
-        merged = dedupe_candidates(tagged_matches, 1.0)
+        merged = dedupe_candidates(tagged_matches, 2.0)
         matches = [match for match in merged if match.get("score", 0.0) >= args.min_score]
         results.append({
             "index": index + 1,

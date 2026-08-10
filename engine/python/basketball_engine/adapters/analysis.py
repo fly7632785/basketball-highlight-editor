@@ -85,7 +85,7 @@ def scale_roi_to_proxy(
     ]
 
 
-def flatten_refined_matches(data: Dict[str, Any], dedupe_seconds: float = 1.0) -> list[Dict[str, Any]]:
+def flatten_refined_matches(data: Dict[str, Any], dedupe_seconds: float = 2.0) -> list[Dict[str, Any]]:
     matches = [
         dict(match)
         for result in data.get("results", [])

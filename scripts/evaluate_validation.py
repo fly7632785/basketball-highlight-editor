@@ -10,7 +10,7 @@ from export_review_queue import is_automatic_goal
 
 
 POSITIVE_LABELS = {"goal", "miss_then_goal"}
-CURRENT_ALGORITHM_VERSION = "python-v2.6-reviewable-crossing-recovery"
+CURRENT_ALGORITHM_VERSION = "python-v2.9.2-track-split-recovery"
 CURRENT_SCHEMA_VERSION = 3
 
 
