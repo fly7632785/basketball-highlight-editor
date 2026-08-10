@@ -8,13 +8,13 @@ import '../core/engine_session.dart';
 import '../core/project_session.dart';
 
 /// 单进程内共享的 EngineClient。Provider dispose 时关闭子进程。
-final Provider<EngineClient> engineClientProvider = Provider<EngineClient>(
-  (ref) {
-    final client = EngineClient();
-    ref.onDispose(client.dispose);
-    return client;
-  },
-);
+final Provider<EngineClient> engineClientProvider = Provider<EngineClient>((
+  ref,
+) {
+  final client = EngineClient();
+  ref.onDispose(client.dispose);
+  return client;
+});
 
 /// 纯函数:解析 Engine 运行根目录。
 ///
@@ -53,10 +53,7 @@ String? findRuntimeRoot({
 /// 纯函数:解析 Python 可执行文件路径。
 ///
 /// 从 app.dart:_findPython 抽出,接受 env 注入,便于测试候选与 fallback 分支。
-String findPython(
-  String runtimeRoot, {
-  required Map<String, String> env,
-}) {
+String findPython(String runtimeRoot, {required Map<String, String> env}) {
   final configured = env['BHE_PYTHON'];
   final candidates = <String>[
     if (configured != null && configured.isNotEmpty) configured,
@@ -83,12 +80,28 @@ String findPython(
 /// 用 `AsyncValue.guard` 包裹原启动逻辑(findRuntimeRoot→findPython→
 /// client.start→engine.hello),失败时 state 转为 AsyncError。
 class EngineBootstrapNotifier extends Notifier<AsyncValue<bool>> {
+  Future<void>? _ensureInFlight;
+
   @override
   AsyncValue<bool> build() => const AsyncValue<bool>.loading();
 
   /// 等价 app.dart:_ensureEngine。已就绪时直接返回,否则重新跑启动流程。
-  Future<void> ensure() async {
-    if (state.valueOrNull == true) return;
+  Future<void> ensure() {
+    final client = ref.read(engineClientProvider);
+    if (state.valueOrNull == true && client.isRunning) {
+      return Future<void>.value();
+    }
+    final current = _ensureInFlight;
+    if (current != null) return current;
+    final future = _ensure();
+    _ensureInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_ensureInFlight, future)) _ensureInFlight = null;
+    });
+  }
+
+  Future<void> _ensure() async {
+    final client = ref.read(engineClientProvider);
     state = const AsyncValue<bool>.loading();
     state = await AsyncValue.guard(() async {
       final env = Platform.environment;
@@ -106,7 +119,6 @@ class EngineBootstrapNotifier extends Notifier<AsyncValue<bool>> {
       final runtimeBin = Directory('$runtimeRoot/bin').existsSync()
           ? '$runtimeRoot/bin'
           : null;
-      final client = ref.read(engineClientProvider);
       await client.start(
         workingDirectory: runtimeRoot,
         enginePythonPath: '$runtimeRoot/engine/python',
@@ -117,10 +129,14 @@ class EngineBootstrapNotifier extends Notifier<AsyncValue<bool>> {
       return true;
     });
   }
+
+  void markUnavailable(Object error, [StackTrace? stackTrace]) {
+    state = AsyncValue<bool>.error(error, stackTrace ?? StackTrace.current);
+  }
 }
 
 final NotifierProvider<EngineBootstrapNotifier, AsyncValue<bool>>
 engineBootstrapProvider =
     NotifierProvider<EngineBootstrapNotifier, AsyncValue<bool>>(
-  EngineBootstrapNotifier.new,
-);
+      EngineBootstrapNotifier.new,
+    );

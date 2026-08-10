@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:desktop/components/cs_bottom_nav.dart';
 import 'package:desktop/components/cs_sidebar_shell.dart';
+import 'package:desktop/core/engine_client.dart';
 import 'package:desktop/providers/session_provider.dart';
 import 'package:desktop/providers/theme_provider.dart';
 import 'package:desktop/router/app_router.dart';
@@ -67,6 +68,7 @@ Future<void> _pumpHarness(WidgetTester tester) async {
     ProviderScope(
       overrides: <Override>[
         engineBootstrapProvider.overrideWith(() => _StubEngine()),
+        engineClientProvider.overrideWithValue(_StubClient()),
         themeModeProvider.overrideWith(() => _StubTheme()),
       ],
       child: const _RouterHost(),
@@ -83,6 +85,17 @@ class _StubEngine extends EngineBootstrapNotifier {
 class _StubTheme extends ThemeModeNotifier {
   @override
   ThemeMode build() => ThemeMode.system;
+}
+
+class _StubClient extends EngineClient {
+  @override
+  bool get isRunning => true;
+
+  @override
+  Future<Map<String, dynamic>> request(
+    String command,
+    Map<String, dynamic> payload,
+  ) async => <String, dynamic>{'ok': true, 'payload': <String, dynamic>{}};
 }
 
 class _RouterHost extends ConsumerWidget {

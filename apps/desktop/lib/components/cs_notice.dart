@@ -126,14 +126,22 @@ class _CsNoticeState extends State<CsNotice>
                       ],
                     ),
                   ),
-                  IconButton(
-                    icon: Icon(LucideIcons.x, size: 16, color: c.textTertiary),
-                    onPressed: widget.onDismiss,
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 24,
-                      minHeight: 24,
+                  Semantics(
+                    button: true,
+                    label: '关闭提示',
+                    child: IconButton(
+                      icon: Icon(
+                        LucideIcons.x,
+                        size: 16,
+                        color: c.textTertiary,
+                      ),
+                      onPressed: widget.onDismiss,
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 24,
+                        minHeight: 24,
+                      ),
                     ),
                   ),
                 ],

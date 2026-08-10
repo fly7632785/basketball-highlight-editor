@@ -23,8 +23,9 @@ class _FakeProjectNotifier extends ProjectNotifier {
   );
 
   @override
-  Future<void> openProject(String root) async {
+  Future<bool> openProject(String root) async {
     openedRoot = root;
+    return true;
   }
 
   @override

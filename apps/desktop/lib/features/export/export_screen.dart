@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +10,7 @@ import '../../components/cs_button.dart';
 import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../components/cs_metric_tile.dart';
+import '../../components/cs_progress_track.dart';
 import '../../providers/project_state.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
@@ -40,7 +43,17 @@ class ExportScreen extends ConsumerWidget {
               item['review_status']?.toString() != 'excluded',
         )
         .fold<int>(0, _clipDuration);
-    final busy = state.busy;
+    final exportRunning = state.exportRunning;
+    final exportRecoverable =
+        state.exportJob?['recoverable'] == true && !exportRunning;
+    final exportProgress =
+        ((state.exportJob?['progress'] as num?)?.toDouble() ?? 0).clamp(
+          0.0,
+          1.0,
+        );
+    final exportStage = state.exportJob?['stage']?.toString() ?? '';
+    final busy =
+        state.busy || exportRunning || state.analysisRunning || state.hydrating;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(Spacing.xl),
@@ -84,6 +97,89 @@ class ExportScreen extends ConsumerWidget {
                       value: '硬件编码优先，软件回退',
                       icon: LucideIcons.cpu,
                     ),
+                    if (exportRunning) ...[
+                      const SizedBox(height: Spacing.sm),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(Spacing.sm),
+                        decoration: BoxDecoration(
+                          color: c.indigo.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(CsRadius.md),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    '${_exportStageLabel(exportStage)} · '
+                                    '${(exportProgress * 100).round()}%\n'
+                                    '本次输出使用启动导出时的片段列表，之后的审核修改用于下一次导出。',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: c.textSecondary,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: Spacing.sm),
+                                CsButton(
+                                  label: const Text('取消导出'),
+                                  icon: LucideIcons.circleStop,
+                                  variant: CsButtonVariant.secondary,
+                                  size: CsButtonSize.sm,
+                                  onPressed: state.busy
+                                      ? null
+                                      : () => notifier.cancelExport(),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: Spacing.sm),
+                            CsProgressTrack(value: exportProgress),
+                          ],
+                        ),
+                      ),
+                    ],
+                    if (state.analysisRunning) ...[
+                      const SizedBox(height: Spacing.sm),
+                      Text(
+                        '视频仍在分析，分析完成后才能导出新的候选结果。',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: c.warning,
+                        ),
+                      ),
+                    ],
+                    if (exportRecoverable) ...[
+                      const SizedBox(height: Spacing.sm),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(Spacing.sm),
+                        decoration: BoxDecoration(
+                          color: c.warning.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(CsRadius.md),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '上次导出已中断，可以从原设置重新导出。',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: c.textSecondary,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: Spacing.sm),
+                            CsButton(
+                              label: const Text('重试导出'),
+                              icon: LucideIcons.refreshCw,
+                              size: CsButtonSize.sm,
+                              onPressed: state.busy
+                                  ? null
+                                  : () => notifier.retryExport(),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: Spacing.sm),
                     CsButton(
                       label: const Text('合并导出'),
@@ -108,7 +204,9 @@ class ExportScreen extends ConsumerWidget {
               ),
               const SizedBox(height: Spacing.md),
               Text(
-                '导出会包含所有当前保留的候选；已排除片段不会进入输出。',
+                exportRunning
+                    ? '导出任务在后台运行，返回审核后仍可继续修改候选。'
+                    : '导出会包含所有当前保留的候选；已排除片段不会进入输出。',
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: c.textSecondary,
                 ),
@@ -185,7 +283,13 @@ class _ExportHistoryCard extends StatelessWidget {
     final count = (item['candidate_count'] as num?)?.toInt() ?? 0;
     final duration = (item['duration_ms'] as num?)?.toInt() ?? 0;
     final processing = (item['processing_ms'] as num?)?.toInt() ?? 0;
+    final fileSize = (item['file_size_bytes'] as num?)?.toInt() ?? 0;
+    final width = (item['width'] as num?)?.toInt();
+    final height = (item['height'] as num?)?.toInt();
+    final videoCodec = item['video_codec']?.toString();
+    final audioCodec = item['audio_codec']?.toString();
     final path = item['output_path']?.toString() ?? '';
+    final directory = _exportDirectoryPath(item);
     final createdAt = DateTime.tryParse(
       item['created_at']?.toString() ?? '',
     )?.toLocal();
@@ -226,8 +330,99 @@ class _ExportHistoryCard extends StatelessWidget {
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
+                const SizedBox(height: Spacing.xs),
+                Text(
+                  [
+                    _formatBytes(fileSize),
+                    if (width != null && height != null) '$width×$height',
+                    if (videoCodec != null && videoCodec.isNotEmpty) videoCodec,
+                    if (audioCodec != null && audioCodec.isNotEmpty) audioCodec,
+                  ].join(' · '),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: c.textTertiary,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
               ],
             ),
+          ),
+          const SizedBox(width: Spacing.md),
+          CsButton(
+            label: const Text('打开目录'),
+            icon: LucideIcons.folderOpen,
+            variant: CsButtonVariant.secondary,
+            size: CsButtonSize.sm,
+            onPressed: directory == null
+                ? null
+                : () => _openDirectory(context, directory),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String? _exportDirectoryPath(Map<String, dynamic> item) {
+  final metadata = item['metadata'];
+  if (metadata is Map) {
+    final files = metadata['files'];
+    if (files is List) {
+      for (final file in files) {
+        final filePath = file?.toString().trim() ?? '';
+        if (filePath.isNotEmpty) return File(filePath).parent.path;
+      }
+    }
+  }
+
+  final outputPath = item['output_path']?.toString().trim() ?? '';
+  if (outputPath.isEmpty) return null;
+  if (FileSystemEntity.typeSync(outputPath, followLinks: true) ==
+      FileSystemEntityType.directory) {
+    return outputPath;
+  }
+  return File(outputPath).parent.path;
+}
+
+String _formatBytes(int bytes) {
+  if (bytes <= 0) return '-';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var value = bytes.toDouble();
+  var unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  final digits = value >= 100 || unit == 0 ? 0 : 1;
+  return '${value.toStringAsFixed(digits)} ${units[unit]}';
+}
+
+Future<void> _openDirectory(BuildContext context, String directory) async {
+  try {
+    final ProcessResult result;
+    if (Platform.isMacOS) {
+      result = await Process.run('open', <String>[directory]);
+    } else if (Platform.isWindows) {
+      result = await Process.run('explorer.exe', <String>[directory]);
+    } else if (Platform.isLinux) {
+      result = await Process.run('xdg-open', <String>[directory]);
+    } else {
+      throw UnsupportedError('当前平台不支持打开文件目录');
+    }
+
+    if (result.exitCode != 0) {
+      throw StateError(result.stderr.toString().trim());
+    }
+  } catch (error) {
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('无法打开目录'),
+        content: Text('$directory\n\n$error'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('知道了'),
           ),
         ],
       ),
@@ -256,3 +451,12 @@ String _formatMs(int milliseconds) {
       ? '$hours:${minutes.toString().padLeft(2, '0')}:${remaining.toString().padLeft(2, '0')}'
       : '${minutes.toString().padLeft(2, '0')}:${remaining.toString().padLeft(2, '0')}';
 }
+
+String _exportStageLabel(String stage) =>
+    const <String, String>{
+      'validate_input': '准备导出',
+      'export_clips': '生成片段',
+      'merge_clips': '合并片段',
+      'persist_export': '保存导出记录',
+    }[stage] ??
+    '正在导出';

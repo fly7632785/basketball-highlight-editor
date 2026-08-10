@@ -45,6 +45,26 @@ void main() {
     expect(find.text('重试分析'), findsOneWidget);
   });
 
+  testWidgets('shows recovery action for a queued analysis after reopening', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {
+          'state': 'queued',
+          'stage': 'validate_input',
+          'progress': 0,
+          'recovery_state': 'queued_recoverable',
+          'recoverable': true,
+        },
+      ),
+    );
+
+    expect(find.text('上次分析没有完成'), findsOneWidget);
+    expect(find.text('重试分析'), findsOneWidget);
+  });
+
   testWidgets('uses a scrollable workbench on a narrow window', (tester) async {
     tester.view.physicalSize = const Size(612, 927);
     tester.view.devicePixelRatio = 1;
@@ -59,6 +79,31 @@ void main() {
 
     expect(find.byType(SingleChildScrollView), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('narrow workbench adapts at phone and tablet widths', (
+    tester,
+  ) async {
+    for (final size in const [Size(320, 700), Size(480, 800)]) {
+      await _pumpReview(
+        tester,
+        const ProjectState(
+          job: {'state': 'completed'},
+          candidates: [
+            {
+              'id': 'candidate-1',
+              'event_time_ms': 12000,
+              'default_start_ms': 6000,
+              'default_end_ms': 15000,
+            },
+          ],
+        ),
+        size: size,
+      );
+
+      expect(find.byType(SingleChildScrollView), findsWidgets);
+      expect(tester.takeException(), isNull);
+    }
   });
 
   testWidgets('no candidates state guides the user to import a video', (
@@ -130,7 +175,7 @@ void main() {
 
       expect(find.text('轨迹穿框'), findsOneWidget);
       expect(find.text('篮网运动'), findsOneWidget);
-      expect(find.text('音频支持'), findsOneWidget);
+      expect(find.text('音频支持'), findsNothing);
       expect(find.text('反弹判断'), findsOneWidget);
       expect(find.text('系统说明'), findsOneWidget);
       expect(find.text('候选 00:12'), findsOneWidget);
@@ -171,6 +216,100 @@ void main() {
     await tester.tap(find.byTooltip('关闭标注'));
     await tester.pump();
     expect(find.byTooltip('显示标注'), findsOneWidget);
+  });
+
+  testWidgets('shows keyboard shortcut help on the candidate panel', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+          },
+        ],
+      ),
+    );
+
+    expect(
+      find.byTooltip(
+        '快捷键\nSpace  播放/暂停\nR  重播当前\n← / →  切换候选\nC / Enter  保留\nX / Backspace  排除\nCmd/Ctrl+Z  撤销',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('filters candidates without changing their chronological order', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'pending',
+            'event_time_ms': 3000,
+            'default_start_ms': 0,
+            'default_end_ms': 6000,
+            'review_status': 'pending',
+          },
+          {
+            'id': 'excluded',
+            'event_time_ms': 9000,
+            'default_start_ms': 6000,
+            'default_end_ms': 12000,
+            'review_status': 'excluded',
+          },
+          {
+            'id': 'goal',
+            'event_time_ms': 15000,
+            'default_start_ms': 12000,
+            'default_end_ms': 18000,
+            'review_status': 'goal',
+          },
+        ],
+      ),
+    );
+
+    await tester.tap(find.byTooltip('筛选候选'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('已排除').last);
+    await tester.pump();
+
+    expect(find.text('1. 00:09'), findsOneWidget);
+    expect(find.text('1. 00:03'), findsNothing);
+    expect(find.text('1. 00:15'), findsNothing);
+  });
+
+  testWidgets('exposes compact candidate editing actions below the video', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+          },
+        ],
+      ),
+    );
+
+    await tester.tap(find.byTooltip('候选操作'));
+    await tester.pumpAndSettle();
+    expect(find.text('调整片段范围'), findsOneWidget);
+    expect(find.text('编辑备注'), findsOneWidget);
+    expect(find.text('撤销上一次审核'), findsOneWidget);
   });
 
   testWidgets('sorts the review list by event time', (tester) async {
@@ -271,19 +410,44 @@ void main() {
     expect(find.text('候选 00:03'), findsOneWidget);
     expect(find.text('候选 00:12'), findsNothing);
   });
+
+  testWidgets('throttles candidate cover extraction', (tester) async {
+    final notifier = _PreviewTrackingNotifier(
+      ProjectState(
+        video: const {'id': 'video-1'},
+        job: const {'state': 'completed'},
+        candidates: List.generate(
+          20,
+          (index) => {
+            'id': 'candidate-$index',
+            'event_time_ms': index * 3000,
+            'default_start_ms': index * 3000,
+            'default_end_ms': index * 3000 + 3000,
+          },
+        ),
+      ),
+    );
+    await _pumpReview(tester, notifier.initialState, notifier: notifier);
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(notifier.maxConcurrentPreviewLoads, lessThanOrEqualTo(2));
+  });
 }
 
 Future<void> _pumpReview(
   WidgetTester tester,
   ProjectState state, {
   Size size = const Size(1200, 800),
+  ProjectNotifier? notifier,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [projectProvider.overrideWith(() => _ReviewNotifier(state))],
+      overrides: [
+        projectProvider.overrideWith(() => notifier ?? _ReviewNotifier(state)),
+      ],
       child: const MaterialApp(home: Scaffold(body: ReviewScreen())),
     ),
   );
@@ -311,5 +475,23 @@ class _ReviewNotifier extends ProjectNotifier {
     }).toList();
     state = state.copyWith(candidates: candidates);
     return true;
+  }
+}
+
+class _PreviewTrackingNotifier extends _ReviewNotifier {
+  _PreviewTrackingNotifier(super.initialState);
+
+  int activePreviewLoads = 0;
+  int maxConcurrentPreviewLoads = 0;
+
+  @override
+  Future<String?> loadCandidatePreview(String candidateId, int timeMs) async {
+    activePreviewLoads++;
+    if (activePreviewLoads > maxConcurrentPreviewLoads) {
+      maxConcurrentPreviewLoads = activePreviewLoads;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    activePreviewLoads--;
+    return null;
   }
 }

@@ -30,6 +30,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   Rect? _roi;
   bool _roiSaved = false;
   bool _savingRoi = false;
+  bool _roiUserEdited = false;
 
   @override
   void initState() {
@@ -37,6 +38,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     final state = ref.read(projectProvider);
     _roi = state.suggestedRoi;
     _roiSaved = state.roiSource != null && state.suggestedRoi != null;
+    _roiUserEdited = state.roiSource == 'manual';
   }
 
   Future<void> _selectVideo() async {
@@ -55,16 +57,16 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     if (roi == null) return;
     setState(() => _savingRoi = true);
     try {
-      await ref.read(projectProvider.notifier).saveRoi(roi);
-      if (mounted) setState(() => _roiSaved = true);
+      final saved = await ref.read(projectProvider.notifier).saveRoi(roi);
+      if (mounted && saved) setState(() => _roiSaved = true);
     } finally {
       if (mounted) setState(() => _savingRoi = false);
     }
   }
 
   Future<void> _startAnalysis() async {
-    await ref.read(projectProvider.notifier).startAnalysis();
-    if (mounted) context.go('/review');
+    final started = await ref.read(projectProvider.notifier).startAnalysis();
+    if (mounted && started) context.go('/review');
   }
 
   @override
@@ -76,10 +78,11 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       final autoRoiChanged =
           previous?.suggestedRoi != next.suggestedRoi &&
           next.roiSource == 'auto';
-      if (videoChanged || autoRoiChanged) {
+      if (videoChanged || (autoRoiChanged && !_roiUserEdited)) {
         setState(() {
           _roi = next.suggestedRoi;
           _roiSaved = next.roiSource != null && next.suggestedRoi != null;
+          if (videoChanged) _roiUserEdited = false;
         });
       }
     });
@@ -90,7 +93,11 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     final hasRoi = _roi != null;
     final width = (state.video?['width'] as num?)?.toDouble() ?? 16;
     final height = (state.video?['height'] as num?)?.toDouble() ?? 9;
-    final roiBusy = state.busy || _savingRoi;
+    final roiBusy =
+        state.busy ||
+        state.exportRunning ||
+        state.analysisRunning ||
+        _savingRoi;
 
     final steps = <CsStep>[
       (
@@ -140,34 +147,57 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                         color: c.surface2,
                         borderRadius: BorderRadius.circular(CsRadius.lg),
                       ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            LucideIcons.film,
-                            size: 18,
-                            color: c.textSecondary,
-                          ),
-                          const SizedBox(width: Spacing.md),
-                          Expanded(
-                            child: SelectableText(
-                              state.videoPath ??
-                                  '支持 MP4 / MOV / H.264 / H.265，原始视频不会被复制。',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: hasVideo
-                                    ? c.textPrimary
-                                    : c.textSecondary,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final path = Row(
+                            children: [
+                              Icon(
+                                LucideIcons.film,
+                                size: 18,
+                                color: c.textSecondary,
                               ),
-                              maxLines: 2,
-                            ),
-                          ),
-                          const SizedBox(width: Spacing.md),
-                          CsButton(
+                              const SizedBox(width: Spacing.md),
+                              Expanded(
+                                child: SelectableText(
+                                  state.videoPath ??
+                                      '支持 MP4 / MOV / H.264 / H.265，原始视频不会被复制。',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: hasVideo
+                                        ? c.textPrimary
+                                        : c.textSecondary,
+                                  ),
+                                  maxLines: 2,
+                                ),
+                              ),
+                            ],
+                          );
+                          final picker = CsButton(
                             label: Text(hasVideo ? '更换视频' : '选择视频'),
                             icon: LucideIcons.folderOpen,
                             variant: CsButtonVariant.secondary,
-                            onPressed: state.busy ? null : _selectVideo,
-                          ),
-                        ],
+                            onPressed: roiBusy ? null : _selectVideo,
+                          );
+                          if (constraints.maxWidth < 520) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                path,
+                                const SizedBox(height: Spacing.md),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: picker,
+                                ),
+                              ],
+                            );
+                          }
+                          return Row(
+                            children: [
+                              Expanded(child: path),
+                              const SizedBox(width: Spacing.md),
+                              picker,
+                            ],
+                          );
+                        },
                       ),
                     ),
 
@@ -179,6 +209,18 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                         style: numericTextStyle(
                           theme.textTheme.labelSmall!.copyWith(
                             color: c.textTertiary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: Spacing.xs),
+                      Text(
+                        _workspaceSummary(state.video!),
+                        style: numericTextStyle(
+                          theme.textTheme.labelSmall!.copyWith(
+                            color:
+                                state.video!['disk_space_sufficient'] == false
+                                ? c.error
+                                : c.textTertiary,
                           ),
                         ),
                       ),
@@ -247,7 +289,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                           ? width / height
                           : 16 / 9,
                       roi: _roi,
-                      onRefreshPreview: state.video != null && !state.busy
+                      onRefreshPreview: state.video != null && !roiBusy
                           ? () => ref
                                 .read(projectProvider.notifier)
                                 .refreshPreview()
@@ -255,6 +297,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                       onChanged: (value) => setState(() {
                         _roi = value;
                         _roiSaved = false;
+                        _roiUserEdited = true;
                       }),
                     ),
                     const SizedBox(height: Spacing.md),
@@ -317,7 +360,19 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     final fps = (video['fps'] as num?)?.toStringAsFixed(2) ?? '-';
     final duration = (video['duration_ms'] as num?)?.toInt() ?? 0;
     final codec = video['video_codec'] ?? '-';
-    return '$w×$h · $fps fps · 时长 ${_formatDuration(duration)} · 编码 $codec';
+    final audio = video['audio_codec'] ?? '无音频';
+    final size = (video['source_size_bytes'] as num?)?.toInt() ?? 0;
+    return '$w×$h · $fps fps · ${_formatDuration(duration)} · $codec / $audio · ${_formatBytes(size)}';
+  }
+
+  String _workspaceSummary(Map<String, dynamic> video) {
+    final available = (video['available_disk_bytes'] as num?)?.toInt() ?? 0;
+    final estimated =
+        (video['estimated_working_space_bytes'] as num?)?.toInt() ?? 0;
+    final sufficient = video['disk_space_sufficient'] != false;
+    return sufficient
+        ? '预计工作空间 ${_formatBytes(estimated)} · 可用 ${_formatBytes(available)}'
+        : '磁盘空间不足：预计需要 ${_formatBytes(estimated)}，当前可用 ${_formatBytes(available)}';
   }
 }
 
@@ -332,6 +387,19 @@ String _formatDuration(int milliseconds) {
   }
   return '${minutes.toString().padLeft(2, '0')}:'
       '${remaining.toString().padLeft(2, '0')}';
+}
+
+String _formatBytes(int bytes) {
+  if (bytes <= 0) return '-';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var value = bytes.toDouble();
+  var unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  final digits = value >= 100 || unit == 0 ? 0 : 1;
+  return '${value.toStringAsFixed(digits)} ${units[unit]}';
 }
 
 /// ROI 拖拽画布。pan 逻辑迁移自 3700bbc(原样),仅视觉精致化:

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:desktop/core/engine_session.dart';
@@ -66,6 +68,52 @@ void main() {
     expect(transport.commands, ['delete_project']);
     expect(transport.payloads.single, {'project_root': '/tmp/project'});
   });
+
+  test(
+    'ProjectSession resets after deleting an equivalent project path',
+    () async {
+      final root = Directory.systemTemp.createTempSync('bhe-session-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final transport = _FakeEngineTransport()
+        ..responses['open_project'] = {
+          'project_root': root.path,
+          'project': {'id': 'project-1'},
+        }
+        ..responses['delete_project'] = {'deleted': true};
+      final session = ProjectSession(EngineSession(transport));
+
+      await session.openProject(root.path);
+      await session.deleteProject('${root.path}/./');
+
+      expect(session.projectRoot, isNull);
+      expect(transport.payloads.last, {'project_root': '${root.path}/./'});
+    },
+  );
+
+  test(
+    'ProjectSession checkpoint restores the previous project context',
+    () async {
+      final transport = _FakeEngineTransport()
+        ..responses['open_project'] = {
+          'project_root': '/tmp/project-a',
+          'project': {'id': 'project-a'},
+          'video': {'id': 'video-a'},
+        }
+        ..responses['create_project'] = {
+          'project': {'id': 'project-b', 'root_path': '/tmp/project-b'},
+        };
+      final session = ProjectSession(EngineSession(transport));
+      await session.openProject('/tmp/project-a');
+      final checkpoint = session.checkpoint();
+
+      await session.createProject(name: 'B', rootPath: '/tmp/project-b');
+      session.restore(checkpoint);
+
+      expect(session.projectRoot, '/tmp/project-a');
+      expect(session.projectId, 'project-a');
+      expect(session.videoId, 'video-a');
+    },
+  );
 
   test('EngineSession polls get_job until a terminal state', () async {
     final transport = _FakeEngineTransport()
@@ -256,8 +304,8 @@ void main() {
         }
         ..responses['list_candidates'] = {'candidates': <dynamic>[]}
         ..responses['review_candidate'] = {'updated': true}
-        ..responses['export_clips'] = {
-          'files': ['/tmp/exports/merged.mp4'],
+        ..responses['start_export'] = {
+          'job': {'id': 'job-export-1', 'state': 'queued'},
         };
       final session = ProjectSession(EngineSession(transport));
 
@@ -267,7 +315,7 @@ void main() {
       await session.startAnalysis(sampleFps: 10);
       await session.listCandidates();
       await session.reviewCandidate('candidate-1', status: 'goal');
-      await session.exportClips(mode: 'merge', outputPath: '/tmp/merged.mp4');
+      await session.startExport(mode: 'merge', outputPath: '/tmp/merged.mp4');
 
       expect(session.projectId, 'project-1');
       expect(session.videoId, 'video-1');
@@ -331,6 +379,35 @@ void main() {
     expect(session.videoId, 'video-1');
     expect(transport.commands, ['open_project']);
   });
+
+  test(
+    'ProjectSession snapshot keeps the original project after session reset',
+    () async {
+      final transport = _FakeEngineTransport()
+        ..responses['create_project'] = {
+          'project': {'id': 'project-1'},
+        }
+        ..responses['link_video'] = {
+          'video': {'id': 'video-1'},
+        }
+        ..responses['get_job'] = {
+          'job': {'id': 'job-1', 'state': 'completed'},
+        };
+      final session = ProjectSession(EngineSession(transport));
+
+      await session.createProject(name: '训练赛', rootPath: '/tmp/project-a');
+      await session.linkVideo('/tmp/game-a.mp4');
+      final scope = session.snapshot(requireVideo: true);
+      session.reset();
+
+      await scope.pollJob(jobId: 'job-1', interval: Duration.zero).toList();
+
+      expect(transport.payloads.last, {
+        'project_root': '/tmp/project-a',
+        'job_id': 'job-1',
+      });
+    },
+  );
 
   test(
     'ProjectSession loads recent projects using one explicit known root',

@@ -45,15 +45,20 @@ class HomeScreen extends ConsumerWidget {
         )
         .length;
     final durationMs = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
-    final busy = state.busy;
+    final busy = state.busy || state.exportRunning || state.analysisRunning;
 
     Future<void> openProject() async {
       if (await notifier.chooseOpenProject()) onProjectOpened?.call();
     }
 
+    Future<void> startNewProject() async {
+      if (await notifier.startNewProject() && context.mounted) {
+        context.go('/import');
+      }
+    }
+
     Future<void> openRecentProject(String root) async {
-      await notifier.openProject(root);
-      if (ref.read(projectProvider).videoPath != null) {
+      if (await notifier.openProject(root)) {
         onProjectOpened?.call();
       }
     }
@@ -175,9 +180,7 @@ class HomeScreen extends ConsumerWidget {
                             CsButton(
                               label: const Text('新建项目'),
                               icon: LucideIcons.plus,
-                              onPressed: busy
-                                  ? null
-                                  : () => context.go('/import'),
+                              onPressed: busy ? null : startNewProject,
                             ),
                             CsButton(
                               label: const Text('打开项目'),

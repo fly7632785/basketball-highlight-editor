@@ -26,7 +26,17 @@ class ReviewScreen extends ConsumerStatefulWidget {
 
 class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   String? _selectedCandidateId;
+  final Set<String> _reviewStartedCandidateIds = <String>{};
+  String _candidateFilter = 'all';
+  final GlobalKey<_VideoPaneState> _videoKey = GlobalKey<_VideoPaneState>();
   final Map<String, Future<String?>> _coverCache = <String, Future<String?>>{};
+  final List<Future<void> Function()> _previewQueue =
+      <Future<void> Function()>[];
+  int _activePreviewLoads = 0;
+  int _replayToken = 0;
+  bool _previewQueueDisposed = false;
+  int _previewGeneration = 0;
+  String? _previewScopeKey;
 
   List<Map<String, dynamic>> _orderedCandidates(
     List<Map<String, dynamic>> candidates,
@@ -53,14 +63,119 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   void _selectCandidate(Map<String, dynamic> candidate) {
     final id = candidate['id']?.toString();
     if (id != null && id.isNotEmpty) {
-      setState(() => _selectedCandidateId = id);
+      final current = _selectedCandidate(
+        _orderedCandidates(ref.read(projectProvider).candidates),
+      );
+      if (current?['id']?.toString() == id) {
+        _requestReplay();
+      } else {
+        setState(() => _selectedCandidateId = id);
+      }
     }
   }
 
-  Future<void> _setCandidateStatus(String id, String status) async {
+  void _ensureReviewStarted(String id) {
+    if (!_reviewStartedCandidateIds.add(id)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(ref.read(projectProvider.notifier).startReview(id));
+      }
+    });
+  }
+
+  void _requestReplay() {
+    setState(() => _replayToken++);
+  }
+
+  void _togglePlayback() {
+    unawaited(_videoKey.currentState?.togglePlayPause());
+  }
+
+  Future<void> _editClipRange(Map<String, dynamic> candidate) async {
+    final result = await showDialog<({int startMs, int endMs})>(
+      context: context,
+      builder: (dialogContext) => _ClipRangeDialog(
+        startMs: _clipStart(candidate),
+        endMs: _clipEnd(candidate),
+        durationMs: _number(
+          ref.read(projectProvider).video?['duration_ms'],
+        ).round(),
+      ),
+    );
+    if (!mounted || result == null) return;
     await ref
         .read(projectProvider.notifier)
+        .updateClipRange(
+          candidate['id']?.toString() ?? '',
+          result.startMs,
+          result.endMs,
+        );
+  }
+
+  Future<void> _editCandidateNote(Map<String, dynamic> candidate) async {
+    final controller = TextEditingController(
+      text: candidate['note']?.toString() ?? '',
+    );
+    final note = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('候选备注'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            hintText: '例如：补篮、擦框、镜头遮挡',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted || note == null) return;
+    await ref
+        .read(projectProvider.notifier)
+        .updateCandidateNote(candidate['id']?.toString() ?? '', note.trim());
+  }
+
+  Future<void> _setCandidateStatus(String id, String status) async {
+    final before = _filterCandidates(
+      _orderedCandidates(ref.read(projectProvider).candidates),
+      _candidateFilter,
+    );
+    final previousIndex = before.indexWhere(
+      (candidate) => candidate['id']?.toString() == id,
+    );
+    final future = ref
+        .read(projectProvider.notifier)
         .reviewCandidate(id, status, showNotice: false);
+    final after = _filterCandidates(
+      _orderedCandidates(ref.read(projectProvider).candidates),
+      _candidateFilter,
+    );
+    if (mounted &&
+        _selectedCandidateId == id &&
+        !after.any((candidate) => candidate['id']?.toString() == id)) {
+      final nextIndex = after.isEmpty
+          ? -1
+          : previousIndex.clamp(0, after.length - 1).toInt();
+      setState(() {
+        _selectedCandidateId = nextIndex < 0
+            ? null
+            : after[nextIndex]['id']?.toString();
+      });
+    }
+    await future;
   }
 
   Future<void> _confirmReanalyze() async {
@@ -82,7 +197,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       ),
     );
     if (confirmed == true && mounted) {
-      await ref.read(projectProvider.notifier).startAnalysis();
+      await ref
+          .read(projectProvider.notifier)
+          .startAnalysis(replaceRecoverable: true);
     }
   }
 
@@ -90,8 +207,11 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(projectProvider);
     final notifier = ref.read(projectProvider.notifier);
-    final candidates = _orderedCandidates(state.candidates);
+    _syncPreviewScope(state);
+    final allCandidates = _orderedCandidates(state.candidates);
+    final candidates = _filterCandidates(allCandidates, _candidateFilter);
     final selected = _selectedCandidate(candidates);
+    final selectedId = selected?['id']?.toString();
     final job = state.job;
     final jobState = job?['state']?.toString() ?? '';
     final recoveryState = job?['recovery_state']?.toString();
@@ -102,28 +222,71 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         .clamp(0.0, 1.0)
         .toDouble();
     final playbackPath = _resolvePlaybackPath(state, analyzing: analyzing);
-    final includedCount = candidates
+    final reviewLocked = analyzing || state.busy || state.hydrating;
+    if (!reviewLocked && selectedId != null && selectedId.isNotEmpty) {
+      _ensureReviewStarted(selectedId);
+    }
+    final includedCount = allCandidates
         .where((candidate) => !_isExcluded(candidate))
         .length;
 
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
-        SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+        SingleActivator(
+          LogicalKeyboardKey.arrowLeft,
+          includeRepeats: false,
+        ): () =>
             _moveCandidate(candidates, -1),
-        SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+        SingleActivator(
+          LogicalKeyboardKey.arrowRight,
+          includeRepeats: false,
+        ): () =>
             _moveCandidate(candidates, 1),
-        SingleActivator(LogicalKeyboardKey.keyX): () {
+        SingleActivator(LogicalKeyboardKey.keyX, includeRepeats: false): () {
           final id = selected?['id']?.toString();
-          if (id != null) {
+          if (!reviewLocked && id != null) {
             unawaited(_setCandidateStatus(id, 'excluded'));
           }
         },
-        SingleActivator(LogicalKeyboardKey.keyC): () {
+        SingleActivator(LogicalKeyboardKey.keyC, includeRepeats: false): () {
           final id = selected?['id']?.toString();
-          if (id != null) {
+          if (!reviewLocked && id != null) {
             unawaited(_setCandidateStatus(id, 'included'));
           }
         },
+        SingleActivator(LogicalKeyboardKey.enter, includeRepeats: false): () {
+          final id = selected?['id']?.toString();
+          if (!reviewLocked && id != null) {
+            unawaited(_setCandidateStatus(id, 'included'));
+          }
+        },
+        SingleActivator(
+          LogicalKeyboardKey.backspace,
+          includeRepeats: false,
+        ): () {
+          final id = selected?['id']?.toString();
+          if (!reviewLocked && id != null) {
+            unawaited(_setCandidateStatus(id, 'excluded'));
+          }
+        },
+        SingleActivator(
+          LogicalKeyboardKey.keyZ,
+          control: true,
+          includeRepeats: false,
+        ): () {
+          if (!reviewLocked) unawaited(notifier.undoReview());
+        },
+        SingleActivator(
+          LogicalKeyboardKey.keyZ,
+          meta: true,
+          includeRepeats: false,
+        ): () {
+          if (!reviewLocked) unawaited(notifier.undoReview());
+        },
+        SingleActivator(LogicalKeyboardKey.space, includeRepeats: false):
+            _togglePlayback,
+        SingleActivator(LogicalKeyboardKey.keyR, includeRepeats: false):
+            _requestReplay,
       },
       child: Focus(
         autofocus: true,
@@ -134,12 +297,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
               if (analyzing ||
                   jobState == 'failed' ||
                   jobState == 'cancelled' ||
-                  (jobState == 'running' &&
-                      recoveryState == 'stale_recoverable'))
+                  job?['recoverable'] == true)
                 _AnalysisBar(
                   state: jobState,
                   stage: job?['stage']?.toString() ?? '',
                   progress: progress,
+                  startedAt: job?['started_at']?.toString(),
                   errorMessage: job?['error_message']?.toString(),
                   recoverable: job?['recoverable'] == true && !analyzing,
                   onCancel: analyzing ? () => notifier.cancelAnalysis() : null,
@@ -153,18 +316,16 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       : null,
                 )
               else if (jobState == 'completed')
-                _CompletedLine(
-                  candidateCount: candidates.length,
-                  onReanalyze: state.busy ? null : _confirmReanalyze,
-                ),
+                _CompletedLine(candidateCount: allCandidates.length),
               const SizedBox(height: Spacing.sm),
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     final video = _VideoPane(
-                      key: ValueKey(playbackPath ?? 'no-video'),
+                      key: _videoKey,
                       videoPath: playbackPath,
                       candidate: selected,
+                      replayToken: _replayToken,
                       frameSize: _videoFrameSize(state.video),
                       hasPrevious: _candidateIndex(candidates, selected) > 0,
                       hasNext:
@@ -172,6 +333,15 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                           candidates.length - 1,
                       onPrevious: () => _moveCandidate(candidates, -1),
                       onNext: () => _moveCandidate(candidates, 1),
+                      onEditRange: selected == null || reviewLocked
+                          ? null
+                          : () => _editClipRange(selected),
+                      onEditNote: selected == null || reviewLocked
+                          ? null
+                          : () => _editCandidateNote(selected),
+                      onUndo: () {
+                        if (!reviewLocked) unawaited(notifier.undoReview());
+                      },
                     );
                     final queueWidth = (constraints.maxWidth * 0.28)
                         .clamp(296.0, 360.0)
@@ -180,7 +350,11 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       candidates: candidates,
                       selectedId: selected?['id']?.toString(),
                       includedCount: includedCount,
-                      busy: state.busy,
+                      totalCount: allCandidates.length,
+                      filter: _candidateFilter,
+                      busy: reviewLocked,
+                      hydrating: state.hydrating,
+                      hydrateError: state.hydrateError,
                       analyzing: analyzing,
                       hasVideo: state.videoPath != null,
                       onSelect: _selectCandidate,
@@ -190,11 +364,26 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                           ? null
                           : (id, timeMs) =>
                                 _loadCandidateCover(notifier, id, timeMs),
-                      onReanalyze: !analyzing && !state.busy
+                      onFilterChanged: (value) =>
+                          setState(() => _candidateFilter = value),
+                      onReanalyze: !analyzing && !state.busy && !state.hydrating
                           ? _confirmReanalyze
                           : null,
+                      onRetryHydration:
+                          state.hydrateError != null && !state.hydrating
+                          ? () => notifier.retryProjectHydration()
+                          : null,
+                      onEditRange: selected == null || reviewLocked
+                          ? null
+                          : () => _editClipRange(selected),
+                      onEditNote: selected == null || reviewLocked
+                          ? null
+                          : () => _editCandidateNote(selected),
+                      onUndo: () {
+                        if (!reviewLocked) unawaited(notifier.undoReview());
+                      },
                       onGoImport: () => context.go('/import'),
-                      onExport: includedCount == 0
+                      onExport: includedCount == 0 || reviewLocked
                           ? null
                           : () => context.go('/export'),
                     );
@@ -213,13 +402,18 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       child: Column(
                         children: [
                           SizedBox(
-                            height: (constraints.maxWidth * 0.62)
-                                .clamp(300.0, 520.0)
+                            height: (constraints.maxWidth * 0.5625)
+                                .clamp(240.0, 520.0)
                                 .toDouble(),
                             child: video,
                           ),
                           const SizedBox(height: Spacing.md),
-                          SizedBox(height: 520, child: queue),
+                          SizedBox(
+                            height: (constraints.maxWidth * 0.92)
+                                .clamp(360.0, 520.0)
+                                .toDouble(),
+                            child: queue,
+                          ),
                         ],
                       ),
                     );
@@ -260,8 +454,73 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final key = '$candidateId:$timeMs';
     return _coverCache.putIfAbsent(
       key,
-      () => notifier.loadCandidatePreview(timeMs),
+      () => _enqueuePreview(
+        () => notifier.loadCandidatePreview(candidateId, timeMs),
+      ),
     );
+  }
+
+  void _syncPreviewScope(ProjectState state) {
+    final key = '${state.video?['id'] ?? ''}|${state.videoPath ?? ''}';
+    if (_previewScopeKey == key) return;
+    _previewScopeKey = key;
+    _previewGeneration++;
+    _coverCache.clear();
+    _reviewStartedCandidateIds.clear();
+  }
+
+  Future<String?> _enqueuePreview(Future<String?> Function() loader) {
+    if (_previewQueueDisposed) return Future<String?>.value(null);
+    final completer = Completer<String?>();
+    final generation = _previewGeneration;
+    _previewQueue.add(() async {
+      if (_previewQueueDisposed || generation != _previewGeneration) {
+        completer.complete(null);
+        return;
+      }
+      try {
+        final path = await loader();
+        completer.complete(
+          _previewQueueDisposed || generation != _previewGeneration
+              ? null
+              : path,
+        );
+      } catch (error, stackTrace) {
+        if (_previewQueueDisposed || generation != _previewGeneration) {
+          completer.complete(null);
+        } else {
+          completer.completeError(error, stackTrace);
+        }
+      }
+    });
+    _drainPreviewQueue();
+    return completer.future;
+  }
+
+  void _drainPreviewQueue() {
+    if (_previewQueueDisposed) {
+      _previewQueue.clear();
+      return;
+    }
+    while (_activePreviewLoads < 2 && _previewQueue.isNotEmpty) {
+      final request = _previewQueue.removeAt(0);
+      _activePreviewLoads++;
+      unawaited(
+        request().whenComplete(() {
+          _activePreviewLoads--;
+          _drainPreviewQueue();
+        }),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _previewQueueDisposed = true;
+    _previewGeneration++;
+    _previewQueue.clear();
+    _coverCache.clear();
+    super.dispose();
   }
 }
 
@@ -270,6 +529,7 @@ class _AnalysisBar extends StatelessWidget {
     required this.state,
     required this.stage,
     required this.progress,
+    required this.startedAt,
     required this.errorMessage,
     required this.recoverable,
     required this.onCancel,
@@ -280,6 +540,7 @@ class _AnalysisBar extends StatelessWidget {
   final String state;
   final String stage;
   final double progress;
+  final String? startedAt;
   final String? errorMessage;
   final bool recoverable;
   final VoidCallback? onCancel;
@@ -308,6 +569,8 @@ class _AnalysisBar extends StatelessWidget {
         : interrupted
         ? '已有候选可以继续使用，也可以重新分析'
         : '${_stageLabel(stage)} · ${(value * 100).round()}%';
+    final elapsed = _formatElapsed(startedAt);
+    final remaining = _formatEstimatedRemaining(startedAt, value);
 
     return Container(
       width: double.infinity,
@@ -351,6 +614,13 @@ class _AnalysisBar extends StatelessWidget {
                 if (active) ...[
                   const SizedBox(height: Spacing.xs),
                   const Text('分析进行中', style: TextStyle(fontSize: 10)),
+                  if (elapsed.isNotEmpty)
+                    Text(
+                      remaining.isEmpty
+                          ? '已用 $elapsed'
+                          : '已用 $elapsed · 预计剩余约 $remaining',
+                      style: TextStyle(fontSize: 10, color: c.textSecondary),
+                    ),
                   const SizedBox(height: Spacing.xs),
                   CsProgressTrack(value: value),
                 ],
@@ -383,13 +653,9 @@ class _AnalysisBar extends StatelessWidget {
 }
 
 class _CompletedLine extends StatelessWidget {
-  const _CompletedLine({
-    required this.candidateCount,
-    required this.onReanalyze,
-  });
+  const _CompletedLine({required this.candidateCount});
 
   final int candidateCount;
-  final VoidCallback? onReanalyze;
 
   @override
   Widget build(BuildContext context) {
@@ -406,13 +672,6 @@ class _CompletedLine extends StatelessWidget {
               context,
             ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
           ),
-          const Spacer(),
-          if (onReanalyze != null)
-            TextButton.icon(
-              onPressed: onReanalyze,
-              icon: const Icon(Icons.replay, size: 15),
-              label: const Text('重新分析'),
-            ),
         ],
       ),
     );
@@ -447,20 +706,28 @@ class _VideoPane extends StatefulWidget {
     super.key,
     required this.videoPath,
     required this.candidate,
+    required this.replayToken,
     required this.frameSize,
     required this.hasPrevious,
     required this.hasNext,
     required this.onPrevious,
     required this.onNext,
+    required this.onEditRange,
+    required this.onEditNote,
+    required this.onUndo,
   });
 
   final String? videoPath;
   final Map<String, dynamic>? candidate;
+  final int replayToken;
   final Size frameSize;
   final bool hasPrevious;
   final bool hasNext;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
+  final VoidCallback? onEditRange;
+  final VoidCallback? onEditNote;
+  final VoidCallback onUndo;
 
   @override
   State<_VideoPane> createState() => _VideoPaneState();
@@ -476,12 +743,24 @@ class _VideoPaneState extends State<_VideoPane> {
   bool _showAnnotations = true;
   int _positionMs = 0;
   int? _clipEndMs;
-  int _playRequest = 0;
+  int _mediaGeneration = 0;
+  bool _disposed = false;
+  Future<void> _mediaQueue = Future<void>.value();
+  int _playbackToken = 0;
 
   @override
   void initState() {
     super.initState();
-    if (widget.videoPath == null || widget.videoPath!.isEmpty) return;
+    _ensurePlayer();
+    unawaited(_queueOpen(widget.videoPath));
+  }
+
+  void _ensurePlayer() {
+    if (_player != null ||
+        widget.videoPath == null ||
+        widget.videoPath!.isEmpty) {
+      return;
+    }
     try {
       MediaKit.ensureInitialized();
       _player = Player();
@@ -491,52 +770,154 @@ class _VideoPaneState extends State<_VideoPane> {
       return;
     }
     _positionSubscription = _player!.stream.position.listen((position) {
+      if (_disposed || !mounted) return;
       final end = _clipEndMs;
-      if (end != null && position.inMilliseconds >= end) {
-        unawaited(_player!.pause());
-        if (mounted) setState(() => _clipEndMs = null);
+      final nextPositionMs = position.inMilliseconds;
+      final clipEnded = end != null && nextPositionMs >= end;
+      final player = _player;
+      if (clipEnded && player != null && player.state.playing) {
+        final generation = _mediaGeneration;
+        final playbackToken = _playbackToken;
+        unawaited(
+          _queuePlayerAction(
+            generation: generation,
+            playbackToken: playbackToken,
+            action: (current) => current.pause(),
+          ),
+        );
       }
-      if (mounted) {
-        setState(() => _positionMs = position.inMilliseconds);
+      if (clipEnded || (nextPositionMs - _positionMs).abs() >= 100) {
+        setState(() {
+          _positionMs = nextPositionMs;
+        });
       }
     });
-    unawaited(_open(widget.videoPath));
   }
 
   @override
   void didUpdateWidget(covariant _VideoPane oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.videoPath != widget.videoPath) {
+      _ensurePlayer();
       _ready = false;
-      unawaited(_open(widget.videoPath));
+      _loading = false;
+      _error = null;
+      _positionMs = 0;
+      _clipEndMs = null;
+      unawaited(_queueOpen(widget.videoPath));
+    } else if (oldWidget.replayToken != widget.replayToken) {
+      unawaited(_queueCandidatePlayback());
     } else if (_candidateSignature(oldWidget.candidate) !=
         _candidateSignature(widget.candidate)) {
-      unawaited(_playCandidate());
+      unawaited(_queueCandidatePlayback());
     }
   }
 
   @override
   void dispose() {
-    unawaited(_positionSubscription?.cancel());
-    unawaited(_player?.dispose());
+    _disposed = true;
+    _mediaGeneration++;
+    _playbackToken++;
+    final subscription = _positionSubscription;
+    _positionSubscription = null;
+    final player = _player;
+    _player = null;
+    unawaited(subscription?.cancel());
+    if (player != null) {
+      final pending = _mediaQueue;
+      unawaited(pending.whenComplete(player.dispose));
+    }
     super.dispose();
   }
 
-  Future<void> _open(String? path) async {
+  Future<void> _queueOpen(String? path) {
+    final generation = ++_mediaGeneration;
+    _playbackToken++;
+    return _enqueueMediaAction(() async {
+      if (!_isCurrent(generation)) return;
+      await _open(path, generation);
+    });
+  }
+
+  void _reloadVideo() {
+    setState(() {
+      _error = null;
+      _ready = false;
+    });
+    _ensurePlayer();
+    unawaited(_queueOpen(widget.videoPath));
+  }
+
+  bool _isCurrent(int generation, {int? playbackToken}) =>
+      mounted &&
+      !_disposed &&
+      generation == _mediaGeneration &&
+      (playbackToken == null || playbackToken == _playbackToken);
+
+  Future<void> _queueCandidatePlayback() {
+    final candidate = widget.candidate;
+    final generation = _mediaGeneration;
+    final playbackToken = ++_playbackToken;
+    return _enqueueMediaAction(() async {
+      if (!_isCurrent(generation, playbackToken: playbackToken)) return;
+      await _playCandidate(candidate, generation, playbackToken: playbackToken);
+    });
+  }
+
+  Future<void> _queuePlayerAction({
+    required int generation,
+    required int playbackToken,
+    required Future<void> Function(Player player) action,
+  }) {
+    return _enqueueMediaAction(() async {
+      if (!_isCurrent(generation, playbackToken: playbackToken)) return;
+      final player = _player;
+      if (player == null || !_ready) return;
+      await action(player);
+    });
+  }
+
+  Future<void> _enqueueMediaAction(Future<void> Function() action) {
+    _mediaQueue = _mediaQueue.catchError((Object _) {}).then((_) async {
+      try {
+        await action();
+      } catch (error) {
+        if (!_disposed && mounted) {
+          setState(() => _error = error.toString());
+        }
+      }
+    });
+    return _mediaQueue;
+  }
+
+  Future<void> _open(String? path, int generation) async {
     final player = _player;
-    if (player == null || path == null || path.isEmpty) return;
-    if (mounted) setState(() => _loading = true);
+    if (player == null) return;
+    if (_isCurrent(generation)) setState(() => _loading = true);
     try {
+      await player.stop();
+      if (!_isCurrent(generation)) return;
+      if (path == null || path.isEmpty) {
+        setState(() {
+          _ready = false;
+          _loading = false;
+        });
+        return;
+      }
       await player.open(Media(Uri.file(path).toString()), play: false);
-      if (!mounted) return;
+      if (!_isCurrent(generation)) return;
       setState(() {
         _ready = true;
         _loading = false;
         _error = null;
       });
-      await _playCandidate();
+      await _playCandidate(
+        widget.candidate,
+        generation,
+        playbackToken: _playbackToken,
+      );
     } catch (error) {
-      if (mounted) {
+      if (_isCurrent(generation)) {
         setState(() {
           _loading = false;
           _ready = false;
@@ -546,29 +927,61 @@ class _VideoPaneState extends State<_VideoPane> {
     }
   }
 
-  Future<void> _playCandidate() async {
+  Future<void> _playCandidate(
+    Map<String, dynamic>? candidate,
+    int generation, {
+    int? playbackToken,
+  }) async {
     final player = _player;
-    final candidate = widget.candidate;
-    if (player == null || !_ready || candidate == null) return;
+    if (player == null ||
+        !_isCurrent(generation, playbackToken: playbackToken) ||
+        !_ready ||
+        candidate == null ||
+        candidate.isEmpty) {
+      return;
+    }
     final start = _clipStart(candidate);
     final end = _clipEnd(candidate);
-    final request = ++_playRequest;
     try {
       await player.seek(Duration(milliseconds: start));
-      if (!mounted || request != _playRequest) return;
+      if (!_isCurrent(generation, playbackToken: playbackToken)) return;
       setState(() => _clipEndMs = end);
       await player.play();
     } catch (error) {
-      if (mounted && request == _playRequest) {
+      if (_isCurrent(generation)) {
         setState(() => _error = error.toString());
       }
     }
   }
 
+  Future<void> togglePlayPause() async {
+    final generation = _mediaGeneration;
+    final playbackToken = _playbackToken;
+    await _queuePlayerAction(
+      generation: generation,
+      playbackToken: playbackToken,
+      action: (player) async {
+        if (player.state.playing) {
+          await player.pause();
+        } else if (_clipEndMs != null && _positionMs >= _clipEndMs!) {
+          await _playCandidate(
+            widget.candidate,
+            generation,
+            playbackToken: playbackToken,
+          );
+        } else {
+          await player.play();
+        }
+      },
+    );
+  }
+
   Future<void> _seek(Duration position) async {
-    if (_player != null && _ready) {
-      await _player!.seek(position);
-    }
+    await _queuePlayerAction(
+      generation: _mediaGeneration,
+      playbackToken: _playbackToken,
+      action: (player) => player.seek(position),
+    );
   }
 
   @override
@@ -604,7 +1017,13 @@ class _VideoPaneState extends State<_VideoPane> {
                       description: _error == null && hasVideo
                           ? '分析完成后会在这里播放候选片段'
                           : null,
-                      action: null,
+                      action: _error != null && hasVideo
+                          ? CsButton(
+                              label: const Text('重新加载视频'),
+                              icon: Icons.refresh,
+                              onPressed: _reloadVideo,
+                            )
+                          : null,
                     )
                   else
                     Center(
@@ -650,13 +1069,20 @@ class _VideoPaneState extends State<_VideoPane> {
           _VideoControls(
             player: player,
             positionMs: _positionMs,
+            clipStartMs: widget.candidate == null
+                ? null
+                : _clipStart(widget.candidate!),
+            clipEndMs: widget.candidate == null
+                ? null
+                : _clipEnd(widget.candidate!),
             enabled: _ready && _error == null,
             hasPrevious: widget.hasPrevious,
             hasNext: widget.hasNext,
             onPrevious: widget.onPrevious,
             onNext: widget.onNext,
             onSeek: _seek,
-            onReplayCandidate: _playCandidate,
+            onTogglePlayback: togglePlayPause,
+            onReplayCandidate: _queueCandidatePlayback,
           ),
           if (widget.candidate != null) ...[
             Align(
@@ -677,7 +1103,12 @@ class _VideoPaneState extends State<_VideoPane> {
                 ),
               ),
             ),
-            _CandidateEvidencePanel(candidate: widget.candidate!),
+            _CandidateEvidencePanel(
+              candidate: widget.candidate!,
+              onEditRange: widget.onEditRange,
+              onEditNote: widget.onEditNote,
+              onUndo: widget.onUndo,
+            ),
           ],
         ],
       ),
@@ -771,7 +1202,7 @@ class _CandidateAnnotationPainter extends CustomPainter {
     final rimPaint = Paint()
       ..color = const Color(0xFFFFB454)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
+      ..strokeWidth = 0.0;
     canvas.drawRect(
       Rect.fromCenter(
         center: Offset(centerX, rimY),
@@ -810,7 +1241,7 @@ class _CandidateAnnotationPainter extends CustomPainter {
         Paint()
           ..color = const Color(0xFF9AA6FF)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 3
+          ..strokeWidth = 0.0
           ..strokeCap = StrokeCap.round,
       );
     }
@@ -837,21 +1268,21 @@ class _CandidateAnnotationPainter extends CustomPainter {
           Offset(_pointX(prediction['landing_x'], size.width), rimY),
           Paint()
             ..color = const Color(0xFF9AA6FF)
-            ..strokeWidth = 2,
+            ..strokeWidth = 0.0,
         );
       }
     }
 
     if (points.isNotEmpty) {
       final ballPaint = Paint()..color = const Color(0xFFE97832);
-      canvas.drawCircle(points.last, 7, ballPaint);
+      canvas.drawCircle(points.last, 5, ballPaint);
       canvas.drawCircle(
         points.last,
-        11,
+        8,
         Paint()
           ..color = const Color(0xFFE97832).withValues(alpha: 0.35)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 2,
+          ..strokeWidth = 0.0,
       );
     }
 
@@ -861,15 +1292,15 @@ class _CandidateAnnotationPainter extends CustomPainter {
           .toDouble();
       canvas.drawCircle(
         Offset(crossingX, crossingY),
-        10 + 14 * pulse,
+        8 + 8 * pulse,
         Paint()
           ..color = resultColor.withValues(alpha: 0.70 * pulse)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 3,
+          ..strokeWidth = 0.0,
       );
       canvas.drawCircle(
         Offset(crossingX, crossingY),
-        5,
+        4,
         Paint()..color = resultColor,
       );
     }
@@ -906,41 +1337,75 @@ class _CandidateAnnotationPainter extends CustomPainter {
       oldDelegate.candidate != candidate;
 }
 
-class _VideoControls extends StatelessWidget {
+class _VideoControls extends StatefulWidget {
   const _VideoControls({
     required this.player,
     required this.positionMs,
+    required this.clipStartMs,
+    required this.clipEndMs,
     required this.enabled,
     required this.hasPrevious,
     required this.hasNext,
     required this.onPrevious,
     required this.onNext,
     required this.onSeek,
+    required this.onTogglePlayback,
     required this.onReplayCandidate,
   });
 
   final Player? player;
   final int positionMs;
+  final int? clipStartMs;
+  final int? clipEndMs;
   final bool enabled;
   final bool hasPrevious;
   final bool hasNext;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
   final Future<void> Function(Duration) onSeek;
+  final Future<void> Function() onTogglePlayback;
   final Future<void> Function() onReplayCandidate;
+
+  @override
+  State<_VideoControls> createState() => _VideoControlsState();
+}
+
+class _VideoControlsState extends State<_VideoControls> {
+  double? _dragValue;
+
+  @override
+  void didUpdateWidget(covariant _VideoControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.player != widget.player ||
+        oldWidget.positionMs != widget.positionMs && _dragValue == null) {
+      _dragValue = null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
+    final player = widget.player;
     if (player == null) return const SizedBox(height: 32);
     return StreamBuilder<Duration>(
-      stream: player!.stream.duration,
-      initialData: player!.state.duration,
+      stream: player.stream.duration,
+      initialData: player.state.duration,
       builder: (context, durationSnapshot) {
         final duration = durationSnapshot.data ?? Duration.zero;
-        final max = duration.inMilliseconds;
-        final value = max <= 0 ? 0.0 : positionMs.clamp(0, max).toDouble();
+        final mediaEnd = duration.inMilliseconds;
+        final rangeStart = (widget.clipStartMs ?? 0).clamp(0, mediaEnd).toInt();
+        final requestedEnd = widget.clipEndMs ?? mediaEnd;
+        final rangeEnd = requestedEnd
+            .clamp(
+              rangeStart + 1,
+              mediaEnd > rangeStart ? mediaEnd : rangeStart + 1,
+            )
+            .toInt();
+        final positionMs = (_dragValue?.round() ?? widget.positionMs)
+            .clamp(rangeStart, rangeEnd)
+            .toInt();
+        final value = positionMs.clamp(rangeStart, rangeEnd).toDouble();
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
           child: Column(
@@ -956,21 +1421,28 @@ class _VideoControls extends StatelessWidget {
                     overlayShape: SliderComponentShape.noOverlay,
                   ),
                   child: Slider(
-                    min: 0,
-                    max: max > 0 ? max.toDouble() : 1,
+                    min: rangeStart.toDouble(),
+                    max: rangeEnd.toDouble(),
                     value: value,
-                    onChanged: !enabled || max <= 0
+                    onChanged: !widget.enabled || mediaEnd <= 0
                         ? null
-                        : (next) =>
-                              onSeek(Duration(milliseconds: next.round())),
+                        : (next) => setState(() => _dragValue = next),
+                    onChangeEnd: !widget.enabled || mediaEnd <= 0
+                        ? null
+                        : (next) async {
+                            setState(() => _dragValue = null);
+                            await widget.onSeek(
+                              Duration(milliseconds: next.round()),
+                            );
+                          },
                   ),
                 ),
               ),
               Row(
                 children: [
                   Text(
-                    '${_formatDuration(Duration(milliseconds: positionMs))} / '
-                    '${_formatDuration(duration)}',
+                    '${_formatDuration(Duration(milliseconds: positionMs - rangeStart))} / '
+                    '${_formatDuration(Duration(milliseconds: rangeEnd - rangeStart))}',
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: c.textSecondary,
                       fontFeatures: const [FontFeature.tabularFigures()],
@@ -979,7 +1451,9 @@ class _VideoControls extends StatelessWidget {
                   const Spacer(),
                   IconButton(
                     tooltip: '上一个候选',
-                    onPressed: enabled && hasPrevious ? onPrevious : null,
+                    onPressed: widget.enabled && widget.hasPrevious
+                        ? widget.onPrevious
+                        : null,
                     icon: const Icon(Icons.skip_previous, size: 19),
                     constraints: const BoxConstraints.tightFor(
                       width: 34,
@@ -989,15 +1463,13 @@ class _VideoControls extends StatelessWidget {
                     visualDensity: VisualDensity.compact,
                   ),
                   StreamBuilder<bool>(
-                    stream: player!.stream.playing,
+                    stream: player.stream.playing,
                     initialData: false,
                     builder: (context, snapshot) => IconButton(
                       tooltip: snapshot.data == true ? '暂停' : '播放',
-                      onPressed: !enabled
+                      onPressed: !widget.enabled
                           ? null
-                          : () => snapshot.data == true
-                                ? player!.pause()
-                                : player!.play(),
+                          : () => unawaited(widget.onTogglePlayback()),
                       icon: Icon(
                         snapshot.data == true ? Icons.pause : Icons.play_arrow,
                         size: 22,
@@ -1012,7 +1484,9 @@ class _VideoControls extends StatelessWidget {
                   ),
                   IconButton(
                     tooltip: '下一个候选',
-                    onPressed: enabled && hasNext ? onNext : null,
+                    onPressed: widget.enabled && widget.hasNext
+                        ? widget.onNext
+                        : null,
                     icon: const Icon(Icons.skip_next, size: 19),
                     constraints: const BoxConstraints.tightFor(
                       width: 34,
@@ -1023,8 +1497,8 @@ class _VideoControls extends StatelessWidget {
                   ),
                   IconButton(
                     tooltip: '重播当前片段',
-                    onPressed: enabled
-                        ? () => unawaited(onReplayCandidate())
+                    onPressed: widget.enabled
+                        ? () => unawaited(widget.onReplayCandidate())
                         : null,
                     icon: const Icon(Icons.replay, size: 18),
                     constraints: const BoxConstraints.tightFor(
@@ -1045,9 +1519,17 @@ class _VideoControls extends StatelessWidget {
 }
 
 class _CandidateEvidencePanel extends StatelessWidget {
-  const _CandidateEvidencePanel({required this.candidate});
+  const _CandidateEvidencePanel({
+    required this.candidate,
+    required this.onEditRange,
+    required this.onEditNote,
+    required this.onUndo,
+  });
 
   final Map<String, dynamic> candidate;
+  final VoidCallback? onEditRange;
+  final VoidCallback? onEditNote;
+  final VoidCallback onUndo;
 
   @override
   Widget build(BuildContext context) {
@@ -1058,14 +1540,11 @@ class _CandidateEvidencePanel extends StatelessWidget {
       ['trajectory_cross'],
     ]);
     final net = _candidateEvidenceValue(candidate, evidence, const [
+      ['signals', 'net_inside_motion_score'],
+      ['net_inside_motion_score'],
       ['signals', 'net_score'],
       ['net_score'],
       ['net_motion_score'],
-    ]);
-    final audio = _candidateEvidenceValue(candidate, evidence, const [
-      ['signals', 'audio_score'],
-      ['audio_score'],
-      ['audio_support'],
     ]);
     final rebound = _candidateEvidenceValue(candidate, evidence, const [
       ['verification', 'rebound'],
@@ -1082,7 +1561,7 @@ class _CandidateEvidencePanel extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      height: 58,
+      height: 54,
       decoration: BoxDecoration(
         color: c.surface2,
         border: Border(top: BorderSide(color: c.border)),
@@ -1091,7 +1570,7 @@ class _CandidateEvidencePanel extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(
           horizontal: Spacing.sm,
-          vertical: 5,
+          vertical: 3,
         ),
         child: Row(
           children: [
@@ -1120,12 +1599,6 @@ class _CandidateEvidencePanel extends StatelessWidget {
               color: _signalColor(c, net),
             ),
             _EvidenceCell(
-              label: '音频支持',
-              value: _formatSignal(audio),
-              width: 82,
-              color: _signalColor(c, audio),
-            ),
-            _EvidenceCell(
               label: '反弹判断',
               value: _formatRebound(rebound),
               width: 82,
@@ -1137,11 +1610,148 @@ class _CandidateEvidencePanel extends StatelessWidget {
               width: 135,
               color: c.textSecondary,
             ),
+            _EvidenceCell(
+              label: '备注',
+              value: candidate['note']?.toString().trim().isNotEmpty == true
+                  ? candidate['note']!.toString()
+                  : '—',
+              width: 150,
+              color: c.textSecondary,
+            ),
+            PopupMenuButton<String>(
+              tooltip: '候选操作',
+              onSelected: (value) {
+                switch (value) {
+                  case 'range':
+                    onEditRange?.call();
+                    return;
+                  case 'note':
+                    onEditNote?.call();
+                    return;
+                  case 'undo':
+                    onUndo();
+                    return;
+                }
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  value: 'range',
+                  enabled: onEditRange != null,
+                  child: const Text('调整片段范围'),
+                ),
+                PopupMenuItem(
+                  value: 'note',
+                  enabled: onEditNote != null,
+                  child: const Text('编辑备注'),
+                ),
+                const PopupMenuDivider(),
+                const PopupMenuItem(value: 'undo', child: Text('撤销上一次审核')),
+              ],
+              icon: Icon(Icons.more_horiz, size: 18, color: c.textSecondary),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+            ),
           ],
         ),
       ),
     );
   }
+}
+
+class _ClipRangeDialog extends StatefulWidget {
+  const _ClipRangeDialog({
+    required this.startMs,
+    required this.endMs,
+    required this.durationMs,
+  });
+
+  final int startMs;
+  final int endMs;
+  final int durationMs;
+
+  @override
+  State<_ClipRangeDialog> createState() => _ClipRangeDialogState();
+}
+
+class _ClipRangeDialogState extends State<_ClipRangeDialog> {
+  late final TextEditingController _startController;
+  late final TextEditingController _endController;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _startController = TextEditingController(text: _formatMs(widget.startMs));
+    _endController = TextEditingController(text: _formatMs(widget.endMs));
+  }
+
+  @override
+  void dispose() {
+    _startController.dispose();
+    _endController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final startMs = _parseTimecode(_startController.text);
+    final endMs = _parseTimecode(_endController.text);
+    if (startMs == null || endMs == null || startMs < 0 || endMs <= startMs) {
+      setState(() => _error = '请输入有效的开始和结束时间');
+      return;
+    }
+    if (widget.durationMs > 0 && endMs > widget.durationMs) {
+      setState(() => _error = '结束时间不能超过视频总时长');
+      return;
+    }
+    Navigator.pop(context, (startMs: startMs, endMs: endMs));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('调整片段范围'),
+    content: SizedBox(
+      width: 320,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _startController,
+            keyboardType: TextInputType.datetime,
+            decoration: const InputDecoration(
+              labelText: '开始时间',
+              hintText: '00:06 或 6',
+            ),
+          ),
+          const SizedBox(height: Spacing.sm),
+          TextField(
+            controller: _endController,
+            keyboardType: TextInputType.datetime,
+            decoration: const InputDecoration(
+              labelText: '结束时间',
+              hintText: '00:15 或 15',
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: Spacing.sm),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _error!,
+                style: TextStyle(color: AppColors.of(context).error),
+              ),
+            ),
+          ],
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(onPressed: _submit, child: const Text('保存')),
+    ],
+  );
 }
 
 class _EvidenceCell extends StatelessWidget {
@@ -1193,13 +1803,22 @@ class _CandidatePanel extends StatelessWidget {
     required this.candidates,
     required this.selectedId,
     required this.includedCount,
+    required this.totalCount,
+    required this.filter,
     required this.busy,
+    required this.hydrating,
+    required this.hydrateError,
     required this.analyzing,
     required this.hasVideo,
     required this.onSelect,
     required this.onSetStatus,
     required this.onLoadCover,
+    required this.onFilterChanged,
     required this.onReanalyze,
+    required this.onRetryHydration,
+    required this.onEditRange,
+    required this.onEditNote,
+    required this.onUndo,
     required this.onGoImport,
     required this.onExport,
   });
@@ -1207,13 +1826,22 @@ class _CandidatePanel extends StatelessWidget {
   final List<Map<String, dynamic>> candidates;
   final String? selectedId;
   final int includedCount;
+  final int totalCount;
+  final String filter;
   final bool busy;
+  final bool hydrating;
+  final String? hydrateError;
   final bool analyzing;
   final bool hasVideo;
   final ValueChanged<Map<String, dynamic>> onSelect;
   final Future<void> Function(String, String) onSetStatus;
   final Future<String?> Function(String, int)? onLoadCover;
+  final ValueChanged<String> onFilterChanged;
   final VoidCallback? onReanalyze;
+  final VoidCallback? onRetryHydration;
+  final VoidCallback? onEditRange;
+  final VoidCallback? onEditNote;
+  final VoidCallback onUndo;
   final VoidCallback onGoImport;
   final VoidCallback? onExport;
 
@@ -1242,9 +1870,46 @@ class _CandidatePanel extends StatelessWidget {
               Text('候选片段', style: theme.textTheme.titleSmall),
               const SizedBox(width: Spacing.sm),
               Text(
-                '已选 $includedCount / ${candidates.length}',
+                '已选 $includedCount / $totalCount',
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: c.textSecondary,
+                ),
+              ),
+              const Spacer(),
+              PopupMenuButton<String>(
+                tooltip: '筛选候选',
+                initialValue: filter,
+                onSelected: onFilterChanged,
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'all', child: Text('全部候选')),
+                  PopupMenuItem(value: 'pending', child: Text('待审核')),
+                  PopupMenuItem(value: 'confirmed', child: Text('已确认')),
+                  PopupMenuItem(value: 'excluded', child: Text('已排除')),
+                  PopupMenuItem(value: 'low', child: Text('低置信度')),
+                ],
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _candidateFilterLabel(filter),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: c.textSecondary,
+                      ),
+                    ),
+                    Icon(Icons.expand_more, size: 15, color: c.textSecondary),
+                  ],
+                ),
+              ),
+              Tooltip(
+                message:
+                    '快捷键\nSpace  播放/暂停\nR  重播当前\n← / →  切换候选\nC / Enter  保留\nX / Backspace  排除\nCmd/Ctrl+Z  撤销',
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Icon(
+                    Icons.keyboard_outlined,
+                    size: 17,
+                    color: c.textSecondary,
+                  ),
                 ),
               ),
             ],
@@ -1253,9 +1918,16 @@ class _CandidatePanel extends StatelessWidget {
           Expanded(
             child: candidates.isEmpty
                 ? _EmptyCandidates(
+                    hydrating: hydrating,
+                    hydrateError: hydrateError,
                     analyzing: analyzing,
                     hasVideo: hasVideo,
+                    filterEmpty: totalCount > 0,
+                    onClearFilter: filter == 'all'
+                        ? null
+                        : () => onFilterChanged('all'),
                     onReanalyze: onReanalyze,
+                    onRetryHydration: onRetryHydration,
                     onGoImport: onGoImport,
                   )
                 : ListView.separated(
@@ -1316,23 +1988,66 @@ class _CandidatePanel extends StatelessWidget {
 class _EmptyCandidates extends StatelessWidget {
   const _EmptyCandidates({
     required this.analyzing,
+    required this.hydrating,
+    required this.hydrateError,
     required this.hasVideo,
+    required this.filterEmpty,
+    required this.onClearFilter,
     required this.onReanalyze,
+    required this.onRetryHydration,
     required this.onGoImport,
   });
 
   final bool analyzing;
+  final bool hydrating;
+  final String? hydrateError;
   final bool hasVideo;
+  final bool filterEmpty;
+  final VoidCallback? onClearFilter;
   final VoidCallback? onReanalyze;
+  final VoidCallback? onRetryHydration;
   final VoidCallback onGoImport;
 
   @override
   Widget build(BuildContext context) {
+    if (hydrating) {
+      return const CsEmptyState(
+        icon: Icons.sync,
+        title: '正在恢复项目',
+        description: '正在加载候选片段和审核记录。',
+      );
+    }
+    if (hydrateError != null) {
+      return CsEmptyState(
+        icon: Icons.sync_problem_outlined,
+        title: '项目数据加载失败',
+        description: '候选片段没有成功恢复，请重试加载，不需要重新分析视频。',
+        action: CsButton(
+          label: const Text('重试加载'),
+          icon: Icons.refresh,
+          onPressed: onRetryHydration,
+        ),
+      );
+    }
     if (analyzing) {
       return const CsEmptyState(
         icon: Icons.hourglass_top,
         title: '正在等待候选片段',
-        description: '候选会在分析过程中自动出现。',
+        description: '分析完成后会显示候选片段。',
+      );
+    }
+    if (filterEmpty) {
+      return CsEmptyState(
+        icon: Icons.filter_alt_off_outlined,
+        title: '没有匹配的候选',
+        description: '当前筛选条件下没有片段。',
+        action: onClearFilter == null
+            ? null
+            : CsButton(
+                label: const Text('显示全部'),
+                icon: Icons.filter_alt_off,
+                onPressed: onClearFilter,
+              ),
       );
     }
     return CsEmptyState(
@@ -1389,74 +2104,82 @@ class _CandidateRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: AnimatedContainer(
-        duration: DurationD.fast,
-        padding: const EdgeInsets.symmetric(
-          horizontal: Spacing.xs,
-          vertical: 4,
-        ),
-        decoration: BoxDecoration(
-          color: selected ? c.indigo.withValues(alpha: 0.10) : null,
-          borderRadius: BorderRadius.circular(CsRadius.sm),
-          border: selected
-              ? Border.all(color: c.indigo.withValues(alpha: 0.45))
-              : null,
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: onTap,
-                  borderRadius: BorderRadius.circular(CsRadius.sm),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Row(
-                      children: [
-                        _CandidateCover(
-                          future: coverFuture,
-                          excluded: excluded,
-                        ),
-                        const SizedBox(width: Spacing.sm),
-                        Expanded(
-                          child: Text(
-                            '${index + 1}. ${_formatMs(_candidateTime(candidate))}',
-                            style: theme.textTheme.labelLarge?.copyWith(
-                              color: excluded ? c.textTertiary : c.textPrimary,
-                              fontFeatures: const [
-                                FontFeature.tabularFigures(),
-                              ],
+    return Semantics(
+      button: true,
+      selected: selected,
+      label:
+          '候选 ${index + 1}，${_formatMs(_candidateTime(candidate))}，${excluded ? '已排除' : '已保留'}',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: AnimatedContainer(
+          duration: DurationD.fast,
+          padding: const EdgeInsets.symmetric(
+            horizontal: Spacing.xs,
+            vertical: 4,
+          ),
+          decoration: BoxDecoration(
+            color: selected ? c.indigo.withValues(alpha: 0.10) : null,
+            borderRadius: BorderRadius.circular(CsRadius.sm),
+            border: selected
+                ? Border.all(color: c.indigo.withValues(alpha: 0.45))
+                : null,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: onTap,
+                    borderRadius: BorderRadius.circular(CsRadius.sm),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        children: [
+                          _CandidateCover(
+                            future: coverFuture,
+                            excluded: excluded,
+                          ),
+                          const SizedBox(width: Spacing.sm),
+                          Expanded(
+                            child: Text(
+                              '${index + 1}. ${_formatMs(_candidateTime(candidate))}',
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                color: excluded
+                                    ? c.textTertiary
+                                    : c.textPrimary,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(width: Spacing.xs),
-            _DecisionButton(
-              tooltip: '保留片段',
-              icon: Icons.check_rounded,
-              active: !excluded,
-              color: c.goal,
-              enabled: !busy,
-              onPressed: onInclude,
-            ),
-            const SizedBox(width: Spacing.xs),
-            _DecisionButton(
-              tooltip: '排除片段',
-              icon: Icons.close_rounded,
-              active: excluded,
-              color: c.error,
-              enabled: !busy,
-              onPressed: onExclude,
-            ),
-          ],
+              const SizedBox(width: Spacing.xs),
+              _DecisionButton(
+                tooltip: '保留片段',
+                icon: Icons.check_rounded,
+                active: !excluded,
+                color: c.goal,
+                enabled: !busy,
+                onPressed: onInclude,
+              ),
+              const SizedBox(width: Spacing.xs),
+              _DecisionButton(
+                tooltip: '排除片段',
+                icon: Icons.close_rounded,
+                active: excluded,
+                color: c.error,
+                enabled: !busy,
+                onPressed: onExclude,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1487,18 +2210,24 @@ class _DecisionButton extends StatelessWidget {
         ? color.withValues(alpha: 0.16)
         : c.surface3.withValues(alpha: 0.72);
     final foreground = active ? color : c.textTertiary;
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: background,
-        borderRadius: BorderRadius.circular(CsRadius.sm),
-        child: InkWell(
-          onTap: enabled ? onPressed : null,
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      selected: active,
+      label: tooltip,
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: background,
           borderRadius: BorderRadius.circular(CsRadius.sm),
-          child: SizedBox(
-            width: 52,
-            height: 40,
-            child: Icon(icon, size: 21, color: foreground),
+          child: InkWell(
+            onTap: enabled ? onPressed : null,
+            borderRadius: BorderRadius.circular(CsRadius.sm),
+            child: SizedBox(
+              width: 52,
+              height: 44,
+              child: Icon(icon, size: 21, color: foreground),
+            ),
           ),
         ),
       ),
@@ -1540,7 +2269,7 @@ class _CandidateCoverState extends State<_CandidateCover> {
       future: _future,
       builder: (context, snapshot) {
         final path = snapshot.data;
-        final cover = path != null && File(path).existsSync()
+        final cover = path != null
             ? Image.file(
                 File(path),
                 fit: BoxFit.cover,
@@ -1572,6 +2301,43 @@ bool _isExcluded(Map<String, dynamic> candidate) =>
     candidate['selection_status']?.toString() == 'excluded' ||
     candidate['review_status']?.toString() == 'excluded';
 
+bool _isConfirmed(Map<String, dynamic> candidate) =>
+    candidate['review_status']?.toString() == 'goal' ||
+    candidate['status']?.toString() == 'goal';
+
+bool _isPending(Map<String, dynamic> candidate) =>
+    !_isExcluded(candidate) && !_isConfirmed(candidate);
+
+bool _isLowConfidence(Map<String, dynamic> candidate) {
+  final confidence = candidate['confidence']?.toString().toLowerCase();
+  if (confidence == 'low' || confidence == 'review') return true;
+  final score = candidate['score'];
+  return score is num && score < 0.48;
+}
+
+List<Map<String, dynamic>> _filterCandidates(
+  List<Map<String, dynamic>> candidates,
+  String filter,
+) {
+  return switch (filter) {
+    'pending' => candidates.where(_isPending).toList(),
+    'confirmed' => candidates.where(_isConfirmed).toList(),
+    'excluded' => candidates.where(_isExcluded).toList(),
+    'low' => candidates.where(_isLowConfidence).toList(),
+    _ => candidates,
+  };
+}
+
+String _candidateFilterLabel(String filter) =>
+    const <String, String>{
+      'all': '全部',
+      'pending': '待审核',
+      'confirmed': '已确认',
+      'excluded': '已排除',
+      'low': '低置信度',
+    }[filter] ??
+    '全部';
+
 int _candidateTime(Map<String, dynamic> candidate) {
   final value = candidate['event_time_ms'];
   return value is num ? value.toInt() : int.tryParse('$value') ?? 0;
@@ -1592,13 +2358,25 @@ String _candidateSignature(Map<String, dynamic>? candidate) {
   return '${candidate['id']}|${_clipStart(candidate)}|${_clipEnd(candidate)}';
 }
 
+final Expando<Map<String, dynamic>> _candidateEvidenceCache = Expando();
+
 Map<String, dynamic> _candidateEvidence(Map<String, dynamic> candidate) {
+  final cached = _candidateEvidenceCache[candidate];
+  if (cached != null) return cached;
   final raw = candidate['evidence_json'] ?? candidate['evidence'];
-  if (raw is Map) return raw.cast<String, dynamic>();
+  if (raw is Map) {
+    final parsed = raw.cast<String, dynamic>();
+    _candidateEvidenceCache[candidate] = parsed;
+    return parsed;
+  }
   if (raw is String && raw.trim().isNotEmpty) {
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is Map) return decoded.cast<String, dynamic>();
+      if (decoded is Map) {
+        final parsed = decoded.cast<String, dynamic>();
+        _candidateEvidenceCache[candidate] = parsed;
+        return parsed;
+      }
     } on FormatException {
       return const <String, dynamic>{};
     }
@@ -1718,6 +2496,26 @@ String _formatMs(int milliseconds) {
       '${(totalSeconds % 60).toString().padLeft(2, '0')}';
 }
 
+int? _parseTimecode(String input) {
+  final value = input.trim();
+  if (value.isEmpty) return null;
+  final parts = value.split(':');
+  if (parts.length == 1) {
+    final seconds = int.tryParse(parts.first);
+    return seconds == null ? null : seconds * 1000;
+  }
+  if (parts.length > 3 || parts.any((part) => int.tryParse(part) == null)) {
+    return null;
+  }
+  final numbers = parts.map(int.parse).toList();
+  if (numbers.any((number) => number < 0)) return null;
+  var seconds = 0;
+  for (final number in numbers) {
+    seconds = seconds * 60 + number;
+  }
+  return seconds * 1000;
+}
+
 String _formatDuration(Duration duration) {
   final totalSeconds = duration.inSeconds;
   final hours = totalSeconds ~/ 3600;
@@ -1754,5 +2552,30 @@ String _stageLabel(String stage) =>
       'generate_candidates': '生成候选',
       'refine_candidates': '精细分析候选',
       'persist_candidates': '整理审核片段',
+      'prepare_review_previews': '准备候选封面',
     }[stage] ??
     stage;
+
+String _formatElapsed(String? startedAt) {
+  if (startedAt == null || startedAt.isEmpty) return '';
+  final started = DateTime.tryParse(startedAt);
+  if (started == null) return '';
+  final elapsed = DateTime.now().toUtc().difference(started.toUtc());
+  return _formatDuration(elapsed.isNegative ? Duration.zero : elapsed);
+}
+
+String _formatEstimatedRemaining(String? startedAt, double progress) {
+  if (startedAt == null ||
+      startedAt.isEmpty ||
+      progress < 0.03 ||
+      progress >= 1) {
+    return '';
+  }
+  final started = DateTime.tryParse(startedAt);
+  if (started == null) return '';
+  final elapsed = DateTime.now().toUtc().difference(started.toUtc());
+  if (elapsed.isNegative || elapsed.inSeconds < 10) return '';
+  final remainingMs = (elapsed.inMilliseconds * (1 - progress) / progress)
+      .round();
+  return _formatDuration(Duration(milliseconds: remainingMs));
+}

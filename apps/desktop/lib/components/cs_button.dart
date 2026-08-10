@@ -113,6 +113,7 @@ class _Raw extends StatefulWidget {
 
 class _RawState extends State<_Raw> {
   bool _hover = false;
+  bool _focused = false;
 
   @override
   Widget build(BuildContext context) {
@@ -130,23 +131,41 @@ class _RawState extends State<_Raw> {
       );
     }
     final disabled = !widget.enabled;
-    return MouseRegion(
-      cursor: widget.enabled ? SystemMouseCursors.click : MouseCursor.defer,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onTap: widget.enabled ? widget.onTap : null,
-        child: AnimatedContainer(
-          duration: DurationD.fast,
-          decoration: BoxDecoration(
-            color: disabled ? c.surface3 : bg,
-            borderRadius: BorderRadius.circular(CsRadius.md),
-            border: border == Colors.transparent
-                ? null
-                : Border.all(color: border),
+    return Semantics(
+      button: true,
+      enabled: widget.enabled,
+      child: FocusableActionDetector(
+        enabled: widget.enabled,
+        mouseCursor: widget.enabled
+            ? SystemMouseCursors.click
+            : MouseCursor.defer,
+        onShowFocusHighlight: (focused) => setState(() => _focused = focused),
+        actions: <Type, Action<Intent>>{
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              widget.onTap?.call();
+              return null;
+            },
           ),
-          foregroundDecoration: _focusRing(c),
-          child: Opacity(opacity: disabled ? 0.5 : 1, child: widget.child),
+        },
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hover = true),
+          onExit: (_) => setState(() => _hover = false),
+          child: GestureDetector(
+            onTap: widget.enabled ? widget.onTap : null,
+            child: AnimatedContainer(
+              duration: DurationD.fast,
+              decoration: BoxDecoration(
+                color: disabled ? c.surface3 : bg,
+                borderRadius: BorderRadius.circular(CsRadius.md),
+                border: border == Colors.transparent
+                    ? null
+                    : Border.all(color: border),
+              ),
+              foregroundDecoration: _focusRing(c),
+              child: Opacity(opacity: disabled ? 0.5 : 1, child: widget.child),
+            ),
+          ),
         ),
       ),
     );
@@ -155,7 +174,10 @@ class _RawState extends State<_Raw> {
   ShapeDecoration _focusRing(AppColors c) => ShapeDecoration(
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(CsRadius.md),
-      side: BorderSide(color: c.indigo.withValues(alpha: 0.0)),
+      side: BorderSide(
+        color: c.indigo.withValues(alpha: _focused ? 0.9 : 0.0),
+        width: 2,
+      ),
     ),
   );
 }

@@ -4,7 +4,12 @@ import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
 
 class CsMetricTile extends StatelessWidget {
-  const CsMetricTile({required this.label, required this.value, this.icon, super.key});
+  const CsMetricTile({
+    required this.label,
+    required this.value,
+    this.icon,
+    super.key,
+  });
   final String label;
   final String value;
   final IconData? icon;
@@ -21,11 +26,21 @@ class CsMetricTile extends StatelessWidget {
             const SizedBox(width: Spacing.sm),
           ],
           Text(label, style: TextStyle(color: c.textSecondary, fontSize: 13)),
-          const Spacer(),
-          Text(value, style: TextStyle(
-            color: c.textPrimary, fontSize: 15, fontWeight: FontWeight.w600,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          )),
+          const SizedBox(width: Spacing.md),
+          Expanded(
+            child: Text(
+              value,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                color: c.textPrimary,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
         ],
       ),
     );

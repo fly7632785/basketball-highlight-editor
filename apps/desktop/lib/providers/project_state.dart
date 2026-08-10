@@ -5,11 +5,16 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/widgets.dart' show Rect;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/engine_session.dart';
+import '../core/engine_client.dart';
 import '../core/project_session.dart';
 import 'notice_provider.dart';
 import 'session_provider.dart';
+import 'sidebar_provider.dart';
+
+const _recentProjectRootsKey = 'basketball_recent_project_roots';
 
 /// 单进程内共享的 ProjectSession。封装 EngineSession(engineClientProvider)。
 final Provider<ProjectSession> projectSessionProvider =
@@ -40,6 +45,8 @@ class ProjectState {
     this.candidates = const <JsonMap>[],
     this.recentProjects = const <JsonMap>[],
     this.exportHistory = const <JsonMap>[],
+    this.hydrating = false,
+    this.hydrateError,
     this.busy = false,
     this.recentLoading = false,
     this.recentError,
@@ -61,10 +68,26 @@ class ProjectState {
   final List<JsonMap> candidates;
   final List<JsonMap> recentProjects;
   final List<JsonMap> exportHistory;
+  final bool hydrating;
+  final String? hydrateError;
   final bool busy;
   final bool recentLoading;
   final String? recentError;
   final String? knownProjectsRoot;
+
+  bool get exportRunning {
+    final jobState = exportJob?['state']?.toString();
+    final recoveryState = exportJob?['recovery_state']?.toString();
+    return (jobState == 'queued' || jobState == 'running') &&
+        (recoveryState == null || recoveryState == 'worker_attached');
+  }
+
+  bool get analysisRunning {
+    final jobState = job?['state']?.toString();
+    final recoveryState = job?['recovery_state']?.toString();
+    return (jobState == 'queued' || jobState == 'running') &&
+        (recoveryState == null || recoveryState == 'worker_attached');
+  }
 
   /// 可空字段使用 sentinel 区分"未传入"与"显式置 null"。
   /// 非空集合/布尔字段使用普通可选参数(默认保留旧值)。
@@ -86,6 +109,8 @@ class ProjectState {
     List<JsonMap>? candidates,
     List<JsonMap>? recentProjects,
     List<JsonMap>? exportHistory,
+    bool? hydrating,
+    Object? hydrateError = _unset,
     bool? busy,
     bool? recentLoading,
   }) {
@@ -123,6 +148,10 @@ class ProjectState {
       candidates: candidates ?? this.candidates,
       recentProjects: recentProjects ?? this.recentProjects,
       exportHistory: exportHistory ?? this.exportHistory,
+      hydrating: hydrating ?? this.hydrating,
+      hydrateError: identical(hydrateError, _unset)
+          ? this.hydrateError
+          : hydrateError as String?,
       busy: busy ?? this.busy,
       recentLoading: recentLoading ?? this.recentLoading,
       recentError: identical(recentError, _unset)
@@ -161,21 +190,34 @@ class _ReviewSnapshot {
 /// - `_section = AppSection.x` 不迁移(由 router 负责)
 /// - `_error = ...` 不迁移(由 notice 替代)
 class ProjectNotifier extends Notifier<ProjectState> {
-  @override
-  ProjectState build() => const ProjectState();
-
   final List<_ReviewSnapshot> _reviewHistory = <_ReviewSnapshot>[];
-  final Set<String> _startedReviewCandidateIds = <String>{};
   final Set<String> _pollingJobIds = <String>{};
+  final Set<String> _pollingExportJobIds = <String>{};
+  Future<void> _reviewQueue = Future<void>.value();
+  Future<void> _busyOperation = Future<void>.value();
+  final Map<String, int> _reviewRevisions = <String, int>{};
+  bool _disposed = false;
   int _projectLoadGeneration = 0;
   int _noticeCounter = 0;
 
   /// 等价 app.dart:_selectVideo(228)。
+  @override
+  ProjectState build() {
+    ref.onDispose(() {
+      _disposed = true;
+      _pollingJobIds.clear();
+      _pollingExportJobIds.clear();
+    });
+    return const ProjectState();
+  }
+
   Future<void> selectVideo(String path) async {
+    await flushReviewQueue();
     await _runBusy(() async {
       _projectLoadGeneration++;
       await ref.read(engineBootstrapProvider.notifier).ensure();
       final session = ref.read(projectSessionProvider);
+      final checkpoint = session.checkpoint();
       final source = File(path).absolute;
       final stem = source.uri.pathSegments.last.replaceFirst(
         RegExp(r'\.[^.]+$'),
@@ -184,19 +226,25 @@ class ProjectNotifier extends Notifier<ProjectState> {
       final knownRoot = state.knownProjectsRoot ?? _projectsRoot;
       final projectRoot =
           '$knownRoot/$stem-${DateTime.now().millisecondsSinceEpoch}';
-      await session.createProject(name: stem, rootPath: projectRoot);
-      final linked = await session.linkVideo(path);
-      final duration =
-          ((linked['video'] as Map?)?['duration_ms'] as num?)?.toInt() ?? 1001;
-      final preview = await session.extractPreview(
-        timeMs: duration > 1000 ? 1000 : duration,
-      );
+      late final JsonMap linked;
+      var projectCreated = false;
+      try {
+        await session.createProject(name: stem, rootPath: projectRoot);
+        projectCreated = true;
+        linked = await session.linkVideo(path);
+      } catch (_) {
+        if (projectCreated) {
+          await session.deleteProject(projectRoot);
+        }
+        session.restore(checkpoint);
+        rethrow;
+      }
       final linkedVideo = (linked['video'] as Map?)?.cast<String, dynamic>();
       state = state.copyWith(
         knownProjectsRoot: knownRoot,
         videoPath: path,
         reviewVideoPath: null,
-        previewPath: preview['path']?.toString(),
+        previewPath: null,
         suggestedRoi: null,
         roiSource: null,
         roiConfidence: null,
@@ -209,15 +257,30 @@ class ProjectNotifier extends Notifier<ProjectState> {
         candidates: const <JsonMap>[],
         exportHistory: const <JsonMap>[],
       );
+      await _rememberProjectsRoot(knownRoot);
+      ref.read(sidebarExtendedProvider.notifier).collapseForProjectCreation();
+      final duration = (linkedVideo?['duration_ms'] as num?)?.toInt() ?? 1001;
+      try {
+        final preview = await session.extractPreview(
+          timeMs: duration > 1000 ? 1000 : duration,
+        );
+        if (!_disposed && state.videoPath == path) {
+          state = state.copyWith(previewPath: preview['path']?.toString());
+        }
+      } catch (error) {
+        if (!_disposed && state.videoPath == path) {
+          _pushNotice('视频预览加载失败：$error', NoticeSeverity.error);
+        }
+      }
       Rect? suggestedRoi;
       String? roiSource;
       double? roiConfidence;
       String? roiSuggestionError;
       try {
         final suggestion = await session.suggestRoi(
-          duration: 20,
+          duration: 12,
           sampleFps: 1,
-          maxSamples: 12,
+          maxSamples: 8,
           confidence: 0.05,
         );
         final roi = (suggestion['roi'] as Map?)?.cast<String, dynamic>();
@@ -247,7 +310,6 @@ class ProjectNotifier extends Notifier<ProjectState> {
         roiDetecting: false,
       );
       _reviewHistory.clear();
-      _startedReviewCandidateIds.clear();
     }, successMessage: '视频已加载，已优先尝试自动识别篮筐区域');
   }
 
@@ -267,22 +329,32 @@ class ProjectNotifier extends Notifier<ProjectState> {
   Future<bool> chooseOpenProject() async {
     final root = await getDirectoryPath(confirmButtonText: '打开项目');
     if (root == null) return false;
-    await openProject(root);
-    return ref.read(projectSessionProvider).projectRoot == root;
+    return openProject(root);
   }
 
   Future<void> deleteProject(String root) async {
     final session = ref.read(projectSessionProvider);
-    final wasCurrentProject = session.projectRoot == root;
+    final normalizedRoot = canonicalProjectPath(root);
+    final wasCurrentProject = session.projectRoot == normalizedRoot;
+    if (wasCurrentProject) await flushReviewQueue();
     await _runBusy(() async {
       await session.deleteProject(root);
       final remaining = state.recentProjects
-          .where((project) => project['project_root']?.toString() != root)
+          .where(
+            (project) =>
+                canonicalProjectPath(
+                  project['project_root']?.toString() ?? '',
+                ) !=
+                normalizedRoot,
+          )
           .toList();
       if (wasCurrentProject) {
+        _projectLoadGeneration++;
+        _reviewHistory.clear();
+        session.reset();
         state = ProjectState(
           recentProjects: remaining,
-          knownProjectsRoot: Directory(root).parent.path,
+          knownProjectsRoot: Directory(normalizedRoot).parent.path,
         );
       } else {
         state = state.copyWith(recentProjects: remaining);
@@ -292,9 +364,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   /// 关闭当前项目但不删除磁盘上的项目数据和原始视频。
   void closeProject() {
+    if (state.busy) return;
     _projectLoadGeneration++;
     _reviewHistory.clear();
-    _startedReviewCandidateIds.clear();
     ref.read(projectSessionProvider).reset();
     state = ProjectState(
       recentProjects: state.recentProjects,
@@ -302,31 +374,130 @@ class ProjectNotifier extends Notifier<ProjectState> {
     );
   }
 
+  Future<void> flushReviewQueue() => _reviewQueue;
+
+  Future<bool> closeProjectSafely() async {
+    if (state.busy) return false;
+    await flushReviewQueue();
+    if (_disposed) return false;
+    closeProject();
+    return true;
+  }
+
+  Future<bool> startNewProject() async {
+    if (state.busy || state.analysisRunning || state.exportRunning) {
+      _pushNotice('请先等待当前操作结束或取消正在运行的任务', NoticeSeverity.info);
+      return false;
+    }
+    await flushReviewQueue();
+    if (_disposed) return false;
+    _projectLoadGeneration++;
+    _reviewHistory.clear();
+    ref.read(projectSessionProvider).reset();
+    state = ProjectState(
+      recentProjects: state.recentProjects,
+      knownProjectsRoot: state.knownProjectsRoot,
+    );
+    return true;
+  }
+
+  Future<bool> cancelTasksAndCloseProject() async {
+    if (state.busy) return false;
+    final generation = _projectLoadGeneration;
+    final session = ref.read(projectSessionProvider);
+    final scope = session.snapshot();
+    final jobIds = <String>{
+      if (_isActiveJob(state.job) && state.job?['id'] is String)
+        state.job!['id'] as String,
+      if (_isActiveJob(state.exportJob) && state.exportJob?['id'] is String)
+        state.exportJob!['id'] as String,
+    };
+    if (jobIds.isEmpty) {
+      return closeProjectSafely();
+    }
+    state = state.copyWith(busy: true);
+    _pushNotice('正在取消任务并关闭项目…', NoticeSeverity.info);
+    try {
+      await flushReviewQueue();
+      for (final jobId in jobIds) {
+        await scope.cancelJob(jobId: jobId);
+      }
+      for (final jobId in jobIds) {
+        await scope
+            .waitForJob(jobId: jobId)
+            .timeout(const Duration(seconds: 15));
+      }
+      if (_disposed || generation != _projectLoadGeneration) return false;
+      state = state.copyWith(busy: false);
+      closeProject();
+      return true;
+    } catch (error) {
+      if (!_disposed && generation == _projectLoadGeneration) {
+        state = state.copyWith(busy: false);
+        _pushNotice('关闭项目失败：$error', NoticeSeverity.error);
+      }
+      return false;
+    }
+  }
+
+  Future<bool> prepareForShutdown() async {
+    try {
+      await _busyOperation.timeout(const Duration(seconds: 30));
+    } catch (error) {
+      if (!_disposed) {
+        _pushNotice('当前操作尚未结束，暂时无法退出：$error', NoticeSeverity.error);
+      }
+      return false;
+    }
+    final session = ref.read(projectSessionProvider);
+    if (session.projectRoot == null) return true;
+    final generation = _projectLoadGeneration;
+    final scope = session.snapshot();
+    final jobIds = <String>{
+      if (_isActiveJob(state.job) && state.job?['id'] is String)
+        state.job!['id'] as String,
+      if (_isActiveJob(state.exportJob) && state.exportJob?['id'] is String)
+        state.exportJob!['id'] as String,
+    };
+    try {
+      await flushReviewQueue();
+      for (final jobId in jobIds) {
+        await scope.cancelJob(jobId: jobId);
+      }
+      for (final jobId in jobIds) {
+        await scope
+            .waitForJob(jobId: jobId)
+            .timeout(const Duration(seconds: 15));
+      }
+      return !_disposed && generation == _projectLoadGeneration;
+    } catch (error) {
+      if (!_disposed) {
+        _pushNotice('退出前保存项目失败：$error', NoticeSeverity.error);
+      }
+      return false;
+    }
+  }
+
   /// 等价 app.dart:_openProject(302)。
-  Future<void> openProject(String root) async {
+  Future<bool> openProject(String root) async {
+    var opened = false;
+    await flushReviewQueue();
     await _runBusy(() async {
       final generation = ++_projectLoadGeneration;
-      state = state.copyWith(
-        video: null,
-        videoPath: null,
-        reviewVideoPath: null,
-        previewPath: null,
-        suggestedRoi: null,
-        roiSource: null,
-        roiConfidence: null,
-        roiSuggestionError: null,
-        roiDetecting: false,
-        job: null,
-        exportJob: null,
-        statistics: null,
-        candidates: const <JsonMap>[],
-        exportHistory: const <JsonMap>[],
-      );
       await ref.read(engineBootstrapProvider.notifier).ensure();
       final session = ref.read(projectSessionProvider);
-      final payload = await session.openProject(root);
+      final checkpoint = session.checkpoint();
+      late final JsonMap payload;
+      try {
+        payload = await session.openProject(root);
+      } catch (_) {
+        session.restore(checkpoint);
+        rethrow;
+      }
+      if (generation != _projectLoadGeneration) return;
       var video = (payload['video'] as Map?)?.cast<String, dynamic>();
       var sourceMissing = false;
+      var analysisInvalidated = false;
       if (video != null) {
         final sourcePath = video['source_path']?.toString();
         sourceMissing =
@@ -348,11 +519,15 @@ class ProjectNotifier extends Notifier<ProjectState> {
           if (replacement != null && replacement.isNotEmpty) {
             final relinked = await session.relinkVideo(replacement);
             video = (relinked['video'] as Map?)?.cast<String, dynamic>();
+            analysisInvalidated = video?['analysis_invalidated'] == true;
             sourceMissing = false;
           }
         }
       }
-      final restoredRoi = (payload['roi'] as Map?)?.cast<String, dynamic>();
+      if (generation != _projectLoadGeneration) return;
+      final restoredRoi = analysisInvalidated
+          ? null
+          : (payload['roi'] as Map?)?.cast<String, dynamic>();
       final calibration = (restoredRoi?['calibration'] as Map?)
           ?.cast<String, dynamic>();
       final restoredRoiRect = video == null || restoredRoi == null
@@ -360,7 +535,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
           : _normalizeRoi(restoredRoi, video);
       final restoredRoiSource = calibration?['source']?.toString() ?? 'manual';
       state = state.copyWith(
-        knownProjectsRoot: Directory(root).parent.path,
+        knownProjectsRoot: Directory(canonicalProjectPath(root)).parent.path,
         video: video,
         videoPath: sourceMissing ? null : video?['source_path']?.toString(),
         reviewVideoPath: null,
@@ -373,80 +548,124 @@ class ProjectNotifier extends Notifier<ProjectState> {
         exportJob: null,
         candidates: const <JsonMap>[],
         exportHistory: const <JsonMap>[],
+        hydrating: video != null && session.videoId != null,
+        hydrateError: null,
       );
+      await _rememberProjectsRoot(
+        Directory(canonicalProjectPath(root)).parent.path,
+      );
+      opened = true;
       _reviewHistory.clear();
-      _startedReviewCandidateIds.clear();
       if (sourceMissing) {
         _pushNotice('原始视频已移动，请重新定位后再开始分析或导出。', NoticeSeverity.error);
       } else if (video != null && payload['video'] != null) {
         final originalPath = (payload['video'] as Map?)?['source_path']
             ?.toString();
         if (originalPath != video['source_path']) {
-          _pushNotice('视频已重新定位，项目数据和审核记录已保留', NoticeSeverity.success);
+          _pushNotice(
+            analysisInvalidated
+                ? '视频内容与原项目不一致，旧候选和 ROI 已清空，请重新设置后分析'
+                : '视频已重新定位，项目数据和审核记录已保留',
+            analysisInvalidated ? NoticeSeverity.info : NoticeSeverity.success,
+          );
         }
       }
-      if (video != null) {
-        unawaited(_hydrateOpenedProject(video, generation));
+      if (video != null && session.videoId != null) {
+        final scope = session.snapshot(requireVideo: true);
+        unawaited(_hydrateOpenedProject(video, generation, scope));
       }
     });
+    return opened;
   }
 
-  Future<void> _hydrateOpenedProject(JsonMap video, int generation) async {
-    final session = ref.read(projectSessionProvider);
+  Future<void> _hydrateOpenedProject(
+    JsonMap video,
+    int generation,
+    ProjectSessionScope scope,
+  ) async {
     final duration = (video['duration_ms'] as num?)?.toInt() ?? 1000;
     try {
-      final preview = await session.extractPreview(
-        timeMs: duration > 1000 ? 1000 : duration,
-      );
-      if (generation == _projectLoadGeneration) {
-        state = state.copyWith(previewPath: preview['path']?.toString());
-      }
-    } catch (error) {
-      _pushNotice('视频预览加载失败：$error', NoticeSeverity.error);
-    }
-
-    try {
-      final results = await Future.wait<Object?>([
-        session.listCandidates(),
-        session.listExports(limit: 5),
-        session.getActiveJobs(),
-        session.getActiveExportJobs(),
-      ]);
-      final candidatePayload = results[0] as JsonMap;
+      final candidatePayload = await scope.listCandidates();
       final candidates =
           ((candidatePayload['candidates'] as List?) ?? const <dynamic>[])
               .whereType<Map>()
               .map((item) => item.cast<String, dynamic>())
               .toList();
       final reviewPath = candidatePayload['review_video_path']?.toString();
-      final analysisJobs = results[2] as List<JsonMap>;
-      final exportJobs = results[3] as List<JsonMap>;
-      final analysisJob = analysisJobs.isEmpty ? null : analysisJobs.last;
-      final exportJob = exportJobs.isEmpty ? null : exportJobs.last;
       if (generation != _projectLoadGeneration) return;
       state = state.copyWith(
         reviewVideoPath: reviewPath == null || reviewPath.isEmpty
             ? null
             : reviewPath,
         candidates: candidates,
-        exportHistory: results[1] as List<JsonMap>,
-        job: analysisJob,
-        exportJob: exportJob,
+        hydrating: false,
+        hydrateError: null,
       );
-      unawaited(refreshStatistics());
-      final analysisId = analysisJob?['id'];
-      if (analysisJob?['recovery_state'] == 'worker_attached' &&
-          analysisId is String) {
-        unawaited(pollJob(analysisId));
+      unawaited(refreshStatistics(generation: generation, scope: scope));
+    } catch (error) {
+      if (!_disposed && generation == _projectLoadGeneration) {
+        state = state.copyWith(
+          hydrating: false,
+          hydrateError: error.toString(),
+        );
+        _pushNotice('候选片段加载失败：$error', NoticeSeverity.error);
       }
-      final exportId = exportJob?['id'];
-      if (exportJob?['recovery_state'] == 'worker_attached' &&
-          exportId is String) {
-        unawaited(pollExportJob(exportId));
+    }
+    try {
+      final exports = await scope.listExports(limit: 5);
+      if (!_disposed && generation == _projectLoadGeneration) {
+        state = state.copyWith(exportHistory: exports);
       }
     } catch (error) {
-      _pushNotice('项目已打开，但部分数据加载失败：$error', NoticeSeverity.error);
+      if (!_disposed && generation == _projectLoadGeneration) {
+        _pushNotice('导出记录加载失败：$error', NoticeSeverity.error);
+      }
     }
+    try {
+      final jobs = await Future.wait<List<JsonMap>>([
+        scope.getActiveJobs(),
+        scope.getActiveJobs(jobType: 'export'),
+      ]);
+      if (!_disposed && generation == _projectLoadGeneration) {
+        final analysisJob = jobs[0].isEmpty ? null : jobs[0].last;
+        final exportJob = jobs[1].isEmpty ? null : jobs[1].last;
+        state = state.copyWith(job: analysisJob, exportJob: exportJob);
+        final analysisId = analysisJob?['id'];
+        if (analysisJob?['recovery_state'] == 'worker_attached' &&
+            analysisId is String) {
+          unawaited(pollJob(analysisId, scope: scope));
+        }
+        final exportId = exportJob?['id'];
+        if (exportJob?['recovery_state'] == 'worker_attached' &&
+            exportId is String) {
+          unawaited(pollExportJob(exportId, scope: scope));
+        }
+      }
+    } catch (error) {
+      if (!_disposed && generation == _projectLoadGeneration) {
+        _pushNotice('任务状态加载失败：$error', NoticeSeverity.error);
+      }
+    }
+    try {
+      final preview = await scope.extractPreview(
+        timeMs: duration > 1000 ? 1000 : duration,
+      );
+      if (generation == _projectLoadGeneration) {
+        state = state.copyWith(previewPath: preview['path']?.toString());
+      }
+    } catch (error) {
+      if (!_disposed && generation == _projectLoadGeneration) {
+        _pushNotice('视频预览加载失败：$error', NoticeSeverity.error);
+      }
+    }
+  }
+
+  Future<void> retryProjectHydration() async {
+    final video = state.video;
+    final scope = _captureScope();
+    if (video == null || scope == null || state.hydrating) return;
+    state = state.copyWith(hydrating: true, hydrateError: null);
+    await _hydrateOpenedProject(video, _projectLoadGeneration, scope);
   }
 
   /// 等价 app.dart:_loadRecentProjects(385)。
@@ -454,10 +673,26 @@ class ProjectNotifier extends Notifier<ProjectState> {
     state = state.copyWith(recentLoading: true, recentError: null);
     try {
       await ref.read(engineBootstrapProvider.notifier).ensure();
-      final projects = await ref
-          .read(projectSessionProvider)
-          .loadRecentProjects(knownRoot: _projectsRoot);
-      state = state.copyWith(recentProjects: projects);
+      final roots = <String>{_projectsRoot, ...await _recentProjectRoots()};
+      final projectsByPath = <String, JsonMap>{};
+      for (final root in roots) {
+        List<JsonMap> projects;
+        try {
+          projects = await ref
+              .read(projectSessionProvider)
+              .loadRecentProjects(knownRoot: root);
+        } catch (_) {
+          continue;
+        }
+        for (final project in projects) {
+          final projectRoot = project['project_root']?.toString();
+          if (projectRoot == null || projectRoot.isEmpty) continue;
+          projectsByPath[canonicalProjectPath(projectRoot)] = project;
+        }
+      }
+      state = state.copyWith(
+        recentProjects: projectsByPath.values.take(20).toList(),
+      );
     } catch (error) {
       state = state.copyWith(recentError: error.toString());
     } finally {
@@ -466,7 +701,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   /// 等价 app.dart:_saveRoi(404)。
-  Future<void> saveRoi(Rect normalized) async {
+  Future<bool> saveRoi(Rect normalized) async {
+    var saved = false;
     await _runBusy(() async {
       final video = state.video;
       if (video == null) throw const SessionStateException('视频元数据尚未准备好');
@@ -489,17 +725,45 @@ class ProjectNotifier extends Notifier<ProjectState> {
         roiConfidence: null,
         roiSuggestionError: null,
       );
+      saved = true;
     }, successMessage: '篮筐区域已保存');
+    return saved;
   }
 
   /// 等价 app.dart:_startAnalysis(445)。
-  Future<void> startAnalysis() async {
+  Future<bool> startAnalysis({bool replaceRecoverable = false}) async {
+    var started = false;
     await _runBusy(() async {
+      await flushReviewQueue();
+      await ref.read(engineBootstrapProvider.notifier).ensure();
       final session = ref.read(projectSessionProvider);
       final activeJobs = await session.getActiveJobs();
       if (activeJobs.isNotEmpty) {
         final active = activeJobs.last;
+        final activeId = active['id'];
+        if (replaceRecoverable &&
+            active['recoverable'] == true &&
+            activeId is String) {
+          final result = await session.retryAnalysis(
+            jobId: activeId,
+            sampleFps: 10,
+            beforeSeconds: 6,
+            afterSeconds: 3,
+          );
+          state = state.copyWith(
+            job: (result['job'] as Map?)?.cast<String, dynamic>(),
+            candidates: const <JsonMap>[],
+            reviewVideoPath: null,
+            statistics: null,
+          );
+          started = true;
+          _pushNotice('已重新开始分析', NoticeSeverity.success);
+          final newJobId = state.job?['id'];
+          if (newJobId is String) unawaited(pollJob(newJobId));
+          return;
+        }
         state = state.copyWith(job: active);
+        started = true;
         if (active['recovery_state'] == 'worker_attached') {
           final jobId = active['id'];
           if (jobId is String) unawaited(pollJob(jobId));
@@ -517,23 +781,28 @@ class ProjectNotifier extends Notifier<ProjectState> {
         reviewVideoPath: null,
         statistics: null,
       );
-      _startedReviewCandidateIds.clear();
-      _pushNotice('分析已开始，候选会在处理过程中陆续更新', NoticeSeverity.success);
+      started = true;
+      _pushNotice('分析已开始，完成后会显示候选片段', NoticeSeverity.success);
       final jobId = state.job?['id'];
       if (jobId is! String) return;
       unawaited(pollJob(jobId));
     });
+    return started;
   }
 
   /// 等价 app.dart:_pollJob(476)。Stream 监听逻辑原样迁移。
-  Future<void> pollJob(String jobId) async {
-    if (!_pollingJobIds.add(jobId)) return;
+  Future<void> pollJob(String jobId, {ProjectSessionScope? scope}) async {
+    if (_disposed || !_pollingJobIds.add(jobId)) return;
     final projectGeneration = _projectLoadGeneration;
+    final requestScope = scope ?? _captureScope();
+    if (requestScope == null) {
+      _pollingJobIds.remove(jobId);
+      return;
+    }
     try {
       var refreshed = false;
-      await for (final payload
-          in ref.read(projectSessionProvider).pollJob(jobId: jobId)) {
-        if (projectGeneration != _projectLoadGeneration) break;
+      await for (final payload in requestScope.pollJob(jobId: jobId)) {
+        if (_disposed || projectGeneration != _projectLoadGeneration) return;
         final nextJob = (payload['job'] as Map?)?.cast<String, dynamic>();
         final previousState = state.job?['state']?.toString();
         state = state.copyWith(job: nextJob);
@@ -543,8 +812,15 @@ class ProjectNotifier extends Notifier<ProjectState> {
             nextState == 'failed' ||
             nextState == 'cancelled';
         if (terminal && !refreshed) {
-          await refreshCandidates();
-          await refreshStatistics();
+          await refreshCandidates(
+            generation: projectGeneration,
+            scope: requestScope,
+          );
+          if (_disposed || projectGeneration != _projectLoadGeneration) return;
+          await refreshStatistics(
+            generation: projectGeneration,
+            scope: requestScope,
+          );
           refreshed = true;
         }
         if (nextState != previousState) {
@@ -560,12 +836,26 @@ class ProjectNotifier extends Notifier<ProjectState> {
           }
         }
       }
+      if (_disposed || projectGeneration != _projectLoadGeneration) return;
       if (!refreshed) {
-        await refreshCandidates();
-        await refreshStatistics();
+        await refreshCandidates(
+          generation: projectGeneration,
+          scope: requestScope,
+        );
+        if (_disposed || projectGeneration != _projectLoadGeneration) return;
+        await refreshStatistics(
+          generation: projectGeneration,
+          scope: requestScope,
+        );
       }
-      await refreshExportHistory();
+      if (_disposed || projectGeneration != _projectLoadGeneration) return;
+      await refreshExportHistory(
+        generation: projectGeneration,
+        scope: requestScope,
+      );
     } catch (error) {
+      if (_disposed || projectGeneration != _projectLoadGeneration) return;
+      _markEngineJobRecoverable(error, export: false);
       _pushNotice(error.toString(), NoticeSeverity.error);
     } finally {
       _pollingJobIds.remove(jobId);
@@ -574,13 +864,15 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   /// 等价 app.dart:_restoreActiveJob(510)。
   Future<void> restoreActiveJob() async {
-    final jobs = await ref.read(projectSessionProvider).getActiveJobs();
+    final scope = _captureScope();
+    if (scope == null) return;
+    final jobs = await scope.getActiveJobs();
     if (jobs.isEmpty) return;
     final active = jobs.last;
     state = state.copyWith(job: active);
     if (active['recovery_state'] == 'worker_attached' &&
         active['id'] is String) {
-      unawaited(pollJob(active['id'] as String));
+      unawaited(pollJob(active['id'] as String, scope: scope));
     }
   }
 
@@ -589,6 +881,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     final jobId = state.job?['id'];
     if (jobId is! String) return;
     await _runBusy(() async {
+      await ref.read(engineBootstrapProvider.notifier).ensure();
       final result = await ref
           .read(projectSessionProvider)
           .retryAnalysis(
@@ -599,9 +892,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
           );
       state = state.copyWith(
         job: (result['job'] as Map?)?.cast<String, dynamic>(),
+        candidates: const <JsonMap>[],
+        reviewVideoPath: null,
         statistics: null,
       );
-      _startedReviewCandidateIds.clear();
       _pushNotice('已重新开始分析', NoticeSeverity.success);
       final newJobId = state.job?['id'];
       if (newJobId is String) unawaited(pollJob(newJobId));
@@ -612,22 +906,43 @@ class ProjectNotifier extends Notifier<ProjectState> {
   Future<void> cancelAnalysis() async {
     final jobId = state.job?['id'];
     if (jobId is! String) return;
+    final generation = _projectLoadGeneration;
     try {
       final result = await ref
           .read(projectSessionProvider)
           .cancelJob(jobId: jobId);
+      if (_disposed ||
+          generation != _projectLoadGeneration ||
+          state.job?['id']?.toString() != jobId) {
+        return;
+      }
       state = state.copyWith(
         job: (result['job'] as Map?)?.cast<String, dynamic>(),
       );
-      _pushNotice('分析已取消', NoticeSeverity.success);
+      final nextState = state.job?['state']?.toString();
+      if (nextState == 'cancelled') {
+        _pushNotice('分析已取消', NoticeSeverity.success);
+      } else {
+        _pushNotice('正在取消分析…', NoticeSeverity.info);
+        final scope = _captureScope();
+        if (scope != null) unawaited(pollJob(jobId, scope: scope));
+      }
     } catch (error) {
       _pushNotice(error.toString(), NoticeSeverity.error);
     }
   }
 
   /// 等价 app.dart:_refreshCandidates(552)。
-  Future<void> refreshCandidates() async {
-    final payload = await ref.read(projectSessionProvider).listCandidates();
+  Future<void> refreshCandidates({
+    int? generation,
+    ProjectSessionScope? scope,
+  }) async {
+    if (_disposed) return;
+    final requestGeneration = generation ?? _projectLoadGeneration;
+    final payload = scope == null
+        ? await ref.read(projectSessionProvider).listCandidates()
+        : await scope.listCandidates();
+    if (_disposed || requestGeneration != _projectLoadGeneration) return;
     final reviewVideoPath = payload['review_video_path']?.toString();
     final reviewVideo = reviewVideoPath == null || reviewVideoPath.isEmpty
         ? null
@@ -641,16 +956,36 @@ class ProjectNotifier extends Notifier<ProjectState> {
     );
   }
 
-  Future<String?> loadCandidatePreview(int timeMs) async {
+  Future<String?> loadCandidatePreview(String candidateId, int timeMs) async {
+    final cachedPath = state.candidates
+        .cast<JsonMap?>()
+        .firstWhere(
+          (candidate) => candidate?['id']?.toString() == candidateId,
+          orElse: () => null,
+        )?['preview_path']
+        ?.toString();
+    if (cachedPath != null &&
+        cachedPath.isNotEmpty &&
+        File(cachedPath).existsSync()) {
+      return cachedPath;
+    }
     final preview = await ref
         .read(projectSessionProvider)
         .extractPreview(timeMs: timeMs);
     return preview['path']?.toString();
   }
 
-  Future<void> refreshStatistics() async {
+  Future<void> refreshStatistics({
+    int? generation,
+    ProjectSessionScope? scope,
+  }) async {
+    if (_disposed) return;
+    final requestGeneration = generation ?? _projectLoadGeneration;
     try {
-      final payload = await ref.read(projectSessionProvider).getStatistics();
+      final payload = scope == null
+          ? await ref.read(projectSessionProvider).getStatistics()
+          : await scope.getStatistics();
+      if (_disposed || requestGeneration != _projectLoadGeneration) return;
       final raw = payload['statistics'];
       state = state.copyWith(
         statistics: raw is Map
@@ -663,11 +998,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   Future<void> startReview(String id) async {
-    if (id.isEmpty || !_startedReviewCandidateIds.add(id)) return;
+    if (id.isEmpty) return;
     try {
       await ref.read(projectSessionProvider).startReview(id);
     } catch (error) {
-      _startedReviewCandidateIds.remove(id);
       _pushNotice('开始记录审核耗时失败：$error', NoticeSeverity.error);
     }
   }
@@ -679,46 +1013,114 @@ class ProjectNotifier extends Notifier<ProjectState> {
     String? reason,
     bool showNotice = true,
   }) async {
-    var succeeded = false;
-    await _runBusy(
-      () async {
-        final previous = state.candidates.cast<JsonMap?>().firstWhere(
-          (item) => item?['id']?.toString() == id,
-          orElse: () => null,
-        );
-        final snapshot = previous == null
-            ? null
-            : _ReviewSnapshot(
-                candidateId: id,
-                status: previous['review_status']?.toString() ?? 'pending',
-                reason: previous['review_reason']?.toString(),
-                note: previous['note']?.toString(),
-              );
-        final engineStatus = status == 'included' ? 'goal' : status;
+    final result = Completer<bool>();
+    final generation = _projectLoadGeneration;
+    final revision = (_reviewRevisions[id] ?? 0) + 1;
+    _reviewRevisions[id] = revision;
+    final previous = state.candidates.cast<JsonMap?>().firstWhere(
+      (item) => item?['id']?.toString() == id,
+      orElse: () => null,
+    );
+    final engineStatus = status == 'included' ? 'goal' : status;
+    if (previous != null &&
+        previous['review_status']?.toString() == engineStatus &&
+        (reason == null || previous['review_reason']?.toString() == reason)) {
+      return true;
+    }
+    final snapshot = previous == null
+        ? null
+        : _ReviewSnapshot(
+            candidateId: id,
+            status: previous['review_status']?.toString() ?? 'pending',
+            reason: previous['review_reason']?.toString(),
+            note: previous['note']?.toString(),
+          );
+    if (previous != null) {
+      _setLocalReviewState(id, engineStatus, reason: reason);
+    }
+    _reviewQueue = _reviewQueue.then((_) async {
+      if (_disposed || generation != _projectLoadGeneration) {
+        result.complete(false);
+        return;
+      }
+      try {
         await ref
             .read(projectSessionProvider)
-            .reviewCandidate(id, status: engineStatus, reason: reason);
-        await refreshCandidates();
+            .reviewCandidate(
+              id,
+              status: engineStatus,
+              reason: reason,
+              note: snapshot?.note,
+            );
+        if (_disposed || generation != _projectLoadGeneration) {
+          result.complete(false);
+          return;
+        }
         if (snapshot != null) _reviewHistory.add(snapshot);
-        unawaited(refreshStatistics());
-        succeeded = true;
-      },
-      successMessage: !showNotice
-          ? null
-          : switch (status) {
-              'goal' || 'included' => '已保留片段',
-              'deferred' => '已暂缓审核',
-              'second_review' => '已标记二次复核',
-              'pending' => '已恢复待审核',
-              _ => '已排除候选',
-            },
+        unawaited(refreshStatistics(generation: generation));
+        if (showNotice) {
+          _pushNotice(switch (status) {
+            'goal' || 'included' => '已保留片段',
+            'deferred' => '已暂缓审核',
+            'second_review' => '已标记二次复核',
+            'pending' => '已恢复待审核',
+            _ => '已排除候选',
+          }, NoticeSeverity.success);
+        }
+        result.complete(true);
+      } catch (error) {
+        if (!_disposed && generation == _projectLoadGeneration) {
+          final current = state.candidates.cast<JsonMap?>().firstWhere(
+            (item) => item?['id']?.toString() == id,
+            orElse: () => null,
+          );
+          if (snapshot != null &&
+              _reviewRevisions[id] == revision &&
+              current?['review_status']?.toString() == engineStatus) {
+            _setLocalReviewState(
+              id,
+              snapshot.status,
+              reason: snapshot.reason,
+              note: snapshot.note,
+            );
+          }
+          _pushNotice(error.toString(), NoticeSeverity.error);
+        }
+        result.complete(false);
+      }
+    });
+    return result.future;
+  }
+
+  void _setLocalReviewState(
+    String id,
+    String status, {
+    String? reason,
+    String? note,
+  }) {
+    state = state.copyWith(
+      candidates: [
+        for (final candidate in state.candidates)
+          if (candidate['id']?.toString() == id)
+            <String, dynamic>{
+              ...candidate,
+              'review_status': status,
+              'selection_status': status == 'excluded'
+                  ? 'excluded'
+                  : 'included',
+              'review_reason': reason,
+              'note': note ?? candidate['note'],
+            }
+          else
+            candidate,
+      ],
     );
-    return succeeded;
   }
 
   /// 等价 app.dart:_updateCandidateNote(587)。
   Future<void> updateCandidateNote(String id, String note) async {
     await _runBusy(() async {
+      await flushReviewQueue();
       final candidate = state.candidates.cast<JsonMap?>().firstWhere(
         (item) => item?['id']?.toString() == id,
         orElse: () => null,
@@ -748,6 +1150,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     final snapshot = _reviewHistory.last;
     var succeeded = false;
     await _runBusy(() async {
+      await flushReviewQueue();
       await ref
           .read(projectSessionProvider)
           .reviewCandidate(
@@ -778,7 +1181,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
     String? outputDir,
     String? outputPath,
   }) async {
-    await _runBusy(() async {
+    if (state.busy || _isActiveJob(state.exportJob)) return;
+    state = state.copyWith(busy: true);
+    try {
+      await flushReviewQueue();
       final result = await ref
           .read(projectSessionProvider)
           .startExport(
@@ -792,21 +1198,41 @@ class ProjectNotifier extends Notifier<ProjectState> {
       if (jobId is! String) {
         throw const SessionStateException('导出任务未返回 id');
       }
-      await pollExportJob(jobId);
-    });
+      // 只锁定“启动导出”这一小段时间；实际编码在后台轮询，审核仍可继续。
+      state = state.copyWith(busy: false);
+      unawaited(pollExportJob(jobId));
+    } catch (error) {
+      _pushNotice(error.toString(), NoticeSeverity.error);
+      state = state.copyWith(busy: false);
+    }
   }
 
   /// 等价 app.dart:_pollExportJob(644)。Stream 监听逻辑原样迁移。
-  Future<void> pollExportJob(String jobId) async {
+  Future<void> pollExportJob(String jobId, {ProjectSessionScope? scope}) async {
+    if (_disposed || !_pollingExportJobIds.add(jobId)) return;
+    final projectGeneration = _projectLoadGeneration;
+    final requestScope = scope ?? _captureScope();
+    if (requestScope == null) {
+      _pollingExportJobIds.remove(jobId);
+      return;
+    }
     try {
-      await for (final payload
-          in ref.read(projectSessionProvider).pollJob(jobId: jobId)) {
+      await for (final payload in requestScope.pollJob(jobId: jobId)) {
+        if (_disposed || projectGeneration != _projectLoadGeneration) return;
         state = state.copyWith(
           exportJob: (payload['job'] as Map?)?.cast<String, dynamic>(),
         );
       }
-      await refreshExportHistory();
-      await refreshStatistics();
+      if (_disposed || projectGeneration != _projectLoadGeneration) return;
+      await refreshExportHistory(
+        generation: projectGeneration,
+        scope: requestScope,
+      );
+      if (_disposed || projectGeneration != _projectLoadGeneration) return;
+      await refreshStatistics(
+        generation: projectGeneration,
+        scope: requestScope,
+      );
       final jobState = state.exportJob?['state']?.toString();
       if (jobState == 'completed') {
         _pushNotice('导出完成', NoticeSeverity.success);
@@ -819,7 +1245,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
         );
       }
     } catch (error) {
+      if (_disposed || projectGeneration != _projectLoadGeneration) return;
+      _markEngineJobRecoverable(error, export: true);
       _pushNotice(error.toString(), NoticeSeverity.error);
+    } finally {
+      _pollingExportJobIds.remove(jobId);
     }
   }
 
@@ -827,14 +1257,27 @@ class ProjectNotifier extends Notifier<ProjectState> {
   Future<void> cancelExport() async {
     final jobId = state.exportJob?['id'];
     if (jobId is! String) return;
+    final generation = _projectLoadGeneration;
     try {
       final result = await ref
           .read(projectSessionProvider)
           .cancelJob(jobId: jobId);
+      if (_disposed ||
+          generation != _projectLoadGeneration ||
+          state.exportJob?['id']?.toString() != jobId) {
+        return;
+      }
       state = state.copyWith(
         exportJob: (result['job'] as Map?)?.cast<String, dynamic>(),
       );
-      _pushNotice('导出已取消', NoticeSeverity.success);
+      final nextState = state.exportJob?['state']?.toString();
+      if (nextState == 'cancelled') {
+        _pushNotice('导出已取消', NoticeSeverity.success);
+      } else {
+        _pushNotice('正在取消导出…', NoticeSeverity.info);
+        final scope = _captureScope();
+        if (scope != null) unawaited(pollExportJob(jobId, scope: scope));
+      }
     } catch (error) {
       _pushNotice(error.toString(), NoticeSeverity.error);
     }
@@ -842,8 +1285,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   Future<void> retryExport() async {
     final jobId = state.exportJob?['id'];
-    if (jobId is! String) return;
-    await _runBusy(() async {
+    if (jobId is! String || state.busy || _isActiveJob(state.exportJob)) return;
+    state = state.copyWith(busy: true);
+    try {
+      await ref.read(engineBootstrapProvider.notifier).ensure();
       final result = await ref
           .read(projectSessionProvider)
           .retryExport(jobId: jobId);
@@ -851,16 +1296,35 @@ class ProjectNotifier extends Notifier<ProjectState> {
         exportJob: (result['job'] as Map?)?.cast<String, dynamic>(),
       );
       final newJobId = state.exportJob?['id'];
-      if (newJobId is String) await pollExportJob(newJobId);
-    });
+      state = state.copyWith(busy: false);
+      if (newJobId is String) unawaited(pollExportJob(newJobId));
+    } catch (error) {
+      _pushNotice(error.toString(), NoticeSeverity.error);
+      state = state.copyWith(busy: false);
+    }
   }
 
   /// 等价 app.dart:_refreshExportHistory(686)。
-  Future<void> refreshExportHistory() async {
-    final history = await ref
-        .read(projectSessionProvider)
-        .listExports(limit: 5);
+  Future<void> refreshExportHistory({
+    int? generation,
+    ProjectSessionScope? scope,
+  }) async {
+    if (_disposed) return;
+    final requestGeneration = generation ?? _projectLoadGeneration;
+    final history = scope == null
+        ? await ref.read(projectSessionProvider).listExports(limit: 5)
+        : await scope.listExports(limit: 5);
+    if (_disposed || requestGeneration != _projectLoadGeneration) return;
     state = state.copyWith(exportHistory: history);
+  }
+
+  ProjectSessionScope? _captureScope() {
+    if (_disposed) return null;
+    try {
+      return ref.read(projectSessionProvider).snapshot(requireVideo: true);
+    } on SessionStateException {
+      return null;
+    }
   }
 
   /// 等价 app.dart:_runBusy(718)。busy=true → await action → busy=false。
@@ -869,23 +1333,29 @@ class ProjectNotifier extends Notifier<ProjectState> {
     Future<void> Function() action, {
     String? successMessage,
   }) async {
+    if (_disposed) return;
     if (state.busy) return;
     state = state.copyWith(busy: true);
+    final completer = Completer<void>();
+    _busyOperation = completer.future;
     try {
       await action();
+      if (_disposed) return;
       if (successMessage != null) {
         _pushNotice(successMessage, NoticeSeverity.success);
       }
     } catch (error) {
+      if (_disposed) return;
       _pushNotice(error.toString(), NoticeSeverity.error);
     } finally {
-      state = state.copyWith(busy: false);
+      if (!completer.isCompleted) completer.complete();
+      if (!_disposed) state = state.copyWith(busy: false);
     }
   }
 
   /// 等价 app.dart:_showNotice(691)。原 SnackBar → noticeProvider.push。
   void _pushNotice(String title, NoticeSeverity severity) {
-    if (title.trim().isEmpty) return;
+    if (_disposed || title.trim().isEmpty) return;
     ref
         .read(noticeProvider.notifier)
         .push(
@@ -906,6 +1376,67 @@ class ProjectNotifier extends Notifier<ProjectState> {
     if (current != null && current.isNotEmpty) return current;
     final home = Platform.environment['HOME'];
     return '${home ?? Directory.current.path}/Movies/BasketballProjects';
+  }
+
+  Future<List<String>> _recentProjectRoots() async {
+    try {
+      final preferences = await SharedPreferences.getInstance().timeout(
+        const Duration(milliseconds: 250),
+      );
+      return preferences.getStringList(_recentProjectRootsKey) ??
+          const <String>[];
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
+  Future<void> _rememberProjectsRoot(String root) async {
+    try {
+      final canonical = canonicalProjectPath(root);
+      final preferences = await SharedPreferences.getInstance().timeout(
+        const Duration(milliseconds: 250),
+      );
+      final roots = <String>{
+        canonical,
+        ...preferences.getStringList(_recentProjectRootsKey) ??
+            const <String>[],
+      }.take(12).toList();
+      await preferences.setStringList(_recentProjectRootsKey, roots);
+    } catch (_) {}
+  }
+
+  bool _isActiveJob(JsonMap? job) {
+    final jobState = job?['state']?.toString();
+    final recoveryState = job?['recovery_state']?.toString();
+    return (jobState == 'queued' || jobState == 'running') &&
+        (recoveryState == null || recoveryState == 'worker_attached');
+  }
+
+  void _markEngineJobRecoverable(Object error, {required bool export}) {
+    if (error is! EngineException ||
+        !const <String>{
+          'ENGINE_EXITED',
+          'ENGINE_NOT_RUNNING',
+          'ENGINE_TIMEOUT',
+          'ENGINE_WRITE_FAILED',
+          'ENGINE_DISPOSED',
+        }.contains(error.code)) {
+      return;
+    }
+    ref.read(engineBootstrapProvider.notifier).markUnavailable(error);
+    final current = export ? state.exportJob : state.job;
+    if (current == null) return;
+    final recoverable = <String, dynamic>{
+      ...current,
+      'state': 'failed',
+      'recovery_state': 'stale_recoverable',
+      'recoverable': true,
+      'error_code': error.code,
+      'error_message': error.message,
+    };
+    state = export
+        ? state.copyWith(exportJob: recoverable)
+        : state.copyWith(job: recoverable);
   }
 
   /// 等价 app.dart:_normalizeRoi(430)。原始像素坐标 → 归一化 [0,1]。

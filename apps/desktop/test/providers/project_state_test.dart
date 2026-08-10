@@ -1,8 +1,10 @@
 // test/providers/project_state_test.dart
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart' show Rect;
 
 import 'package:desktop/core/engine_session.dart';
+import 'package:desktop/core/engine_client.dart';
 import 'package:desktop/core/project_session.dart';
 import 'package:desktop/providers/notice_provider.dart';
 import 'package:desktop/providers/project_state.dart';
@@ -40,7 +42,156 @@ void main() {
         expect(notices.last.title, contains('视频已加载'));
       },
     );
+
+    test('opening an invalid project keeps the current UI state', () async {
+      final fakeSession = _FakeProjectSession();
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+      final notifier = container.read(projectProvider.notifier);
+      await notifier.selectVideo('/path/current.mp4');
+      fakeSession.throwOnOpenProject = true;
+
+      await notifier.openProject('/path/invalid-project');
+
+      final state = container.read(projectProvider);
+      expect(state.videoPath, '/path/current.mp4');
+      expect(state.video?['id'], 'vid-1');
+      expect(
+        container.read(noticeProvider).last.severity,
+        NoticeSeverity.error,
+      );
+    });
   });
+
+  test(
+    'startAnalysis replaces a recoverable queued job when requested',
+    () async {
+      final fakeSession = _FakeProjectSession()
+        ..activeAnalysisJobs = <JsonMap>[
+          <String, dynamic>{
+            'id': 'old-job',
+            'state': 'queued',
+            'recovery_state': 'queued_recoverable',
+            'recoverable': true,
+          },
+        ]
+        ..retryAnalysisResult = <String, dynamic>{
+          'job': <String, dynamic>{'id': 'new-job', 'state': 'queued'},
+        };
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final started = await container
+          .read(projectProvider.notifier)
+          .startAnalysis(replaceRecoverable: true);
+
+      expect(started, isTrue);
+      expect(fakeSession.retryAnalysisCalls, ['old-job']);
+      expect(fakeSession.startAnalysisCalls, 0);
+      expect(container.read(projectProvider).job?['id'], 'new-job');
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
+  test(
+    'retryAnalysis clears the previous candidate result immediately',
+    () async {
+      final fakeSession = _FakeProjectSession()..clearCandidatesOnRetry = true;
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(projectProvider.notifier);
+      await notifier.startAnalysis();
+      fakeSession.seedCandidates(<JsonMap>[
+        <String, dynamic>{'id': 'old-candidate', 'review_status': 'goal'},
+      ]);
+      await notifier.refreshCandidates();
+      expect(container.read(projectProvider).candidates, isNotEmpty);
+
+      await notifier.retryAnalysis();
+
+      final state = container.read(projectProvider);
+      expect(state.job?['id'], 'retry-job');
+      expect(state.candidates, isEmpty);
+      expect(state.reviewVideoPath, isNull);
+    },
+  );
+
+  test(
+    'engine transport failure makes a running analysis recoverable',
+    () async {
+      final fakeSession = _FakeProjectSession();
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+      final notifier = container.read(projectProvider.notifier);
+      await notifier.startAnalysis();
+      await Future<void>.delayed(Duration.zero);
+      final scope = ProjectSessionScope(
+        engine: EngineSession(_ThrowingTransport()),
+        projectRoot: '/tmp/project',
+        videoId: 'video-1',
+      );
+
+      await notifier.pollJob('start-job', scope: scope);
+
+      final state = container.read(projectProvider);
+      expect(state.analysisRunning, isFalse);
+      expect(state.job?['recoverable'], isTrue);
+      expect(state.job?['recovery_state'], 'stale_recoverable');
+      expect(state.job?['error_code'], 'ENGINE_EXITED');
+      expect(container.read(engineBootstrapProvider).hasError, isTrue);
+    },
+  );
+
+  test(
+    'cancel analysis reports cancelling until the engine reaches terminal state',
+    () async {
+      final fakeSession = _FakeProjectSession()
+        ..cancelJobResult = <String, dynamic>{
+          'job': <String, dynamic>{
+            'id': 'start-job',
+            'state': 'running',
+            'stage': 'cancelling',
+          },
+        };
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+      final notifier = container.read(projectProvider.notifier);
+      await notifier.startAnalysis();
+      await Future<void>.delayed(Duration.zero);
+
+      await notifier.cancelAnalysis();
+
+      expect(container.read(projectProvider).job?['stage'], 'cancelling');
+      expect(container.read(noticeProvider).last.title, '正在取消分析…');
+      expect(container.read(noticeProvider).last.severity, NoticeSeverity.info);
+    },
+  );
 
   group('ProjectNotifier.reviewCandidate', () {
     test('reviewCandidate(id,"goal") 更新候选 status 并 push 成功 notice', () async {
@@ -162,7 +313,7 @@ void main() {
     );
 
     test(
-      'startReview caches candidate ids and avoids duplicate engine calls',
+      'startReview restarts timing when the candidate is revisited',
       () async {
         final fakeSession = _FakeProjectSession();
         final container = ProviderContainer(
@@ -178,7 +329,49 @@ void main() {
         await notifier.startReview('c1');
         await notifier.startReview('c2');
 
-        expect(fakeSession.startReviewCalls, ['c1', 'c2']);
+        expect(fakeSession.startReviewCalls, ['c1', 'c1', 'c2']);
+      },
+    );
+
+    test(
+      'rapid review operations are serialized without dropping input',
+      () async {
+        final fakeSession =
+            _FakeProjectSession(reviewDelay: const Duration(milliseconds: 20))
+              ..seedCandidates(<JsonMap>[
+                <String, dynamic>{'id': 'c1', 'review_status': 'pending'},
+                <String, dynamic>{'id': 'c2', 'review_status': 'pending'},
+              ]);
+        final container = ProviderContainer(
+          overrides: <Override>[
+            projectSessionProvider.overrideWithValue(fakeSession),
+            engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+          ],
+        );
+        addTearDown(container.dispose);
+        final notifier = container.read(projectProvider.notifier);
+        await notifier.refreshCandidates();
+
+        final first = notifier.reviewCandidate(
+          'c1',
+          'included',
+          showNotice: false,
+        );
+        final second = notifier.reviewCandidate(
+          'c2',
+          'excluded',
+          showNotice: false,
+        );
+
+        expect(await Future.wait([first, second]), [true, true]);
+        expect(fakeSession.reviewCalls, ['c1', 'c2']);
+        expect(
+          container
+              .read(projectProvider)
+              .candidates
+              .map((candidate) => candidate['review_status']),
+          ['goal', 'excluded'],
+        );
       },
     );
   });
@@ -215,6 +408,63 @@ void main() {
         expect(notices.last.title, '片段范围已更新');
       },
     );
+  });
+
+  group('ProjectNotifier.saveRoi', () {
+    test('Engine 拒绝保存 ROI 时返回 false', () async {
+      final fakeSession = _FakeProjectSession()..throwOnSaveRoi = true;
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(projectProvider.notifier);
+      await notifier.selectVideo('/path/sample.mp4');
+      final saved = await notifier.saveRoi(
+        const Rect.fromLTWH(0.1, 0.1, 0.3, 0.3),
+      );
+
+      expect(saved, isFalse);
+      expect(container.read(projectProvider).roiSource, isNull);
+    });
+  });
+
+  group('ProjectNotifier.export', () {
+    test('后台导出不会锁死后续审核操作', () async {
+      final fakeSession = _FakeProjectSession()
+        ..seedCandidates(<JsonMap>[
+          <String, dynamic>{'id': 'c-export', 'review_status': 'pending'},
+        ]);
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(projectProvider.notifier);
+      await notifier.refreshCandidates();
+      await notifier.export('separate', outputDir: '/tmp/highlights');
+
+      expect(container.read(projectProvider).busy, isFalse);
+      expect(container.read(projectProvider).exportRunning, isTrue);
+
+      final succeeded = await notifier.reviewCandidate(
+        'c-export',
+        'included',
+        showNotice: false,
+      );
+
+      expect(succeeded, isTrue);
+      expect(
+        container.read(projectProvider).candidates.single['review_status'],
+        'goal',
+      );
+    });
   });
 
   group('ProjectNotifier.deleteProject', () {
@@ -278,14 +528,28 @@ class _StubEngineBootstrap extends EngineBootstrapNotifier {
 /// 子类化 ProjectSession(方案 A)。重写所有被 ProjectNotifier 调用的高层方法,
 /// 返回预设 JsonMap;底层 engine.client 永不触达(_NeverTransport 兜底)。
 class _FakeProjectSession extends ProjectSession {
-  _FakeProjectSession() : super(EngineSession(_NeverTransport()));
+  _FakeProjectSession({this.reviewDelay = Duration.zero})
+    : super(EngineSession(_NeverTransport()));
+
+  final Duration reviewDelay;
 
   final List<JsonMap> _candidates = <JsonMap>[];
   List<JsonMap> reviewHistory = <JsonMap>[];
   JsonMap statistics = <String, dynamic>{};
   final List<String> startReviewCalls = <String>[];
+  final List<String> retryAnalysisCalls = <String>[];
   final List<String> deletedRoots = <String>[];
+  final List<String> reviewCalls = <String>[];
+  int startAnalysisCalls = 0;
+  List<JsonMap> activeAnalysisJobs = <JsonMap>[];
+  JsonMap retryAnalysisResult = <String, dynamic>{
+    'job': <String, dynamic>{'id': 'retry-job', 'state': 'queued'},
+  };
+  JsonMap cancelJobResult = <String, dynamic>{};
   bool throwOnReviewCandidate = false;
+  bool throwOnSaveRoi = false;
+  bool throwOnOpenProject = false;
+  bool clearCandidatesOnRetry = false;
 
   void seedCandidates(List<JsonMap> seed) {
     _candidates
@@ -299,7 +563,12 @@ class _FakeProjectSession extends ProjectSession {
     required String rootPath,
     String? projectId,
     String language = 'zh-CN',
-  }) async => <String, dynamic>{};
+  }) async {
+    startAnalysisCalls++;
+    return <String, dynamic>{
+      'job': <String, dynamic>{'id': 'start-job', 'state': 'queued'},
+    };
+  }
 
   @override
   Future<JsonMap> deleteProject(String projectRoot) async {
@@ -308,10 +577,13 @@ class _FakeProjectSession extends ProjectSession {
   }
 
   @override
-  Future<JsonMap> openProject(String projectRoot) async => <String, dynamic>{
-    'project_root': projectRoot,
-    'project': <String, dynamic>{'id': 'proj-1'},
-  };
+  Future<JsonMap> openProject(String projectRoot) async {
+    if (throwOnOpenProject) throw StateError('invalid project');
+    return <String, dynamic>{
+      'project_root': projectRoot,
+      'project': <String, dynamic>{'id': 'proj-1'},
+    };
+  }
 
   @override
   Future<List<JsonMap>> loadRecentProjects({
@@ -353,7 +625,10 @@ class _FakeProjectSession extends ProjectSession {
     required num y2,
     String? name,
     JsonMap? calibration,
-  }) async => <String, dynamic>{};
+  }) async {
+    if (throwOnSaveRoi) throw StateError('save_roi failed');
+    return <String, dynamic>{};
+  }
 
   @override
   Future<JsonMap> startAnalysis({
@@ -365,7 +640,12 @@ class _FakeProjectSession extends ProjectSession {
     int? proxyHeight,
     double? proxyFps,
     String? modelPath,
-  }) async => <String, dynamic>{};
+  }) async {
+    startAnalysisCalls++;
+    return <String, dynamic>{
+      'job': <String, dynamic>{'id': 'start-job', 'state': 'queued'},
+    };
+  }
 
   @override
   Future<JsonMap> retryAnalysis({
@@ -378,12 +658,19 @@ class _FakeProjectSession extends ProjectSession {
     int? proxyHeight,
     double? proxyFps,
     String? modelPath,
-  }) async => <String, dynamic>{};
+  }) async {
+    retryAnalysisCalls.add(jobId);
+    if (clearCandidatesOnRetry) _candidates.clear();
+    return retryAnalysisResult;
+  }
 
   @override
-  Future<JsonMap> cancelJob({required String jobId}) async => <String, dynamic>{
-    'job': <String, dynamic>{'id': jobId, 'state': 'cancelled'},
-  };
+  Future<JsonMap> cancelJob({required String jobId}) async =>
+      cancelJobResult.isNotEmpty
+      ? cancelJobResult
+      : <String, dynamic>{
+          'job': <String, dynamic>{'id': jobId, 'state': 'cancelled'},
+        };
 
   @override
   Future<JsonMap> listCandidates() async => <String, dynamic>{
@@ -417,6 +704,8 @@ class _FakeProjectSession extends ProjectSession {
     String? note,
     String? reason,
   }) async {
+    reviewCalls.add(candidateId);
+    await Future<void>.delayed(reviewDelay);
     if (throwOnReviewCandidate) {
       throw StateError('review_candidate failed');
     }
@@ -460,7 +749,7 @@ class _FakeProjectSession extends ProjectSession {
 
   @override
   Future<List<JsonMap>> getActiveJobs({String jobType = 'analysis'}) async =>
-      <JsonMap>[];
+      jobType == 'analysis' ? activeAnalysisJobs : <JsonMap>[];
 
   @override
   Future<List<JsonMap>> listExports({int limit = 20}) async => <JsonMap>[];
@@ -476,5 +765,12 @@ class _NeverTransport implements EngineTransport {
   @override
   Future<JsonMap> request(String command, JsonMap payload) async {
     throw StateError('unexpected engine call: $command');
+  }
+}
+
+class _ThrowingTransport implements EngineTransport {
+  @override
+  Future<JsonMap> request(String command, JsonMap payload) {
+    throw const EngineException('ENGINE_EXITED', 'Engine 已退出');
   }
 }

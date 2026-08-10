@@ -1,4 +1,15 @@
+import 'dart:io';
+
 import 'engine_session.dart';
+
+String canonicalProjectPath(String path) {
+  final directory = Directory(path).absolute;
+  try {
+    return directory.resolveSymbolicLinksSync();
+  } on FileSystemException {
+    return directory.path;
+  }
+}
 
 class SessionStateException implements Exception {
   const SessionStateException(this.message);
@@ -7,6 +18,114 @@ class SessionStateException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class ProjectSessionCheckpoint {
+  const ProjectSessionCheckpoint({
+    this.projectRoot,
+    this.projectId,
+    this.videoId,
+  });
+
+  final String? projectRoot;
+  final String? projectId;
+  final String? videoId;
+}
+
+/// 后台任务使用的不可变项目上下文。
+///
+/// ProjectSession 本身会随着打开项目而变化；后台轮询必须持有创建时的
+/// projectRoot/videoId，不能在每次请求时重新读取可变会话。
+class ProjectSessionScope {
+  const ProjectSessionScope({
+    required this.engine,
+    required this.projectRoot,
+    this.projectId,
+    this.videoId,
+  });
+
+  final EngineSession engine;
+  final String projectRoot;
+  final String? projectId;
+  final String? videoId;
+
+  Future<JsonMap> extractPreview({int timeMs = 1000}) {
+    return engine.extractPreview(
+      projectRoot: projectRoot,
+      videoId: _requireVideoId(),
+      timeMs: timeMs,
+    );
+  }
+
+  Stream<JsonMap> pollJob({
+    required String jobId,
+    Duration interval = const Duration(seconds: 1),
+  }) {
+    return engine.pollJob(
+      projectRoot: projectRoot,
+      jobId: jobId,
+      interval: interval,
+    );
+  }
+
+  Future<JsonMap> listCandidates() {
+    return engine.listCandidates(
+      projectRoot: projectRoot,
+      videoId: _requireVideoId(),
+    );
+  }
+
+  Future<List<JsonMap>> getActiveJobs({String jobType = 'analysis'}) async {
+    final payload = await engine.getActiveJobs(
+      projectRoot: projectRoot,
+      videoId: videoId,
+      jobType: jobType,
+    );
+    return _mapList(payload['jobs']);
+  }
+
+  Future<List<JsonMap>> listExports({int limit = 20}) async {
+    final payload = await engine.listExports(
+      projectRoot: projectRoot,
+      limit: limit,
+    );
+    return _mapList(payload['exports']);
+  }
+
+  Future<JsonMap> getStatistics() {
+    return engine.getStatistics(projectRoot: projectRoot);
+  }
+
+  Future<JsonMap> cancelJob({required String jobId}) {
+    return engine.cancelJob(projectRoot: projectRoot, jobId: jobId);
+  }
+
+  Future<JsonMap> waitForJob({
+    required String jobId,
+    Duration interval = const Duration(milliseconds: 200),
+  }) {
+    return engine.waitForJob(
+      projectRoot: projectRoot,
+      jobId: jobId,
+      interval: interval,
+    );
+  }
+
+  String _requireVideoId() {
+    final value = videoId;
+    if (value == null || value.isEmpty) {
+      throw const SessionStateException('当前快照尚未关联视频');
+    }
+    return value;
+  }
+}
+
+List<JsonMap> _mapList(Object? raw) {
+  if (raw is! List) return <JsonMap>[];
+  return raw
+      .whereType<Map>()
+      .map((item) => Map<String, dynamic>.from(item))
+      .toList();
 }
 
 class ProjectSession {
@@ -22,6 +141,33 @@ class ProjectSession {
   String? get projectId => _projectId;
   String? get videoId => _videoId;
 
+  ProjectSessionCheckpoint checkpoint() => ProjectSessionCheckpoint(
+    projectRoot: _projectRoot,
+    projectId: _projectId,
+    videoId: _videoId,
+  );
+
+  void restore(ProjectSessionCheckpoint checkpoint) {
+    _projectRoot = checkpoint.projectRoot;
+    _projectId = checkpoint.projectId;
+    _videoId = checkpoint.videoId;
+  }
+
+  /// 捕获当前项目上下文，供可能跨越项目切换的后台任务使用。
+  ProjectSessionScope snapshot({bool requireVideo = false}) {
+    final root = _requireProjectRoot();
+    final videoId = _videoId;
+    if (requireVideo && (videoId == null || videoId.isEmpty)) {
+      throw const SessionStateException('当前会话尚未关联视频');
+    }
+    return ProjectSessionScope(
+      engine: engine,
+      projectRoot: root,
+      projectId: _projectId,
+      videoId: videoId,
+    );
+  }
+
   Future<JsonMap> createProject({
     required String name,
     required String rootPath,
@@ -34,7 +180,9 @@ class ProjectSession {
       projectId: projectId,
       language: language,
     );
-    _projectRoot = rootPath;
+    _projectRoot = canonicalProjectPath(
+      (payload['project'] as Map?)?['root_path']?.toString() ?? rootPath,
+    );
     _projectId = _nestedId(payload, 'project');
     _videoId = null;
     return payload;
@@ -44,7 +192,9 @@ class ProjectSession {
     final payload = await engine.openProject(projectRoot: projectRoot);
     final project = payload['project'];
     final video = payload['video'];
-    _projectRoot = payload['project_root']?.toString() ?? projectRoot;
+    _projectRoot = canonicalProjectPath(
+      payload['project_root']?.toString() ?? projectRoot,
+    );
     _projectId = project is Map ? project['id']?.toString() : null;
     _videoId = video is Map ? video['id']?.toString() : null;
     return payload;
@@ -52,7 +202,7 @@ class ProjectSession {
 
   Future<JsonMap> deleteProject(String projectRoot) async {
     final payload = await engine.deleteProject(projectRoot: projectRoot);
-    if (_projectRoot == projectRoot) reset();
+    if (_projectRoot == canonicalProjectPath(projectRoot)) reset();
     return payload;
   }
 
@@ -280,20 +430,6 @@ class ProjectSession {
       candidateId: candidateId,
       startMs: startMs,
       endMs: endMs,
-    );
-  }
-
-  Future<JsonMap> exportClips({
-    String mode = 'separate',
-    String? outputDir,
-    String? outputPath,
-  }) {
-    return engine.exportClips(
-      projectRoot: _requireProjectRoot(),
-      videoId: _requireVideoId(),
-      mode: mode,
-      outputDir: outputDir,
-      outputPath: outputPath,
     );
   }
 

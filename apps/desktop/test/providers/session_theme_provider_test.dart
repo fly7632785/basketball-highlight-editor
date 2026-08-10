@@ -171,6 +171,22 @@ void main() {
       final state = container.read(engineBootstrapProvider);
       expect(state.isLoading, isFalse);
     });
+
+    test('concurrent ensure shares one engine startup', () async {
+      final client = FakeEngineClient(
+        startDelay: const Duration(milliseconds: 20),
+      );
+      final container = ProviderContainer(
+        overrides: <Override>[engineClientProvider.overrideWithValue(client)],
+      );
+      addTearDown(container.dispose);
+      final notifier = container.read(engineBootstrapProvider.notifier);
+
+      await Future.wait([notifier.ensure(), notifier.ensure()]);
+
+      expect(client.startCalls, 1);
+      expect(client.helloCalls, 1);
+    });
   });
 
   group('themeModeProvider', () {
@@ -218,8 +234,15 @@ void main() {
 }
 
 class FakeEngineClient extends EngineClient {
+  FakeEngineClient({this.startDelay = Duration.zero});
+
+  final Duration startDelay;
   int startCalls = 0;
   int helloCalls = 0;
+  bool running = false;
+
+  @override
+  bool get isRunning => running;
 
   @override
   Future<void> start({
@@ -229,6 +252,8 @@ class FakeEngineClient extends EngineClient {
     String? extraPath,
   }) async {
     startCalls++;
+    await Future<void>.delayed(startDelay);
+    running = true;
   }
 
   @override

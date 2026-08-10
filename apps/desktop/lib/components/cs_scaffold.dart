@@ -27,20 +27,9 @@ class CsScaffold extends ConsumerStatefulWidget {
 }
 
 class _CsScaffoldState extends ConsumerState<CsScaffold> {
-  int? _lastBranch;
-
   @override
   Widget build(BuildContext context) {
     final shell = widget.shell;
-    final previousBranch = _lastBranch;
-    _lastBranch = shell.currentIndex;
-    if (previousBranch == 0 && shell.currentIndex == 1) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        ref.read(sidebarExtendedProvider.notifier).collapseForProjectCreation();
-      });
-    }
-
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= Breakpoints.md;
@@ -51,8 +40,7 @@ class _CsScaffoldState extends ConsumerState<CsScaffold> {
               children: <Widget>[
                 CsSidebarShell(
                   shell: shell,
-                  extended:
-                      constraints.maxWidth >= Breakpoints.lg && sidebarExtended,
+                  extended: sidebarExtended,
                   onToggle: () =>
                       ref.read(sidebarExtendedProvider.notifier).toggle(),
                 ),
@@ -102,6 +90,7 @@ class CsTopBar extends ConsumerWidget {
     final title = _branchLabels[shell.currentIndex];
     final engineAsync = ref.watch(engineBootstrapProvider);
     final themeMode = ref.watch(themeModeProvider);
+    final projectState = ref.watch(projectProvider);
 
     return Container(
       height: 56,
@@ -126,7 +115,9 @@ class CsTopBar extends ConsumerWidget {
             IconButton(
               tooltip: '关闭当前项目',
               icon: Icon(LucideIcons.folderX, size: 17, color: c.textSecondary),
-              onPressed: () => _confirmCloseProject(context, ref, shell),
+              onPressed: projectState.busy
+                  ? null
+                  : () => _confirmCloseProject(context, ref, shell),
             ),
           if (!compact) ...<Widget>[
             Icon(LucideIcons.shield, size: 12, color: c.textSecondary),
@@ -180,21 +171,21 @@ Future<void> _confirmCloseProject(
 ) async {
   final state = ref.read(projectProvider);
   final session = ref.read(projectSessionProvider);
+  if (state.busy) return;
   if (session.projectRoot == null && state.video == null) {
     shell.goBranch(0);
     return;
   }
 
-  final analyzing =
-      state.job?['state'] == 'queued' || state.job?['state'] == 'running';
+  final analyzing = state.analysisRunning;
+  final exporting = state.exportRunning;
+  final busy = analyzing || exporting;
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: Text(analyzing ? '分析仍在进行' : '关闭当前项目？'),
+      title: Text(busy ? '任务仍在进行' : '关闭当前项目？'),
       content: Text(
-        analyzing
-            ? '关闭项目会先取消当前分析，项目数据和原始视频不会被删除。'
-            : '项目数据和原始视频会保留，下次可以从项目列表重新打开。',
+        busy ? '关闭项目会先取消当前任务，项目数据和原始视频不会被删除。' : '项目数据和原始视频会保留，下次可以从项目列表重新打开。',
       ),
       actions: [
         TextButton(
@@ -203,17 +194,16 @@ Future<void> _confirmCloseProject(
         ),
         FilledButton(
           onPressed: () => Navigator.pop(dialogContext, true),
-          child: Text(analyzing ? '取消分析并关闭' : '关闭项目'),
+          child: Text(busy ? '取消任务并关闭' : '关闭项目'),
         ),
       ],
     ),
   );
   if (confirmed != true || !context.mounted) return;
-  if (analyzing) {
-    await ref.read(projectProvider.notifier).cancelAnalysis();
-  }
-  ref.read(projectProvider.notifier).closeProject();
-  shell.goBranch(0);
+  final closed = busy
+      ? await ref.read(projectProvider.notifier).cancelTasksAndCloseProject()
+      : await ref.read(projectProvider.notifier).closeProjectSafely();
+  if (closed && context.mounted) shell.goBranch(0);
 }
 
 class _EngineStatusChip extends StatelessWidget {

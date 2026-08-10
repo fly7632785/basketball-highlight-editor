@@ -54,18 +54,21 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
       final router = ref.read(appRouterProvider);
       final dialogContext = router.routerDelegate.navigatorKey.currentContext;
       if (dialogContext == null || !dialogContext.mounted) {
-        await windowManager.destroy();
+        final ready = await ref
+            .read(projectProvider.notifier)
+            .prepareForShutdown();
+        if (ready) await windowManager.destroy();
         return;
       }
-      final job = ref.read(projectProvider).job;
-      final analyzing = job?['state'] == 'queued' || job?['state'] == 'running';
+      final state = ref.read(projectProvider);
+      final analyzing = state.analysisRunning;
+      final exporting = state.exportRunning;
+      final busy = analyzing || exporting || state.busy;
       final action = await showDialog<String>(
         context: dialogContext,
         builder: (context) => AlertDialog(
-          title: Text(analyzing ? '分析仍在进行' : '退出 Courtside？'),
-          content: Text(
-            analyzing ? '当前视频还在分析，退出前需要先取消分析。' : '确认关闭软件吗？本地项目数据不会被删除。',
-          ),
+          title: Text(busy ? '任务仍在进行' : '退出 Courtside？'),
+          content: Text(busy ? '当前任务还在进行，退出前需要先取消任务。' : '确认关闭软件吗？本地项目数据不会被删除。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, 'stay'),
@@ -73,15 +76,16 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, 'exit'),
-              child: Text(analyzing ? '取消分析并退出' : '退出软件'),
+              child: Text(busy ? '取消任务并退出' : '退出软件'),
             ),
           ],
         ),
       );
       if (action != 'exit') return;
-      if (analyzing) {
-        await ref.read(projectProvider.notifier).cancelAnalysis();
-      }
+      final ready = await ref
+          .read(projectProvider.notifier)
+          .prepareForShutdown();
+      if (!ready) return;
       await windowManager.destroy();
     } finally {
       _confirmingClose = false;

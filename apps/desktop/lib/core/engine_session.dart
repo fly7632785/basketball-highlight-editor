@@ -332,22 +332,6 @@ class EngineSession {
     });
   }
 
-  Future<JsonMap> exportClips({
-    required String projectRoot,
-    required String videoId,
-    String mode = 'separate',
-    String? outputDir,
-    String? outputPath,
-  }) {
-    return client.request('export_clips', <String, dynamic>{
-      'project_root': projectRoot,
-      'video_id': videoId,
-      'mode': mode,
-      ...?_optionalEntry('output_dir', outputDir),
-      ...?_optionalEntry('output_path', outputPath),
-    });
-  }
-
   Future<JsonMap> startExport({
     required String projectRoot,
     required String videoId,

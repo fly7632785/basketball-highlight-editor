@@ -41,8 +41,13 @@ class CsCard extends StatelessWidget {
 }
 
 class _CardBox extends StatefulWidget {
-  const _CardBox({required this.child, required this.color, required this.border,
-      this.accent, this.onTap});
+  const _CardBox({
+    required this.child,
+    required this.color,
+    required this.border,
+    this.accent,
+    this.onTap,
+  });
   final Widget child;
   final Color color, border;
   final Color? accent;
@@ -53,31 +58,56 @@ class _CardBox extends StatefulWidget {
 
 class _CardBoxState extends State<_CardBox> {
   bool _hover = false;
+  bool _focused = false;
   @override
   Widget build(BuildContext context) {
     final interactive = widget.onTap != null;
     Color bg = widget.color;
-    if (interactive && _hover) bg = Color.alphaBlend(Colors.white.withValues(alpha: 0.04), bg);
-    return MouseRegion(
-      cursor: interactive ? SystemMouseCursors.click : MouseCursor.defer,
-      onEnter: interactive ? (_) => setState(() => _hover = true) : null,
-      onExit: interactive ? (_) => setState(() => _hover = false) : null,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: DurationD.fast,
-          clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(CsRadius.lg),
-            border: Border.all(color: widget.border),
+    if (interactive && _hover) {
+      bg = Color.alphaBlend(Colors.white.withValues(alpha: 0.04), bg);
+    }
+    return Semantics(
+      button: interactive,
+      enabled: interactive,
+      child: FocusableActionDetector(
+        enabled: interactive,
+        mouseCursor: interactive ? SystemMouseCursors.click : MouseCursor.defer,
+        onShowFocusHighlight: (value) => setState(() => _focused = value),
+        actions: <Type, Action<Intent>>{
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              widget.onTap?.call();
+              return null;
+            },
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (widget.accent != null) Container(width: 3, color: widget.accent),
-              Expanded(child: widget.child),
-            ],
+        },
+        child: MouseRegion(
+          onEnter: interactive ? (_) => setState(() => _hover = true) : null,
+          onExit: interactive ? (_) => setState(() => _hover = false) : null,
+          child: GestureDetector(
+            onTap: widget.onTap,
+            child: AnimatedContainer(
+              duration: DurationD.fast,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(CsRadius.lg),
+                border: Border.all(
+                  color: _focused
+                      ? AppColors.of(context).indigo
+                      : widget.border,
+                  width: _focused ? 2 : 1,
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (widget.accent != null)
+                    Container(width: 3, color: widget.accent),
+                  Expanded(child: widget.child),
+                ],
+              ),
+            ),
           ),
         ),
       ),
