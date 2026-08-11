@@ -4,19 +4,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:desktop/theme/app_colors.dart';
 
 void main() {
-  test('dark colors match the editor workspace palette', () {
-    expect(darkAppColors.indigo, const Color(0xFF4D9DFF));
-    expect(darkAppColors.orange, const Color(0xFFFFA62B));
-    expect(darkAppColors.background, const Color(0xFF0F1115));
-    expect(darkAppColors.surface, const Color(0xFF181B21));
+  test('dark brand colors match spec', () {
+    expect(darkAppColors.indigo, const Color(0xFF5E6AD2));
+    expect(darkAppColors.orange, const Color(0xFFFF6B2C));
+    expect(darkAppColors.background, const Color(0xFF0B0E14));
+    expect(darkAppColors.surface, const Color(0xFF121620));
   });
   test('semantic colors distinct', () {
-    expect(darkAppColors.goal, const Color(0xFF48C774));
-    expect(darkAppColors.pending, const Color(0xFFF4C95D));
-    expect(darkAppColors.excluded, const Color(0xFF8D96A5));
+    expect(darkAppColors.goal, const Color(0xFF3FB950));
+    expect(darkAppColors.pending, const Color(0xFFE3B341));
+    expect(darkAppColors.excluded, const Color(0xFF6B7280));
   });
-  test('light palette preserves its orange accent', () {
-    expect(lightAppColors.orange, const Color(0xFFFF9500));
+  test('light orange darkened for contrast', () {
+    expect(lightAppColors.orange, const Color(0xFFF2601D));
   });
   testWidgets('of(context) returns theme extension', (tester) async {
     late AppColors captured;

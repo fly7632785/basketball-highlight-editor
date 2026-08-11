@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
@@ -9,7 +8,6 @@ import 'components/cs_notice_overlay.dart';
 import 'providers/project_state.dart';
 import 'providers/theme_provider.dart';
 import 'router/app_router.dart';
-import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
 
 class CourtsideApp extends ConsumerStatefulWidget {
@@ -102,18 +100,7 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
       theme: appTheme(Brightness.light),
       darkTheme: appTheme(Brightness.dark),
       themeMode: ref.watch(themeModeProvider),
-      builder: (context, child) {
-        final colors = AppColors.of(context);
-        return CupertinoTheme(
-          data: CupertinoThemeData(
-            brightness: Theme.of(context).brightness,
-            primaryColor: colors.indigo,
-            barBackgroundColor: colors.surface,
-            scaffoldBackgroundColor: colors.background,
-          ),
-          child: CsNoticeOverlay(child: child!),
-        );
-      },
+      builder: (context, child) => CsNoticeOverlay(child: child!),
     );
   }
 }

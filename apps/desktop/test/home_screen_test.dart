@@ -40,9 +40,7 @@ class _FakeProjectNotifier extends ProjectNotifier {
 }
 
 void main() {
-  testWidgets('renders project workspace and recent project row', (
-    tester,
-  ) async {
+  testWidgets('renders slogan and recent project card', (tester) async {
     late _FakeProjectNotifier fake;
     await tester.pumpWidget(
       ProviderScope(
@@ -57,11 +55,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('项目库'), findsOneWidget);
-    expect(find.text('最近使用'), findsOneWidget);
+    expect(find.text('把整场比赛，变成你的高光。'), findsOneWidget);
+    expect(find.text('最近项目'), findsOneWidget);
     expect(find.text('周末训练赛'), findsOneWidget);
-    expect(find.text('已保留'), findsOneWidget);
-    expect(find.text('4'), findsOneWidget);
+    expect(find.textContaining('4 保留'), findsOneWidget);
   });
 
   testWidgets('tapping a recent project card opens it', (tester) async {
@@ -103,12 +100,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final menuButton = find.byTooltip('项目操作');
-      expect(menuButton, findsOneWidget);
-      await tester.ensureVisible(menuButton);
-      await tester.tap(menuButton);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('删除项目').first);
+      final deleteButton = find.byTooltip('删除项目');
+      expect(deleteButton, findsOneWidget);
+      await tester.ensureVisible(deleteButton);
+      await tester.tap(deleteButton);
       await tester.pumpAndSettle();
 
       expect(find.text('删除项目？'), findsOneWidget);

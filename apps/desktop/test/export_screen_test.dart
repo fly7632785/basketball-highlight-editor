@@ -39,7 +39,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byTooltip('打开目录'), findsOneWidget);
+    expect(find.text('打开目录'), findsOneWidget);
   });
 }
 

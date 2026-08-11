@@ -1,15 +1,10 @@
 // lib/theme/app_theme.dart
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
 import 'tokens.dart';
 
 ThemeData appTheme(Brightness brightness) {
   final colors = brightness == Brightness.dark ? darkAppColors : lightAppColors;
-  final fontFamily = switch (defaultTargetPlatform) {
-    TargetPlatform.macOS => '.AppleSystemUIFont',
-    _ => 'Inter',
-  };
   final scheme = ColorScheme.fromSeed(
     seedColor: colors.indigo,
     brightness: brightness,
@@ -27,24 +22,24 @@ ThemeData appTheme(Brightness brightness) {
       onSurface: colors.textPrimary,
     ),
     scaffoldBackgroundColor: colors.background,
-    fontFamily: fontFamily,
+    fontFamily: 'Inter',
     extensions: [colors],
   );
   return base.copyWith(
-    textTheme: _buildTextTheme(colors, fontFamily),
+    textTheme: _buildTextTheme(colors),
     cardTheme: CardThemeData(
       color: colors.surface,
       elevation: 0,
       margin: EdgeInsets.zero,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(CsRadius.md),
-        side: BorderSide(color: colors.border.withValues(alpha: 0.75)),
+        borderRadius: BorderRadius.circular(CsRadius.lg),
+        side: BorderSide(color: colors.border),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: colors.surface2,
+      fillColor: colors.surface3,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(CsRadius.md),
         borderSide: BorderSide(color: colors.border),
@@ -57,43 +52,9 @@ ThemeData appTheme(Brightness brightness) {
         borderRadius: BorderRadius.circular(CsRadius.md),
         borderSide: BorderSide(color: colors.indigo, width: 2),
       ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
     ),
     dividerTheme: DividerThemeData(color: colors.border, thickness: 1),
-    iconTheme: IconThemeData(color: colors.textSecondary, size: 18),
-    iconButtonTheme: IconButtonThemeData(
-      style: ButtonStyle(
-        foregroundColor: WidgetStatePropertyAll(colors.textSecondary),
-        overlayColor: WidgetStatePropertyAll(colors.surface3),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(CsRadius.sm),
-          ),
-        ),
-      ),
-    ),
-    dialogTheme: DialogThemeData(
-      backgroundColor: colors.surface,
-      surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(CsRadius.xl),
-      ),
-    ),
-    popupMenuTheme: PopupMenuThemeData(
-      color: colors.surface3,
-      surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(CsRadius.lg),
-      ),
-    ),
-    tooltipTheme: TooltipThemeData(
-      decoration: BoxDecoration(
-        color: colors.surface3,
-        borderRadius: BorderRadius.circular(CsRadius.sm),
-      ),
-      textStyle: TextStyle(color: colors.textPrimary, fontSize: 11),
-      waitDuration: const Duration(milliseconds: 500),
-    ),
     snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
     chipTheme: ChipThemeData(
       backgroundColor: colors.surface3,
@@ -108,7 +69,7 @@ ThemeData appTheme(Brightness brightness) {
       ),
     ),
     navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: colors.surface2,
+      backgroundColor: colors.surface,
       indicatorColor: colors.indigo.withValues(alpha: 0.15),
       labelTextStyle: WidgetStatePropertyAll(
         TextStyle(
@@ -121,64 +82,64 @@ ThemeData appTheme(Brightness brightness) {
   );
 }
 
-TextTheme _buildTextTheme(AppColors colors, String fontFamily) => TextTheme(
+TextTheme _buildTextTheme(AppColors colors) => TextTheme(
   displayLarge: TextStyle(
-    fontFamily: fontFamily,
-    fontSize: 30,
-    fontWeight: FontWeight.w600,
-    height: 1.12,
-    letterSpacing: -0.75,
+    fontFamily: 'Inter',
+    fontSize: 28,
+    fontWeight: FontWeight.w500,
+    height: 1.15,
+    letterSpacing: -0.6,
     color: colors.textPrimary,
   ),
   displayMedium: TextStyle(
-    fontFamily: fontFamily,
-    fontSize: 24,
-    fontWeight: FontWeight.w600,
-    height: 1.18,
-    letterSpacing: -0.45,
+    fontFamily: 'Inter',
+    fontSize: 22,
+    fontWeight: FontWeight.w500,
+    height: 1.2,
+    letterSpacing: -0.35,
     color: colors.textPrimary,
   ),
   titleLarge: TextStyle(
-    fontFamily: fontFamily,
-    fontSize: 20,
-    fontWeight: FontWeight.w600,
-    letterSpacing: -0.25,
+    fontFamily: 'Inter',
+    fontSize: 18,
+    fontWeight: FontWeight.w500,
+    letterSpacing: -0.15,
     color: colors.textPrimary,
   ),
   titleMedium: TextStyle(
-    fontFamily: fontFamily,
+    fontFamily: 'Inter',
     fontSize: 15,
     fontWeight: FontWeight.w500,
     color: colors.textPrimary,
   ),
   bodyLarge: TextStyle(
-    fontFamily: fontFamily,
+    fontFamily: 'Inter',
     fontSize: 14,
     fontWeight: FontWeight.w400,
     height: 1.5,
     color: colors.textPrimary,
   ),
   bodyMedium: TextStyle(
-    fontFamily: fontFamily,
+    fontFamily: 'Inter',
     fontSize: 13,
     fontWeight: FontWeight.w400,
     height: 1.5,
     color: colors.textPrimary,
   ),
   labelLarge: TextStyle(
-    fontFamily: fontFamily,
+    fontFamily: 'Inter',
     fontSize: 13,
     fontWeight: FontWeight.w500,
     color: colors.textPrimary,
   ),
   labelMedium: TextStyle(
-    fontFamily: fontFamily,
+    fontFamily: 'Inter',
     fontSize: 12,
     fontWeight: FontWeight.w500,
     color: colors.textPrimary,
   ),
   labelSmall: TextStyle(
-    fontFamily: fontFamily,
+    fontFamily: 'Inter',
     fontSize: 11,
     fontWeight: FontWeight.w500,
     color: colors.textPrimary,

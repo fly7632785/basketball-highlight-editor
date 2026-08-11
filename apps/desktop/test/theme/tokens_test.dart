@@ -13,7 +13,7 @@ void main() {
   });
   test('breakpoints match spec', () {
     expect(Breakpoints.md, 900);
-    expect(Breakpoints.lg, 1180);
+    expect(Breakpoints.lg, 1280);
   });
   test('durations within Linear range', () {
     expect(DurationD.fast.inMilliseconds, 150);

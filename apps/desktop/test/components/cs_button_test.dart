@@ -2,7 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/cupertino.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:desktop/components/cs_button.dart';
 import 'package:desktop/theme/app_theme.dart';
 import 'package:desktop/theme/app_colors.dart';
@@ -13,7 +13,7 @@ Widget _wrapped(Widget child) => MaterialApp(
 );
 
 void main() {
-  testWidgets('primary renders system blue filled with label', (tester) async {
+  testWidgets('primary renders orange filled with label', (tester) async {
     await tester.pumpWidget(
       _wrapped(
         CsButton(
@@ -29,7 +29,7 @@ void main() {
         matching: find.byType(AnimatedContainer),
       ),
     );
-    expect((ac.decoration as BoxDecoration).color, darkAppColors.indigo);
+    expect((ac.decoration as BoxDecoration).color, darkAppColors.orange);
     expect(find.text('开始分析'), findsOneWidget);
   });
   testWidgets('disabled when onPressed null', (tester) async {
@@ -55,7 +55,7 @@ void main() {
       _wrapped(
         CsButton(
           variant: CsButtonVariant.primary,
-          icon: CupertinoIcons.play_fill,
+          icon: LucideIcons.play,
           label: const Text('x'),
           onPressed: () {},
           isLoading: true,
@@ -64,7 +64,7 @@ void main() {
     );
     await tester.pump();
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(find.byIcon(CupertinoIcons.play_fill), findsNothing);
+    expect(find.byIcon(LucideIcons.play), findsNothing);
   });
 
   testWidgets('can be focused and activated with keyboard', (tester) async {

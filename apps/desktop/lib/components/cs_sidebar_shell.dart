@@ -1,11 +1,15 @@
 // lib/components/cs_sidebar_shell.dart
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
 
+/// 桌面侧栏:`≥ md(900)` 时显示；展开/收缩由用户控制，宽度不足时自动使用折叠态。
+///
+/// Logo(Courtside)+ 4 CsSidebarItem + 底部隐私徽章。导航通过
+/// `shell.goBranch(index)` 切换 StatefulNavigationShell 的当前 branch。
 class CsSidebarShell extends StatelessWidget {
   const CsSidebarShell({
     required this.shell,
@@ -22,44 +26,27 @@ class CsSidebarShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     return Container(
-      width: extended
-          ? WorkspaceMetrics.sidebarExpanded
-          : WorkspaceMetrics.sidebarCollapsed,
+      width: extended ? 232 : 76,
       decoration: BoxDecoration(
-        color: c.surface.withValues(alpha: 0.82),
-        border: Border(
-          right: BorderSide(color: c.border.withValues(alpha: 0.68)),
-        ),
+        color: c.surface,
+        border: Border(right: BorderSide(color: c.border)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           Padding(
             padding: EdgeInsets.fromLTRB(
-              extended ? Spacing.md : 6,
-              Spacing.md,
-              extended ? Spacing.sm : 6,
-              Spacing.md,
+              extended ? Spacing.md : Spacing.xs,
+              Spacing.lg,
+              extended ? Spacing.md : Spacing.xs,
+              Spacing.lg,
             ),
             child: Row(
               mainAxisAlignment: extended
                   ? MainAxisAlignment.start
                   : MainAxisAlignment.center,
               children: <Widget>[
-                Container(
-                  width: 30,
-                  height: 30,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: c.orange.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(CsRadius.sm),
-                  ),
-                  child: Icon(
-                    CupertinoIcons.sportscourt,
-                    size: 17,
-                    color: c.orange,
-                  ),
-                ),
+                Icon(LucideIcons.volleyball, size: 22, color: c.orange),
                 if (extended) ...<Widget>[
                   const SizedBox(width: Spacing.sm),
                   Expanded(
@@ -67,16 +54,16 @@ class CsSidebarShell extends StatelessWidget {
                       'Courtside',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         color: c.textPrimary,
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: -0.25,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.2,
                       ),
                     ),
                   ),
                 ],
-                if (extended) const SizedBox(width: Spacing.xs),
+                const SizedBox(width: Spacing.xs),
                 SizedBox(
-                  width: extended ? 28 : 18,
-                  height: 30,
+                  width: 32,
+                  height: 32,
                   child: IconButton(
                     tooltip: extended ? '收缩侧栏' : '展开侧栏',
                     padding: EdgeInsets.zero,
@@ -84,9 +71,9 @@ class CsSidebarShell extends StatelessWidget {
                     onPressed: onToggle,
                     icon: Icon(
                       extended
-                          ? CupertinoIcons.chevron_left
-                          : CupertinoIcons.chevron_right,
-                      size: 13,
+                          ? LucideIcons.chevronLeft
+                          : LucideIcons.chevronRight,
+                      size: 16,
                       color: c.textSecondary,
                     ),
                   ),
@@ -94,33 +81,33 @@ class CsSidebarShell extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: Spacing.xs),
+          const SizedBox(height: Spacing.md),
           _NavItem(
             shell: shell,
             index: 0,
             label: '项目',
-            icon: CupertinoIcons.rectangle_grid_2x2,
+            icon: LucideIcons.home,
             extended: extended,
           ),
           _NavItem(
             shell: shell,
             index: 1,
             label: '导入',
-            icon: CupertinoIcons.add_circled,
+            icon: LucideIcons.upload,
             extended: extended,
           ),
           _NavItem(
             shell: shell,
             index: 2,
             label: '审核',
-            icon: CupertinoIcons.check_mark_circled,
+            icon: LucideIcons.folderCheck,
             extended: extended,
           ),
           _NavItem(
             shell: shell,
             index: 3,
             label: '导出',
-            icon: CupertinoIcons.arrow_down_to_line,
+            icon: LucideIcons.download,
             extended: extended,
           ),
           const Spacer(),
@@ -134,11 +121,7 @@ class CsSidebarShell extends StatelessWidget {
               ),
               child: Row(
                 children: <Widget>[
-                  Icon(
-                    CupertinoIcons.lock_shield,
-                    size: 12,
-                    color: c.textTertiary,
-                  ),
+                  Icon(LucideIcons.shield, size: 12, color: c.textTertiary),
                   const SizedBox(width: Spacing.xs),
                   Text(
                     '本地处理',
@@ -154,7 +137,7 @@ class CsSidebarShell extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: Spacing.lg),
               child: Center(
                 child: Icon(
-                  CupertinoIcons.lock_shield,
+                  LucideIcons.shield,
                   size: 12,
                   color: c.textTertiary,
                 ),
@@ -193,6 +176,10 @@ class _NavItem extends StatelessWidget {
   }
 }
 
+/// 单个侧栏项。
+///
+/// 选中态:左 3px indigo 条 + indigo 8% 背景 + 文字 w600 + 图标 indigo;
+/// 未选中:textSecondary。折叠态(extended=false)只显示图标 + Tooltip(label)。
 class CsSidebarItem extends StatelessWidget {
   const CsSidebarItem({
     required this.label,
@@ -218,22 +205,20 @@ class CsSidebarItem extends StatelessWidget {
     final iconData = selected ? (selectedIcon ?? icon) : icon;
 
     final inner = Material(
-      color: selected ? c.indigo.withValues(alpha: 0.16) : Colors.transparent,
-      borderRadius: BorderRadius.circular(CsRadius.sm),
+      color: selected ? c.indigo.withValues(alpha: 0.08) : Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(CsRadius.sm),
         onTap: onTap,
         child: Padding(
           padding: EdgeInsets.symmetric(
-            horizontal: extended ? 12 : Spacing.sm,
-            vertical: 10,
+            horizontal: extended ? Spacing.md : Spacing.sm,
+            vertical: Spacing.sm + 2,
           ),
           child: Row(
             mainAxisAlignment: extended
                 ? MainAxisAlignment.start
                 : MainAxisAlignment.center,
             children: <Widget>[
-              Icon(iconData, size: 16, color: fg),
+              Icon(iconData, size: 18, color: fg),
               if (extended) ...<Widget>[
                 const SizedBox(width: Spacing.sm + 2),
                 Text(
@@ -250,12 +235,22 @@ class CsSidebarItem extends StatelessWidget {
       ),
     );
 
+    final withMarker = Stack(
+      children: <Widget>[
+        inner,
+        if (selected)
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: Container(width: 3, color: c.indigo),
+          ),
+      ],
+    );
+
     return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: extended ? Spacing.sm : Spacing.xs,
-        vertical: 2,
-      ),
-      child: extended ? inner : Tooltip(message: label, child: inner),
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: extended ? withMarker : Tooltip(message: label, child: withMarker),
     );
   }
 }

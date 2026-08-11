@@ -2,16 +2,17 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../components/cs_button.dart';
+import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
-import '../../components/cs_workspace.dart';
+import '../../components/cs_step_indicator.dart';
 import '../../providers/project_state.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_theme.dart';
@@ -135,6 +136,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     });
 
     final c = AppColors.of(context);
+    final theme = Theme.of(context);
     final hasVideo = state.videoPath != null;
     final hasRoi = _roi != null;
     final width = (state.video?['width'] as num?)?.toDouble() ?? 16;
@@ -145,115 +147,357 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
         state.analysisRunning ||
         _savingRoi;
 
-    final canAnalyze = hasVideo && hasRoi && _roiSaved && !roiBusy;
-    final canvas = _RoiCanvas(
-      enabled: hasVideo && !roiBusy,
-      previewPath: state.previewPath,
-      aspectRatio: width > 0 && height > 0 ? width / height : 16 / 9,
-      roi: _editingNet ? _netRoi : _roi,
-      secondaryRoi: _editingNet ? _roi : _netRoi,
-      activeColor: _editingNet ? Colors.white : c.indigo,
-      secondaryColor: _editingNet ? c.indigo : Colors.white,
-      activeLabel: _editingNet ? '篮网检测区' : '投篮分析区',
-      secondaryLabel: _editingNet ? '投篮分析区' : '篮网检测区',
-      onRefreshPreview: state.video != null && !roiBusy
-          ? () => ref.read(projectProvider.notifier).refreshPreview()
-          : null,
-      onChanged: (value) => setState(() {
-        if (_editingNet) {
-          _netRoi = value;
-          _netUserEdited = true;
-        } else {
-          _roi = value;
-          _roiSaved = false;
-          _roiUserEdited = true;
-          if (!_netUserEdited) {
-            _netRoi = _recommendedNetRoi(value, state.hoopBbox);
-          }
-        }
-      }),
-      onEditComplete: () => unawaited(_autoSaveRoi()),
-    );
-    final inspector = _ImportCalibrationInspector(
-      state: state,
-      busy: roiBusy,
-      hasVideo: hasVideo,
-      hasRoi: hasRoi,
-      roiSaved: _roiSaved,
-      savingRoi: _savingRoi,
-      editingNet: _editingNet,
-      analysisStartMs: _analysisStartMs,
-      analysisEndMs: _analysisEndMs,
-      videoSummary: state.video == null ? null : _videoSummary(state.video!),
-      workspaceSummary: state.video == null
-          ? null
-          : _workspaceSummary(state.video!),
-      onSelectVideo: _selectVideo,
-      onRangeChanged: (start, end) => setState(() {
-        _analysisStartMs = start;
-        _analysisEndMs = end;
-      }),
-      onRangeCommit: _saveAnalysisRange,
-      onSelectAnalysisRoi: () => setState(() => _editingNet = false),
-      onSelectNetRoi: () => setState(() => _editingNet = true),
-      onResetNetRoi: () {
-        setState(() {
-          _netRoi = _recommendedNetRoi(_roi, state.hoopBbox);
-          _netUserEdited = false;
-          _editingNet = true;
-        });
-        unawaited(_autoSaveRoi());
-      },
-    );
-    return CsWorkspace(
-      title: '导入与校准',
-      subtitle: hasVideo ? '拖拽画布上的区域以校准检测范围' : '选择原始视频后开始校准',
-      actions: <Widget>[
-        CsButton(
-          label: const Text('开始分析'),
-          icon: CupertinoIcons.play_fill,
-          isLoading: state.busy,
-          onPressed: canAnalyze ? _startAnalysis : null,
-        ),
-      ],
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth >= Breakpoints.lg) {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      if (state.roiDetecting) _RoiStatusLine(state: state),
-                      if (state.roiDetecting)
-                        const SizedBox(height: Spacing.sm),
-                      Expanded(child: Center(child: canvas)),
+    final steps = <CsStep>[
+      (
+        index: '01',
+        title: '选择原始视频',
+        icon: LucideIcons.upload,
+        completed: hasVideo,
+      ),
+      (
+        index: '02',
+        title: '框选篮筐区域',
+        icon: LucideIcons.crop,
+        completed: hasRoi && _roiSaved,
+      ),
+    ];
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(Spacing.xl),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1000),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('新建分析项目', style: theme.textTheme.displayMedium),
+              const SizedBox(height: Spacing.sm),
+              Text(
+                '选择原始视频，系统会优先自动定位篮筐，也可以手动调整检测区域。',
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  color: c.textSecondary,
+                ),
+              ),
+              const SizedBox(height: Spacing.xl),
+
+              CsCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CsStepIndicator(steps: steps),
+                    const SizedBox(height: Spacing.xl),
+
+                    // ── 视频选择行 ──
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(Spacing.md),
+                      decoration: BoxDecoration(
+                        color: c.surface2,
+                        borderRadius: BorderRadius.circular(CsRadius.lg),
+                      ),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final path = Row(
+                            children: [
+                              Icon(
+                                LucideIcons.film,
+                                size: 18,
+                                color: c.textSecondary,
+                              ),
+                              const SizedBox(width: Spacing.md),
+                              Expanded(
+                                child: SelectableText(
+                                  state.videoPath ??
+                                      '支持 MP4 / MOV / H.264 / H.265，原始视频不会被复制。',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: hasVideo
+                                        ? c.textPrimary
+                                        : c.textSecondary,
+                                  ),
+                                  maxLines: 2,
+                                ),
+                              ),
+                            ],
+                          );
+                          final picker = CsButton(
+                            label: Text(hasVideo ? '更换视频' : '选择视频'),
+                            icon: LucideIcons.folderOpen,
+                            variant: CsButtonVariant.secondary,
+                            onPressed: roiBusy ? null : _selectVideo,
+                          );
+                          if (constraints.maxWidth < 520) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                path,
+                                const SizedBox(height: Spacing.md),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: picker,
+                                ),
+                              ],
+                            );
+                          }
+                          return Row(
+                            children: [
+                              Expanded(child: path),
+                              const SizedBox(width: Spacing.md),
+                              picker,
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+
+                    // ── 视频信息行 ──
+                    if (state.video != null) ...[
+                      const SizedBox(height: Spacing.sm),
+                      Text(
+                        _videoSummary(state.video!),
+                        style: numericTextStyle(
+                          theme.textTheme.labelSmall!.copyWith(
+                            color: c.textTertiary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: Spacing.xs),
+                      Text(
+                        _workspaceSummary(state.video!),
+                        style: numericTextStyle(
+                          theme.textTheme.labelSmall!.copyWith(
+                            color:
+                                state.video!['disk_space_sufficient'] == false
+                                ? c.error
+                                : c.textTertiary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: Spacing.md),
+                      _AnalysisRangeEditor(
+                        videoPath: state.videoPath,
+                        durationMs:
+                            (state.video!['duration_ms'] as num?)?.toInt() ?? 0,
+                        startMs: _analysisStartMs,
+                        endMs: _analysisEndMs,
+                        enabled: !roiBusy,
+                        onChanged: (start, end) => setState(() {
+                          _analysisStartMs = start;
+                          _analysisEndMs = end;
+                        }),
+                        onCommit: _saveAnalysisRange,
+                      ),
                     ],
+
+                    const SizedBox(height: Spacing.xl),
+
+                    // ── ROI 提示 ──
+                    if (state.roiDetecting) ...[
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: c.indigo,
+                            ),
+                          ),
+                          const SizedBox(width: Spacing.sm),
+                          Expanded(
+                            child: Text(
+                              '正在自动识别篮筐区域，完成后可以继续调整并保存。',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: c.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: Spacing.sm),
+                    ] else if (state.roiSource == 'auto' && hasRoi) ...[
+                      Row(
+                        children: [
+                          Icon(LucideIcons.sparkles, size: 14, color: c.indigo),
+                          const SizedBox(width: Spacing.sm),
+                          Expanded(
+                            child: Text(
+                              state.roiConfidence == null
+                                  ? '已自动识别篮筐区域'
+                                  : '已自动识别篮筐区域 · 置信度 '
+                                        '${(state.roiConfidence! * 100).round()}%',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: c.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: Spacing.sm),
+                    ] else if (state.roiSuggestionError != null) ...[
+                      Text(
+                        '自动识别失败：${state.roiSuggestionError}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: c.error,
+                        ),
+                      ),
+                      const SizedBox(height: Spacing.sm),
+                    ],
+
+                    // ── ROI 画布 ──
+                    _RoiCanvas(
+                      enabled: hasVideo && !roiBusy,
+                      previewPath: state.previewPath,
+                      aspectRatio: width > 0 && height > 0
+                          ? width / height
+                          : 16 / 9,
+                      roi: _editingNet ? _netRoi : _roi,
+                      secondaryRoi: _editingNet ? _roi : _netRoi,
+                      activeColor: _editingNet ? Colors.white : c.indigo,
+                      secondaryColor: _editingNet ? c.indigo : Colors.white,
+                      activeLabel: _editingNet ? '篮网检测区' : '投篮分析区',
+                      secondaryLabel: _editingNet ? '投篮分析区' : '篮网检测区',
+                      onRefreshPreview: state.video != null && !roiBusy
+                          ? () => ref
+                                .read(projectProvider.notifier)
+                                .refreshPreview()
+                          : null,
+                      onChanged: (value) => setState(() {
+                        if (_editingNet) {
+                          _netRoi = value;
+                          _netUserEdited = true;
+                        } else {
+                          _roi = value;
+                          _roiSaved = false;
+                          _roiUserEdited = true;
+                          if (!_netUserEdited) {
+                            _netRoi = _recommendedNetRoi(value, state.hoopBbox);
+                          }
+                        }
+                      }),
+                      onEditComplete: () => unawaited(_autoSaveRoi()),
+                    ),
+                    const SizedBox(height: Spacing.md),
+
+                    Text('校准检测区域', style: theme.textTheme.labelLarge),
+                    const SizedBox(height: Spacing.xs),
+                    Wrap(
+                      spacing: Spacing.sm,
+                      runSpacing: Spacing.xs,
+                      children: [
+                        _CalibrationTargetButton(
+                          index: '1',
+                          label: '投篮分析区',
+                          color: c.indigo,
+                          selected: !_editingNet,
+                          onPressed: hasVideo
+                              ? () => setState(() => _editingNet = false)
+                              : null,
+                        ),
+                        _CalibrationTargetButton(
+                          index: '2',
+                          label: '篮网检测区',
+                          color: Colors.white,
+                          selected: _editingNet,
+                          onPressed: hasVideo
+                              ? () => setState(() => _editingNet = true)
+                              : null,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: Spacing.sm),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(Spacing.sm),
+                      decoration: BoxDecoration(
+                        color: c.surface2,
+                        borderRadius: BorderRadius.circular(CsRadius.sm),
+                        border: Border.all(color: c.border),
+                      ),
+                      child: Text(
+                        _editingNet
+                            ? '正在编辑：篮网检测区（白色）。只包住篮圈下方到网底的白网；不要包含篮板、球员或地面。它只用于辅助判断篮网是否摆动。'
+                            : '正在编辑：投篮分析区（紫色）。覆盖篮板、篮筐、来球轨迹和篮筐下方的落球区域；它可以明显大于篮网。',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: c.textSecondary,
+                          height: 1.45,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: Spacing.sm),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: hasVideo && !roiBusy
+                            ? () => setState(() {
+                                _netRoi = _recommendedNetRoi(
+                                  _roi,
+                                  state.hoopBbox,
+                                );
+                                _netUserEdited = false;
+                                _editingNet = true;
+                              })
+                            : null,
+                        icon: const Icon(Icons.restart_alt_rounded, size: 16),
+                        label: const Text('重置篮网区为推荐范围'),
+                      ),
+                    ),
+                    const SizedBox(height: Spacing.sm),
+
+                    Row(
+                      children: [
+                        SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: _savingRoi
+                              ? CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: c.indigo,
+                                )
+                              : Icon(
+                                  _roiSaved
+                                      ? Icons.cloud_done_outlined
+                                      : Icons.edit_outlined,
+                                  size: 14,
+                                  color: c.textSecondary,
+                                ),
+                        ),
+                        const SizedBox(width: Spacing.xs),
+                        Expanded(
+                          child: Text(
+                            hasRoi
+                                ? (_roiSaved
+                                      ? '区域已自动保存。拖拽或缩放结束后会再次保存。'
+                                      : '调整结束后将自动保存区域。')
+                                : '拖拽覆盖篮筐上方轨迹、篮筐、篮网和下方区域。',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: c.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: Spacing.lg),
+              // ── 开始分析 ──
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  CsButton(
+                    label: const Text('开始分析'),
+                    icon: LucideIcons.play,
+                    isLoading: state.busy,
+                    onPressed: (hasVideo && hasRoi && _roiSaved && !roiBusy)
+                        ? _startAnalysis
+                        : null,
                   ),
-                ),
-                const SizedBox(width: Spacing.md),
-                SizedBox(
-                  width: WorkspaceMetrics.inspectorWidth,
-                  child: SingleChildScrollView(child: inspector),
-                ),
-              ],
-            );
-          }
-          return SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                if (state.roiDetecting) _RoiStatusLine(state: state),
-                if (state.roiDetecting) const SizedBox(height: Spacing.sm),
-                canvas,
-                const SizedBox(height: Spacing.md),
-                inspector,
-              ],
-            ),
-          );
-        },
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -277,331 +521,6 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     return sufficient
         ? '预计工作空间 ${_formatBytes(estimated)} · 可用 ${_formatBytes(available)}'
         : '磁盘空间不足：预计需要 ${_formatBytes(estimated)}，当前可用 ${_formatBytes(available)}';
-  }
-}
-
-class _RoiStatusLine extends StatelessWidget {
-  const _RoiStatusLine({required this.state});
-
-  final ProjectState state;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final text = state.roiDetecting
-        ? '正在自动识别篮筐与篮网区域…'
-        : state.roiSource == 'auto'
-        ? '已自动识别区域'
-        : '手动校准区域';
-    return Row(
-      children: <Widget>[
-        SizedBox(
-          width: 14,
-          height: 14,
-          child: state.roiDetecting
-              ? CircularProgressIndicator(strokeWidth: 2, color: c.indigo)
-              : Icon(
-                  CupertinoIcons.check_mark_circled_solid,
-                  color: c.goal,
-                  size: 14,
-                ),
-        ),
-        const SizedBox(width: Spacing.xs),
-        Text(
-          text,
-          style: Theme.of(
-            context,
-          ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
-        ),
-      ],
-    );
-  }
-}
-
-class _ImportCalibrationInspector extends StatelessWidget {
-  const _ImportCalibrationInspector({
-    required this.state,
-    required this.busy,
-    required this.hasVideo,
-    required this.hasRoi,
-    required this.roiSaved,
-    required this.savingRoi,
-    required this.editingNet,
-    required this.analysisStartMs,
-    required this.analysisEndMs,
-    required this.videoSummary,
-    required this.workspaceSummary,
-    required this.onSelectVideo,
-    required this.onRangeChanged,
-    required this.onRangeCommit,
-    required this.onSelectAnalysisRoi,
-    required this.onSelectNetRoi,
-    required this.onResetNetRoi,
-  });
-
-  final ProjectState state;
-  final bool busy;
-  final bool hasVideo;
-  final bool hasRoi;
-  final bool roiSaved;
-  final bool savingRoi;
-  final bool editingNet;
-  final int analysisStartMs;
-  final int analysisEndMs;
-  final String? videoSummary;
-  final String? workspaceSummary;
-  final VoidCallback onSelectVideo;
-  final void Function(int startMs, int endMs) onRangeChanged;
-  final Future<void> Function(int startMs, int endMs) onRangeCommit;
-  final VoidCallback onSelectAnalysisRoi;
-  final VoidCallback onSelectNetRoi;
-  final VoidCallback onResetNetRoi;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final theme = Theme.of(context);
-    final durationMs = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        InspectorSection(
-          title: '原始视频',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  Icon(CupertinoIcons.film, size: 17, color: c.textTertiary),
-                  const SizedBox(width: Spacing.sm),
-                  Expanded(
-                    child: Text(
-                      state.videoPath?.split('/').last ?? '尚未选择视频',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: hasVideo ? c.textPrimary : c.textSecondary,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: Spacing.sm),
-              SizedBox(
-                width: double.infinity,
-                child: CsButton(
-                  label: Text(hasVideo ? '更换视频' : '选择视频'),
-                  icon: CupertinoIcons.folder_open,
-                  variant: CsButtonVariant.secondary,
-                  onPressed: busy ? null : onSelectVideo,
-                ),
-              ),
-              if (videoSummary != null) ...<Widget>[
-                const SizedBox(height: Spacing.sm),
-                Text(
-                  videoSummary!,
-                  style: numericTextStyle(
-                    theme.textTheme.labelSmall!.copyWith(color: c.textTertiary),
-                  ),
-                ),
-                const SizedBox(height: Spacing.xs),
-                Text(
-                  workspaceSummary ?? '',
-                  style: numericTextStyle(
-                    theme.textTheme.labelSmall!.copyWith(
-                      color: state.video?['disk_space_sufficient'] == false
-                          ? c.error
-                          : c.textTertiary,
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-        if (hasVideo) ...<Widget>[
-          const SizedBox(height: Spacing.md),
-          InspectorSection(
-            title: '分析范围',
-            child: _AnalysisRangeEditor(
-              videoPath: state.videoPath,
-              durationMs: durationMs,
-              startMs: analysisStartMs,
-              endMs: analysisEndMs,
-              enabled: !busy,
-              onChanged: onRangeChanged,
-              onCommit: onRangeCommit,
-            ),
-          ),
-          const SizedBox(height: Spacing.md),
-          InspectorSection(
-            title: '校准区域',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Text(
-                  '在左侧画布拖动或缩放选区；修改会自动保存。',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: c.textSecondary,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: Spacing.sm),
-                _CalibrationTargetButton(
-                  index: '1',
-                  label: '投篮分析区',
-                  color: c.indigo,
-                  selected: !editingNet,
-                  onPressed: busy ? null : onSelectAnalysisRoi,
-                ),
-                const SizedBox(height: Spacing.xs),
-                _CalibrationTargetButton(
-                  index: '2',
-                  label: '篮网检测区',
-                  color: Colors.white,
-                  selected: editingNet,
-                  onPressed: busy ? null : onSelectNetRoi,
-                ),
-                const SizedBox(height: Spacing.sm),
-                Container(
-                  padding: const EdgeInsets.all(Spacing.sm),
-                  decoration: BoxDecoration(
-                    color: c.surface2,
-                    borderRadius: BorderRadius.circular(CsRadius.sm),
-                  ),
-                  child: Text(
-                    editingNet
-                        ? '白色区域只包住篮圈下方到网底的篮网，不要包含篮板、球员或地面。'
-                        : '蓝色区域需覆盖来球轨迹、篮筐、篮网和下方落球区域。',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: c.textSecondary,
-                      height: 1.45,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: Spacing.xs),
-                TextButton.icon(
-                  onPressed: busy ? null : onResetNetRoi,
-                  icon: const Icon(
-                    CupertinoIcons.arrow_counterclockwise,
-                    size: 15,
-                  ),
-                  label: const Text('恢复推荐篮网区'),
-                ),
-                const SizedBox(height: Spacing.xs),
-                _SaveStateLine(
-                  hasRoi: hasRoi,
-                  roiSaved: roiSaved,
-                  savingRoi: savingRoi,
-                ),
-                if (state.roiSuggestionError != null) ...<Widget>[
-                  const SizedBox(height: Spacing.sm),
-                  Text(
-                    '自动识别未完成：${state.roiSuggestionError}',
-                    style: theme.textTheme.labelSmall?.copyWith(color: c.error),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: Spacing.md),
-          _AnalysisReadyHint(hasRoi: hasRoi, roiSaved: roiSaved, busy: busy),
-        ],
-      ],
-    );
-  }
-}
-
-class _SaveStateLine extends StatelessWidget {
-  const _SaveStateLine({
-    required this.hasRoi,
-    required this.roiSaved,
-    required this.savingRoi,
-  });
-
-  final bool hasRoi;
-  final bool roiSaved;
-  final bool savingRoi;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final icon = savingRoi
-        ? SizedBox(
-            width: 13,
-            height: 13,
-            child: CircularProgressIndicator(strokeWidth: 2, color: c.indigo),
-          )
-        : Icon(
-            roiSaved
-                ? CupertinoIcons.check_mark_circled_solid
-                : CupertinoIcons.pencil,
-            size: 13,
-            color: roiSaved ? c.goal : c.textSecondary,
-          );
-    final text = !hasRoi
-        ? '请先框选投篮分析区。'
-        : roiSaved
-        ? '校准区域已自动保存。'
-        : '调整结束后会自动保存。';
-    return Row(
-      children: <Widget>[
-        icon,
-        const SizedBox(width: Spacing.xs),
-        Expanded(
-          child: Text(
-            text,
-            style: Theme.of(
-              context,
-            ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _AnalysisReadyHint extends StatelessWidget {
-  const _AnalysisReadyHint({
-    required this.hasRoi,
-    required this.roiSaved,
-    required this.busy,
-  });
-
-  final bool hasRoi;
-  final bool roiSaved;
-  final bool busy;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final message = busy
-        ? '正在处理当前项目，请稍候。'
-        : !hasRoi
-        ? '完成投篮分析区框选后即可开始分析。'
-        : !roiSaved
-        ? '等待区域自动保存后即可开始分析。'
-        : '校准完成，可从顶部开始分析。';
-    return Row(
-      children: <Widget>[
-        Icon(
-          hasRoi && roiSaved && !busy
-              ? CupertinoIcons.checkmark_seal_fill
-              : CupertinoIcons.info_circle,
-          size: 15,
-          color: hasRoi && roiSaved && !busy ? c.goal : c.textTertiary,
-        ),
-        const SizedBox(width: Spacing.xs),
-        Expanded(
-          child: Text(
-            message,
-            style: Theme.of(
-              context,
-            ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
-          ),
-        ),
-      ],
-    );
   }
 }
 
@@ -855,8 +774,8 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
                 onPressed: _ready ? () => unawaited(_togglePlayback()) : null,
                 icon: Icon(
                   _player?.state.playing == true
-                      ? CupertinoIcons.pause_fill
-                      : CupertinoIcons.play_fill,
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
                 ),
               ),
               const SizedBox(width: Spacing.xs),
@@ -915,7 +834,7 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
                         unawaited(_commitRange(0, widget.durationMs));
                       }
                     : null,
-                icon: const Icon(CupertinoIcons.arrow_up_arrow_down, size: 16),
+                icon: const Icon(Icons.unfold_more_rounded, size: 16),
                 label: const Text('使用全片'),
               ),
             ],
@@ -1123,7 +1042,7 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                           else if (!widget.enabled)
                             const Center(
                               child: CsEmptyState(
-                                icon: CupertinoIcons.lock_fill,
+                                icon: LucideIcons.lock,
                                 title: '请先选择视频',
                                 description: '选择原始视频后即可框选篮筐区域。',
                               ),
@@ -1131,14 +1050,14 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                           else if (widget.previewPath != null)
                             Center(
                               child: CsEmptyState(
-                                icon: CupertinoIcons.exclamationmark_triangle,
+                                icon: LucideIcons.circleAlert,
                                 title: '预览帧不可用',
                                 description: '视频元数据已读取，可以重新生成预览后继续框选。',
                                 action: widget.onRefreshPreview == null
                                     ? null
                                     : CsButton(
                                         label: const Text('重新生成预览'),
-                                        icon: CupertinoIcons.arrow_clockwise,
+                                        icon: LucideIcons.refreshCw,
                                         variant: CsButtonVariant.secondary,
                                         size: CsButtonSize.sm,
                                         onPressed: widget.onRefreshPreview,
@@ -1148,14 +1067,14 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                           else
                             Center(
                               child: CsEmptyState(
-                                icon: CupertinoIcons.film,
+                                icon: LucideIcons.film,
                                 title: '正在准备视频预览',
                                 description: '预览准备好后即可拖拽框选篮筐区域。',
                                 action: widget.onRefreshPreview == null
                                     ? null
                                     : CsButton(
                                         label: const Text('生成预览'),
-                                        icon: CupertinoIcons.arrow_clockwise,
+                                        icon: LucideIcons.refreshCw,
                                         variant: CsButtonVariant.secondary,
                                         size: CsButtonSize.sm,
                                         onPressed: widget.onRefreshPreview,
@@ -1197,7 +1116,7 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                         IconButton(
                           tooltip: '缩小',
                           onPressed: _zoom > 1 ? () => _changeZoom(-0.5) : null,
-                          icon: const Icon(CupertinoIcons.minus, size: 16),
+                          icon: const Icon(Icons.remove_rounded, size: 16),
                           constraints: const BoxConstraints.tightFor(
                             width: 30,
                             height: 30,
@@ -1211,7 +1130,7 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                         IconButton(
                           tooltip: '放大',
                           onPressed: _zoom < 4 ? () => _changeZoom(0.5) : null,
-                          icon: const Icon(CupertinoIcons.add, size: 16),
+                          icon: const Icon(Icons.add_rounded, size: 16),
                           constraints: const BoxConstraints.tightFor(
                             width: 30,
                             height: 30,
@@ -1221,7 +1140,7 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                         IconButton(
                           tooltip: '适应画面',
                           onPressed: _zoom > 1 ? _resetZoom : null,
-                          icon: const Icon(CupertinoIcons.fullscreen, size: 15),
+                          icon: const Icon(Icons.fit_screen_outlined, size: 15),
                           constraints: const BoxConstraints.tightFor(
                             width: 30,
                             height: 30,

@@ -4,7 +4,7 @@ abstract final class Spacing {
 }
 
 abstract final class CsRadius {
-  static const double xs = 4, sm = 8, md = 12, lg = 16, xl = 20, full = 999;
+  static const double xs = 4, sm = 6, md = 8, lg = 12, xl = 16, full = 999;
 }
 
 abstract final class DurationD {
@@ -14,13 +14,5 @@ abstract final class DurationD {
 }
 
 abstract final class Breakpoints {
-  static const double sm = 640, md = 900, lg = 1180, xl = 1536;
-}
-
-abstract final class WorkspaceMetrics {
-  static const double sidebarCollapsed = 60;
-  static const double sidebarExpanded = 220;
-  static const double globalBarHeight = 40;
-  static const double pageBarHeight = 52;
-  static const double inspectorWidth = 320;
+  static const double sm = 640, md = 900, lg = 1280, xl = 1536;
 }

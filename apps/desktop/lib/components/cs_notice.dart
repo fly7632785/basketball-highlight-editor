@@ -1,7 +1,7 @@
 // lib/components/cs_notice.dart
 import 'dart:async';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../providers/notice_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
@@ -49,16 +49,10 @@ class _CsNoticeState extends State<CsNotice>
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final (color, icon) = switch (widget.message.severity) {
-      NoticeSeverity.success => (
-        c.success,
-        CupertinoIcons.check_mark_circled_solid,
-      ),
-      NoticeSeverity.error => (c.error, CupertinoIcons.xmark_circle_fill),
-      NoticeSeverity.warning => (
-        c.warning,
-        CupertinoIcons.exclamationmark_triangle_fill,
-      ),
-      NoticeSeverity.info => (c.indigo, CupertinoIcons.info_circle_fill),
+      NoticeSeverity.success => (c.success, LucideIcons.circleCheck),
+      NoticeSeverity.error => (c.error, LucideIcons.circleX),
+      NoticeSeverity.warning => (c.warning, LucideIcons.triangleAlert),
+      NoticeSeverity.info => (c.indigo, LucideIcons.info),
     };
     return MouseRegion(
       onEnter: (_) => _timer?.cancel(),
@@ -79,8 +73,8 @@ class _CsNoticeState extends State<CsNotice>
               ),
               decoration: BoxDecoration(
                 color: c.surface.withValues(alpha: 0.97),
-                borderRadius: BorderRadius.circular(CsRadius.lg),
-                border: Border.all(color: c.border.withValues(alpha: 0.82)),
+                borderRadius: BorderRadius.circular(CsRadius.md),
+                border: Border.all(color: color.withValues(alpha: 0.38)),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.22),
@@ -145,7 +139,7 @@ class _CsNoticeState extends State<CsNotice>
                     label: '关闭提示',
                     child: IconButton(
                       icon: Icon(
-                        CupertinoIcons.xmark,
+                        LucideIcons.x,
                         size: 14,
                         color: c.textTertiary,
                       ),

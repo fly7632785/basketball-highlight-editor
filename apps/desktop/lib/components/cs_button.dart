@@ -88,9 +88,9 @@ class CsButton extends StatelessWidget {
     CsButtonVariant.ghost => c.textSecondary,
   };
   Color _background(AppColors c) => switch (variant) {
-    CsButtonVariant.primary => c.indigo,
+    CsButtonVariant.primary => c.orange,
     CsButtonVariant.danger => c.error,
-    CsButtonVariant.secondary => c.surface2,
+    CsButtonVariant.secondary => Colors.transparent,
     CsButtonVariant.ghost => Colors.transparent,
   };
 }
@@ -119,14 +119,14 @@ class _RawState extends State<_Raw> {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     Color bg = widget.background;
-    final border = widget.background == Colors.transparent
-        ? Colors.transparent
-        : c.borderStrong.withValues(alpha: 0.72);
+    Color border = Colors.transparent;
     if (widget.background == Colors.transparent) {
+      // secondary / ghost
+      border = widget.onTap == null ? c.border : c.borderStrong;
       if (_hover && widget.enabled) bg = c.surface2;
     } else if (_hover && widget.enabled) {
       bg = Color.alphaBlend(
-        Colors.white.withValues(alpha: 0.08),
+        Colors.white.withValues(alpha: 0.10),
         widget.background,
       );
     }
