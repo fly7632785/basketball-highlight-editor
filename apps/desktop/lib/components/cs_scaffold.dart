@@ -93,8 +93,8 @@ class CsTopBar extends ConsumerWidget {
     final projectState = ref.watch(projectProvider);
 
     return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: Spacing.lg),
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
       decoration: BoxDecoration(
         color: c.surface,
         border: Border(bottom: BorderSide(color: c.border)),
@@ -103,7 +103,7 @@ class CsTopBar extends ConsumerWidget {
         children: <Widget>[
           Text(
             title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
               color: c.textPrimary,
               fontWeight: FontWeight.w500,
             ),

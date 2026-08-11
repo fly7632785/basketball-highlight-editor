@@ -14,9 +14,11 @@ Future<void> main() async {
     size: Size(1440, 900),
     minimumSize: Size(1180, 720),
     center: true,
+    backgroundColor: Color(0xFF0B0E14),
     titleBarStyle: TitleBarStyle.normal,
   );
   windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.setBrightness(Brightness.dark);
     await windowManager.show();
     await windowManager.focus();
   });

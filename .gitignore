@@ -13,6 +13,7 @@ data/artifacts/
 third_party/
 third_party/*/weights/
 third_party/*/models/
+design-system/courtside/pages/
 
 # Local agent instructions and generated UI preview state.
 .agents/

@@ -5,9 +5,32 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
 
 import 'package:desktop/features/review/review_screen.dart';
+import 'package:desktop/features/review/media_readiness.dart';
 import 'package:desktop/providers/project_state.dart';
 
 void main() {
+  test('waits for a positive media duration before playback', () async {
+    final duration = await waitForPlayableDuration(
+      current: Duration.zero,
+      updates: Stream<Duration>.fromIterable(const [
+        Duration.zero,
+        Duration.zero,
+        Duration(seconds: 9),
+      ]),
+    );
+
+    expect(duration, const Duration(seconds: 9));
+  });
+
+  test('uses an already available media duration immediately', () async {
+    final duration = await waitForPlayableDuration(
+      current: const Duration(seconds: 9),
+      updates: const Stream<Duration>.empty(),
+    );
+
+    expect(duration, const Duration(seconds: 9));
+  });
+
   testWidgets(
     'shows analysis progress instead of an unexplained waiting state',
     (tester) async {
@@ -23,6 +46,21 @@ void main() {
       expect(find.text('分析进行中'), findsOneWidget);
     },
   );
+
+  testWidgets('shows total duration after analysis completes', (tester) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {
+          'state': 'completed',
+          'started_at': '2026-08-11T10:00:00.000+00:00',
+          'finished_at': '2026-08-11T10:12:30.000+00:00',
+        },
+      ),
+    );
+
+    expect(find.text('分析完成 · 0 个候选 · 用时 12:30'), findsOneWidget);
+  });
 
   testWidgets('shows recovery action for an interrupted analysis', (
     tester,
@@ -80,6 +118,25 @@ void main() {
 
     expect(find.byType(SingleChildScrollView), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('uses a flat divider on a wide review workbench', (tester) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+          },
+        ],
+      ),
+    );
+
+    expect(find.byType(VerticalDivider), findsOneWidget);
   });
 
   testWidgets('narrow workbench adapts at phone and tablet widths', (
@@ -180,6 +237,13 @@ void main() {
       expect(find.text('音频支持'), findsNothing);
       expect(find.text('反弹判断'), findsOneWidget);
       expect(find.text('系统说明'), findsOneWidget);
+      expect(find.byTooltip('综合轨迹穿框、篮网运动和反弹等信号得出，只用于排序和辅助审核。'), findsOneWidget);
+      expect(find.byTooltip('判断篮球轨迹是否从篮筐上方进入，并在篮筐横向范围内向下穿过。'), findsOneWidget);
+      expect(
+        find.byTooltip('检测白色篮网区域在球经过后的运动强度；光线、球员遮挡会影响该信号。'),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('检测篮球撞框后向上或向外回弹；出现反弹通常降低进球可能性。'), findsOneWidget);
       expect(find.text('候选 00:12'), findsOneWidget);
       expect(find.text('片段 00:06 - 00:15 · 时长 9 秒'), findsOneWidget);
       expect(find.text('补篮后进球'), findsOneWidget);
@@ -247,10 +311,10 @@ void main() {
       ),
     );
 
-    expect(find.byTooltip('关闭标注'), findsOneWidget);
-    await tester.tap(find.byTooltip('关闭标注'));
+    expect(find.byTooltip('关闭标注（A）'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
     await tester.pump();
-    expect(find.byTooltip('显示标注'), findsOneWidget);
+    expect(find.byTooltip('显示标注（A）'), findsOneWidget);
   });
 
   testWidgets('shows keyboard shortcut help on the candidate panel', (
@@ -273,7 +337,7 @@ void main() {
 
     expect(
       find.byTooltip(
-        '快捷键\nSpace  播放/暂停\nR  重播当前\nL  循环当前\n↑ / ↓  切换候选\n← / →  快退/快进 3 秒\nC / Enter  保留\nX / Backspace  排除\nCmd/Ctrl+Z  撤销',
+        '快捷键\nSpace  播放/暂停\nR  重播当前\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒\nC / Enter  保留\nX / Backspace  排除\nCmd/Ctrl+Z  撤销',
       ),
       findsOneWidget,
     );

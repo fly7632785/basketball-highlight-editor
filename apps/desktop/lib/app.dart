@@ -20,12 +20,32 @@ class CourtsideApp extends ConsumerStatefulWidget {
 class _CourtsideAppState extends ConsumerState<CourtsideApp>
     with WindowListener {
   bool _confirmingClose = false;
+  late final ProviderSubscription<ThemeMode> _themeSubscription;
 
   @override
   void initState() {
     super.initState();
     windowManager.addListener(this);
     unawaited(_enableWindowCloseGuard());
+    _themeSubscription = ref.listenManual<ThemeMode>(
+      themeModeProvider,
+      (_, next) => unawaited(_syncNativeWindowBrightness(next)),
+      fireImmediately: true,
+    );
+  }
+
+  Future<void> _syncNativeWindowBrightness(ThemeMode mode) async {
+    final brightness = switch (mode) {
+      ThemeMode.light => Brightness.light,
+      ThemeMode.dark => Brightness.dark,
+      ThemeMode.system =>
+        WidgetsBinding.instance.platformDispatcher.platformBrightness,
+    };
+    try {
+      await windowManager.setBrightness(brightness);
+    } catch (_) {
+      // Widget tests and non-desktop hosts do not expose the native channel.
+    }
   }
 
   Future<void> _enableWindowCloseGuard() async {
@@ -38,6 +58,7 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
 
   @override
   void dispose() {
+    _themeSubscription.close();
     windowManager.removeListener(this);
     super.dispose();
   }
