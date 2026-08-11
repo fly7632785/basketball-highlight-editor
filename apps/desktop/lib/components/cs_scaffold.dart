@@ -1,8 +1,8 @@
 // lib/components/cs_scaffold.dart
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../providers/session_provider.dart';
 import '../providers/project_state.dart';
@@ -13,10 +13,6 @@ import '../theme/tokens.dart';
 import 'cs_bottom_nav.dart';
 import 'cs_sidebar_shell.dart';
 
-/// 自适应 shell:宽窗(≥ md)侧栏 + 内容;窄窗内容 + 底栏。
-///
-/// LayoutBuilder 切换两种布局。两种布局均在内容顶部保留 CsTopBar(标题 +
-/// Engine 状态胶囊 + 隐私徽章 + 主题切换)。侧栏状态会持久化，创建项目后默认收缩。
 class CsScaffold extends ConsumerStatefulWidget {
   const CsScaffold({required this.shell, super.key});
 
@@ -70,14 +66,6 @@ class _CsScaffoldState extends ConsumerState<CsScaffold> {
   }
 }
 
-const List<String> _branchLabels = <String>['项目', '导入', '审核', '导出'];
-
-/// 顶部条:branch 标题 + Engine 胶囊 + 隐私徽章 + 主题切换 IconButton。
-///
-/// 放在 cs_scaffold.dart 内(与 Scaffold 同文件,无独立 spec 章节)。Engine
-/// 状态胶囊通过私有 _EngineStatusChip 渲染,使用 AppColors 的语义色而非
-/// CsStatusChip 的 ReviewStatus(因为 Engine 的 loading/error/ready 三态
-/// 语义不是 goal/pending/excluded,自定义胶囊更直接)。
 class CsTopBar extends ConsumerWidget {
   const CsTopBar({required this.shell, this.compact = false, super.key});
 
@@ -87,40 +75,49 @@ class CsTopBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final c = AppColors.of(context);
-    final title = _branchLabels[shell.currentIndex];
     final engineAsync = ref.watch(engineBootstrapProvider);
     final themeMode = ref.watch(themeModeProvider);
     final projectState = ref.watch(projectProvider);
+    final projectLabel = _activeProjectLabel(projectState);
 
     return Container(
-      height: 56,
+      height: WorkspaceMetrics.globalBarHeight,
       padding: const EdgeInsets.symmetric(horizontal: Spacing.lg),
       decoration: BoxDecoration(
         color: c.surface,
-        border: Border(bottom: BorderSide(color: c.border)),
+        border: Border(
+          bottom: BorderSide(color: c.border.withValues(alpha: 0.7)),
+        ),
       ),
       child: Row(
         children: <Widget>[
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: c.textPrimary,
-              fontWeight: FontWeight.w500,
+          Icon(CupertinoIcons.film, size: 14, color: c.textTertiary),
+          const SizedBox(width: Spacing.sm),
+          Flexible(
+            child: Text(
+              projectLabel ?? '本地视频工作区',
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: projectLabel == null ? c.textTertiary : c.textSecondary,
+              ),
             ),
           ),
-          const SizedBox(width: Spacing.md),
           _EngineStatusChip(async: engineAsync),
           const Spacer(),
           if (shell.currentIndex != 0)
             IconButton(
               tooltip: '关闭当前项目',
-              icon: Icon(LucideIcons.folderX, size: 17, color: c.textSecondary),
+              icon: Icon(
+                CupertinoIcons.xmark_circle,
+                size: 17,
+                color: c.textSecondary,
+              ),
               onPressed: projectState.busy
                   ? null
                   : () => _confirmCloseProject(context, ref, shell),
             ),
           if (!compact) ...<Widget>[
-            Icon(LucideIcons.shield, size: 12, color: c.textSecondary),
+            Icon(CupertinoIcons.lock_shield, size: 12, color: c.textSecondary),
             const SizedBox(width: Spacing.xs),
             Text(
               '本地处理',
@@ -134,10 +131,10 @@ class CsTopBar extends ConsumerWidget {
             tooltip: '切换主题',
             icon: Icon(
               themeMode == ThemeMode.dark
-                  ? LucideIcons.moon
+                  ? CupertinoIcons.moon
                   : themeMode == ThemeMode.light
-                  ? LucideIcons.sun
-                  : LucideIcons.monitor,
+                  ? CupertinoIcons.sun_max
+                  : CupertinoIcons.device_desktop,
               size: 18,
               color: c.textSecondary,
             ),
@@ -150,6 +147,22 @@ class CsTopBar extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  static String? _activeProjectLabel(ProjectState state) {
+    final video = state.video;
+    if (video == null) return null;
+    final values = <Object?>[
+      video['display_name'],
+      video['filename'],
+      video['file_name'],
+      video['name'],
+    ];
+    for (final value in values) {
+      final text = value?.toString().trim();
+      if (text != null && text.isNotEmpty) return text;
+    }
+    return null;
   }
 
   static ThemeMode _nextThemeMode(ThemeMode current) {
@@ -216,16 +229,18 @@ class _EngineStatusChip extends StatelessWidget {
     final c = AppColors.of(context);
     final (label, color, icon) = async.when(
       data: (v) => v
-          ? ('Engine 就绪', c.goal, LucideIcons.circleCheck)
-          : ('Engine 未启动', c.excluded, LucideIcons.ban),
-      loading: () => ('等待 Engine', c.pending, LucideIcons.hourglass),
-      error: (_, _) => ('Engine 错误', c.error, LucideIcons.circleAlert),
+          ? ('Engine 就绪', c.goal, CupertinoIcons.check_mark_circled_solid)
+          : ('Engine 未启动', c.excluded, CupertinoIcons.xmark_circle),
+      loading: () => ('等待 Engine', c.pending, CupertinoIcons.clock),
+      error: (_, _) =>
+          ('Engine 错误', c.error, CupertinoIcons.exclamationmark_circle),
     );
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: Spacing.sm, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.16),
+        color: color.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(CsRadius.full),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

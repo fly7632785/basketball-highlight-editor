@@ -1,23 +1,17 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../components/cs_button.dart';
-import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
-import '../../components/cs_metric_tile.dart';
 import '../../components/cs_skeleton.dart';
-import '../../components/cs_status_chip.dart';
-import '../../components/cs_step_indicator.dart';
+import '../../components/cs_workspace.dart';
+import '../../components/media_project_row.dart';
 import '../../providers/project_state.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
 
-/// Home 屏:Hero slogan + 主 CTA / 当前项目 metrics / 最近项目网格 / 工作流指示。
-///
-/// 所有数据来自 [projectProvider];导航用 `context.go`,打开项目走
-/// `ProjectNotifier.chooseOpenProject` / `openProject`(目录选择器在 notifier 内)。
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({this.onProjectOpened, super.key});
 
@@ -27,24 +21,6 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(projectProvider);
     final notifier = ref.read(projectProvider.notifier);
-    final c = AppColors.of(context);
-    final theme = Theme.of(context);
-
-    final included = state.candidates
-        .where(
-          (it) =>
-              it['selection_status']?.toString() != 'excluded' &&
-              it['review_status']?.toString() != 'excluded',
-        )
-        .length;
-    final excluded = state.candidates
-        .where(
-          (it) =>
-              it['selection_status']?.toString() == 'excluded' ||
-              it['review_status']?.toString() == 'excluded',
-        )
-        .length;
-    final durationMs = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
     final busy = state.busy || state.exportRunning || state.analysisRunning;
 
     Future<void> openProject() async {
@@ -58,9 +34,7 @@ class HomeScreen extends ConsumerWidget {
     }
 
     Future<void> openRecentProject(String root) async {
-      if (await notifier.openProject(root)) {
-        onProjectOpened?.call();
-      }
+      if (await notifier.openProject(root)) onProjectOpened?.call();
     }
 
     Future<void> deleteRecentProject(Map<String, dynamic> item) async {
@@ -72,222 +46,159 @@ class HomeScreen extends ConsumerWidget {
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('删除项目？'),
-          content: Text('将删除“$name”的项目数据库、分析缓存和导出文件，原始视频不会被删除。'),
-          actions: [
+          content: Text('将删除“$name”的分析记录和导出文件，原始视频不会被删除。'),
+          actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
               child: const Text('取消'),
             ),
-            FilledButton.tonal(
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.of(dialogContext).error,
+              ),
               onPressed: () => Navigator.pop(dialogContext, true),
               child: const Text('删除项目'),
             ),
           ],
         ),
       );
-      if (confirmed == true) {
-        await notifier.deleteProject(root);
-        await notifier.loadRecentProjects();
-      }
+      if (confirmed != true) return;
+      await notifier.deleteProject(root);
+      await notifier.loadRecentProjects();
     }
 
-    final steps = <CsStep>[
-      (
-        index: '01',
-        title: '导入视频',
-        icon: LucideIcons.upload,
-        completed: state.video != null,
-      ),
-      (
-        index: '02',
-        title: '框选 ROI',
-        icon: LucideIcons.crop,
-        completed: state.roiSource != null,
-      ),
-      (
-        index: '03',
-        title: '分析扫描',
-        icon: LucideIcons.scanLine,
-        completed: state.job?['state'] == 'completed',
-      ),
-      (
-        index: '04',
-        title: '审核候选',
-        icon: LucideIcons.checkCheck,
-        completed: state.candidates.isNotEmpty,
-      ),
-      (
-        index: '05',
-        title: '导出集锦',
-        icon: LucideIcons.share,
-        completed: state.exportHistory.isNotEmpty,
-      ),
-    ];
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(Spacing.xl),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ── Hero ──
-              Text('把整场比赛，变成你的高光。', style: theme.textTheme.displayLarge),
-              const SizedBox(height: Spacing.sm),
+    return CsWorkspace(
+      title: '项目库',
+      subtitle: state.recentLoading ? '正在同步本机项目' : '本机项目',
+      actions: <Widget>[
+        IconButton(
+          tooltip: '刷新最近项目',
+          onPressed: state.recentLoading || busy
+              ? null
+              : () => notifier.loadRecentProjects(),
+          icon: const Icon(CupertinoIcons.arrow_clockwise),
+        ),
+        CsButton(
+          label: const Text('打开项目'),
+          icon: CupertinoIcons.folder_open,
+          variant: CsButtonVariant.secondary,
+          onPressed: busy ? null : openProject,
+        ),
+        CsButton(
+          label: const Text('新建项目'),
+          icon: CupertinoIcons.add,
+          onPressed: busy ? null : startNewProject,
+        ),
+      ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          if (state.video != null) ...<Widget>[
+            _ActiveProjectStrip(state: state),
+            const SizedBox(height: Spacing.lg),
+          ],
+          Row(
+            children: <Widget>[
+              Text('最近使用', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(width: Spacing.sm),
               Text(
-                '导入固定机位视频，本地分析候选进球，剔除误检后导出集锦。'
-                '所有处理在本机完成，原始视频不会被复制或上传。',
-                style: theme.textTheme.bodyLarge?.copyWith(
-                  color: c.textSecondary,
+                '${state.recentProjects.length} 个项目',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppColors.of(context).textTertiary,
                 ),
               ),
-              const SizedBox(height: Spacing.xxl),
-
-              // ── 主 CTA + 当前项目 metrics ──
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final wide = constraints.maxWidth >= Breakpoints.md;
-                  final ctaCard = CsCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              LucideIcons.sparkles,
-                              size: 20,
-                              color: c.indigo,
-                            ),
-                            const SizedBox(width: Spacing.sm),
-                            Text('从视频开始', style: theme.textTheme.titleLarge),
-                          ],
-                        ),
-                        const SizedBox(height: Spacing.sm),
-                        Text(
-                          '选择一段固定机位录像，系统会优先自动定位篮筐，'
-                          '随后生成候选进球片段供你审核与导出。',
-                          style: theme.textTheme.bodyLarge?.copyWith(
-                            color: c.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(height: Spacing.lg),
-                        Wrap(
-                          spacing: Spacing.sm,
-                          runSpacing: Spacing.sm,
-                          children: [
-                            CsButton(
-                              label: const Text('新建项目'),
-                              icon: LucideIcons.plus,
-                              onPressed: busy ? null : startNewProject,
-                            ),
-                            CsButton(
-                              label: const Text('打开项目'),
-                              icon: LucideIcons.folderOpen,
-                              variant: CsButtonVariant.secondary,
-                              onPressed: busy ? null : openProject,
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  );
-                  final metricsCard = CsCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text('当前项目', style: theme.textTheme.titleMedium),
-                        const SizedBox(height: Spacing.md),
-                        CsMetricTile(
-                          label: '当前保留',
-                          value: '$included',
-                          icon: LucideIcons.check,
-                        ),
-                        CsMetricTile(
-                          label: '已排除',
-                          value: '$excluded',
-                          icon: LucideIcons.x,
-                        ),
-                        CsMetricTile(
-                          label: '视频时长',
-                          value: _formatDuration(durationMs),
-                          icon: LucideIcons.clock,
-                        ),
-                        const SizedBox(height: Spacing.xs),
-                        Text(
-                          '本地 SQLite · 原始视频不复制',
-                          style: TextStyle(color: c.textTertiary, fontSize: 11),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (wide) {
-                    return IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(flex: 3, child: ctaCard),
-                          const SizedBox(width: Spacing.md),
-                          Expanded(flex: 2, child: metricsCard),
-                        ],
-                      ),
-                    );
-                  }
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      ctaCard,
-                      const SizedBox(height: Spacing.md),
-                      metricsCard,
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: Spacing.xxl),
-
-              // ── 最近项目 ──
-              Row(
-                children: [
-                  Expanded(
-                    child: Text('最近项目', style: theme.textTheme.titleLarge),
-                  ),
-                  IconButton(
-                    tooltip: '刷新最近项目',
-                    onPressed: state.recentLoading || busy
-                        ? null
-                        : () => notifier.loadRecentProjects(),
-                    icon: const Icon(LucideIcons.refreshCw, size: 18),
-                  ),
-                ],
-              ),
-              const SizedBox(height: Spacing.md),
-              _RecentProjects(
-                state: state,
-                busy: busy,
-                onOpen: openRecentProject,
-                onDelete: deleteRecentProject,
-                onCreate: () => context.go('/import'),
-              ),
-              const SizedBox(height: Spacing.xxl),
-
-              // ── 工作流 ──
-              Text('工作流', style: theme.textTheme.titleMedium),
-              const SizedBox(height: Spacing.md),
-              CsStepIndicator(steps: steps),
-              const SizedBox(height: Spacing.xl),
             ],
           ),
-        ),
+          const SizedBox(height: Spacing.sm),
+          Expanded(
+            child: _ProjectLibrary(
+              state: state,
+              busy: busy,
+              onOpen: openRecentProject,
+              onDelete: deleteRecentProject,
+              onCreate: startNewProject,
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-/// 最近项目区域:加载(CsSkeleton) / 空(CsEmptyState) / 错(CsEmptyState) / 网格。
-class _RecentProjects extends StatelessWidget {
-  const _RecentProjects({
+class _ActiveProjectStrip extends StatelessWidget {
+  const _ActiveProjectStrip({required this.state});
+
+  final ProjectState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final included = state.candidates
+        .where(
+          (item) =>
+              item['selection_status']?.toString() != 'excluded' &&
+              item['review_status']?.toString() != 'excluded',
+        )
+        .length;
+    final duration = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: Spacing.md, vertical: 11),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(CsRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      child: Row(
+        children: <Widget>[
+          Icon(CupertinoIcons.play_rectangle, color: c.indigo, size: 18),
+          const SizedBox(width: Spacing.sm),
+          Text('当前项目', style: Theme.of(context).textTheme.labelLarge),
+          const Spacer(),
+          _StripMetric(label: '时长', value: _formatDuration(duration)),
+          const SizedBox(width: Spacing.lg),
+          _StripMetric(label: '候选', value: '${state.candidates.length}'),
+          const SizedBox(width: Spacing.lg),
+          _StripMetric(label: '已保留', value: '$included', color: c.goal),
+        ],
+      ),
+    );
+  }
+}
+
+class _StripMetric extends StatelessWidget {
+  const _StripMetric({required this.label, required this.value, this.color});
+
+  final String label;
+  final String value;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Text.rich(
+      TextSpan(
+        text: '$label  ',
+        style: Theme.of(
+          context,
+        ).textTheme.labelSmall?.copyWith(color: c.textTertiary),
+        children: <InlineSpan>[
+          TextSpan(
+            text: value,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: color ?? c.textPrimary,
+              fontWeight: FontWeight.w600,
+              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProjectLibrary extends StatelessWidget {
+  const _ProjectLibrary({
     required this.state,
     required this.busy,
     required this.onOpen,
@@ -304,201 +215,89 @@ class _RecentProjects extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (state.recentLoading && state.recentProjects.isEmpty) {
-      return const _RecentSkeletonGrid();
+      return const _RecentSkeletonList();
     }
     if (state.recentProjects.isEmpty) {
       return CsEmptyState(
-        icon: LucideIcons.folderOpen,
+        icon: CupertinoIcons.rectangle_stack_badge_plus,
         title: state.recentError != null ? '加载最近项目失败' : '还没有项目',
-        description: state.recentError ?? '新建一个项目后，分析记录和导出历史会显示在这里。',
-        action: CsButton(label: const Text('新建项目'), onPressed: onCreate),
+        description: state.recentError ?? '新建一个项目后，视频、审核记录和导出历史都会保存在这里。',
+        action: CsButton(
+          label: const Text('新建项目'),
+          icon: CupertinoIcons.add,
+          onPressed: busy ? null : onCreate,
+        ),
       );
     }
-    return _RecentGrid(
-      projects: state.recentProjects,
-      onOpen: busy ? null : onOpen,
-      onDelete: busy ? null : onDelete,
-    );
-  }
-}
-
-class _RecentGrid extends StatelessWidget {
-  const _RecentGrid({
-    required this.projects,
-    required this.onOpen,
-    required this.onDelete,
-  });
-
-  final List<Map<String, dynamic>> projects;
-  final Future<void> Function(String root)? onOpen;
-  final Future<void> Function(Map<String, dynamic> item)? onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final cols = constraints.maxWidth >= 900
-            ? 3
-            : (constraints.maxWidth >= 560 ? 2 : 1);
-        final rows = <Widget>[];
-        for (var i = 0; i < projects.length; i += cols) {
-          final cells = <Widget>[];
-          for (var j = 0; j < cols; j++) {
-            final index = i + j;
-            if (j > 0) {
-              cells.add(const SizedBox(width: Spacing.md));
-            }
-            if (index < projects.length) {
-              cells.add(
-                Expanded(
-                  child: _ProjectCard(
-                    item: projects[index],
-                    onOpen: onOpen,
-                    onDelete: onDelete,
-                  ),
-                ),
-              );
-            } else {
-              cells.add(const Expanded(child: SizedBox.shrink()));
-            }
-          }
-          rows.add(
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: cells,
-              ),
-            ),
-          );
-          if (i + cols < projects.length) {
-            rows.add(const SizedBox(height: Spacing.md));
-          }
-        }
-        return Column(children: rows);
-      },
-    );
-  }
-}
-
-class _ProjectCard extends StatelessWidget {
-  const _ProjectCard({
-    required this.item,
-    required this.onOpen,
-    required this.onDelete,
-  });
-
-  final Map<String, dynamic> item;
-  final Future<void> Function(String root)? onOpen;
-  final Future<void> Function(Map<String, dynamic> item)? onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final c = AppColors.of(context);
-    final project = _map(item['project']);
-    final video = _map(item['video']);
-    final statistics = _map(item['statistics']);
-    final root = item['project_root']?.toString() ?? '';
-    final name = project['name']?.toString() ?? '未命名项目';
-    final goals = statistics['included_count'] == null
-        ? _int(statistics['goal_count'])
-        : _int(statistics['included_count']);
-    final candidates = _int(statistics['candidate_count']);
-    final duration = _int(video['duration_ms']);
-    final source = video['source_path']?.toString();
-    final videoName = (source == null || source.isEmpty)
-        ? null
-        : source.split('/').last;
-
-    return CsCard(
-      onTap: (onOpen == null || root.isEmpty) ? null : () => onOpen!(root),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Icon(LucideIcons.folder, size: 16, color: c.textTertiary),
-              const SizedBox(width: Spacing.sm),
-              Expanded(
-                child: Text(
-                  name,
-                  style: theme.textTheme.titleMedium,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              if (onDelete != null && root.isNotEmpty)
-                IconButton(
-                  tooltip: '删除项目',
-                  onPressed: () => onDelete!(item),
-                  icon: const Icon(LucideIcons.trash2, size: 17),
-                  visualDensity: VisualDensity.compact,
-                ),
-              if (goals > 0)
-                const CsStatusChip(status: ReviewStatus.goal, compact: true),
-            ],
-          ),
-          const SizedBox(height: Spacing.xs),
-          if (videoName != null)
-            Text(
-              videoName,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: c.textSecondary,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          const SizedBox(height: Spacing.xs),
-          Text(
-            '$goals 保留 · $candidates 候选 · ${_formatDuration(duration)}',
-            style: theme.textTheme.bodySmall?.copyWith(color: c.textTertiary),
-          ),
-        ],
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(CsRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      child: ListView.separated(
+        padding: EdgeInsets.zero,
+        itemCount: state.recentProjects.length,
+        separatorBuilder: (_, _) => Divider(height: 1, color: c.border),
+        itemBuilder: (context, index) {
+          final item = state.recentProjects[index];
+          final project = _map(item['project']);
+          final video = _map(item['video']);
+          final statistics = _map(item['statistics']);
+          final root = item['project_root']?.toString() ?? '';
+          final source = video['source_path']?.toString();
+          return MediaProjectRow(
+            name: project['name']?.toString() ?? '未命名项目',
+            sourceName: source?.split('/').last,
+            duration: _formatDuration(_int(video['duration_ms'])),
+            candidates: _int(statistics['candidate_count']),
+            included: statistics['included_count'] == null
+                ? _int(statistics['goal_count'])
+                : _int(statistics['included_count']),
+            onOpen: busy || root.isEmpty ? null : () => onOpen(root),
+            onDelete: busy || root.isEmpty ? null : () => onDelete(item),
+          );
+        },
       ),
     );
   }
 }
 
-class _RecentSkeletonGrid extends StatelessWidget {
-  const _RecentSkeletonGrid();
+class _RecentSkeletonList extends StatelessWidget {
+  const _RecentSkeletonList();
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final cols = constraints.maxWidth >= 900
-            ? 3
-            : (constraints.maxWidth >= 560 ? 2 : 1);
-        final cells = <Widget>[];
-        for (var i = 0; i < cols; i++) {
-          if (i > 0) {
-            cells.add(const SizedBox(width: Spacing.md));
-          }
-          cells.add(
+    final c = AppColors.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(CsRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      child: ListView.separated(
+        padding: const EdgeInsets.all(Spacing.md),
+        itemCount: 4,
+        separatorBuilder: (_, _) => const SizedBox(height: Spacing.md),
+        itemBuilder: (_, _) => const Row(
+          children: <Widget>[
+            CsSkeleton(width: 76, height: 48),
+            SizedBox(width: Spacing.md),
             Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(Spacing.lg),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    CsSkeleton(width: 120, height: 16),
-                    SizedBox(height: Spacing.md),
-                    CsSkeleton(width: double.infinity, height: 12),
-                    SizedBox(height: Spacing.xs),
-                    CsSkeleton(width: 180, height: 12),
-                  ],
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  CsSkeleton(width: 156, height: 14),
+                  SizedBox(height: 7),
+                  CsSkeleton(width: 220, height: 10),
+                ],
               ),
             ),
-          );
-        }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: cells,
-        );
-      },
+            CsSkeleton(width: 70, height: 24),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -515,9 +314,7 @@ String _formatDuration(int milliseconds) {
   final minutes = (seconds % 3600) ~/ 60;
   final remaining = seconds % 60;
   if (hours > 0) {
-    return '$hours:${minutes.toString().padLeft(2, '0')}:'
-        '${remaining.toString().padLeft(2, '0')}';
+    return '$hours:${minutes.toString().padLeft(2, '0')}:${remaining.toString().padLeft(2, '0')}';
   }
-  return '${minutes.toString().padLeft(2, '0')}:'
-      '${remaining.toString().padLeft(2, '0')}';
+  return '${minutes.toString().padLeft(2, '0')}:${remaining.toString().padLeft(2, '0')}';
 }

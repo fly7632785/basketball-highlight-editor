@@ -107,6 +107,30 @@ void main() {
     }
   });
 
+  testWidgets('wide workbench keeps video, filmstrip and inspector together', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+          },
+        ],
+      ),
+      size: const Size(1440, 900),
+    );
+
+    expect(find.byType(CandidateFilmstrip), findsOneWidget);
+    expect(find.byType(ReviewInspector), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('no candidates state guides the user to import a video', (
     tester,
   ) async {
@@ -144,9 +168,10 @@ void main() {
     expect(find.text('默认保留'), findsNothing);
     expect(find.text('保留'), findsNothing);
     expect(find.text('已排除'), findsNothing);
-    expect(find.text('时长 9 秒'), findsOneWidget);
-    expect(find.byTooltip('保留片段 (C / Enter)'), findsOneWidget);
-    expect(find.byTooltip('排除片段 (X / Backspace)'), findsOneWidget);
+    expect(find.text('00:06 - 00:15 · 9 秒'), findsOneWidget);
+    expect(find.byType(CandidateFilmstrip), findsOneWidget);
+    expect(find.byTooltip('保留片段 (C / Enter)'), findsWidgets);
+    expect(find.byTooltip('排除片段 (X / Backspace)'), findsWidgets);
   });
 
   testWidgets(
@@ -175,18 +200,17 @@ void main() {
         ),
       );
 
-      expect(find.text('轨迹穿框'), findsOneWidget);
-      expect(find.text('篮网运动'), findsOneWidget);
+      expect(find.textContaining('轨迹穿框'), findsOneWidget);
+      expect(find.textContaining('篮网运动'), findsOneWidget);
       expect(find.text('音频支持'), findsNothing);
-      expect(find.text('反弹判断'), findsOneWidget);
-      expect(find.text('系统说明'), findsOneWidget);
+      expect(find.textContaining('反弹判断'), findsOneWidget);
+      expect(find.textContaining('证据不确定'), findsOneWidget);
       expect(find.text('候选 00:12'), findsOneWidget);
-      expect(find.text('片段 00:06 - 00:15 · 时长 9 秒'), findsOneWidget);
-      expect(find.text('补篮后进球'), findsOneWidget);
+      expect(find.text('00:06 - 00:15 · 9 秒 · 补篮后进球'), findsOneWidget);
       expect(find.byTooltip('调整片段范围'), findsOneWidget);
       expect(find.byTooltip('编辑备注'), findsOneWidget);
       expect(find.byTooltip('候选操作'), findsNothing);
-      expect(find.text('00:06 - 00:15 · 时长 9 秒 · 置信度'), findsNothing);
+      expect(find.textContaining('置信度'), findsNothing);
     },
   );
 
@@ -215,8 +239,8 @@ void main() {
       ),
     );
 
-    expect(find.text('推定穿框'), findsOneWidget);
-    expect(find.text('通过'), findsNothing);
+    expect(find.textContaining('推定穿框'), findsOneWidget);
+    expect(find.textContaining('轨迹穿框 通过'), findsNothing);
   });
 
   testWidgets('provides a toggle for video annotations', (tester) async {
@@ -351,9 +375,18 @@ void main() {
     await tester.tap(find.text('已排除').last);
     await tester.pump();
 
-    expect(find.text('1. 00:09'), findsOneWidget);
-    expect(find.text('1. 00:03'), findsNothing);
-    expect(find.text('1. 00:15'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('candidate-filmstrip-excluded')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('candidate-filmstrip-pending')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('candidate-filmstrip-goal')),
+      findsNothing,
+    );
   });
 
   testWidgets('exposes direct candidate editing actions below the video', (
@@ -404,11 +437,11 @@ void main() {
       ),
     );
 
-    final first = find.text('1. 00:03');
-    final second = find.text('2. 00:12');
+    final first = find.byKey(const ValueKey('candidate-filmstrip-early'));
+    final second = find.byKey(const ValueKey('candidate-filmstrip-late'));
     expect(first, findsOneWidget);
     expect(second, findsOneWidget);
-    expect(tester.getTopLeft(first).dy, lessThan(tester.getTopLeft(second).dy));
+    expect(tester.getTopLeft(first).dx, lessThan(tester.getTopLeft(second).dx));
   });
 
   testWidgets('decision buttons do not switch the selected candidate', (

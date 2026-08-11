@@ -1,24 +1,19 @@
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../components/cs_button.dart';
-import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
-import '../../components/cs_metric_tile.dart';
-import '../../components/cs_progress_track.dart';
+import '../../components/cs_workspace.dart';
+import '../../components/export_summary.dart';
 import '../../providers/project_state.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
 
-/// Export 屏:汇总当前保留片段 + 合并/分别导出 CTA + 历史。
-///
-/// 数据来自 [projectProvider];导出走 `ProjectNotifier.export(mode:)`,
-/// 返回审核用 `context.go('/review')`。
 class ExportScreen extends ConsumerWidget {
   const ExportScreen({super.key});
 
@@ -26,220 +21,70 @@ class ExportScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(projectProvider);
     final notifier = ref.read(projectProvider.notifier);
-    final theme = Theme.of(context);
-    final c = AppColors.of(context);
-
-    final includedCount = state.candidates
-        .where(
-          (item) =>
-              item['selection_status']?.toString() != 'excluded' &&
-              item['review_status']?.toString() != 'excluded',
-        )
-        .length;
-    final durationMs = state.candidates
-        .where(
-          (item) =>
-              item['selection_status']?.toString() != 'excluded' &&
-              item['review_status']?.toString() != 'excluded',
-        )
-        .fold<int>(0, _clipDuration);
-    final exportRunning = state.exportRunning;
-    final exportRecoverable =
-        state.exportJob?['recoverable'] == true && !exportRunning;
-    final exportProgress =
-        ((state.exportJob?['progress'] as num?)?.toDouble() ?? 0).clamp(
-          0.0,
-          1.0,
-        );
-    final exportStage = state.exportJob?['stage']?.toString() ?? '';
+    final included = state.candidates.where(_included).toList();
+    final includedCount = included.length;
+    final durationMs = included.fold<int>(0, _clipDuration);
+    final running = state.exportRunning;
+    final recoverable = state.exportJob?['recoverable'] == true && !running;
+    final progress = ((state.exportJob?['progress'] as num?)?.toDouble() ?? 0)
+        .clamp(0.0, 1.0);
     final busy =
-        state.busy || exportRunning || state.analysisRunning || state.hydrating;
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(Spacing.xl),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 900),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('导出集锦', style: theme.textTheme.displayMedium),
-              const SizedBox(height: Spacing.sm),
-              Text(
-                '分析结果默认保留，导出时只排除你打叉的片段。',
-                style: theme.textTheme.bodyLarge?.copyWith(
-                  color: c.textSecondary,
-                ),
-              ),
-              const SizedBox(height: Spacing.xxl),
-
-              CsCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CsMetricTile(
-                      label: '当前保留',
-                      value: '$includedCount 个',
-                      icon: LucideIcons.check,
-                    ),
-                    CsMetricTile(
-                      label: '合计时长',
-                      value: _formatMs(durationMs),
-                      icon: LucideIcons.clock,
-                    ),
-                    const CsMetricTile(
-                      label: '输出编码',
-                      value: 'H.264 / AAC',
-                      icon: LucideIcons.fileVideo,
-                    ),
-                    const CsMetricTile(
-                      label: '处理方式',
-                      value: '硬件编码优先，软件回退',
-                      icon: LucideIcons.cpu,
-                    ),
-                    if (exportRunning) ...[
-                      const SizedBox(height: Spacing.sm),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(Spacing.sm),
-                        decoration: BoxDecoration(
-                          color: c.indigo.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(CsRadius.md),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    '${_exportStageLabel(exportStage)} · '
-                                    '${(exportProgress * 100).round()}%\n'
-                                    '本次输出使用启动导出时的片段列表，之后的审核修改用于下一次导出。',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: c.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: Spacing.sm),
-                                CsButton(
-                                  label: const Text('取消导出'),
-                                  icon: LucideIcons.circleStop,
-                                  variant: CsButtonVariant.secondary,
-                                  size: CsButtonSize.sm,
-                                  onPressed: state.busy
-                                      ? null
-                                      : () => notifier.cancelExport(),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: Spacing.sm),
-                            CsProgressTrack(value: exportProgress),
-                          ],
-                        ),
-                      ),
-                    ],
-                    if (state.analysisRunning) ...[
-                      const SizedBox(height: Spacing.sm),
-                      Text(
-                        '视频仍在分析，分析完成后才能导出新的候选结果。',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: c.warning,
-                        ),
-                      ),
-                    ],
-                    if (exportRecoverable) ...[
-                      const SizedBox(height: Spacing.sm),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(Spacing.sm),
-                        decoration: BoxDecoration(
-                          color: c.warning.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(CsRadius.md),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                '上次导出已中断，可以从原设置重新导出。',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: c.textSecondary,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: Spacing.sm),
-                            CsButton(
-                              label: const Text('重试导出'),
-                              icon: LucideIcons.refreshCw,
-                              size: CsButtonSize.sm,
-                              onPressed: state.busy
-                                  ? null
-                                  : () => notifier.retryExport(),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: Spacing.sm),
-                    CsButton(
-                      label: const Text('合并导出'),
-                      icon: LucideIcons.merge,
-                      isLoading: busy,
-                      onPressed: includedCount > 0 && !busy
-                          ? () => _chooseMerge(context, notifier)
-                          : null,
-                    ),
-                    const SizedBox(height: Spacing.sm),
-                    CsButton(
-                      label: const Text('分别导出'),
-                      icon: LucideIcons.files,
-                      variant: CsButtonVariant.secondary,
-                      isLoading: busy,
-                      onPressed: includedCount > 0 && !busy
-                          ? () => _chooseSeparate(context, notifier)
-                          : null,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: Spacing.md),
-              Text(
-                exportRunning
-                    ? '导出任务在后台运行，返回审核后仍可继续修改候选。'
-                    : '导出会包含所有当前保留的候选；已排除片段不会进入输出。',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: c.textSecondary,
-                ),
-              ),
-              const SizedBox(height: Spacing.md),
-              CsButton(
-                label: const Text('返回审核'),
-                icon: LucideIcons.arrowLeft,
-                variant: CsButtonVariant.ghost,
-                onPressed: () => context.go('/review'),
-              ),
-
-              // ── 历史 ──
-              if (state.exportHistory.isNotEmpty) ...[
-                const SizedBox(height: Spacing.xxl),
-                Text('最近导出', style: theme.textTheme.titleLarge),
-                const SizedBox(height: Spacing.md),
-                for (final item in state.exportHistory)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: Spacing.sm),
-                    child: _ExportHistoryCard(item: item),
-                  ),
-              ] else ...[
-                const SizedBox(height: Spacing.xxl),
-                const CsEmptyState(
-                  icon: LucideIcons.history,
-                  title: '还没有导出记录',
-                  description: '完成一次导出后，历史记录会出现在这里。',
-                ),
-              ],
-            ],
-          ),
+        state.busy || running || state.analysisRunning || state.hydrating;
+    final summary = ExportSummary(
+      includedCount: includedCount,
+      duration: _formatMs(durationMs),
+      running: running,
+      recoverable: recoverable,
+      busy: busy,
+      progress: progress,
+      stageLabel: _exportStageLabel(
+        state.exportJob?['stage']?.toString() ?? '',
+      ),
+      onMerge: includedCount > 0 && !busy
+          ? () => _chooseMerge(context, notifier)
+          : null,
+      onSeparate: includedCount > 0 && !busy
+          ? () => _chooseSeparate(context, notifier)
+          : null,
+      onCancel: state.busy ? null : () => notifier.cancelExport(),
+      onRetry: state.busy ? null : () => notifier.retryExport(),
+    );
+    final history = _ExportHistory(state: state);
+    return CsWorkspace(
+      title: '导出集锦',
+      subtitle: '$includedCount 个片段 · ${_formatMs(durationMs)}',
+      actions: <Widget>[
+        CsButton(
+          label: const Text('返回审核'),
+          icon: CupertinoIcons.chevron_left,
+          variant: CsButtonVariant.secondary,
+          size: CsButtonSize.sm,
+          onPressed: () => context.go('/review'),
         ),
+      ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth >= Breakpoints.lg) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Expanded(child: summary),
+                const SizedBox(width: Spacing.md),
+                SizedBox(width: 340, child: history),
+              ],
+            );
+          }
+          return SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                summary,
+                const SizedBox(height: Spacing.lg),
+                history,
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -250,8 +95,8 @@ class ExportScreen extends ConsumerWidget {
   ) async {
     final location = await getSaveLocation(
       suggestedName: 'highlights.mp4',
-      acceptedTypeGroups: const [
-        XTypeGroup(label: '视频', extensions: ['mp4']),
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(label: '视频', extensions: <String>['mp4']),
       ],
     );
     if (location != null) {
@@ -270,97 +115,130 @@ class ExportScreen extends ConsumerWidget {
   }
 }
 
-class _ExportHistoryCard extends StatelessWidget {
-  const _ExportHistoryCard({required this.item});
+class _ExportHistory extends StatelessWidget {
+  const _ExportHistory({required this.state});
+
+  final ProjectState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    if (state.exportHistory.isEmpty) {
+      return const CsEmptyState(
+        icon: CupertinoIcons.clock,
+        title: '还没有导出记录',
+        description: '完成一次导出后，最近输出会显示在这里。',
+      );
+    }
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(CsRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              Spacing.md,
+              Spacing.md,
+              Spacing.md,
+              Spacing.sm,
+            ),
+            child: Row(
+              children: <Widget>[
+                Text('最近导出', style: Theme.of(context).textTheme.titleMedium),
+                const Spacer(),
+                Text(
+                  '${state.exportHistory.length} 条',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: c.textTertiary),
+                ),
+              ],
+            ),
+          ),
+          Divider(height: 1, color: c.border),
+          for (
+            var index = 0;
+            index < state.exportHistory.length;
+            index++
+          ) ...<Widget>[
+            _ExportHistoryRow(item: state.exportHistory[index]),
+            if (index < state.exportHistory.length - 1)
+              Divider(height: 1, color: c.border),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ExportHistoryRow extends StatelessWidget {
+  const _ExportHistoryRow({required this.item});
 
   final Map<String, dynamic> item;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final c = AppColors.of(context);
     final mode = item['mode'] == 'merge' ? '合并导出' : '分别导出';
     final count = (item['candidate_count'] as num?)?.toInt() ?? 0;
     final duration = (item['duration_ms'] as num?)?.toInt() ?? 0;
-    final processing = (item['processing_ms'] as num?)?.toInt() ?? 0;
-    final fileSize = (item['file_size_bytes'] as num?)?.toInt() ?? 0;
-    final width = (item['width'] as num?)?.toInt();
-    final height = (item['height'] as num?)?.toInt();
-    final videoCodec = item['video_codec']?.toString();
-    final audioCodec = item['audio_codec']?.toString();
     final path = item['output_path']?.toString() ?? '';
     final directory = _exportDirectoryPath(item);
-    final createdAt = DateTime.tryParse(
-      item['created_at']?.toString() ?? '',
-    )?.toLocal();
-    final time = createdAt == null
-        ? ''
-        : '${createdAt.month.toString().padLeft(2, '0')}-'
-              '${createdAt.day.toString().padLeft(2, '0')} '
-              '${createdAt.hour.toString().padLeft(2, '0')}:'
-              '${createdAt.minute.toString().padLeft(2, '0')}';
-
-    return CsCard(
+    return Padding(
+      padding: const EdgeInsets.all(Spacing.md),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(LucideIcons.history, size: 18, color: c.textTertiary),
-          const SizedBox(width: Spacing.md),
+        children: <Widget>[
+          Container(
+            width: 32,
+            height: 32,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: c.indigo.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(CsRadius.sm),
+            ),
+            child: Icon(CupertinoIcons.film, size: 16, color: c.indigo),
+          ),
+          const SizedBox(width: Spacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
+              children: <Widget>[
                 Text(
                   '$mode · $count 个片段 · ${_formatMs(duration)}',
-                  style: theme.textTheme.titleMedium,
+                  style: Theme.of(context).textTheme.labelMedium,
                 ),
-                const SizedBox(height: Spacing.xs),
-                SelectableText(
-                  path,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: c.textSecondary,
-                  ),
-                ),
-                const SizedBox(height: Spacing.xs),
+                const SizedBox(height: 3),
                 Text(
-                  '${time.isEmpty ? '' : '$time · '}处理 ${_formatMs(processing)}',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: c.textTertiary,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-                const SizedBox(height: Spacing.xs),
-                Text(
-                  [
-                    _formatBytes(fileSize),
-                    if (width != null && height != null) '$width×$height',
-                    if (videoCodec != null && videoCodec.isNotEmpty) videoCodec,
-                    if (audioCodec != null && audioCodec.isNotEmpty) audioCodec,
-                  ].join(' · '),
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: c.textTertiary,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
+                  path.isEmpty ? '输出文件不可用' : path,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: c.textTertiary),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: Spacing.md),
-          CsButton(
-            label: const Text('打开目录'),
-            icon: LucideIcons.folderOpen,
-            variant: CsButtonVariant.secondary,
-            size: CsButtonSize.sm,
+          IconButton(
+            tooltip: '打开目录',
             onPressed: directory == null
                 ? null
                 : () => _openDirectory(context, directory),
+            icon: const Icon(CupertinoIcons.folder_open),
           ),
         ],
       ),
     );
   }
 }
+
+bool _included(Map<String, dynamic> item) =>
+    item['selection_status']?.toString() != 'excluded' &&
+    item['review_status']?.toString() != 'excluded';
 
 String? _exportDirectoryPath(Map<String, dynamic> item) {
   final metadata = item['metadata'];
@@ -373,7 +251,6 @@ String? _exportDirectoryPath(Map<String, dynamic> item) {
       }
     }
   }
-
   final outputPath = item['output_path']?.toString().trim() ?? '';
   if (outputPath.isEmpty) return null;
   if (FileSystemEntity.typeSync(outputPath, followLinks: true) ==
@@ -381,19 +258,6 @@ String? _exportDirectoryPath(Map<String, dynamic> item) {
     return outputPath;
   }
   return File(outputPath).parent.path;
-}
-
-String _formatBytes(int bytes) {
-  if (bytes <= 0) return '-';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  var value = bytes.toDouble();
-  var unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit++;
-  }
-  final digits = value >= 100 || unit == 0 ? 0 : 1;
-  return '${value.toStringAsFixed(digits)} ${units[unit]}';
 }
 
 Future<void> _openDirectory(BuildContext context, String directory) async {
@@ -408,10 +272,7 @@ Future<void> _openDirectory(BuildContext context, String directory) async {
     } else {
       throw UnsupportedError('当前平台不支持打开文件目录');
     }
-
-    if (result.exitCode != 0) {
-      throw StateError(result.stderr.toString().trim());
-    }
+    if (result.exitCode != 0) throw StateError(result.stderr.toString().trim());
   } catch (error) {
     if (!context.mounted) return;
     await showDialog<void>(
@@ -419,7 +280,7 @@ Future<void> _openDirectory(BuildContext context, String directory) async {
       builder: (dialogContext) => AlertDialog(
         title: const Text('无法打开目录'),
         content: Text('$directory\n\n$error'),
-        actions: [
+        actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text('知道了'),
@@ -459,4 +320,4 @@ String _exportStageLabel(String stage) =>
       'merge_clips': '合并片段',
       'persist_export': '保存导出记录',
     }[stage] ??
-    '正在导出';
+    '准备导出';

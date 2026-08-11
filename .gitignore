@@ -23,3 +23,6 @@ apps/desktop/.codex/
 .superpowers/brainstorm/*/content/*.html
 !.superpowers/brainstorm/68926-1786089783/content/review-real-v6.html
 !.superpowers/brainstorm/68926-1786089783/content/review-real-v7.html
+
+# UI skill generated page overrides; authoritative UI specifications live in docs/design/.
+design-system/courtside/pages/

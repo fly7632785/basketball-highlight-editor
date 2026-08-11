@@ -16,7 +16,7 @@ void main() {
         child: const BasketballHighlightApp(enableStartupProjectScan: false),
       ),
     );
-    expect(find.text('把整场比赛，变成你的高光。'), findsOneWidget);
+    expect(find.text('项目'), findsWidgets);
     expect(find.text('新建项目'), findsWidgets);
   });
 }

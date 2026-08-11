@@ -28,7 +28,7 @@ class CsCard extends StatelessWidget {
     final base = switch (tier) {
       CsCardTier.defaultTier => c.surface,
       CsCardTier.hover => c.surface2,
-      CsCardTier.selected => c.surface3,
+      CsCardTier.selected => c.surface2,
     };
     return _CardBox(
       color: base,
@@ -61,11 +61,9 @@ class _CardBoxState extends State<_CardBox> {
   bool _focused = false;
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     final interactive = widget.onTap != null;
-    Color bg = widget.color;
-    if (interactive && _hover) {
-      bg = Color.alphaBlend(Colors.white.withValues(alpha: 0.04), bg);
-    }
+    final bg = interactive && _hover ? c.surface2 : widget.color;
     return Semantics(
       button: interactive,
       enabled: interactive,
@@ -91,11 +89,13 @@ class _CardBoxState extends State<_CardBox> {
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 color: bg,
-                borderRadius: BorderRadius.circular(CsRadius.lg),
+                borderRadius: BorderRadius.circular(CsRadius.md),
                 border: Border.all(
                   color: _focused
                       ? AppColors.of(context).indigo
-                      : widget.border,
+                      : interactive && _hover
+                      ? c.borderStrong
+                      : widget.border.withValues(alpha: 0.82),
                   width: _focused ? 2 : 1,
                 ),
               ),
