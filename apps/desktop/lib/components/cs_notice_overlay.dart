@@ -22,7 +22,7 @@ class CsNoticeOverlay extends ConsumerWidget {
           child: Align(
             alignment: Alignment.topCenter,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 320),
+              constraints: const BoxConstraints(maxWidth: 340),
               child: SizedBox(
                 width: double.infinity,
                 child: Column(

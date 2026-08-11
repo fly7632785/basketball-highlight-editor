@@ -105,6 +105,28 @@ def test_pipeline_commands_forward_refine_window(tmp_path: Path):
     assert commands[3][commands[3].index("--window") + 1] == "4.0"
 
 
+def test_pipeline_commands_limit_proxy_and_preserve_source_timestamps(tmp_path: Path):
+    commands = build_pipeline_commands(
+        repo_root=tmp_path,
+        source_video=Path("source.mp4"),
+        proxy_video=Path("proxy.mp4"),
+        model_path=Path("model.pt"),
+        coarse_detections=Path("coarse.json"),
+        coarse_candidates=Path("candidates.json"),
+        refined_output=Path("refined.json"),
+        proxy_roi=[10, 20, 100, 200],
+        source_roi=[20, 40, 200, 400],
+        cache_dir=Path("cache"),
+        analysis_start_ms=120_000,
+        analysis_end_ms=300_000,
+        net_roi=[40, 100, 180, 340],
+    )
+    assert commands[0][commands[0].index("--start-time") + 1] == "120.0"
+    assert commands[0][commands[0].index("--duration") + 1] == "180.0"
+    assert commands[1][commands[1].index("--time-offset") + 1] == "120.0"
+    assert commands[3][commands[3].index("--net-roi") + 1:commands[3].index("--output")] == ["40", "100", "180", "340"]
+
+
 def test_pipeline_proxy_preserves_source_aspect_ratio(tmp_path: Path):
     script = Path(__file__).parents[1] / "scripts" / "create_proxy.py"
     assert "force_original_aspect_ratio=decrease" in script.read_text(encoding="utf-8")

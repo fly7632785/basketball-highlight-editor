@@ -43,13 +43,26 @@ def _clamp01(value):
     return max(0.0, min(1.0, float(value)))
 
 
-def _net_zones(rim, frame_width, frame_height):
+def _net_zones(rim, frame_width, frame_height, net_roi=None):
     """Build the same upper/lower/below regions used by bball-highlights.
 
     These are auxiliary regions derived from the calibrated rim; they do not
     replace the ball detector and therefore remain usable when the ball is
     hidden by the net.
     """
+    if net_roi:
+        x1, y1, x2, y2 = [int(value) for value in net_roi]
+        x1, x2 = sorted((max(0, x1), min(frame_width, x2)))
+        y1, y2 = sorted((max(0, y1), min(frame_height, y2)))
+        if x2 > x1 and y2 > y1:
+            height = y2 - y1
+            def net_box(start, end):
+                return (x1, y1 + int(height * start), x2, y1 + int(height * end))
+            return {
+                "upper": net_box(0.0, 0.42),
+                "lower": net_box(0.28, 0.74),
+                "below": net_box(0.58, 1.0),
+            }
     cx = float(rim["center_x"])
     cy = float(rim["rim_y"])
     rw = max(4.0, float(rim["width"]))
@@ -70,22 +83,39 @@ def _net_zones(rim, frame_width, frame_height):
     }
 
 
-def _zone_signal(gray, hsv, background_gray):
+def _zone_signal(gray, hsv, background_gray, previous_gray=None):
     if gray.size == 0 or hsv.size == 0:
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0
     orange = cv2.inRange(hsv, (0, 45, 35), (25, 255, 255)) > 0
     if background_gray is None or background_gray.shape != gray.shape:
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0
     diff = cv2.absdiff(background_gray, gray)
     changed_ratio = float((diff > 25).mean())
     gray_motion = _clamp01(changed_ratio / 0.12)
     orange_motion = _clamp01(float((orange & (diff > 25)).mean()) / 0.035)
-    return gray_motion, changed_ratio, orange_motion
+    white = cv2.inRange(hsv, (0, 0, 145), (180, 90, 255)) > 0
+    white_motion = _clamp01(float((white & (diff > 18)).mean()) / 0.020)
+    downward_motion = 0.0
+    if previous_gray is not None and previous_gray.shape == gray.shape:
+        flow = cv2.calcOpticalFlowFarneback(
+            previous_gray, gray, None, 0.5, 2, 15, 2, 5, 1.2, 0,
+        )
+        magnitude = cv2.magnitude(flow[..., 0], flow[..., 1])
+        moving_white = white & (magnitude > 0.35)
+        white_motion = max(
+            white_motion,
+            _clamp01(float(moving_white.mean()) / 0.015),
+        )
+        downward_motion = _clamp01(
+            float((moving_white & (flow[..., 1] > 0.12)).mean()) / 0.012,
+        )
+    return gray_motion, changed_ratio, orange_motion, white_motion, downward_motion
 
 
 def scan_window(
     model, video, roi, center_time, window, sample_fps, scale, conf, device,
     rim=None, batch=8, start_time_override=None, end_time_override=None,
+    net_roi=None,
 ):
     x1, y1, x2, y2 = roi
     cap = cv2.VideoCapture(str(video))
@@ -101,10 +131,21 @@ def scan_window(
     records = []
     frame_index = start_frame
     previous_net = None
-    zones = _net_zones(rim, int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or x2),
-                       int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or y2)) if rim else {}
+    zones = _net_zones(
+        rim,
+        int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or x2),
+        int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or y2),
+        net_roi=net_roi,
+    ) if rim else {}
     zone_history = {name: deque(maxlen=15) for name in zones}
-    if rim:
+    previous_zone_gray = {name: None for name in zones}
+    if net_roi:
+        net_x1, net_y1, net_x2, net_y2 = [int(value) for value in net_roi]
+        net_x1 = max(x1, net_x1)
+        net_x2 = min(x2, net_x2)
+        net_y1 = max(y1, net_y1)
+        net_y2 = min(y2, net_y2)
+    elif rim:
         net_x1 = max(x1, int(rim["center_x"] - 2.0 * rim["width"]))
         net_x2 = min(x2, int(rim["center_x"] + 2.0 * rim["width"]))
         net_y1 = max(y1, int(rim["rim_y"]))
@@ -221,15 +262,18 @@ def scan_window(
                     )
                 else:
                     zone_measurements_valid = False
-                gray_motion, changed_ratio, orange_motion = _zone_signal(
-                    current_gray, current_hsv, background,
+                gray_motion, changed_ratio, orange_motion, white_motion, downward_motion = _zone_signal(
+                    current_gray, current_hsv, background, previous_zone_gray[zone_name],
                 )
                 if current_gray.size > 0:
                     history.append(current_gray)
                 zone_values[f"net_{zone_name}_motion_score"] = round(gray_motion, 4)
                 zone_values[f"net_{zone_name}_changed_ratio"] = round(changed_ratio, 4)
                 zone_values[f"net_{zone_name}_orange_score"] = round(orange_motion, 4)
-                signals.append(gray_motion)
+                zone_values[f"net_{zone_name}_white_motion_score"] = round(white_motion, 4)
+                zone_values[f"net_{zone_name}_downward_motion_score"] = round(downward_motion, 4)
+                previous_zone_gray[zone_name] = current_gray.copy()
+                signals.append(max(gray_motion, white_motion, downward_motion))
                 signals.append(orange_motion)
             zone_values["net_measurement_valid"] = zone_measurements_valid
             zone_values["net_whole_signal_score"] = round(

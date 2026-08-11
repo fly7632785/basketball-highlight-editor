@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS videos (
     fps REAL,
     video_codec TEXT,
     audio_codec TEXT,
+    analysis_start_ms INTEGER NOT NULL DEFAULT 0,
+    analysis_end_ms INTEGER,
     status TEXT NOT NULL DEFAULT 'linked',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

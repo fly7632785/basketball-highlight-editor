@@ -35,6 +35,8 @@ class ProjectState {
     this.reviewVideoPath,
     this.previewPath,
     this.suggestedRoi,
+    this.netRoi,
+    this.hoopBbox,
     this.roiSource,
     this.roiConfidence,
     this.roiSuggestionError,
@@ -58,6 +60,8 @@ class ProjectState {
   final String? reviewVideoPath;
   final String? previewPath;
   final Rect? suggestedRoi;
+  final Rect? netRoi;
+  final Rect? hoopBbox;
   final String? roiSource;
   final double? roiConfidence;
   final String? roiSuggestionError;
@@ -97,6 +101,8 @@ class ProjectState {
     Object? reviewVideoPath = _unset,
     Object? previewPath = _unset,
     Object? suggestedRoi = _unset,
+    Object? netRoi = _unset,
+    Object? hoopBbox = _unset,
     Object? roiSource = _unset,
     Object? roiConfidence = _unset,
     Object? roiSuggestionError = _unset,
@@ -128,6 +134,8 @@ class ProjectState {
       suggestedRoi: identical(suggestedRoi, _unset)
           ? this.suggestedRoi
           : suggestedRoi as Rect?,
+      netRoi: identical(netRoi, _unset) ? this.netRoi : netRoi as Rect?,
+      hoopBbox: identical(hoopBbox, _unset) ? this.hoopBbox : hoopBbox as Rect?,
       roiSource: identical(roiSource, _unset)
           ? this.roiSource
           : roiSource as String?,
@@ -246,6 +254,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
         reviewVideoPath: null,
         previewPath: null,
         suggestedRoi: null,
+        netRoi: null,
+        hoopBbox: null,
         roiSource: null,
         roiConfidence: null,
         roiSuggestionError: null,
@@ -273,6 +283,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         }
       }
       Rect? suggestedRoi;
+      Rect? hoopBbox;
       String? roiSource;
       double? roiConfidence;
       String? roiSuggestionError;
@@ -288,6 +299,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
           suggestedRoi = _normalizeRoi(roi, linkedVideo);
           final calibration = (suggestion['calibration'] as Map?)
               ?.cast<String, dynamic>();
+          final rawHoopBbox = calibration?['hoop_bbox'];
+          if (rawHoopBbox is List) {
+            hoopBbox = _normalizeBbox(rawHoopBbox, linkedVideo);
+          }
           await session.saveRoi(
             x1: roi['x1'] as num,
             y1: roi['y1'] as num,
@@ -304,6 +319,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
       }
       state = state.copyWith(
         suggestedRoi: suggestedRoi,
+        hoopBbox: hoopBbox,
         roiSource: roiSource,
         roiConfidence: roiConfidence,
         roiSuggestionError: roiSuggestionError,
@@ -533,6 +549,14 @@ class ProjectNotifier extends Notifier<ProjectState> {
       final restoredRoiRect = video == null || restoredRoi == null
           ? null
           : _normalizeRoi(restoredRoi, video);
+      final storedNetRoi = calibration?['net_roi'];
+      final rawHoopBbox = calibration?['hoop_bbox'];
+      final restoredHoopBbox = video == null || rawHoopBbox is! List
+          ? null
+          : _normalizeBbox(rawHoopBbox, video);
+      final restoredNetRoi = video == null || storedNetRoi is! Map
+          ? null
+          : _normalizeRoi(storedNetRoi.cast<String, dynamic>(), video);
       final restoredRoiSource = calibration?['source']?.toString() ?? 'manual';
       state = state.copyWith(
         knownProjectsRoot: Directory(canonicalProjectPath(root)).parent.path,
@@ -541,6 +565,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
         reviewVideoPath: null,
         previewPath: null,
         suggestedRoi: restoredRoiRect,
+        netRoi: restoredNetRoi,
+        hoopBbox: restoredHoopBbox,
         roiSource: restoredRoiRect == null ? null : restoredRoiSource,
         roiConfidence: (calibration?['confidence'] as num?)?.toDouble(),
         roiSuggestionError: null,
@@ -701,7 +727,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   /// 等价 app.dart:_saveRoi(404)。
-  Future<bool> saveRoi(Rect normalized) async {
+  Future<bool> saveRoi(
+    Rect normalized, {
+    Rect? netRoi,
+    bool showNotice = true,
+  }) async {
     var saved = false;
     await _runBusy(() async {
       final video = state.video;
@@ -711,6 +741,24 @@ class ProjectNotifier extends Notifier<ProjectState> {
       if (width <= 0 || height <= 0) {
         throw const SessionStateException('视频分辨率无效');
       }
+      final calibration = <String, dynamic>{'source': 'manual'};
+      final hoopBbox = state.hoopBbox;
+      if (hoopBbox != null) {
+        calibration['hoop_bbox'] = <double>[
+          hoopBbox.left * width,
+          hoopBbox.top * height,
+          hoopBbox.right * width,
+          hoopBbox.bottom * height,
+        ];
+      }
+      if (netRoi != null) {
+        calibration['net_roi'] = <String, double>{
+          'x1': netRoi.left * width,
+          'y1': netRoi.top * height,
+          'x2': netRoi.right * width,
+          'y2': netRoi.bottom * height,
+        };
+      }
       await ref
           .read(projectSessionProvider)
           .saveRoi(
@@ -718,15 +766,40 @@ class ProjectNotifier extends Notifier<ProjectState> {
             y1: normalized.top * height,
             x2: normalized.right * width,
             y2: normalized.bottom * height,
-            calibration: const <String, dynamic>{'source': 'manual'},
+            calibration: calibration,
           );
       state = state.copyWith(
         roiSource: 'manual',
+        netRoi: netRoi,
         roiConfidence: null,
         roiSuggestionError: null,
       );
       saved = true;
-    }, successMessage: '篮筐区域已保存');
+    }, successMessage: showNotice ? '篮筐区域已保存' : null);
+    return saved;
+  }
+
+  Future<bool> saveAnalysisRange(
+    int startMs,
+    int endMs, {
+    bool showNotice = true,
+  }) async {
+    var saved = false;
+    await _runBusy(() async {
+      final result = await ref
+          .read(projectSessionProvider)
+          .setAnalysisRange(startMs: startMs, endMs: endMs);
+      final video = (result['video'] as Map?)?.cast<String, dynamic>();
+      if (video != null) {
+        state = state.copyWith(
+          video: video,
+          candidates: const <JsonMap>[],
+          reviewVideoPath: null,
+          statistics: null,
+        );
+      }
+      saved = true;
+    }, successMessage: showNotice ? '分析范围已保存' : null);
     return saved;
   }
 
@@ -1447,6 +1520,24 @@ class ProjectNotifier extends Notifier<ProjectState> {
     final y1 = (roi['y1'] as num?)?.toDouble() ?? 0;
     final x2 = (roi['x2'] as num?)?.toDouble() ?? width;
     final y2 = (roi['y2'] as num?)?.toDouble() ?? height;
+    return Rect.fromLTRB(
+      (x1 / width).clamp(0.0, 1.0).toDouble(),
+      (y1 / height).clamp(0.0, 1.0).toDouble(),
+      (x2 / width).clamp(0.0, 1.0).toDouble(),
+      (y2 / height).clamp(0.0, 1.0).toDouble(),
+    );
+  }
+
+  Rect? _normalizeBbox(List<dynamic> bbox, Map<String, dynamic> video) {
+    if (bbox.length != 4 || bbox.any((value) => value is! num)) return null;
+    final width = (video['width'] as num?)?.toDouble() ?? 0;
+    final height = (video['height'] as num?)?.toDouble() ?? 0;
+    if (width <= 0 || height <= 0) return null;
+    final x1 = (bbox[0] as num).toDouble();
+    final y1 = (bbox[1] as num).toDouble();
+    final x2 = (bbox[2] as num).toDouble();
+    final y2 = (bbox[3] as num).toDouble();
+    if (x2 <= x1 || y2 <= y1) return null;
     return Rect.fromLTRB(
       (x1 / width).clamp(0.0, 1.0).toDouble(),
       (y1 / height).clamp(0.0, 1.0).toDouble(),

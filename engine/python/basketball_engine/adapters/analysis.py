@@ -158,15 +158,27 @@ def build_pipeline_commands(
     batch: int = 8,
     conf: float = 0.10,
     window_seconds: float = 2.5,
+    analysis_start_ms: int = 0,
+    analysis_end_ms: int | None = None,
+    net_roi: Iterable[float] | None = None,
 ) -> list[list[str]]:
     proxy_roi_args = [str(round(float(value))) for value in proxy_roi]
     source_roi_args = [str(round(float(value))) for value in source_roi]
+    net_roi_args = [str(round(float(value))) for value in net_roi] if net_roi else []
+    analysis_start_seconds = max(0.0, analysis_start_ms / 1000.0)
+    analysis_duration_seconds = (
+        None if analysis_end_ms is None else max(0.0, (analysis_end_ms - analysis_start_ms) / 1000.0)
+    )
+    proxy_range_args = ["--start-time", str(analysis_start_seconds)]
+    if analysis_duration_seconds is not None:
+        proxy_range_args += ["--duration", str(analysis_duration_seconds)]
     return [
         [
             sys.executable, _script(repo_root, "create_proxy.py"),
             "--video", str(source_video), "--output", str(proxy_video),
             "--width", str(proxy_width), "--height", str(proxy_height),
             "--fps", str(proxy_fps),
+            *proxy_range_args,
         ],
         [
             sys.executable, _script(repo_root, "scan_video.py"),
@@ -174,6 +186,7 @@ def build_pipeline_commands(
             "--roi", *proxy_roi_args, "--sample-fps", str(proxy_fps),
             "--scale", str(coarse_scale), "--batch", str(batch),
             "--conf", str(conf), "--cache-dir", str(cache_dir / "coarse"),
+            "--time-offset", str(analysis_start_seconds),
             "--output", str(coarse_detections),
         ],
         [
@@ -188,6 +201,7 @@ def build_pipeline_commands(
             "--window", str(window_seconds),
             "--scale", str(refine_scale), "--conf", str(conf),
             "--batch", str(batch), "--cache-dir", str(cache_dir / "refine"),
+            *( ["--net-roi", *net_roi_args] if net_roi_args else [] ),
             "--output", str(refined_output),
         ],
     ]

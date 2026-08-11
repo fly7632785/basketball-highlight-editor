@@ -22,6 +22,31 @@ def test_create_project_and_statistics(tmp_path: Path):
     assert stats["statistics"]["goal_count"] == 0
 
 
+def test_analysis_range_is_persisted_and_invalidates_candidates(tmp_path: Path):
+    store = ProjectStore(tmp_path / "project")
+    store.initialize()
+    store.create_project("project-1", "范围测试")
+    video = store.link_video({
+        "id": "video-1",
+        "source_path": str(tmp_path / "source.mp4"),
+        "source_size_bytes": 1,
+        "source_mtime_ns": 1,
+        "duration_ms": 60_000,
+        "width": 1280,
+        "height": 720,
+    })
+    store.replace_candidates(video["id"], [{
+        "id": "candidate-1", "video_id": video["id"], "event_time_ms": 10_000,
+        "default_start_ms": 4_000, "default_end_ms": 13_000,
+        "review_start_ms": 4_000, "review_end_ms": 13_000,
+        "detector_version": "test", "evidence_json": "{}",
+    }])
+    updated = store.set_analysis_range(video["id"], 5_000, 50_000)
+    assert updated["analysis_start_ms"] == 5_000
+    assert updated["analysis_end_ms"] == 50_000
+    assert store.list_candidates(video["id"]) == []
+
+
 def test_delete_project_removes_project_files_but_not_source_video(tmp_path: Path):
     project_root = tmp_path / "project"
     source = tmp_path / "source.mp4"

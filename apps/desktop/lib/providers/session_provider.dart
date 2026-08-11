@@ -36,6 +36,14 @@ String? findRuntimeRoot({
     '${appContents.path}/Resources/runtime',
   ];
 
+  var executableDirectory = executable.parent;
+  for (var depth = 0; depth <= 10; depth++) {
+    candidates.add(executableDirectory.path);
+    final parent = executableDirectory.parent;
+    if (parent.path == executableDirectory.path) break;
+    executableDirectory = parent;
+  }
+
   var directory = Directory(currentDir);
   for (var depth = 0; depth <= 6; depth++) {
     candidates.add(directory.path);

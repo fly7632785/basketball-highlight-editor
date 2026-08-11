@@ -370,7 +370,7 @@ class EventsTest(unittest.TestCase):
         self.assertEqual(candidates[0]["signals"]["net_motion_order"], "lower_to_below")
         self.assertTrue(candidates[0]["verification"]["net_support"])
 
-    def test_reliable_no_net_motion_is_rejected(self):
+    def test_reliable_no_net_motion_stays_reviewable(self):
         records = [
             {"time": 1.0, "net_lower_motion_score": 0.0, "net_below_motion_score": 0.0,
              "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 295]}]},
@@ -388,7 +388,7 @@ class EventsTest(unittest.TestCase):
         candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
         self.assertEqual(len(candidates), 1)
         self.assertFalse(candidates[0]["gates"]["automatic_goal"])
-        self.assertEqual(candidates[0]["verdict"], "missed")
+        self.assertEqual(candidates[0]["verdict"], "ambiguous")
 
     def test_lower_net_motion_without_sequence_stays_reviewable(self):
         records = [

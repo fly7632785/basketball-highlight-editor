@@ -57,6 +57,15 @@ class ProjectSessionScope {
     );
   }
 
+  Future<JsonMap> setAnalysisRange({required int startMs, required int endMs}) {
+    return engine.setAnalysisRange(
+      projectRoot: projectRoot,
+      videoId: _requireVideoId(),
+      startMs: startMs,
+      endMs: endMs,
+    );
+  }
+
   Stream<JsonMap> pollJob({
     required String jobId,
     Duration interval = const Duration(seconds: 1),
@@ -262,6 +271,15 @@ class ProjectSession {
       projectRoot: _requireProjectRoot(),
       videoId: _requireVideoId(),
       timeMs: timeMs,
+    );
+  }
+
+  Future<JsonMap> setAnalysisRange({required int startMs, required int endMs}) {
+    return engine.setAnalysisRange(
+      projectRoot: _requireProjectRoot(),
+      videoId: _requireVideoId(),
+      startMs: startMs,
+      endMs: endMs,
     );
   }
 

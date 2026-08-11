@@ -106,6 +106,20 @@ class EngineSession {
     });
   }
 
+  Future<JsonMap> setAnalysisRange({
+    required String projectRoot,
+    required String videoId,
+    required int startMs,
+    required int endMs,
+  }) {
+    return client.request('set_analysis_range', <String, dynamic>{
+      'project_root': projectRoot,
+      'video_id': videoId,
+      'start_ms': startMs,
+      'end_ms': endMs,
+    });
+  }
+
   Future<JsonMap> suggestRoi({
     required String projectRoot,
     required String videoId,

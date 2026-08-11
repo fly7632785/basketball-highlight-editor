@@ -29,7 +29,7 @@ from .protocol import ProtocolError
 from .storage import ProjectStore, new_id
 
 
-ANALYSIS_ALGORITHM_VERSION = "python-v2.9.2-track-split-recovery"
+ANALYSIS_ALGORITHM_VERSION = "python-v2.10-white-net-trajectory"
 
 
 class EngineService:
@@ -92,6 +92,7 @@ class EngineService:
             "extract_preview": self.extract_preview,
             "suggest_roi": self.suggest_roi,
             "save_roi": self.save_roi,
+            "set_analysis_range": self.set_analysis_range,
             "start_analysis": self.start_analysis,
             "cancel_job": self.cancel_job,
             "get_job": self.get_job,
@@ -710,6 +711,20 @@ class EngineService:
             raise ProtocolError("ROI_INVALID", str(exc)) from exc
         return {"roi": roi}
 
+    def set_analysis_range(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        video_id = payload.get("video_id")
+        if not isinstance(video_id, str) or not video_id:
+            raise ProtocolError("VIDEO_NOT_FOUND", "缺少有效 video_id")
+        try:
+            start_ms = int(payload["start_ms"])
+            end_ms = int(payload["end_ms"])
+            video = self._require_store(payload).set_analysis_range(video_id, start_ms, end_ms)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProtocolError("ANALYSIS_RANGE_INVALID", "分析范围无效") from exc
+        except LookupError as exc:
+            raise ProtocolError("VIDEO_NOT_FOUND", "视频不存在") from exc
+        return {"video": video}
+
     def _create_analysis_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         store = self._require_store(payload)
         project = store.project()
@@ -737,11 +752,17 @@ class EngineService:
             or not math.isfinite(after_seconds) or after_seconds <= 0
         ):
             raise ProtocolError("INVALID_REQUEST", "分析参数必须在有效范围内")
+        analysis_start_ms = int(video.get("analysis_start_ms") or 0)
+        analysis_end_ms = int(video.get("analysis_end_ms") or video.get("duration_ms") or 0)
+        if analysis_end_ms <= analysis_start_ms:
+            raise ProtocolError("ANALYSIS_RANGE_INVALID", "分析范围无效")
         checkpoint = {
             "sample_fps": sample_fps,
             "window_seconds": window_seconds,
             "before_seconds": before_seconds,
             "after_seconds": after_seconds,
+            "analysis_start_ms": analysis_start_ms,
+            "analysis_end_ms": analysis_end_ms,
             "algorithm_version": ANALYSIS_ALGORITHM_VERSION,
         }
         return {"job": store.create_job(project["id"], video_id, "analysis", checkpoint)}
@@ -900,6 +921,14 @@ class EngineService:
             )
             proxy_scale = 1.0 / proxy_fit_scale
             source_roi = [roi[key] for key in ("x1", "y1", "x2", "y2")]
+            calibration = roi.get("calibration") if isinstance(roi.get("calibration"), dict) else {}
+            raw_net_roi = calibration.get("net_roi") if isinstance(calibration, dict) else None
+            net_roi = None
+            if isinstance(raw_net_roi, dict):
+                try:
+                    net_roi = [float(raw_net_roi[key]) for key in ("x1", "y1", "x2", "y2")]
+                except (KeyError, TypeError, ValueError):
+                    net_roi = None
             proxy_roi = scale_roi_to_proxy(
                 roi,
                 source_width,
@@ -915,6 +944,7 @@ class EngineService:
                 "model_path": str(model_path),
                 "model_mtime_ns": model_path.stat().st_mtime_ns,
                 "roi": source_roi,
+                "net_roi": net_roi,
                 "proxy_width": proxy_width,
                 "proxy_height": proxy_height,
                 "proxy_fps": proxy_fps,
@@ -925,6 +955,8 @@ class EngineService:
                 "conf": float(payload.get("conf", 0.10)),
                 "before_seconds": float(payload.get("before_seconds", 6)),
                 "after_seconds": float(payload.get("after_seconds", 3)),
+                "analysis_start_ms": int(video.get("analysis_start_ms") or 0),
+                "analysis_end_ms": int(video.get("analysis_end_ms") or video.get("duration_ms") or 0),
             }
             analysis_key = hashlib.sha256(
                 json.dumps(analysis_parameters, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -957,6 +989,9 @@ class EngineService:
                 refine_scale=int(payload.get("refine_scale", 2)),
                 conf=float(payload.get("conf", 0.10)),
                 window_seconds=float(payload.get("window_seconds", 2.5)),
+                analysis_start_ms=int(video.get("analysis_start_ms") or 0),
+                analysis_end_ms=int(video.get("analysis_end_ms") or video.get("duration_ms") or 0),
+                net_roi=net_roi,
             )
 
             checkpoint = {

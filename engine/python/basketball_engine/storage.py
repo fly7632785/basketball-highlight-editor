@@ -79,6 +79,15 @@ class ProjectStore:
 
     @staticmethod
     def _ensure_schema_compatibility(connection: sqlite3.Connection) -> None:
+        video_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(videos)").fetchall()
+        }
+        for name, definition in (
+            ("analysis_start_ms", "INTEGER NOT NULL DEFAULT 0"),
+            ("analysis_end_ms", "INTEGER"),
+        ):
+            if name not in video_columns:
+                connection.execute(f"ALTER TABLE videos ADD COLUMN {name} {definition}")
         columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(candidate_reviews)").fetchall()
@@ -198,6 +207,8 @@ class ProjectStore:
             metadata.get("fps"),
             metadata.get("video_codec"),
             metadata.get("audio_codec"),
+            0,
+            metadata.get("duration_ms"),
             timestamp,
             timestamp,
         )
@@ -207,8 +218,9 @@ class ProjectStore:
                 INSERT INTO videos (
                     id, project_id, source_path, source_size_bytes, source_mtime_ns,
                     duration_ms, width, height, fps, video_codec, audio_codec,
+                    analysis_start_ms, analysis_end_ms,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 values,
             )
@@ -218,6 +230,29 @@ class ProjectStore:
         with self.connect() as connection:
             row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
         return dict(row) if row else None
+
+    def set_analysis_range(
+        self,
+        video_id: str,
+        start_ms: int,
+        end_ms: int,
+    ) -> Dict[str, Any]:
+        video = self.video(video_id)
+        if not video:
+            raise LookupError("VIDEO_NOT_FOUND")
+        duration_ms = int(video.get("duration_ms") or 0)
+        if start_ms < 0 or end_ms <= start_ms or (duration_ms > 0 and end_ms > duration_ms):
+            raise ValueError("ANALYSIS_RANGE_INVALID")
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE videos SET analysis_start_ms = ?, analysis_end_ms = ?, updated_at = ? WHERE id = ?",
+                (start_ms, end_ms, now_iso(), video_id),
+            )
+            connection.execute("DELETE FROM candidates WHERE video_id = ?", (video_id,))
+        updated = self.video(video_id)
+        if not updated:
+            raise LookupError("VIDEO_NOT_FOUND")
+        return updated
 
     def relink_video(self, video_id: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Replace the source reference and invalidate analysis for changed media."""

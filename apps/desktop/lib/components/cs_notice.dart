@@ -59,88 +59,96 @@ class _CsNoticeState extends State<CsNotice>
       onExit: (_) => _startTimer(),
       child: SlideTransition(
         position: Tween<Offset>(
-          begin: const Offset(0, -0.25),
+          begin: const Offset(0, -0.16),
           end: Offset.zero,
-        ).animate(CurvedAnimation(parent: _anim, curve: Curves.easeOut)),
+        ).animate(CurvedAnimation(parent: _anim, curve: Curves.easeOutCubic)),
         child: FadeTransition(
           opacity: _anim,
           child: Material(
             color: Colors.transparent,
             child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(Spacing.md),
+              padding: const EdgeInsets.symmetric(
+                horizontal: Spacing.sm,
+                vertical: 6,
+              ),
               decoration: BoxDecoration(
-                color: c.surface,
-                borderRadius: BorderRadius.circular(CsRadius.lg),
-                border: Border.all(color: c.border),
+                color: c.surface.withValues(alpha: 0.97),
+                borderRadius: BorderRadius.circular(CsRadius.md),
+                border: Border.all(color: color.withValues(alpha: 0.38)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.22),
+                    blurRadius: 18,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
               ),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(width: 3, height: 36, color: color),
-                  const SizedBox(width: Spacing.sm),
-                  Icon(icon, size: 18, color: color),
-                  const SizedBox(width: Spacing.sm),
-                  Expanded(
+                  Icon(icon, size: 15, color: color),
+                  const SizedBox(width: 7),
+                  Flexible(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           widget.message.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: c.textPrimary,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
-                        if (widget.message.description != null) ...[
-                          const SizedBox(height: 2),
+                        if (widget.message.description != null)
                           Text(
                             widget.message.description!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: c.textSecondary,
-                              fontSize: 12,
-                              height: 1.4,
+                              fontSize: 11,
+                              height: 1.35,
                             ),
                           ),
-                        ],
                         if (widget.message.action != null &&
-                            widget.message.actionLabel != null) ...[
-                          const SizedBox(height: Spacing.sm),
+                            widget.message.actionLabel != null)
                           InkWell(
                             onTap: widget.message.action,
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              padding: const EdgeInsets.only(top: 2),
                               child: Text(
                                 widget.message.actionLabel!,
                                 style: TextStyle(
                                   color: c.indigo,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
                             ),
                           ),
-                        ],
                       ],
                     ),
                   ),
+                  const SizedBox(width: 2),
                   Semantics(
                     button: true,
                     label: '关闭提示',
                     child: IconButton(
                       icon: Icon(
                         LucideIcons.x,
-                        size: 16,
+                        size: 14,
                         color: c.textTertiary,
                       ),
                       onPressed: widget.onDismiss,
                       visualDensity: VisualDensity.compact,
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(
-                        minWidth: 24,
-                        minHeight: 24,
+                        minWidth: 22,
+                        minHeight: 22,
                       ),
                     ),
                   ),

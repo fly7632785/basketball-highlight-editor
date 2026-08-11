@@ -19,6 +19,8 @@ def parse_args():
     parser.add_argument("--sample-fps", type=float, default=5)
     parser.add_argument("--duration", type=float,
                         help="Optional duration limit in seconds, useful for benchmarks.")
+    parser.add_argument("--time-offset", type=float, default=0.0,
+                        help="Source timestamp offset for a clipped proxy.")
     parser.add_argument("--scale", type=int, default=4)
     parser.add_argument("--batch", type=int, default=8)
     parser.add_argument("--conf", type=float, default=0.15)
@@ -57,6 +59,7 @@ def scan_video(args):
             "roi": args.roi,
             "sample_fps": args.sample_fps,
             "duration": args.duration,
+            "time_offset": args.time_offset,
             "scale": args.scale,
             "batch": args.batch,
             "conf": args.conf,
@@ -152,7 +155,7 @@ def scan_video(args):
         pending_crops.append(crop)
         pending_meta.append({
             "frame": frame_index,
-            "time": round(frame_index / fps, 4),
+                    "time": round(frame_index / fps + args.time_offset, 4),
         })
         if len(pending_crops) >= args.batch:
             flush_batch()

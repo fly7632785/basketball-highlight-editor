@@ -100,6 +100,20 @@ void main() {
       );
       expect(result, resourcesRuntime);
     });
+
+    test('从 macOS Debug app 包路径向上找到开发仓库运行时', () {
+      final executable = File(
+        '$runtimeRoot/build/macos/Build/Products/Debug/desktop.app/Contents/MacOS/desktop',
+      )..createSync(recursive: true);
+
+      final result = findRuntimeRoot(
+        env: const <String, String>{},
+        resolvedExecutable: executable.path,
+        currentDir: '/elsewhere',
+      );
+
+      expect(result, runtimeRoot);
+    });
   });
 
   group('findPython', () {

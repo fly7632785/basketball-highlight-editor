@@ -213,14 +213,19 @@ def _multi_signal_features(records, event_time):
     lower = max(
         _delta_signal(records, "net_lower_motion_score", event_time),
         _delta_signal(records, "net_lower_orange_score", event_time),
+        _delta_signal(records, "net_lower_white_motion_score", event_time),
+        _delta_signal(records, "net_lower_downward_motion_score", event_time),
     )
     below = max(
         _delta_signal(records, "net_below_motion_score", event_time),
         _delta_signal(records, "net_below_orange_score", event_time),
+        _delta_signal(records, "net_below_white_motion_score", event_time),
+        _delta_signal(records, "net_below_downward_motion_score", event_time),
     )
     upper = max(
         _delta_signal(records, "net_upper_motion_score", event_time),
         _delta_signal(records, "net_upper_orange_score", event_time),
+        _delta_signal(records, "net_upper_white_motion_score", event_time),
     )
     whole = _delta_signal(records, "net_whole_signal_score", event_time)
     if whole == 0.0:
@@ -239,6 +244,8 @@ def _zone_signal_value(record, zone):
     return max(
         float(record.get(f"net_{zone}_motion_score", 0.0)),
         float(record.get(f"net_{zone}_orange_score", 0.0)),
+        float(record.get(f"net_{zone}_white_motion_score", 0.0)),
+        float(record.get(f"net_{zone}_downward_motion_score", 0.0)),
         min(1.0, float(record.get(f"net_{zone}_changed_ratio", 0.0)) / 0.12),
     )
 

@@ -17,8 +17,8 @@ from cache_io import read_json_cache, write_json_cache
 from refine_candidates import scan_window
 
 
-DETECTION_CACHE_VERSION = "python-v2.4-weighted-progress-normalized-coarse"
-ALGORITHM_VERSION = "python-v2.9.2-track-split-recovery"
+DETECTION_CACHE_VERSION = "python-v2.5-white-net-region"
+ALGORITHM_VERSION = "python-v2.10-white-net-trajectory"
 REFINED_SCHEMA_VERSION = 3
 
 
@@ -37,6 +37,7 @@ def parse_args():
     parser.add_argument("--model", required=True)
     parser.add_argument("--coarse", required=True)
     parser.add_argument("--roi", nargs=4, type=int, metavar=("X1", "Y1", "X2", "Y2"), required=True)
+    parser.add_argument("--net-roi", nargs=4, type=int, metavar=("X1", "Y1", "X2", "Y2"))
     parser.add_argument("--proxy-scale", type=float, default=2.0)
     parser.add_argument("--window", type=float, default=2.5)
     parser.add_argument("--sample-fps", type=float, default=30)
@@ -228,34 +229,11 @@ def main(args):
                 "conf": args.conf,
                 "batch": args.batch,
                 "rim": rim,
-                "signal_version": 3,
+                "net_roi": args.net_roi,
+                "signal_version": 4,
             }, sort_keys=True).encode()
             cache_path = args.cache_dir / (hashlib.sha256(cache_key).hexdigest() + ".json")
             legacy_cache_paths_by_index[index] = []
-            for legacy_version in (
-                "python-v2.5-complete-crossing-net-support",
-                DETECTION_CACHE_VERSION,
-            ):
-                if legacy_version == DETECTION_CACHE_VERSION:
-                    continue
-                legacy_cache_key = json.dumps({
-                    "algorithm_version": legacy_version,
-                    "schema_version": REFINED_SCHEMA_VERSION,
-                    "video": video_fingerprint,
-                    "model": model_fingerprint,
-                    "roi": args.roi,
-                    "time": round(float(coarse["time"]), 4),
-                    "window": args.window,
-                    "sample_fps": args.sample_fps,
-                    "scale": args.scale,
-                    "conf": args.conf,
-                    "batch": args.batch,
-                    "rim": rim,
-                    "signal_version": 3,
-                }, sort_keys=True).encode()
-                legacy_cache_paths_by_index[index].append(args.cache_dir / (
-                    hashlib.sha256(legacy_cache_key).hexdigest() + ".json"
-                ))
         cache_paths_by_index[index] = cache_path
         candidate_cache_paths = [cache_path, *legacy_cache_paths_by_index.get(index, [])]
         cached = None
@@ -295,6 +273,7 @@ def main(args):
             args.batch,
             start_time_override=group["start"],
             end_time_override=group["end"],
+            net_roi=args.net_roi,
         )
         for index in group_indices:
             center = float(candidates[index]["time"])

@@ -49,6 +49,8 @@ def parse_args():
     parser.add_argument("--fps", type=float, default=5)
     parser.add_argument("--duration", type=float,
                         help="Optional duration limit, useful for short benchmarks.")
+    parser.add_argument("--start-time", type=float, default=0.0,
+                        help="Source timestamp where the proxy range begins.")
     parser.add_argument("--codec", choices=("auto", "libx264", "h264_videotoolbox"), default="auto")
     parser.add_argument("--hwaccel", choices=("auto", "none", "videotoolbox"), default="auto")
     return parser.parse_args()
@@ -60,6 +62,8 @@ def build_proxy_command(
     command = [ffmpeg, "-y", "-progress", "pipe:1", "-nostats"]
     if hwaccel != "none":
         command += ["-hwaccel", hwaccel]
+    if args.start_time > 0:
+        command += ["-ss", str(args.start_time)]
     command += ["-i", str(video)]
     if args.duration is not None:
         command += ["-t", str(args.duration)]
@@ -149,6 +153,7 @@ def main(args):
             "preserve_aspect_ratio": True,
             "fps": args.fps,
             "duration": args.duration,
+            "start_time": args.start_time,
             "codec": codec,
             "hwaccel": hwaccel,
             "timestamp_policy": "CFR proxy; source timestamps remain authoritative for final cuts",

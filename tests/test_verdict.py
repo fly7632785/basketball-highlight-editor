@@ -61,7 +61,7 @@ def test_resolve_verdict_keeps_weak_evidence_ambiguous():
     assert result["verdict"] == "ambiguous"
 
 
-def test_resolve_verdict_rejects_reliable_zero_net_motion():
+def test_resolve_verdict_keeps_reliable_zero_net_motion_reviewable():
     track = [
         {"time": 1.1, "x": 490, "y": 300},
         {"time": 1.4, "x": 491, "y": 345},
@@ -78,7 +78,7 @@ def test_resolve_verdict_rejects_reliable_zero_net_motion():
 
     result = resolve_verdict(candidate, track, RIM)
 
-    assert result["verdict"] == "missed"
+    assert result["verdict"] == "ambiguous"
     assert result["net_no_motion"] is True
 
 

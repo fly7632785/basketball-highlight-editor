@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
@@ -143,9 +144,9 @@ void main() {
     expect(find.text('默认保留'), findsNothing);
     expect(find.text('保留'), findsNothing);
     expect(find.text('已排除'), findsNothing);
-    expect(find.textContaining('时长 9 秒'), findsOneWidget);
-    expect(find.byTooltip('保留片段'), findsOneWidget);
-    expect(find.byTooltip('排除片段'), findsOneWidget);
+    expect(find.text('时长 9 秒'), findsOneWidget);
+    expect(find.byTooltip('保留片段 (C / Enter)'), findsOneWidget);
+    expect(find.byTooltip('排除片段 (X / Backspace)'), findsOneWidget);
   });
 
   testWidgets(
@@ -162,6 +163,7 @@ void main() {
               'default_start_ms': 6000,
               'default_end_ms': 15000,
               'review_status': 'pending',
+              'note': '补篮后进球',
               'evidence_json': jsonEncode({
                 'verification': {'trajectory_cross': true},
                 'signals': {'net_score': 0.82, 'audio_score': 0.71},
@@ -180,9 +182,42 @@ void main() {
       expect(find.text('系统说明'), findsOneWidget);
       expect(find.text('候选 00:12'), findsOneWidget);
       expect(find.text('片段 00:06 - 00:15 · 时长 9 秒'), findsOneWidget);
+      expect(find.text('补篮后进球'), findsOneWidget);
+      expect(find.byTooltip('调整片段范围'), findsOneWidget);
+      expect(find.byTooltip('编辑备注'), findsOneWidget);
+      expect(find.byTooltip('候选操作'), findsNothing);
       expect(find.text('00:06 - 00:15 · 时长 9 秒 · 置信度'), findsNothing);
     },
   );
+
+  testWidgets('labels an ambiguous geometric crossing as inferred', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      ProjectState(
+        job: const {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+            'evidence_json': jsonEncode({
+              'verification': {
+                'verdict': 'ambiguous',
+                'trajectory_cross': true,
+                'complete_crossing': true,
+              },
+            }),
+          },
+        ],
+      ),
+    );
+
+    expect(find.text('推定穿框'), findsOneWidget);
+    expect(find.text('通过'), findsNothing);
+  });
 
   testWidgets('provides a toggle for video annotations', (tester) async {
     await _pumpReview(
@@ -238,10 +273,44 @@ void main() {
 
     expect(
       find.byTooltip(
-        '快捷键\nSpace  播放/暂停\nR  重播当前\n← / →  切换候选\nC / Enter  保留\nX / Backspace  排除\nCmd/Ctrl+Z  撤销',
+        '快捷键\nSpace  播放/暂停\nR  重播当前\nL  循环当前\n↑ / ↓  切换候选\n← / →  快退/快进 3 秒\nC / Enter  保留\nX / Backspace  排除\nCmd/Ctrl+Z  撤销',
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('routes review shortcuts through the workspace focus node', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'early',
+            'event_time_ms': 3000,
+            'default_start_ms': 0,
+            'default_end_ms': 6000,
+          },
+          {
+            'id': 'late',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+          },
+        ],
+      ),
+    );
+
+    final focus = tester.widget<Focus>(
+      find.byKey(const Key('review-shortcut-focus')),
+    );
+    expect(focus.onKeyEvent, isNotNull);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(find.text('候选 00:12'), findsOneWidget);
   });
 
   testWidgets('filters candidates without changing their chronological order', (
@@ -287,7 +356,7 @@ void main() {
     expect(find.text('1. 00:15'), findsNothing);
   });
 
-  testWidgets('exposes compact candidate editing actions below the video', (
+  testWidgets('exposes direct candidate editing actions below the video', (
     tester,
   ) async {
     await _pumpReview(
@@ -305,11 +374,10 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('候选操作'));
-    await tester.pumpAndSettle();
-    expect(find.text('调整片段范围'), findsOneWidget);
-    expect(find.text('编辑备注'), findsOneWidget);
-    expect(find.text('撤销上一次审核'), findsOneWidget);
+    expect(find.byTooltip('调整片段范围'), findsOneWidget);
+    expect(find.byTooltip('编辑备注'), findsOneWidget);
+    expect(find.byTooltip('撤销上一次审核 (Cmd/Ctrl+Z)'), findsOneWidget);
+    expect(find.byTooltip('候选操作'), findsNothing);
   });
 
   testWidgets('sorts the review list by event time', (tester) async {
@@ -370,7 +438,7 @@ void main() {
     );
 
     expect(find.text('候选 00:03'), findsOneWidget);
-    await tester.tap(find.byTooltip('保留片段').at(1));
+    await tester.tap(find.byTooltip('保留片段 (C / Enter)').at(1));
     await tester.pump();
 
     expect(find.text('候选 00:03'), findsOneWidget);
@@ -404,7 +472,7 @@ void main() {
     );
 
     expect(find.text('候选 00:03'), findsOneWidget);
-    await tester.tap(find.byTooltip('排除片段').first);
+    await tester.tap(find.byTooltip('排除片段 (X / Backspace)').first);
     await tester.pump();
 
     expect(find.text('候选 00:03'), findsOneWidget);
