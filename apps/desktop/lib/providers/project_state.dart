@@ -16,6 +16,20 @@ import 'sidebar_provider.dart';
 
 const _recentProjectRootsKey = 'basketball_recent_project_roots';
 
+({String title, String? description}) userFacingNotice(Object error) {
+  final raw = error.toString();
+  if (raw.contains('ROI_COORDINATES_INVALID')) {
+    return (title: '检测区域无法保存', description: '请从左上向右下拖出一个有效矩形，再松开鼠标。');
+  }
+  if (raw.contains('ROI_OUT_OF_BOUNDS')) {
+    return (title: '检测区域超出画面', description: '请把四个手柄拖回预览画面内。');
+  }
+  if (raw.contains('ROI_TOO_SMALL')) {
+    return (title: '投篮分析区太小', description: '请扩大紫色区域，覆盖篮筐、篮网和球落下的位置。');
+  }
+  return (title: raw, description: null);
+}
+
 /// 单进程内共享的 ProjectSession。封装 EngineSession(engineClientProvider)。
 final Provider<ProjectSession> projectSessionProvider =
     Provider<ProjectSession>((ref) {
@@ -1427,15 +1441,17 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   /// 等价 app.dart:_showNotice(691)。原 SnackBar → noticeProvider.push。
-  void _pushNotice(String title, NoticeSeverity severity) {
-    if (_disposed || title.trim().isEmpty) return;
+  void _pushNotice(Object error, NoticeSeverity severity) {
+    final content = userFacingNotice(error);
+    if (_disposed || content.title.trim().isEmpty) return;
     ref
         .read(noticeProvider.notifier)
         .push(
           NoticeMessage(
             id: 'project-${DateTime.now().microsecondsSinceEpoch}-${_noticeCounter++}',
             severity: severity,
-            title: title,
+            title: content.title,
+            description: content.description,
           ),
         );
   }

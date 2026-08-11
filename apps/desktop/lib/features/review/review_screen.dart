@@ -1118,6 +1118,20 @@ class _VideoPaneState extends State<_VideoPane> {
                           ),
                         ),
                       ),
+                    if (_ready && _error == null && player != null)
+                      Center(
+                        child: StreamBuilder<bool>(
+                          stream: player.stream.playing,
+                          initialData: player.state.playing,
+                          builder: (context, snapshot) => _CenterPlaybackButton(
+                            playing: snapshot.data == true,
+                            onPressed: () {
+                              widget.onInteraction();
+                              unawaited(togglePlayPause());
+                            },
+                          ),
+                        ),
+                      ),
                     if (_loading)
                       const ColoredBox(
                         color: Colors.black26,
@@ -1185,6 +1199,38 @@ class _VideoPaneState extends State<_VideoPane> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _CenterPlaybackButton extends StatelessWidget {
+  const _CenterPlaybackButton({required this.playing, required this.onPressed});
+
+  final bool playing;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Tooltip(
+      message: playing ? '暂停（Space）' : '播放（Space）',
+      child: Material(
+        color: c.background.withValues(alpha: playing ? 0.42 : 0.72),
+        shape: const CircleBorder(),
+        child: InkWell(
+          onTap: onPressed,
+          customBorder: const CircleBorder(),
+          child: SizedBox(
+            width: 56,
+            height: 56,
+            child: Icon(
+              playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+              size: 31,
+              color: c.textPrimary,
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -11,6 +11,21 @@ import 'package:desktop/providers/project_state.dart';
 import 'package:desktop/providers/session_provider.dart';
 
 void main() {
+  test('将 ROI 后端错误转换成可操作提示', () {
+    expect(
+      userFacingNotice(
+        const EngineException('ROI_INVALID', 'ROI_COORDINATES_INVALID'),
+      ),
+      (title: '检测区域无法保存', description: '请从左上向右下拖出一个有效矩形，再松开鼠标。'),
+    );
+    expect(
+      userFacingNotice(
+        const EngineException('ROI_INVALID', 'ROI_TOO_SMALL: 检测区域太小'),
+      ),
+      (title: '投篮分析区太小', description: '请扩大紫色区域，覆盖篮筐、篮网和球落下的位置。'),
+    );
+  });
+
   group('ProjectNotifier.selectVideo', () {
     test(
       '更新 videoPath/previewPath,自动 ROI 失败时记录 roiSuggestionError,push 成功 notice',

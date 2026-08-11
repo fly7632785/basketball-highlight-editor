@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -941,6 +942,14 @@ class _RoiCanvasState extends State<_RoiCanvas> {
   _RoiDragMode? _dragMode;
   double _zoom = 1;
   Alignment _focus = Alignment.center;
+  final FocusNode _focusNode = FocusNode(debugLabel: 'roi-canvas');
+  bool _changedSinceDrag = false;
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   void didUpdateWidget(covariant _RoiCanvas oldWidget) {
@@ -970,6 +979,31 @@ class _RoiCanvasState extends State<_RoiCanvas> {
     });
   }
 
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (!widget.enabled ||
+        !_focusNode.hasFocus ||
+        event is! PointerScrollEvent) {
+      return;
+    }
+    final direction = event.scrollDelta.dy.sign;
+    if (direction == 0) return;
+    GestureBinding.instance.pointerSignalResolver.register(event, (_) {
+      if (mounted) _changeZoom(-direction * 0.25);
+    });
+  }
+
+  Offset _toCanvasPoint(Offset point, Size size) {
+    if (_zoom == 1) return point;
+    final anchor = Offset(
+      ((_focus.x + 1) / 2) * size.width,
+      ((_focus.y + 1) / 2) * size.height,
+    );
+    return Offset(
+      anchor.dx + (point.dx - anchor.dx) / _zoom,
+      anchor.dy + (point.dy - anchor.dy) / _zoom,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
@@ -988,118 +1022,142 @@ class _RoiCanvasState extends State<_RoiCanvas> {
             ),
             child: Stack(
               children: [
-                ClipRect(
-                  child: Transform.scale(
-                    alignment: _focus,
-                    scale: _zoom,
-                    child: GestureDetector(
-                      onPanStart: widget.enabled
-                          ? (details) => _beginDrag(
-                              details.localPosition,
-                              constraints.biggest,
-                            )
-                          : null,
-                      onPanUpdate:
-                          widget.enabled && _start != null && _dragMode != null
-                          ? (details) => _updateDrag(
-                              details.localPosition,
-                              constraints.biggest,
-                            )
-                          : null,
-                      onPanEnd: widget.enabled
-                          ? (_) {
-                              setState(() {
-                                _start = null;
-                                _initialRect = null;
-                                _dragMode = null;
-                              });
-                              widget.onEditComplete();
-                            }
-                          : null,
-                      child: Stack(
-                        children: [
-                          if (widget.previewPath != null &&
-                              File(widget.previewPath!).existsSync())
-                            Positioned.fill(
-                              child: Image.file(
-                                File(widget.previewPath!),
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, _) => Center(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(Spacing.md),
-                                    child: Text(
-                                      '预览加载失败，请重新生成。',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: c.error,
-                                        fontSize: 12,
+                Focus(
+                  focusNode: _focusNode,
+                  child: Listener(
+                    onPointerSignal: _handlePointerSignal,
+                    child: ClipRect(
+                      child: Transform.scale(
+                        alignment: _focus,
+                        scale: _zoom,
+                        transformHitTests: false,
+                        child: GestureDetector(
+                          onTapDown: widget.enabled
+                              ? (_) => _focusNode.requestFocus()
+                              : null,
+                          onPanStart: widget.enabled
+                              ? (details) => _beginDrag(
+                                  _toCanvasPoint(
+                                    details.localPosition,
+                                    constraints.biggest,
+                                  ),
+                                  constraints.biggest,
+                                )
+                              : null,
+                          onPanUpdate:
+                              widget.enabled &&
+                                  _start != null &&
+                                  _dragMode != null
+                              ? (details) => _updateDrag(
+                                  _toCanvasPoint(
+                                    details.localPosition,
+                                    constraints.biggest,
+                                  ),
+                                  constraints.biggest,
+                                )
+                              : null,
+                          onPanEnd: widget.enabled
+                              ? (_) {
+                                  final changed = _changedSinceDrag;
+                                  setState(() {
+                                    _start = null;
+                                    _initialRect = null;
+                                    _dragMode = null;
+                                    _changedSinceDrag = false;
+                                  });
+                                  if (changed) widget.onEditComplete();
+                                }
+                              : null,
+                          child: Stack(
+                            children: [
+                              if (widget.previewPath != null &&
+                                  File(widget.previewPath!).existsSync())
+                                Positioned.fill(
+                                  child: Image.file(
+                                    File(widget.previewPath!),
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (context, error, _) => Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(
+                                          Spacing.md,
+                                        ),
+                                        child: Text(
+                                          '预览加载失败，请重新生成。',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: c.error,
+                                            fontSize: 12,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
+                                )
+                              else if (!widget.enabled)
+                                const Center(
+                                  child: CsEmptyState(
+                                    icon: LucideIcons.lock,
+                                    title: '请先选择视频',
+                                    description: '选择原始视频后即可框选篮筐区域。',
+                                  ),
+                                )
+                              else if (widget.previewPath != null)
+                                Center(
+                                  child: CsEmptyState(
+                                    icon: LucideIcons.circleAlert,
+                                    title: '预览帧不可用',
+                                    description: '视频元数据已读取，可以重新生成预览后继续框选。',
+                                    action: widget.onRefreshPreview == null
+                                        ? null
+                                        : CsButton(
+                                            label: const Text('重新生成预览'),
+                                            icon: LucideIcons.refreshCw,
+                                            variant: CsButtonVariant.secondary,
+                                            size: CsButtonSize.sm,
+                                            onPressed: widget.onRefreshPreview,
+                                          ),
+                                  ),
+                                )
+                              else
+                                Center(
+                                  child: CsEmptyState(
+                                    icon: LucideIcons.film,
+                                    title: '正在准备视频预览',
+                                    description: '预览准备好后即可拖拽框选篮筐区域。',
+                                    action: widget.onRefreshPreview == null
+                                        ? null
+                                        : CsButton(
+                                            label: const Text('生成预览'),
+                                            icon: LucideIcons.refreshCw,
+                                            variant: CsButtonVariant.secondary,
+                                            size: CsButtonSize.sm,
+                                            onPressed: widget.onRefreshPreview,
+                                          ),
+                                  ),
+                                ),
+                              Positioned.fill(
+                                child: CustomPaint(
+                                  painter: _RoiPainter(
+                                    roi: widget.secondaryRoi,
+                                    color: widget.secondaryColor,
+                                    label: widget.secondaryLabel,
+                                    viewportScale: _zoom,
+                                  ),
                                 ),
                               ),
-                            )
-                          else if (!widget.enabled)
-                            const Center(
-                              child: CsEmptyState(
-                                icon: LucideIcons.lock,
-                                title: '请先选择视频',
-                                description: '选择原始视频后即可框选篮筐区域。',
+                              Positioned.fill(
+                                child: CustomPaint(
+                                  painter: _RoiPainter(
+                                    roi: widget.roi,
+                                    color: widget.activeColor,
+                                    label: widget.activeLabel,
+                                    viewportScale: _zoom,
+                                  ),
+                                ),
                               ),
-                            )
-                          else if (widget.previewPath != null)
-                            Center(
-                              child: CsEmptyState(
-                                icon: LucideIcons.circleAlert,
-                                title: '预览帧不可用',
-                                description: '视频元数据已读取，可以重新生成预览后继续框选。',
-                                action: widget.onRefreshPreview == null
-                                    ? null
-                                    : CsButton(
-                                        label: const Text('重新生成预览'),
-                                        icon: LucideIcons.refreshCw,
-                                        variant: CsButtonVariant.secondary,
-                                        size: CsButtonSize.sm,
-                                        onPressed: widget.onRefreshPreview,
-                                      ),
-                              ),
-                            )
-                          else
-                            Center(
-                              child: CsEmptyState(
-                                icon: LucideIcons.film,
-                                title: '正在准备视频预览',
-                                description: '预览准备好后即可拖拽框选篮筐区域。',
-                                action: widget.onRefreshPreview == null
-                                    ? null
-                                    : CsButton(
-                                        label: const Text('生成预览'),
-                                        icon: LucideIcons.refreshCw,
-                                        variant: CsButtonVariant.secondary,
-                                        size: CsButtonSize.sm,
-                                        onPressed: widget.onRefreshPreview,
-                                      ),
-                              ),
-                            ),
-                          Positioned.fill(
-                            child: CustomPaint(
-                              painter: _RoiPainter(
-                                roi: widget.secondaryRoi,
-                                color: widget.secondaryColor,
-                                label: widget.secondaryLabel,
-                              ),
-                            ),
+                            ],
                           ),
-                          Positioned.fill(
-                            child: CustomPaint(
-                              painter: _RoiPainter(
-                                roi: widget.roi,
-                                color: widget.activeColor,
-                                label: widget.activeLabel,
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -1203,6 +1261,7 @@ class _RoiCanvasState extends State<_RoiCanvas> {
       _start = point;
       _initialRect = current;
       _dragMode = mode;
+      _changedSinceDrag = false;
     });
   }
 
@@ -1211,6 +1270,7 @@ class _RoiCanvasState extends State<_RoiCanvas> {
     final mode = _dragMode;
     if (start == null || mode == null) return;
     final base = _initialRect;
+    _changedSinceDrag = true;
     if (mode == _RoiDragMode.create || base == null) {
       widget.onChanged(_normalizedRect(start, point, size));
       return;
@@ -1265,11 +1325,13 @@ class _RoiPainter extends CustomPainter {
     required this.roi,
     required this.color,
     required this.label,
+    required this.viewportScale,
   });
 
   final Rect? roi;
   final Color color;
   final String label;
+  final double viewportScale;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1282,37 +1344,44 @@ class _RoiPainter extends CustomPainter {
       value.bottom * size.height,
     );
     canvas.drawRect(rect, Paint()..color = color.withValues(alpha: 0.18));
+    final inverseScale = 1 / viewportScale;
     canvas.drawRect(
       rect,
       Paint()
         ..color = color
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2,
+        ..strokeWidth = inverseScale,
     );
     final textPainter = TextPainter(
       text: TextSpan(
         text: label,
         style: TextStyle(
           color: color == Colors.white ? Colors.black : Colors.white,
-          fontSize: 11,
+          fontSize: 10 * inverseScale,
           fontWeight: FontWeight.w500,
         ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
+    final padding = 4 * inverseScale;
+    final labelWidth = textPainter.width + padding * 2;
+    final labelHeight = textPainter.height + padding;
+    final preferredTop = rect.top - labelHeight - padding;
     final labelRect = Rect.fromLTWH(
-      rect.left + 5,
-      (rect.top + 5).clamp(0.0, size.height - textPainter.height - 4),
-      textPainter.width + 10,
-      textPainter.height + 4,
+      rect.left.clamp(0.0, size.width - labelWidth),
+      preferredTop >= 0
+          ? preferredTop
+          : (rect.bottom + padding).clamp(0.0, size.height - labelHeight),
+      labelWidth,
+      labelHeight,
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(labelRect, const Radius.circular(3)),
       Paint()..color = color,
     );
-    textPainter.paint(canvas, labelRect.topLeft + const Offset(5, 2));
+    textPainter.paint(canvas, labelRect.topLeft + Offset(padding, padding / 2));
     // 四角手柄
-    const handle = 8.0;
+    final handle = 6 * inverseScale;
     final paint = Paint()..color = color;
     for (final corner in [
       rect.topLeft,
@@ -1329,5 +1398,8 @@ class _RoiPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RoiPainter oldDelegate) =>
-      oldDelegate.roi != roi || oldDelegate.color != color;
+      oldDelegate.roi != roi ||
+      oldDelegate.color != color ||
+      oldDelegate.label != label ||
+      oldDelegate.viewportScale != viewportScale;
 }

@@ -9,7 +9,13 @@ void main() {
     addTearDown(container.dispose);
     expect(container.read(noticeProvider), isEmpty);
     final notifier = container.read(noticeProvider.notifier);
-    notifier.push(const NoticeMessage(id: '1', severity: NoticeSeverity.success, title: 'ok'));
+    notifier.push(
+      const NoticeMessage(
+        id: '1',
+        severity: NoticeSeverity.success,
+        title: 'ok',
+      ),
+    );
     expect(container.read(noticeProvider).length, 1);
     notifier.dismiss('1');
     expect(container.read(noticeProvider), isEmpty);
@@ -20,8 +26,36 @@ void main() {
     addTearDown(container.dispose);
     final notifier = container.read(noticeProvider.notifier);
     for (var i = 0; i < 6; i++) {
-      notifier.push(NoticeMessage(id: '$i', severity: NoticeSeverity.info, title: '$i'));
+      notifier.push(
+        NoticeMessage(id: '$i', severity: NoticeSeverity.info, title: '$i'),
+      );
     }
     expect(container.read(noticeProvider).length, 4);
+  });
+
+  test('same error replaces the existing notice instead of stacking', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(noticeProvider.notifier);
+
+    notifier.push(
+      const NoticeMessage(
+        id: 'first',
+        severity: NoticeSeverity.error,
+        title: '检测区域无法保存',
+        description: '请重新拖出一个有效矩形。',
+      ),
+    );
+    notifier.push(
+      const NoticeMessage(
+        id: 'second',
+        severity: NoticeSeverity.error,
+        title: '检测区域无法保存',
+        description: '请重新拖出一个有效矩形。',
+      ),
+    );
+
+    expect(container.read(noticeProvider), hasLength(1));
+    expect(container.read(noticeProvider).single.id, 'second');
   });
 }

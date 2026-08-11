@@ -27,7 +27,15 @@ class NoticeNotifier extends Notifier<List<NoticeMessage>> {
   List<NoticeMessage> build() => const [];
 
   void push(NoticeMessage msg) {
-    var next = [...state, msg];
+    var next = state
+        .where(
+          (item) =>
+              item.severity != msg.severity ||
+              item.title != msg.title ||
+              item.description != msg.description,
+        )
+        .toList();
+    next.add(msg);
     if (next.length > 4) next = next.sublist(next.length - 4);
     state = next;
   }
@@ -37,5 +45,6 @@ class NoticeNotifier extends Notifier<List<NoticeMessage>> {
   }
 }
 
-final noticeProvider =
-    NotifierProvider<NoticeNotifier, List<NoticeMessage>>(NoticeNotifier.new);
+final noticeProvider = NotifierProvider<NoticeNotifier, List<NoticeMessage>>(
+  NoticeNotifier.new,
+);
