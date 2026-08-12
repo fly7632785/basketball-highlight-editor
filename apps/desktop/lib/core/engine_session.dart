@@ -294,6 +294,46 @@ class EngineSession {
     });
   }
 
+  Future<JsonMap> listPlayers({required String projectRoot}) {
+    return client.request('list_players', <String, dynamic>{
+      'project_root': projectRoot,
+    });
+  }
+
+  Future<JsonMap> createPlayer({
+    required String projectRoot,
+    required String name,
+  }) {
+    return client.request('create_player', <String, dynamic>{
+      'project_root': projectRoot,
+      'name': name,
+    });
+  }
+
+  Future<JsonMap> setCandidatePlayer({
+    required String projectRoot,
+    required String candidateId,
+    String? playerId,
+  }) {
+    return client.request('set_candidate_player', <String, dynamic>{
+      'project_root': projectRoot,
+      'candidate_id': candidateId,
+      'player_id': playerId,
+    });
+  }
+
+  Future<JsonMap> setCandidatesPlayer({
+    required String projectRoot,
+    required List<String> candidateIds,
+    String? playerId,
+  }) {
+    return client.request('set_candidates_player', <String, dynamic>{
+      'project_root': projectRoot,
+      'candidate_ids': candidateIds,
+      'player_id': playerId,
+    });
+  }
+
   Future<JsonMap> listReviewHistory({
     required String projectRoot,
     required String candidateId,
@@ -352,6 +392,8 @@ class EngineSession {
     String mode = 'separate',
     String? outputDir,
     String? outputPath,
+    List<String>? playerIds,
+    bool? includeUnassigned,
   }) {
     return client.request('start_export', <String, dynamic>{
       'project_root': projectRoot,
@@ -359,6 +401,8 @@ class EngineSession {
       'mode': mode,
       ...?_optionalEntry('output_dir', outputDir),
       ...?_optionalEntry('output_path', outputPath),
+      ...?_optionalEntry('player_ids', playerIds),
+      ...?_optionalEntry('include_unassigned', includeUnassigned),
     });
   }
 

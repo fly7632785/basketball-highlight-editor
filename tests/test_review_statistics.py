@@ -206,3 +206,64 @@ def test_get_statistics_returns_review_metrics_and_conflicts(tmp_path: Path):
     assert statistics["avg_review_duration_ms"] >= 0
     assert statistics["reason_distribution"] == {"rebound": 1}
     assert statistics["conflict_count"] == 1
+
+
+def test_players_can_be_created_assigned_and_cleared(tmp_path: Path):
+    service, store, project_root = _create_project(tmp_path)
+    rows = _add_candidates(store, tmp_path, count=2)
+
+    created = service.handle("create_player", {
+        "project_root": str(project_root),
+        "name": "科比",
+    })["player"]
+    service.handle("set_candidate_player", {
+        "project_root": str(project_root),
+        "candidate_id": rows[0]["id"],
+        "player_id": created["id"],
+    })
+    service.handle("set_candidates_player", {
+        "project_root": str(project_root),
+        "candidate_ids": [rows[1]["id"]],
+        "player_id": created["id"],
+    })
+
+    candidates = service.handle("list_candidates", {
+        "project_root": str(project_root),
+        "video_id": rows[0]["video_id"],
+    })["candidates"]
+    assert [item["player_name"] for item in candidates] == ["科比", "科比"]
+
+    service.handle("set_candidate_player", {
+        "project_root": str(project_root),
+        "candidate_id": rows[0]["id"],
+        "player_id": None,
+    })
+    candidates = store.list_candidates(rows[0]["video_id"])
+    assert candidates[0]["player_id"] is None
+    assert candidates[1]["player_id"] == created["id"]
+
+
+def test_export_snapshot_filters_by_player_and_unassigned(tmp_path: Path, monkeypatch):
+    service, store, project_root = _create_project(tmp_path)
+    rows = _add_candidates(store, tmp_path, count=3)
+    player = service.handle("create_player", {
+        "project_root": str(project_root),
+        "name": "罗斯",
+    })["player"]
+    service.handle("set_candidate_player", {
+        "project_root": str(project_root),
+        "candidate_id": rows[0]["id"],
+        "player_id": player["id"],
+    })
+
+    monkeypatch.setattr(service, "_validated_source", lambda video: tmp_path / "source.mp4")
+    monkeypatch.setattr(service, "_ensure_disk_space", lambda *_: None)
+    result = service.handle("start_export", {
+        "project_root": str(project_root),
+        "video_id": rows[0]["video_id"],
+        "player_ids": [player["id"]],
+        "include_unassigned": False,
+    })
+    checkpoint = store.get_job(result["job"]["id"])["checkpoint_json"]
+    snapshot = json.loads(checkpoint)["candidate_snapshot"]
+    assert [item["id"] for item in snapshot] == [rows[0]["id"]]

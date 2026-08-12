@@ -84,6 +84,36 @@ class ProjectSessionScope {
     );
   }
 
+  Future<JsonMap> listPlayers() {
+    return engine.listPlayers(projectRoot: projectRoot);
+  }
+
+  Future<JsonMap> createPlayer(String name) {
+    return engine.createPlayer(projectRoot: projectRoot, name: name);
+  }
+
+  Future<JsonMap> setCandidatePlayer({
+    required String candidateId,
+    String? playerId,
+  }) {
+    return engine.setCandidatePlayer(
+      projectRoot: projectRoot,
+      candidateId: candidateId,
+      playerId: playerId,
+    );
+  }
+
+  Future<JsonMap> setCandidatesPlayer({
+    required List<String> candidateIds,
+    String? playerId,
+  }) {
+    return engine.setCandidatesPlayer(
+      projectRoot: projectRoot,
+      candidateIds: candidateIds,
+      playerId: playerId,
+    );
+  }
+
   Future<List<JsonMap>> getActiveJobs({String jobType = 'analysis'}) async {
     final payload = await engine.getActiveJobs(
       projectRoot: projectRoot,
@@ -408,6 +438,36 @@ class ProjectSession {
     );
   }
 
+  Future<JsonMap> listPlayers() {
+    return engine.listPlayers(projectRoot: _requireProjectRoot());
+  }
+
+  Future<JsonMap> createPlayer(String name) {
+    return engine.createPlayer(projectRoot: _requireProjectRoot(), name: name);
+  }
+
+  Future<JsonMap> setCandidatePlayer({
+    required String candidateId,
+    String? playerId,
+  }) {
+    return engine.setCandidatePlayer(
+      projectRoot: _requireProjectRoot(),
+      candidateId: candidateId,
+      playerId: playerId,
+    );
+  }
+
+  Future<JsonMap> setCandidatesPlayer({
+    required List<String> candidateIds,
+    String? playerId,
+  }) {
+    return engine.setCandidatesPlayer(
+      projectRoot: _requireProjectRoot(),
+      candidateIds: candidateIds,
+      playerId: playerId,
+    );
+  }
+
   Future<JsonMap> listReviewHistory(String candidateId) {
     return engine.listReviewHistory(
       projectRoot: _requireProjectRoot(),
@@ -455,6 +515,8 @@ class ProjectSession {
     String mode = 'separate',
     String? outputDir,
     String? outputPath,
+    List<String>? playerIds,
+    bool? includeUnassigned,
   }) {
     return engine.startExport(
       projectRoot: _requireProjectRoot(),
@@ -462,6 +524,8 @@ class ProjectSession {
       mode: mode,
       outputDir: outputDir,
       outputPath: outputPath,
+      playerIds: playerIds,
+      includeUnassigned: includeUnassigned,
     );
   }
 

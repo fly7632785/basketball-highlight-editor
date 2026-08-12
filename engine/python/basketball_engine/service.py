@@ -100,6 +100,10 @@ class EngineService:
             "retry_analysis": self.retry_analysis,
             "retry_export": self.retry_export,
             "list_candidates": self.list_candidates,
+            "list_players": self.list_players,
+            "create_player": self.create_player,
+            "set_candidate_player": self.set_candidate_player,
+            "set_candidates_player": self.set_candidates_player,
             "start_review": self.start_review,
             "review_candidate": self.review_candidate,
             "list_review_history": self.list_review_history,
@@ -1251,7 +1255,47 @@ class EngineService:
         return {
             "candidates": candidates,
             "review_video_path": review_video_path,
+            "players": store.list_players(),
         }
+
+    def list_players(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {"players": self._require_store(payload).list_players()}
+
+    def create_player(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        name = payload.get("name")
+        if not isinstance(name, str):
+            raise ProtocolError("INVALID_REQUEST", "缺少球员名称")
+        try:
+            player = self._require_store(payload).create_player(name)
+        except ValueError as exc:
+            raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
+        return {"player": player}
+
+    def set_candidate_player(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        candidate_id = payload.get("candidate_id")
+        if not isinstance(candidate_id, str) or not candidate_id:
+            raise ProtocolError("INVALID_REQUEST", "缺少 candidate_id")
+        player_id = payload.get("player_id")
+        if player_id is not None and (not isinstance(player_id, str) or not player_id):
+            raise ProtocolError("INVALID_REQUEST", "player_id 必须是字符串或 null")
+        try:
+            self._require_store(payload).set_candidate_player(candidate_id, player_id)
+        except (ValueError, LookupError) as exc:
+            raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
+        return {"updated": True}
+
+    def set_candidates_player(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        candidate_ids = payload.get("candidate_ids")
+        if not isinstance(candidate_ids, list) or not all(isinstance(item, str) and item for item in candidate_ids):
+            raise ProtocolError("INVALID_REQUEST", "candidate_ids 必须是非空字符串列表")
+        player_id = payload.get("player_id")
+        if player_id is not None and (not isinstance(player_id, str) or not player_id):
+            raise ProtocolError("INVALID_REQUEST", "player_id 必须是字符串或 null")
+        try:
+            count = self._require_store(payload).set_candidates_player(candidate_ids, player_id)
+        except (ValueError, LookupError) as exc:
+            raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
+        return {"updated": count}
 
     def start_review(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -1422,6 +1466,14 @@ class EngineService:
                     "项目存在未完成的分析或导出任务，请先恢复、重试或取消该任务",
                     {"job_ids": [item["id"] for item in active]},
                 )
+            requested_player_ids = payload.get("player_ids")
+            if requested_player_ids is not None and (
+                not isinstance(requested_player_ids, list)
+                or not all(isinstance(item, str) and item for item in requested_player_ids)
+            ):
+                raise ProtocolError("INVALID_REQUEST", "player_ids 必须是字符串列表")
+            include_unassigned = payload.get("include_unassigned", True) is True
+            selected_players = {item for item in requested_player_ids or []}
             candidate_snapshot = [
                 {
                     "id": candidate["id"],
@@ -1431,6 +1483,11 @@ class EngineService:
                 }
                 for candidate in store.list_candidates(video_id)
                 if candidate.get("selection_status") != "excluded"
+                and (
+                    requested_player_ids is None
+                    or candidate.get("player_id") in selected_players
+                    or (include_unassigned and not candidate.get("player_id"))
+                )
             ]
             if not candidate_snapshot:
                 raise ProtocolError("NO_EXPORT_CANDIDATES", "没有可导出的候选片段")
@@ -1438,6 +1495,8 @@ class EngineService:
                 "mode": payload.get("mode", "separate"),
                 "output_dir": payload.get("output_dir"),
                 "output_path": payload.get("output_path"),
+                "player_ids": sorted(selected_players) if requested_player_ids is not None else None,
+                "include_unassigned": include_unassigned,
                 "candidate_snapshot": candidate_snapshot,
                 "candidate_count": len(candidate_snapshot),
             }

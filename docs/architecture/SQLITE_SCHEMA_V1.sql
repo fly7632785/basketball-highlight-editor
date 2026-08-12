@@ -86,6 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_candidates_video_time
 
 CREATE TABLE IF NOT EXISTS candidate_reviews (
     candidate_id TEXT PRIMARY KEY REFERENCES candidates(id) ON DELETE CASCADE,
+    player_id TEXT REFERENCES players(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     reason TEXT,
     note TEXT,
@@ -94,6 +95,18 @@ CREATE TABLE IF NOT EXISTS candidate_reviews (
     review_duration_ms INTEGER,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS players (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_players_project_name
+    ON players(project_id, name);
 
 CREATE TABLE IF NOT EXISTS exports (
     id TEXT PRIMARY KEY,

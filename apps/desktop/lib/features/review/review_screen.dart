@@ -29,6 +29,8 @@ class ReviewScreen extends ConsumerStatefulWidget {
 
 class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   String? _selectedCandidateId;
+  final Set<String> _selectedForBatch = <String>{};
+  bool _batchMode = false;
   final Set<String> _reviewStartedCandidateIds = <String>{};
   String _candidateFilter = 'all';
   final GlobalKey<_VideoPaneState> _videoKey = GlobalKey<_VideoPaneState>();
@@ -92,6 +94,123 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
 
   void _requestReplay() {
     setState(() => _replayToken++);
+  }
+
+  Future<void> _setPlayerForCandidate(
+    Map<String, dynamic> candidate,
+    ProjectState state,
+    ProjectNotifier notifier,
+  ) async {
+    final playerId = await _choosePlayer(context, state.players);
+    if (!mounted || playerId == null) return;
+    if (playerId == _clearPlayerChoice) {
+      await notifier.setCandidatePlayer(candidate['id'].toString(), null);
+      return;
+    }
+    if (playerId == _newPlayerChoice) {
+      final name = await _promptPlayerName();
+      if (!mounted || name == null) return;
+      final createdId = await notifier.createPlayer(name);
+      if (createdId == null) return;
+      await notifier.setCandidatePlayer(candidate['id'].toString(), createdId);
+      return;
+    }
+    await notifier.setCandidatePlayer(candidate['id'].toString(), playerId);
+  }
+
+  Future<String?> _promptPlayerName() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('添加球员'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '例如：科比、罗斯'),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('添加'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return name?.trim().isEmpty == true ? null : name?.trim();
+  }
+
+  Future<String?> _choosePlayer(
+    BuildContext dialogContext,
+    List<Map<String, dynamic>> players,
+  ) {
+    return showDialog<String>(
+      context: dialogContext,
+      builder: (context) => SimpleDialog(
+        title: const Text('选择球员'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, _clearPlayerChoice),
+            child: const Text('清除标签'),
+          ),
+          for (final player in players)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, player['id']?.toString()),
+              child: Text(player['name']?.toString() ?? ''),
+            ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, _newPlayerChoice),
+            child: const Text('新建球员'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static const _newPlayerChoice = '__new_player__';
+  static const _clearPlayerChoice = '__clear_player__';
+
+  void _toggleBatchMode() {
+    setState(() {
+      _batchMode = !_batchMode;
+      _selectedForBatch.clear();
+    });
+    _focusReviewShortcuts();
+  }
+
+  void _toggleBatchCandidate(String id) {
+    setState(() {
+      if (!_selectedForBatch.add(id)) _selectedForBatch.remove(id);
+    });
+  }
+
+  Future<void> _setPlayerForBatch(
+    ProjectState state,
+    ProjectNotifier notifier,
+  ) async {
+    if (_selectedForBatch.isEmpty) return;
+    final playerId = await _choosePlayer(context, state.players);
+    if (!mounted || playerId == null) return;
+    String? selectedPlayerId;
+    if (playerId == _newPlayerChoice) {
+      final name = await _promptPlayerName();
+      if (!mounted || name == null) return;
+      selectedPlayerId = await notifier.createPlayer(name);
+      if (selectedPlayerId == null) return;
+    } else if (playerId != _clearPlayerChoice) {
+      selectedPlayerId = playerId;
+    }
+    await notifier.setCandidatesPlayer(
+      _selectedForBatch.toList(),
+      selectedPlayerId,
+    );
+    if (mounted) setState(() => _selectedForBatch.clear());
   }
 
   void _togglePlayback() {
@@ -388,6 +507,14 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     analyzing: analyzing,
                     hasVideo: state.videoPath != null,
                     onSelect: _selectCandidate,
+                    onSetPlayer: (candidate) =>
+                        _setPlayerForCandidate(candidate, state, notifier),
+                    batchMode: _batchMode,
+                    selectedForBatch: _selectedForBatch,
+                    onToggleBatch: _toggleBatchMode,
+                    onToggleBatchCandidate: _toggleBatchCandidate,
+                    onSetPlayerForBatch: () =>
+                        _setPlayerForBatch(state, notifier),
                     onSetStatus: (id, status) =>
                         _setCandidateStatus(id, status),
                     onLoadCover: state.video == null
@@ -2425,6 +2552,12 @@ class _CandidatePanel extends StatelessWidget {
     required this.analyzing,
     required this.hasVideo,
     required this.onSelect,
+    required this.onSetPlayer,
+    required this.batchMode,
+    required this.selectedForBatch,
+    required this.onToggleBatch,
+    required this.onToggleBatchCandidate,
+    required this.onSetPlayerForBatch,
     required this.onSetStatus,
     required this.onLoadCover,
     required this.onFilterChanged,
@@ -2448,6 +2581,12 @@ class _CandidatePanel extends StatelessWidget {
   final bool analyzing;
   final bool hasVideo;
   final ValueChanged<Map<String, dynamic>> onSelect;
+  final Future<void> Function(Map<String, dynamic>) onSetPlayer;
+  final bool batchMode;
+  final Set<String> selectedForBatch;
+  final VoidCallback onToggleBatch;
+  final ValueChanged<String> onToggleBatchCandidate;
+  final VoidCallback onSetPlayerForBatch;
   final Future<void> Function(String, String) onSetStatus;
   final Future<String?> Function(String, int)? onLoadCover;
   final ValueChanged<String> onFilterChanged;
@@ -2485,6 +2624,27 @@ class _CandidatePanel extends StatelessWidget {
                 ),
               ),
               const Spacer(),
+              if (batchMode && selectedForBatch.isNotEmpty) ...[
+                Text(
+                  '批量 ${selectedForBatch.length} 个',
+                  style: theme.textTheme.labelSmall?.copyWith(color: c.indigo),
+                ),
+                IconButton(
+                  tooltip: '设置批量球员标签',
+                  onPressed: busy ? null : onSetPlayerForBatch,
+                  icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+              IconButton(
+                tooltip: batchMode ? '退出批量选择' : '批量选择候选',
+                onPressed: busy ? null : onToggleBatch,
+                icon: Icon(
+                  batchMode ? Icons.close_fullscreen : Icons.checklist_outlined,
+                  size: 18,
+                ),
+                visualDensity: VisualDensity.compact,
+              ),
               PopupMenuButton<String>(
                 tooltip: '筛选候选',
                 initialValue: filter,
@@ -2556,9 +2716,13 @@ class _CandidatePanel extends StatelessWidget {
                         candidate: candidate,
                         index: index,
                         selected: id == selectedId,
+                        batchMode: batchMode,
+                        batchSelected: selectedForBatch.contains(id),
                         excluded: _isExcluded(candidate),
                         busy: busy,
                         onTap: () => onSelect(candidate),
+                        onSetPlayer: () => unawaited(onSetPlayer(candidate)),
+                        onToggleBatch: () => onToggleBatchCandidate(id),
                         onInclude: () => unawaited(onSetStatus(id, 'included')),
                         onExclude: () => unawaited(onSetStatus(id, 'excluded')),
                         coverFuture: coverFuture,
@@ -2690,9 +2854,13 @@ class _CandidateRow extends StatelessWidget {
     required this.candidate,
     required this.index,
     required this.selected,
+    required this.batchMode,
+    required this.batchSelected,
     required this.excluded,
     required this.busy,
     required this.onTap,
+    required this.onSetPlayer,
+    required this.onToggleBatch,
     required this.onInclude,
     required this.onExclude,
     required this.coverFuture,
@@ -2702,9 +2870,13 @@ class _CandidateRow extends StatelessWidget {
   final Map<String, dynamic> candidate;
   final int index;
   final bool selected;
+  final bool batchMode;
+  final bool batchSelected;
   final bool excluded;
   final bool busy;
   final VoidCallback onTap;
+  final VoidCallback onSetPlayer;
+  final VoidCallback onToggleBatch;
   final VoidCallback onInclude;
   final VoidCallback onExclude;
   final Future<String?>? coverFuture;
@@ -2735,6 +2907,15 @@ class _CandidateRow extends StatelessWidget {
           ),
           child: Row(
             children: [
+              if (batchMode)
+                Padding(
+                  padding: const EdgeInsets.only(right: Spacing.xs),
+                  child: Checkbox(
+                    value: batchSelected,
+                    onChanged: busy ? null : (_) => onToggleBatch(),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
               Expanded(
                 child: Material(
                   color: Colors.transparent,
@@ -2778,6 +2959,10 @@ class _CandidateRow extends StatelessWidget {
                                 ),
                               ],
                             ),
+                          ),
+                          _PlayerChip(
+                            name: candidate['player_name']?.toString(),
+                            onTap: onSetPlayer,
                           ),
                         ],
                       ),
@@ -2852,6 +3037,43 @@ class _DecisionButton extends StatelessWidget {
               width: 52,
               height: 44,
               child: Icon(icon, size: 21, color: foreground),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlayerChip extends StatelessWidget {
+  const _PlayerChip({required this.name, required this.onTap});
+
+  final String? name;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Tooltip(
+      message: '设置球员标签',
+      child: Material(
+        color: c.surface3,
+        borderRadius: BorderRadius.circular(CsRadius.sm),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(CsRadius.sm),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.person_outline, size: 14, color: c.textTertiary),
+                const SizedBox(width: 3),
+                Text(
+                  name == null || name!.isEmpty ? '球员' : name!,
+                  style: TextStyle(color: c.textSecondary, fontSize: 10),
+                ),
+              ],
             ),
           ),
         ),

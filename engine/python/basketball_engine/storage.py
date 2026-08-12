@@ -79,6 +79,20 @@ class ProjectStore:
 
     @staticmethod
     def _ensure_schema_compatibility(connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS players (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(project_id, name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_players_project_name
+                ON players(project_id, name);
+            """
+        )
         video_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(videos)").fetchall()
         }
@@ -94,6 +108,7 @@ class ProjectStore:
         }
         for name, definition in (
             ("reason", "TEXT"),
+            ("player_id", "TEXT REFERENCES players(id) ON DELETE SET NULL"),
             ("review_started_at", "TEXT"),
             ("review_duration_ms", "INTEGER"),
         ):
@@ -379,9 +394,11 @@ class ProjectStore:
                    CASE WHEN COALESCE(r.status, 'pending') = 'excluded'
                         THEN 'excluded' ELSE 'included' END AS selection_status,
                    r.reason AS review_reason, r.note, r.reviewed_at,
-                   r.review_started_at, r.review_duration_ms
+                   r.review_started_at, r.review_duration_ms,
+                   r.player_id, p.name AS player_name
             FROM candidates c
             LEFT JOIN candidate_reviews r ON r.candidate_id = c.id
+            LEFT JOIN players p ON p.id = r.player_id
         """
         params: Iterable[Any] = ()
         if video_id:
@@ -397,7 +414,7 @@ class ProjectStore:
             existing_reviews = {
                 row["candidate_id"]: dict(row)
                 for row in connection.execute(
-                    "SELECT candidate_id, status, reason, note, reviewed_at, review_started_at, review_duration_ms "
+                    "SELECT candidate_id, status, reason, note, reviewed_at, review_started_at, review_duration_ms, player_id "
                     "FROM candidate_reviews "
                     "WHERE candidate_id IN (SELECT id FROM candidates WHERE video_id = ?)",
                     (video_id,),
@@ -435,12 +452,13 @@ class ProjectStore:
                 connection.execute(
                     """
                     INSERT INTO candidate_reviews (
-                        candidate_id, status, reason, note, reviewed_at,
+                        candidate_id, player_id, status, reason, note, reviewed_at,
                         review_started_at, review_duration_ms, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         row["id"],
+                        review["player_id"] if review else None,
                         review["status"] if review else "pending",
                         review["reason"] if review else None,
                         review["note"] if review else None,
@@ -450,6 +468,98 @@ class ProjectStore:
                         timestamp,
                     ),
                 )
+
+    def list_players(self) -> list[Dict[str, Any]]:
+        project = self.project()
+        if not project:
+            raise ValueError("PROJECT_NOT_INITIALIZED")
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM players WHERE project_id = ? ORDER BY name COLLATE NOCASE, created_at",
+                (project["id"],),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_player(self, name: str) -> Dict[str, Any]:
+        project = self.project()
+        if not project:
+            raise ValueError("PROJECT_NOT_INITIALIZED")
+        normalized = name.strip()
+        if not normalized:
+            raise ValueError("PLAYER_NAME_INVALID")
+        timestamp = now_iso()
+        player = {"id": new_id("player"), "project_id": project["id"], "name": normalized,
+                  "created_at": timestamp, "updated_at": timestamp}
+        try:
+            with self.connect() as connection:
+                connection.execute(
+                    "INSERT INTO players (id, project_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (player["id"], player["project_id"], player["name"], timestamp, timestamp),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("PLAYER_ALREADY_EXISTS") from exc
+        return player
+
+    def set_candidate_player(self, candidate_id: str, player_id: str | None) -> None:
+        with self.connect() as connection:
+            candidate = connection.execute(
+                "SELECT c.id, v.project_id FROM candidates c JOIN videos v ON v.id = c.video_id WHERE c.id = ?",
+                (candidate_id,),
+            ).fetchone()
+            if not candidate:
+                raise LookupError("CANDIDATE_NOT_FOUND")
+            if player_id is not None:
+                player = connection.execute(
+                    "SELECT id FROM players WHERE id = ? AND project_id = ?",
+                    (player_id, candidate["project_id"]),
+                ).fetchone()
+                if not player:
+                    raise LookupError("PLAYER_NOT_FOUND")
+            connection.execute(
+                """
+                INSERT INTO candidate_reviews (candidate_id, player_id, status, updated_at)
+                VALUES (?, ?, 'pending', ?)
+                ON CONFLICT(candidate_id) DO UPDATE SET
+                    player_id = excluded.player_id,
+                    updated_at = excluded.updated_at
+                """,
+                (candidate_id, player_id, now_iso()),
+            )
+
+    def set_candidates_player(self, candidate_ids: list[str], player_id: str | None) -> int:
+        if not candidate_ids:
+            return 0
+        with self.connect() as connection:
+            placeholders = ", ".join("?" for _ in candidate_ids)
+            rows = connection.execute(
+                f"SELECT c.id, v.project_id FROM candidates c JOIN videos v ON v.id = c.video_id WHERE c.id IN ({placeholders})",
+                tuple(candidate_ids),
+            ).fetchall()
+            if len(rows) != len(set(candidate_ids)):
+                raise LookupError("CANDIDATE_NOT_FOUND")
+            projects = {row["project_id"] for row in rows}
+            if len(projects) != 1:
+                raise ValueError("CANDIDATE_PROJECT_MISMATCH")
+            if player_id is not None:
+                player = connection.execute(
+                    "SELECT id FROM players WHERE id = ? AND project_id = ?",
+                    (player_id, next(iter(projects))),
+                ).fetchone()
+                if not player:
+                    raise LookupError("PLAYER_NOT_FOUND")
+            timestamp = now_iso()
+            for candidate_id in set(candidate_ids):
+                connection.execute(
+                    """
+                    INSERT INTO candidate_reviews (candidate_id, player_id, status, updated_at)
+                    VALUES (?, ?, 'pending', ?)
+                    ON CONFLICT(candidate_id) DO UPDATE SET
+                        player_id = excluded.player_id,
+                        updated_at = excluded.updated_at
+                    """,
+                    (candidate_id, player_id, timestamp),
+                )
+        return len(set(candidate_ids))
 
     def start_review(self, candidate_id: str, review_started_at: str | None = None) -> str:
         timestamp = normalize_review_started_at(review_started_at) if review_started_at is not None else now_iso()

@@ -758,6 +758,8 @@ class _FakeProjectSession extends ProjectSession {
     String mode = 'separate',
     String? outputDir,
     String? outputPath,
+    List<String>? playerIds,
+    bool? includeUnassigned,
   }) async => <String, dynamic>{
     'job': <String, dynamic>{'id': 'export-1', 'state': 'running'},
   };

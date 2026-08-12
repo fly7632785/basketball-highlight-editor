@@ -19,30 +19,28 @@ import '../../theme/tokens.dart';
 ///
 /// 数据来自 [projectProvider];导出走 `ProjectNotifier.export(mode:)`,
 /// 返回审核用 `context.go('/review')`。
-class ExportScreen extends ConsumerWidget {
+class ExportScreen extends ConsumerStatefulWidget {
   const ExportScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ExportScreen> createState() => _ExportScreenState();
+}
+
+class _ExportScreenState extends ConsumerState<ExportScreen> {
+  final Set<String> _selectedPlayerIds = <String>{};
+  bool _includeUnassigned = true;
+  bool _playerFilterActive = false;
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(projectProvider);
     final notifier = ref.read(projectProvider.notifier);
     final theme = Theme.of(context);
     final c = AppColors.of(context);
 
-    final includedCount = state.candidates
-        .where(
-          (item) =>
-              item['selection_status']?.toString() != 'excluded' &&
-              item['review_status']?.toString() != 'excluded',
-        )
-        .length;
-    final durationMs = state.candidates
-        .where(
-          (item) =>
-              item['selection_status']?.toString() != 'excluded' &&
-              item['review_status']?.toString() != 'excluded',
-        )
-        .fold<int>(0, _clipDuration);
+    final includedCandidates = _filteredCandidates(state);
+    final includedCount = includedCandidates.length;
+    final durationMs = includedCandidates.fold<int>(0, _clipDuration);
     final exportRunning = state.exportRunning;
     final exportRecoverable =
         state.exportJob?['recoverable'] == true && !exportRunning;
@@ -97,6 +95,59 @@ class ExportScreen extends ConsumerWidget {
                       value: '硬件编码优先，软件回退',
                       icon: LucideIcons.cpu,
                     ),
+                    if (state.players.isNotEmpty) ...[
+                      const SizedBox(height: Spacing.md),
+                      Text('导出范围', style: theme.textTheme.titleSmall),
+                      const SizedBox(height: Spacing.xs),
+                      Wrap(
+                        spacing: Spacing.xs,
+                        runSpacing: Spacing.xs,
+                        children: [
+                          FilterChip(
+                            label: const Text('全部球员'),
+                            selected: !_playerFilterActive,
+                            onSelected: (_) => setState(() {
+                              _playerFilterActive = false;
+                              _selectedPlayerIds.clear();
+                              _includeUnassigned = true;
+                            }),
+                          ),
+                          for (final player in state.players)
+                            FilterChip(
+                              label: Text(player['name']?.toString() ?? ''),
+                              selected: _selectedPlayerIds.contains(
+                                player['id']?.toString(),
+                              ),
+                              onSelected: (value) => setState(() {
+                                _playerFilterActive = true;
+                                final id = player['id']?.toString();
+                                if (id == null) return;
+                                if (value) {
+                                  _selectedPlayerIds.add(id);
+                                  _includeUnassigned = false;
+                                } else {
+                                  _selectedPlayerIds.remove(id);
+                                }
+                              }),
+                            ),
+                          FilterChip(
+                            label: const Text('未标记'),
+                            selected: _playerFilterActive && _includeUnassigned,
+                            onSelected: (value) => setState(() {
+                              _playerFilterActive = true;
+                              _includeUnassigned = value;
+                            }),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: Spacing.xs),
+                      Text(
+                        '当前筛选：$includedCount 个 · ${_formatMs(durationMs)}',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: c.textSecondary,
+                        ),
+                      ),
+                    ],
                     if (exportRunning) ...[
                       const SizedBox(height: Spacing.sm),
                       Container(
@@ -255,8 +306,22 @@ class ExportScreen extends ConsumerWidget {
       ],
     );
     if (location != null) {
-      await notifier.export('merge', outputPath: location.path);
+      await notifier.export(
+        'merge',
+        outputPath: location.path,
+        playerIds: _playerFilterActive ? _selectedPlayerIds.toList() : null,
+        includeUnassigned: _playerFilterActive ? _includeUnassigned : null,
+      );
     }
+  }
+
+  List<Map<String, dynamic>> _filteredCandidates(ProjectState state) {
+    return state.candidates.where(_isIncluded).where((item) {
+      if (!_playerFilterActive) return true;
+      final playerId = item['player_id']?.toString();
+      return _selectedPlayerIds.contains(playerId) ||
+          (_includeUnassigned && (playerId == null || playerId.isEmpty));
+    }).toList();
   }
 
   Future<void> _chooseSeparate(
@@ -265,10 +330,19 @@ class ExportScreen extends ConsumerWidget {
   ) async {
     final directory = await getDirectoryPath(confirmButtonText: '选择输出目录');
     if (directory != null) {
-      await notifier.export('separate', outputDir: directory);
+      await notifier.export(
+        'separate',
+        outputDir: directory,
+        playerIds: _playerFilterActive ? _selectedPlayerIds.toList() : null,
+        includeUnassigned: _playerFilterActive ? _includeUnassigned : null,
+      );
     }
   }
 }
+
+bool _isIncluded(Map<String, dynamic> item) =>
+    item['selection_status']?.toString() != 'excluded' &&
+    item['review_status']?.toString() != 'excluded';
 
 class _ExportHistoryCard extends StatelessWidget {
   const _ExportHistoryCard({required this.item});

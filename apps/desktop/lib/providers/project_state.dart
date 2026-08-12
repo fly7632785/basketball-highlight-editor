@@ -59,6 +59,7 @@ class ProjectState {
     this.exportJob,
     this.statistics,
     this.candidates = const <JsonMap>[],
+    this.players = const <JsonMap>[],
     this.recentProjects = const <JsonMap>[],
     this.exportHistory = const <JsonMap>[],
     this.hydrating = false,
@@ -84,6 +85,7 @@ class ProjectState {
   final JsonMap? exportJob;
   final JsonMap? statistics;
   final List<JsonMap> candidates;
+  final List<JsonMap> players;
   final List<JsonMap> recentProjects;
   final List<JsonMap> exportHistory;
   final bool hydrating;
@@ -127,6 +129,7 @@ class ProjectState {
     Object? recentError = _unset,
     Object? knownProjectsRoot = _unset,
     List<JsonMap>? candidates,
+    List<JsonMap>? players,
     List<JsonMap>? recentProjects,
     List<JsonMap>? exportHistory,
     bool? hydrating,
@@ -168,6 +171,7 @@ class ProjectState {
           ? this.statistics
           : statistics as JsonMap?,
       candidates: candidates ?? this.candidates,
+      players: players ?? this.players,
       recentProjects: recentProjects ?? this.recentProjects,
       exportHistory: exportHistory ?? this.exportHistory,
       hydrating: hydrating ?? this.hydrating,
@@ -279,6 +283,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         exportJob: null,
         statistics: null,
         candidates: const <JsonMap>[],
+        players: const <JsonMap>[],
         exportHistory: const <JsonMap>[],
       );
       await _rememberProjectsRoot(knownRoot);
@@ -638,6 +643,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
             ? null
             : reviewPath,
         candidates: candidates,
+        players: ((candidatePayload['players'] as List?) ?? const <dynamic>[])
+            .whereType<Map>()
+            .map((item) => item.cast<String, dynamic>())
+            .toList(),
         hydrating: false,
         hydrateError: null,
       );
@@ -1039,6 +1048,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
           .whereType<Map>()
           .map((item) => item.cast<String, dynamic>())
           .toList(),
+      players: ((payload['players'] as List?) ?? const <dynamic>[])
+          .whereType<Map>()
+          .map((item) => item.cast<String, dynamic>())
+          .toList(),
       reviewVideoPath: reviewVideo,
     );
   }
@@ -1262,11 +1275,46 @@ class ProjectNotifier extends Notifier<ProjectState> {
     }, successMessage: '片段范围已更新');
   }
 
+  Future<String?> createPlayer(String name) async {
+    String? playerId;
+    await _runBusy(() async {
+      final created = await ref.read(projectSessionProvider).createPlayer(name);
+      playerId = (created['player'] as Map?)?['id']?.toString();
+      final payload = await ref.read(projectSessionProvider).listPlayers();
+      state = state.copyWith(players: _jsonList(payload['players']));
+    }, successMessage: '球员已添加');
+    return playerId;
+  }
+
+  Future<void> setCandidatePlayer(String candidateId, String? playerId) async {
+    await _runBusy(() async {
+      await ref
+          .read(projectSessionProvider)
+          .setCandidatePlayer(candidateId: candidateId, playerId: playerId);
+      await refreshCandidates();
+    });
+  }
+
+  Future<void> setCandidatesPlayer(
+    List<String> candidateIds,
+    String? playerId,
+  ) async {
+    if (candidateIds.isEmpty) return;
+    await _runBusy(() async {
+      await ref
+          .read(projectSessionProvider)
+          .setCandidatesPlayer(candidateIds: candidateIds, playerId: playerId);
+      await refreshCandidates();
+    }, successMessage: '已更新 ${candidateIds.length} 个片段的球员标签');
+  }
+
   /// 等价 app.dart:_export(623)。
   Future<void> export(
     String mode, {
     String? outputDir,
     String? outputPath,
+    List<String>? playerIds,
+    bool? includeUnassigned,
   }) async {
     if (state.busy || _isActiveJob(state.exportJob)) return;
     state = state.copyWith(busy: true);
@@ -1278,6 +1326,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
             mode: mode,
             outputDir: outputDir,
             outputPath: outputPath,
+            playerIds: playerIds,
+            includeUnassigned: includeUnassigned,
           );
       final job = (result['job'] as Map?)?.cast<String, dynamic>();
       state = state.copyWith(exportJob: job);
@@ -1565,3 +1615,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
 final NotifierProvider<ProjectNotifier, ProjectState> projectProvider =
     NotifierProvider<ProjectNotifier, ProjectState>(ProjectNotifier.new);
+
+List<JsonMap> _jsonList(Object? raw) {
+  if (raw is! List) return <JsonMap>[];
+  return raw
+      .whereType<Map>()
+      .map((item) => Map<String, dynamic>.from(item))
+      .toList();
+}
