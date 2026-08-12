@@ -251,7 +251,7 @@ JOB_CANCELLED
 `confirmation_rate`、`avg_review_duration_ms`、`reason_distribution` 和
 `conflict_count`；统计字段缺失时客户端应按 0 或空集合降级。
 
-`inspect_video` 还返回 `available_disk_bytes`、`estimated_working_space_bytes` 和 `disk_space_sufficient`，用于导入页提前提示长视频处理所需空间。代理、分析和导出启动前会再次按项目工作目录执行预检，失败返回 `DISK_SPACE_LOW`。
+`inspect_video` 还返回 `available_disk_bytes`、`estimated_processing_space_bytes` 和 `disk_space_sufficient`，用于导入页提前提示长视频处理所需空间。分析和导出启动前会再次按项目工作目录执行预检，失败返回 `DISK_SPACE_LOW`。
 
 `open_project` 和 `list_recent_projects` 返回的视频对象还包含 `source_exists` 和 `source_status`。当原始视频被移动后，调用方应显示重新定位入口；`relink_video` 只更新视频引用和重新读取的媒体元数据，不删除候选、审核记录或项目数据库。
 

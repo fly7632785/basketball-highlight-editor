@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/gestures.dart';
@@ -14,15 +15,14 @@ import '../../components/cs_button.dart';
 import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../components/cs_step_indicator.dart';
+import '../../core/engine_session.dart';
 import '../../providers/project_state.dart';
 import '../../theme/app_colors.dart';
-import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 
-/// Import 屏:选择视频 → 框选 ROI → 开始分析。
+/// 全页面配置向导：视频 → 分析范围 → 检测区域 → 确认并开始分析。
 ///
-/// 数据来自 [projectProvider];ROI pan state 由本组件持有,
-/// 选视频后用 `state.suggestedRoi` 作为初始值。
+/// 所有编辑先写入 workflowDraft，只有最后一步才写入项目生效配置并启动分析。
 class ImportVideoScreen extends ConsumerStatefulWidget {
   const ImportVideoScreen({super.key});
 
@@ -31,469 +31,429 @@ class ImportVideoScreen extends ConsumerStatefulWidget {
 }
 
 class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
+  static const _stepCount = 4;
+  static const _fastAnalysisEnabled = bool.fromEnvironment(
+    'ENABLE_FAST_ANALYSIS',
+    defaultValue: false,
+  );
+
+  int _step = 0;
+  bool _draftLoaded = false;
+  bool _applying = false;
+  bool _showExistingDraft = false;
   Rect? _roi;
   Rect? _netRoi;
-  bool _roiSaved = false;
-  bool _savingRoi = false;
-  bool _roiUserEdited = false;
+  Rect? _hoopBbox;
   bool _netUserEdited = false;
-  bool _autoSavingRoi = false;
-  bool _roiSaveQueued = false;
   bool _editingNet = false;
   int _analysisStartMs = 0;
   int _analysisEndMs = 0;
+  String _analysisMode = 'standard';
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _restoreDraft());
+  }
+
+  Future<void> _restoreDraft() async {
+    if (!mounted || _draftLoaded) return;
     final state = ref.read(projectProvider);
+    final draft =
+        state.workflowDraft ??
+        await ref.read(projectProvider.notifier).loadWorkflowDraft();
+    if (!mounted) return;
+    _draftLoaded = true;
+    if (state.video != null) {
+      _syncFromState(state);
+    }
+    if (draft != null && draft.isNotEmpty && state.video != null) {
+      _applyDraftLocally(draft);
+      setState(() => _showExistingDraft = true);
+      return;
+    }
+  }
+
+  void _syncFromState(ProjectState state) {
+    final video = state.video;
+    if (video == null) return;
     _roi = state.suggestedRoi;
-    _netRoi =
-        _netRoiFromState(state) ?? _recommendedNetRoi(_roi, state.hoopBbox);
-    _roiSaved = state.roiSource != null && state.suggestedRoi != null;
-    _roiUserEdited = state.roiSource == 'manual';
+    _netRoi = state.netRoi ?? _recommendedNetRoi(_roi, state.hoopBbox);
+    _hoopBbox = state.hoopBbox;
     _analysisStartMs = _analysisStart(state);
     _analysisEndMs = _analysisEnd(state);
+    _analysisMode = state.analysisMode;
+    if (_step == 0) _step = 1;
+  }
+
+  void _applyDraftLocally(JsonMap draft) {
+    final roi = _rectFromJson(draft['roi']);
+    final net = _rectFromJson(draft['net_roi']);
+    final hoop = _rectFromJson(draft['hoop_bbox']);
+    final range = (draft['analysis_range'] as Map?)?.cast<String, dynamic>();
+    final savedStep = (draft['step'] as num?)?.toInt() ?? 0;
+    setState(() {
+      _step = savedStep.clamp(0, _stepCount - 1);
+      _roi = roi ?? _roi;
+      _netRoi = net ?? _netRoi;
+      _hoopBbox = hoop ?? _hoopBbox;
+      _analysisStartMs =
+          (range?['start_ms'] as num?)?.toInt() ?? _analysisStartMs;
+      _analysisEndMs = (range?['end_ms'] as num?)?.toInt() ?? _analysisEndMs;
+      final mode = draft['analysis_mode']?.toString();
+      _analysisMode = mode == 'fast' ? 'fast' : 'standard';
+      _netUserEdited = net != null;
+    });
+  }
+
+  JsonMap _draft({int? step}) => {
+    'version': 3,
+    'step': step ?? _step,
+    'analysis_range': {'start_ms': _analysisStartMs, 'end_ms': _analysisEndMs},
+    'analysis_mode': _analysisMode,
+    ...?_rectMap('roi', _roi),
+    ...?_rectMap('net_roi', _netRoi),
+    ...?_rectMap('hoop_bbox', _hoopBbox),
+  };
+
+  JsonMap _backendDraft({int? step}) {
+    return {
+      'version': 3,
+      'step': step ?? _step,
+      'analysis_range': {
+        'start_ms': _analysisStartMs,
+        'end_ms': _analysisEndMs,
+      },
+      'analysis_mode': _analysisMode,
+      ...?_rectMap('roi', _roi),
+      ...?_rectMap('net_roi', _netRoi),
+      ...?_rectMap('hoop_bbox', _hoopBbox),
+    };
+  }
+
+  Future<void> _persistDraft({int? step}) async {
+    if (ref.read(projectProvider).video == null) return;
+    await ref
+        .read(projectProvider.notifier)
+        .saveWorkflowDraft(_draft(step: step));
   }
 
   Future<void> _selectVideo() async {
-    const typeGroup = XTypeGroup(
+    const group = XTypeGroup(
       label: '视频',
       extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
+      mimeTypes: [
+        'video/*',
+        'video/mp4',
+        'video/quicktime',
+        'video/x-m4v',
+        'video/x-msvideo',
+        'video/x-matroska',
+      ],
+      uniformTypeIdentifiers: [
+        'public.movie',
+        'public.mpeg-4',
+        'com.apple.quicktime-movie',
+      ],
     );
-    final file = await openFile(acceptedTypeGroups: const [typeGroup]);
-    if (file != null) {
-      await ref.read(projectProvider.notifier).selectVideo(file.path);
-    }
-  }
-
-  Future<void> _saveRoi({bool showNotice = true}) async {
-    final roi = _roi;
-    if (roi == null) return;
-    setState(() => _savingRoi = true);
+    final file = await openFile(acceptedTypeGroups: const [group]);
+    if (file == null || !mounted) return;
+    setState(() {
+      _step = 1;
+      _showExistingDraft = false;
+    });
     try {
-      final saved = await ref
+      final metadata = await ref
+          .read(projectSessionProvider)
+          .inspectVideo(videoPath: file.path);
+      final video =
+          (metadata['video'] as Map?)?.cast<String, dynamic>() ?? metadata;
+      final advice = _videoProcessingAdvice(video);
+      if (advice.heavy || _isElevatedVideo(video)) {
+        if (!mounted) return;
+        final proceed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('这个视频可能需要较长时间'),
+            content: Text(
+              '${advice.importDetail}\n\n如果方便，建议先用剪辑工具压缩后再导入。也可以继续，原视频不会被修改。',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('先取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('继续导入'),
+              ),
+            ],
+          ),
+        );
+        if (proceed != true || !mounted) {
+          if (mounted) {
+            setState(() {
+              _step = 0;
+            });
+          }
+          return;
+        }
+      }
+    } catch (_) {
+      // 元数据预检失败时仍交给正式导入流程处理。
+    }
+    await ref.read(projectProvider.notifier).selectVideo(file.path);
+    if (!mounted) return;
+    _draftLoaded = true;
+    _syncFromState(ref.read(projectProvider));
+    setState(() {
+      _step = 1;
+      _showExistingDraft = false;
+    });
+    await _persistDraft(step: 1);
+  }
+
+  Future<void> _next() async {
+    if (!_canLeaveStep(_step)) return;
+    final next = math.min(_step + 1, _stepCount - 1);
+    setState(() => _step = next);
+    await _persistDraft(step: next);
+  }
+
+  Future<void> _back() async {
+    if (_step == 0) return;
+    final next = _step - 1;
+    setState(() => _step = next);
+    await _persistDraft(step: next);
+  }
+
+  bool _canLeaveStep(int step) {
+    final state = ref.read(projectProvider);
+    if (step == 0) return state.video != null;
+    if (step == 2) return _roi != null;
+    return true;
+  }
+
+  Future<void> _applyAndAnalyze() async {
+    final state = ref.read(projectProvider);
+    if (state.video == null || _roi == null || _applying) return;
+    if (state.candidates.isNotEmpty && mounted) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('应用新配置？'),
+          content: Text(
+            '当前已有 ${state.candidates.length} 个候选片段。应用后会按新配置重新生成候选，原始视频不会被删除。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('应用并重新分析'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    setState(() => _applying = true);
+    try {
+      final applied = await ref
           .read(projectProvider.notifier)
-          .saveRoi(roi, netRoi: _netRoi, showNotice: showNotice);
-      if (mounted && saved) setState(() => _roiSaved = true);
+          .applyWorkflowDraft(_backendDraft(step: _step));
+      if (!mounted || !applied) return;
+      await ref.read(projectProvider.notifier).startAnalysis();
+      if (mounted) context.go('/review');
     } finally {
-      if (mounted) setState(() => _savingRoi = false);
+      if (mounted) setState(() => _applying = false);
     }
-  }
-
-  Future<void> _autoSaveRoi() async {
-    if (_autoSavingRoi) {
-      _roiSaveQueued = true;
-      return;
-    }
-    _autoSavingRoi = true;
-    await _saveRoi(showNotice: false);
-    _autoSavingRoi = false;
-    if (_roiSaveQueued && mounted) {
-      _roiSaveQueued = false;
-      await _autoSaveRoi();
-    }
-  }
-
-  Future<void> _startAnalysis() async {
-    final started = await ref.read(projectProvider.notifier).startAnalysis();
-    if (mounted && started) context.go('/review');
-  }
-
-  Future<void> _saveAnalysisRange(int startMs, int endMs) async {
-    if (endMs <= startMs) return;
-    await ref
-        .read(projectProvider.notifier)
-        .saveAnalysisRange(startMs, endMs, showNotice: false);
   }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(projectProvider);
-    // 视频切换时重置 ROI 为引擎建议值。
     ref.listen<ProjectState>(projectProvider, (previous, next) {
-      final videoChanged = previous?.videoPath != next.videoPath;
-      final autoRoiChanged =
-          previous?.suggestedRoi != next.suggestedRoi &&
-          next.roiSource == 'auto';
-      if (videoChanged || (autoRoiChanged && !_roiUserEdited)) {
+      final previousVideoId = previous?.video?['id']?.toString();
+      final nextVideoId = next.video?['id']?.toString();
+      final projectChanged =
+          previousVideoId != nextVideoId ||
+          previous?.videoPath != next.videoPath;
+      if (!projectChanged) return;
+      if (next.video == null) {
         setState(() {
-          _roi = next.suggestedRoi;
-          if (videoChanged || !_netUserEdited) {
-            _netRoi =
-                _netRoiFromState(next) ??
-                _recommendedNetRoi(_roi, next.hoopBbox);
-          }
-          _roiSaved = next.roiSource != null && next.suggestedRoi != null;
-          if (videoChanged) {
-            _roiUserEdited = false;
-            _netUserEdited = false;
-            _editingNet = false;
-            _analysisStartMs = _analysisStart(next);
-            _analysisEndMs = _analysisEnd(next);
-          }
+          _draftLoaded = false;
+          _showExistingDraft = false;
+          _step = 0;
+          _roi = null;
+          _netRoi = null;
+          _hoopBbox = null;
+          _analysisStartMs = 0;
+          _analysisEndMs = 0;
         });
+        return;
       }
+      _draftLoaded = true;
+      _showExistingDraft = false;
+      _syncFromState(next);
+      setState(() => _step = 1);
     });
-
     final c = AppColors.of(context);
     final theme = Theme.of(context);
-    final hasVideo = state.videoPath != null;
-    final hasRoi = _roi != null;
-    final width = (state.video?['width'] as num?)?.toDouble() ?? 16;
-    final height = (state.video?['height'] as num?)?.toDouble() ?? 9;
-    final roiBusy =
-        state.busy ||
-        state.exportRunning ||
-        state.analysisRunning ||
-        _savingRoi;
-
+    final hasVideo = state.video != null;
+    final busy =
+        state.busy || state.analysisRunning || state.exportRunning || _applying;
     final steps = <CsStep>[
       (
         index: '01',
-        title: '选择原始视频',
+        title: '选择视频',
         icon: LucideIcons.upload,
         completed: hasVideo,
       ),
       (
         index: '02',
-        title: '框选篮筐区域',
-        icon: LucideIcons.crop,
-        completed: hasRoi && _roiSaved,
+        title: '分析范围',
+        icon: LucideIcons.scanLine,
+        completed: hasVideo,
+      ),
+      (
+        index: '03',
+        title: '检测区域',
+        icon: LucideIcons.target,
+        completed: _roi != null,
+      ),
+      (
+        index: '04',
+        title: '确认并分析',
+        icon: LucideIcons.listChecks,
+        completed: false,
       ),
     ];
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(Spacing.xl),
+      padding: const EdgeInsets.fromLTRB(
+        Spacing.xl,
+        Spacing.lg,
+        Spacing.xl,
+        Spacing.xxl,
+      ),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1000),
+          constraints: const BoxConstraints(maxWidth: 1080),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('新建分析项目', style: theme.textTheme.displayMedium),
-              const SizedBox(height: Spacing.sm),
-              Text(
-                '选择原始视频，系统会优先自动定位篮筐，也可以手动调整检测区域。',
-                style: theme.textTheme.bodyLarge?.copyWith(
-                  color: c.textSecondary,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('配置分析项目', style: theme.textTheme.displayMedium),
+                        const SizedBox(height: Spacing.xs),
+                        Text(
+                          hasVideo
+                              ? '按步骤确认视频、分析范围和篮筐检测区域，最后再开始分析。'
+                              : '先选择一段固定机位视频，系统会在最后一步统一应用配置。',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: c.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (hasVideo)
+                    TextButton.icon(
+                      onPressed: busy ? null : _selectVideo,
+                      icon: const Icon(Icons.swap_horiz_rounded, size: 17),
+                      label: const Text('更换视频'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: Spacing.lg),
+              CsCard(
+                child: CsStepIndicator(
+                  steps: steps,
+                  onStepTap: busy
+                      ? null
+                      : (index) {
+                          if (index < _step) {
+                            setState(() => _step = index);
+                            unawaited(_persistDraft(step: index));
+                          }
+                        },
                 ),
               ),
-              const SizedBox(height: Spacing.xl),
-
-              CsCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              if (_showExistingDraft) ...[
+                const SizedBox(height: Spacing.sm),
+                _DraftBanner(
+                  onContinue: () => setState(() => _showExistingDraft = false),
+                  onDiscard: () async {
+                    await ref
+                        .read(projectProvider.notifier)
+                        .clearWorkflowDraft();
+                    if (!mounted) return;
+                    _syncFromState(ref.read(projectProvider));
+                    setState(() {
+                      _step = 1;
+                      _showExistingDraft = false;
+                    });
+                  },
+                ),
+              ],
+              const SizedBox(height: Spacing.md),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child: _buildStep(context, state, busy),
+              ),
+              if (state.busyMessage != null) ...[
+                const SizedBox(height: Spacing.sm),
+                Row(
                   children: [
-                    CsStepIndicator(steps: steps),
-                    const SizedBox(height: Spacing.xl),
-
-                    // ── 视频选择行 ──
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(Spacing.md),
-                      decoration: BoxDecoration(
-                        color: c.surface2,
-                        borderRadius: BorderRadius.circular(CsRadius.lg),
-                      ),
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final path = Row(
-                            children: [
-                              Icon(
-                                LucideIcons.film,
-                                size: 18,
-                                color: c.textSecondary,
-                              ),
-                              const SizedBox(width: Spacing.md),
-                              Expanded(
-                                child: SelectableText(
-                                  state.videoPath ??
-                                      '支持 MP4 / MOV / H.264 / H.265，原始视频不会被复制。',
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    color: hasVideo
-                                        ? c.textPrimary
-                                        : c.textSecondary,
-                                  ),
-                                  maxLines: 2,
-                                ),
-                              ),
-                            ],
-                          );
-                          final picker = CsButton(
-                            label: Text(hasVideo ? '更换视频' : '选择视频'),
-                            icon: LucideIcons.folderOpen,
-                            variant: CsButtonVariant.secondary,
-                            onPressed: roiBusy ? null : _selectVideo,
-                          );
-                          if (constraints.maxWidth < 520) {
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                path,
-                                const SizedBox(height: Spacing.md),
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: picker,
-                                ),
-                              ],
-                            );
-                          }
-                          return Row(
-                            children: [
-                              Expanded(child: path),
-                              const SizedBox(width: Spacing.md),
-                              picker,
-                            ],
-                          );
-                        },
+                    SizedBox(
+                      width: 13,
+                      height: 13,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.8,
+                        color: c.indigo,
                       ),
                     ),
-
-                    // ── 视频信息行 ──
-                    if (state.video != null) ...[
-                      const SizedBox(height: Spacing.sm),
-                      Text(
-                        _videoSummary(state.video!),
-                        style: numericTextStyle(
-                          theme.textTheme.labelSmall!.copyWith(
-                            color: c.textTertiary,
-                          ),
-                        ),
+                    const SizedBox(width: Spacing.sm),
+                    Text(
+                      state.busyMessage!,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: c.textSecondary,
                       ),
-                      const SizedBox(height: Spacing.xs),
-                      Text(
-                        _workspaceSummary(state.video!),
-                        style: numericTextStyle(
-                          theme.textTheme.labelSmall!.copyWith(
-                            color:
-                                state.video!['disk_space_sufficient'] == false
-                                ? c.error
-                                : c.textTertiary,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: Spacing.md),
-                      _AnalysisRangeEditor(
-                        videoPath: state.videoPath,
-                        durationMs:
-                            (state.video!['duration_ms'] as num?)?.toInt() ?? 0,
-                        startMs: _analysisStartMs,
-                        endMs: _analysisEndMs,
-                        enabled: !roiBusy,
-                        onChanged: (start, end) => setState(() {
-                          _analysisStartMs = start;
-                          _analysisEndMs = end;
-                        }),
-                        onCommit: _saveAnalysisRange,
-                      ),
-                    ],
-
-                    const SizedBox(height: Spacing.xl),
-
-                    // ── ROI 提示 ──
-                    if (state.roiDetecting) ...[
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: c.indigo,
-                            ),
-                          ),
-                          const SizedBox(width: Spacing.sm),
-                          Expanded(
-                            child: Text(
-                              '正在自动识别篮筐区域，完成后可以继续调整并保存。',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: c.textSecondary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: Spacing.sm),
-                    ] else if (state.roiSource == 'auto' && hasRoi) ...[
-                      Row(
-                        children: [
-                          Icon(LucideIcons.sparkles, size: 14, color: c.indigo),
-                          const SizedBox(width: Spacing.sm),
-                          Expanded(
-                            child: Text(
-                              state.roiConfidence == null
-                                  ? '已自动识别篮筐区域'
-                                  : '已自动识别篮筐区域 · 置信度 '
-                                        '${(state.roiConfidence! * 100).round()}%',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: c.textSecondary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: Spacing.sm),
-                    ] else if (state.roiSuggestionError != null) ...[
-                      Text(
-                        '自动识别失败：${state.roiSuggestionError}',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: c.error,
-                        ),
-                      ),
-                      const SizedBox(height: Spacing.sm),
-                    ],
-
-                    // ── ROI 画布 ──
-                    _RoiCanvas(
-                      enabled: hasVideo && !roiBusy,
-                      previewPath: state.previewPath,
-                      aspectRatio: width > 0 && height > 0
-                          ? width / height
-                          : 16 / 9,
-                      roi: _editingNet ? _netRoi : _roi,
-                      secondaryRoi: _editingNet ? _roi : _netRoi,
-                      activeColor: _editingNet ? Colors.white : c.indigo,
-                      secondaryColor: _editingNet ? c.indigo : Colors.white,
-                      activeLabel: _editingNet ? '篮网检测区' : '投篮分析区',
-                      secondaryLabel: _editingNet ? '投篮分析区' : '篮网检测区',
-                      onRefreshPreview: state.video != null && !roiBusy
-                          ? () => ref
-                                .read(projectProvider.notifier)
-                                .refreshPreview()
-                          : null,
-                      onChanged: (value) => setState(() {
-                        if (_editingNet) {
-                          _netRoi = value;
-                          _netUserEdited = true;
-                        } else {
-                          _roi = value;
-                          _roiSaved = false;
-                          _roiUserEdited = true;
-                          if (!_netUserEdited) {
-                            _netRoi = _recommendedNetRoi(value, state.hoopBbox);
-                          }
-                        }
-                      }),
-                      onEditComplete: () => unawaited(_autoSaveRoi()),
-                    ),
-                    const SizedBox(height: Spacing.md),
-
-                    Text('校准检测区域', style: theme.textTheme.labelLarge),
-                    const SizedBox(height: Spacing.xs),
-                    Wrap(
-                      spacing: Spacing.sm,
-                      runSpacing: Spacing.xs,
-                      children: [
-                        _CalibrationTargetButton(
-                          index: '1',
-                          label: '投篮分析区',
-                          color: c.indigo,
-                          selected: !_editingNet,
-                          onPressed: hasVideo
-                              ? () => setState(() => _editingNet = false)
-                              : null,
-                        ),
-                        _CalibrationTargetButton(
-                          index: '2',
-                          label: '篮网检测区',
-                          color: Colors.white,
-                          selected: _editingNet,
-                          onPressed: hasVideo
-                              ? () => setState(() => _editingNet = true)
-                              : null,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: Spacing.sm),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(Spacing.sm),
-                      decoration: BoxDecoration(
-                        color: c.surface2,
-                        borderRadius: BorderRadius.circular(CsRadius.sm),
-                        border: Border.all(color: c.border),
-                      ),
-                      child: Text(
-                        _editingNet
-                            ? '正在编辑：篮网检测区（白色）。只包住篮圈下方到网底的白网；不要包含篮板、球员或地面。它只用于辅助判断篮网是否摆动。'
-                            : '正在编辑：投篮分析区（紫色）。覆盖篮板、篮筐、来球轨迹和篮筐下方的落球区域；它可以明显大于篮网。',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: c.textSecondary,
-                          height: 1.45,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: Spacing.sm),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        onPressed: hasVideo && !roiBusy
-                            ? () => setState(() {
-                                _netRoi = _recommendedNetRoi(
-                                  _roi,
-                                  state.hoopBbox,
-                                );
-                                _netUserEdited = false;
-                                _editingNet = true;
-                              })
-                            : null,
-                        icon: const Icon(Icons.restart_alt_rounded, size: 16),
-                        label: const Text('重置篮网区为推荐范围'),
-                      ),
-                    ),
-                    const SizedBox(height: Spacing.sm),
-
-                    Row(
-                      children: [
-                        SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: _savingRoi
-                              ? CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: c.indigo,
-                                )
-                              : Icon(
-                                  _roiSaved
-                                      ? Icons.cloud_done_outlined
-                                      : Icons.edit_outlined,
-                                  size: 14,
-                                  color: c.textSecondary,
-                                ),
-                        ),
-                        const SizedBox(width: Spacing.xs),
-                        Expanded(
-                          child: Text(
-                            hasRoi
-                                ? (_roiSaved
-                                      ? '区域已自动保存。拖拽或缩放结束后会再次保存。'
-                                      : '调整结束后将自动保存区域。')
-                                : '拖拽覆盖篮筐上方轨迹、篮筐、篮网和下方区域。',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: c.textSecondary,
-                            ),
-                          ),
-                        ),
-                      ],
                     ),
                   ],
                 ),
-              ),
-
-              const SizedBox(height: Spacing.lg),
-              // ── 开始分析 ──
+              ],
+              const SizedBox(height: Spacing.md),
               Row(
-                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  CsButton(
-                    label: const Text('开始分析'),
-                    icon: LucideIcons.play,
-                    isLoading: state.busy,
-                    onPressed: (hasVideo && hasRoi && _roiSaved && !roiBusy)
-                        ? _startAnalysis
-                        : null,
-                  ),
+                  if (_step > 0)
+                    TextButton.icon(
+                      onPressed: busy ? null : _back,
+                      icon: const Icon(Icons.arrow_back_rounded, size: 17),
+                      label: const Text('上一步'),
+                    ),
+                  const Spacer(),
+                  if (_step < _stepCount - 1)
+                    CsButton(
+                      label: const Text('下一步'),
+                      icon: LucideIcons.arrowRight,
+                      onPressed: busy || !_canLeaveStep(_step) ? null : _next,
+                    )
+                  else
+                    CsButton(
+                      label: const Text('确认配置并开始分析'),
+                      icon: LucideIcons.play,
+                      isLoading: _applying,
+                      onPressed: busy || _roi == null ? null : _applyAndAnalyze,
+                    ),
                 ],
               ),
             ],
@@ -503,26 +463,602 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     );
   }
 
-  String _videoSummary(Map<String, dynamic> video) {
-    final w = video['width'] ?? '-';
-    final h = video['height'] ?? '-';
-    final fps = (video['fps'] as num?)?.toStringAsFixed(2) ?? '-';
-    final duration = (video['duration_ms'] as num?)?.toInt() ?? 0;
-    final codec = video['video_codec'] ?? '-';
-    final audio = video['audio_codec'] ?? '无音频';
-    final size = (video['source_size_bytes'] as num?)?.toInt() ?? 0;
-    return '$w×$h · $fps fps · ${_formatDuration(duration)} · $codec / $audio · ${_formatBytes(size)}';
+  Widget _buildStep(BuildContext context, ProjectState state, bool busy) {
+    switch (_step) {
+      case 0:
+        return _VideoStep(
+          video: state.video,
+          onSelect: busy ? null : _selectVideo,
+        );
+      case 1:
+        final duration = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
+        return _AnalysisStep(
+          videoPath: state.video?['source_path']?.toString(),
+          durationMs: duration,
+          startMs: _analysisStartMs,
+          endMs: _analysisEndMs,
+          enabled: !busy,
+          onChanged: (start, end) {
+            setState(() {
+              _analysisStartMs = start;
+              _analysisEndMs = end;
+            });
+            unawaited(_persistDraft());
+          },
+        );
+      case 2:
+        final sourceWidth = (state.video?['width'] as num?)?.toDouble() ?? 16;
+        final sourceHeight = (state.video?['height'] as num?)?.toDouble() ?? 9;
+        final hoopBbox = _hoopBbox;
+        return _DetectionStep(
+          state: state,
+          hoopBbox: hoopBbox,
+          roi: _roi,
+          netRoi: _netRoi,
+          editingNet: _editingNet,
+          enabled: state.video != null && !busy,
+          aspectRatio: sourceWidth / sourceHeight,
+          onEditNetChanged: (value) => setState(() => _editingNet = value),
+          onChanged: (value) {
+            setState(() {
+              if (_editingNet) {
+                _netRoi = value;
+                _netUserEdited = true;
+              } else {
+                _roi = value;
+                if (!_netUserEdited) {
+                  _netRoi = _recommendedNetRoi(value, hoopBbox);
+                }
+              }
+            });
+            unawaited(_persistDraft());
+          },
+          onResetNet: () {
+            setState(() {
+              _netRoi = _recommendedNetRoi(_roi, state.hoopBbox);
+              _netUserEdited = false;
+            });
+            unawaited(_persistDraft());
+          },
+        );
+      case 3:
+        return _SummaryStep(
+          state: state,
+          startMs: _analysisStartMs,
+          endMs: _analysisEndMs,
+          roi: _roi,
+          netRoi: _netRoi,
+          analysisMode: _analysisMode,
+          fastModeEnabled: _fastAnalysisEnabled,
+          onAnalysisModeChanged: (mode) {
+            setState(() => _analysisMode = mode);
+            unawaited(
+              ref.read(projectProvider.notifier).setAnalysisMode(mode),
+            );
+            unawaited(_persistDraft());
+          },
+        );
+      default:
+        return const SizedBox.shrink();
+    }
   }
+}
 
-  String _workspaceSummary(Map<String, dynamic> video) {
-    final available = (video['available_disk_bytes'] as num?)?.toInt() ?? 0;
-    final estimated =
-        (video['estimated_working_space_bytes'] as num?)?.toInt() ?? 0;
-    final sufficient = video['disk_space_sufficient'] != false;
-    return sufficient
-        ? '预计工作空间 ${_formatBytes(estimated)} · 可用 ${_formatBytes(available)}'
-        : '磁盘空间不足：预计需要 ${_formatBytes(estimated)}，当前可用 ${_formatBytes(available)}';
+class _DraftBanner extends StatelessWidget {
+  const _DraftBanner({required this.onContinue, required this.onDiscard});
+  final VoidCallback onContinue;
+  final VoidCallback onDiscard;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: Spacing.md,
+        vertical: Spacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: c.indigo.withValues(alpha: .10),
+        border: Border.all(color: c.indigo.withValues(alpha: .35)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.restore_rounded, size: 17, color: c.indigo),
+          const SizedBox(width: Spacing.sm),
+          const Expanded(child: Text('检测到上次未完成的配置。')),
+          TextButton(onPressed: onDiscard, child: const Text('放弃草稿')),
+          FilledButton(onPressed: onContinue, child: const Text('继续配置')),
+        ],
+      ),
+    );
   }
+}
+
+class _VideoStep extends StatelessWidget {
+  const _VideoStep({required this.video, required this.onSelect});
+  final JsonMap? video;
+  final VoidCallback? onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final theme = Theme.of(context);
+    if (video == null) {
+      return CsCard(
+        child: Column(
+          children: [
+            const SizedBox(height: Spacing.lg),
+            Icon(LucideIcons.fileVideo, size: 42, color: c.indigo),
+            const SizedBox(height: Spacing.md),
+            Text('选择原始视频', style: theme.textTheme.titleLarge),
+            const SizedBox(height: Spacing.xs),
+            Text(
+              '支持 MP4、MOV、M4V、AVI、MKV。原始视频不会被修改或上传。',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: c.textSecondary,
+              ),
+            ),
+            const SizedBox(height: Spacing.lg),
+            CsButton(
+              label: const Text('选择视频'),
+              icon: LucideIcons.folderOpen,
+              onPressed: onSelect,
+            ),
+            const SizedBox(height: Spacing.lg),
+          ],
+        ),
+      );
+    }
+    return _InfoPanel(
+      title: '视频已准备好',
+      icon: LucideIcons.checkCircle2,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _videoSummary(video!),
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: Spacing.md),
+          _VideoProcessingHint(video: video!),
+        ],
+      ),
+    );
+  }
+}
+
+class _VideoProcessingHint extends StatelessWidget {
+  const _VideoProcessingHint({required this.video});
+
+  final JsonMap video;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final advice = _videoProcessingAdvice(video);
+    final color = advice.heavy ? c.warning : c.textSecondary;
+    final background = advice.heavy
+        ? c.warning.withValues(alpha: .09)
+        : c.surface2;
+    final border = advice.heavy ? c.warning.withValues(alpha: .35) : c.border;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: Spacing.md,
+        vertical: Spacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: background,
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            advice.heavy ? Icons.schedule_rounded : Icons.info_outline_rounded,
+            size: 17,
+            color: color,
+          ),
+          const SizedBox(width: Spacing.sm),
+          Expanded(
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: advice.title,
+                    style: TextStyle(
+                      color: advice.heavy ? c.textPrimary : color,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  TextSpan(
+                    text: '\n${advice.importDetail}',
+                    style: TextStyle(color: color, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VideoProcessingAdvice {
+  const _VideoProcessingAdvice({
+    required this.heavy,
+    required this.title,
+    required this.importDetail,
+  });
+
+  final bool heavy;
+  final String title;
+  final String importDetail;
+}
+
+_VideoProcessingAdvice _videoProcessingAdvice(JsonMap video) {
+  const gib = 1024 * 1024 * 1024;
+  final sizeBytes = (video['source_size_bytes'] as num?)?.toInt() ?? 0;
+  final durationMs = (video['duration_ms'] as num?)?.toInt() ?? 0;
+  final width = (video['width'] as num?)?.toInt() ?? 0;
+  final height = (video['height'] as num?)?.toInt() ?? 0;
+  final durationSeconds = durationMs / 1000;
+  final bitrateMbps = durationSeconds > 0
+      ? sizeBytes * 8 / durationSeconds / 1000000
+      : 0.0;
+  final highResolution = width >= 3840 || height >= 2160;
+  final heavy =
+      sizeBytes >= 8 * gib ||
+      highResolution ||
+      bitrateMbps >= 80 ||
+      durationMs >= const Duration(minutes: 45).inMilliseconds;
+  final elevated =
+      sizeBytes >= 2 * gib ||
+      width >= 2560 ||
+      height >= 1440 ||
+      bitrateMbps >= 45 ||
+      durationMs >= const Duration(minutes: 20).inMilliseconds;
+  final sizeLabel = _formatBytes(sizeBytes);
+  final videoLabel =
+      '$sizeLabel · ${width > 0 && height > 0 ? '$width×$height' : '分辨率未知'}';
+
+  if (heavy) {
+    return _VideoProcessingAdvice(
+      heavy: true,
+      title: '视频体量较大，后续处理可能需要较长时间',
+      importDetail: '$videoLabel。若只是想减少等待，建议先压缩为 1080p MP4 再导入；分析期间不要关闭应用。',
+    );
+  }
+  if (elevated) {
+    return _VideoProcessingAdvice(
+      heavy: false,
+      title: '视频体量偏大，处理时间会比普通视频更长',
+      importDetail: '$videoLabel。建议保持电源和磁盘空间充足，想加快速度可先压缩后导入。',
+    );
+  }
+  return const _VideoProcessingAdvice(
+    heavy: false,
+    title: '视频已就绪',
+    importDetail: '分析会在本地进行，耗时主要取决于视频时长、分辨率和文件码率。',
+  );
+}
+
+bool _isElevatedVideo(JsonMap video) {
+  const gib = 1024 * 1024 * 1024;
+  final sizeBytes = (video['source_size_bytes'] as num?)?.toInt() ?? 0;
+  final durationMs = (video['duration_ms'] as num?)?.toInt() ?? 0;
+  final width = (video['width'] as num?)?.toInt() ?? 0;
+  final height = (video['height'] as num?)?.toInt() ?? 0;
+  return sizeBytes >= 2 * gib ||
+      width >= 2560 ||
+      height >= 1440 ||
+      durationMs >= const Duration(minutes: 20).inMilliseconds;
+}
+
+String _formatBytes(int bytes) {
+  if (bytes <= 0) return '文件大小未知';
+  if (bytes >= 1024 * 1024 * 1024) {
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+  if (bytes >= 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(0)} MB';
+  }
+  return '${(bytes / 1024).toStringAsFixed(0)} KB';
+}
+
+class _AnalysisStep extends StatelessWidget {
+  const _AnalysisStep({
+    required this.videoPath,
+    required this.durationMs,
+    required this.startMs,
+    required this.endMs,
+    required this.enabled,
+    required this.onChanged,
+  });
+  final String? videoPath;
+  final int durationMs;
+  final int startMs;
+  final int endMs;
+  final bool enabled;
+  final void Function(int startMs, int endMs) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InfoPanel(
+      title: '分析范围',
+      icon: LucideIcons.scanLine,
+      subtitle: '默认分析全片。拖动范围手柄排除热身、暂停或比赛结束部分，修改会自动保存在当前草稿。',
+      child: _AnalysisRangeEditor(
+        videoPath: videoPath,
+        durationMs: durationMs,
+        startMs: startMs,
+        endMs: endMs,
+        enabled: enabled,
+        onChanged: onChanged,
+        onCommit: (_, _) async {},
+      ),
+    );
+  }
+}
+
+class _DetectionStep extends StatelessWidget {
+  const _DetectionStep({
+    required this.state,
+    required this.hoopBbox,
+    required this.roi,
+    required this.netRoi,
+    required this.editingNet,
+    required this.enabled,
+    required this.aspectRatio,
+    required this.onEditNetChanged,
+    required this.onChanged,
+    required this.onResetNet,
+  });
+  final ProjectState state;
+  final Rect? hoopBbox;
+  final Rect? roi;
+  final Rect? netRoi;
+  final bool editingNet;
+  final bool enabled;
+  final double aspectRatio;
+  final ValueChanged<bool> onEditNetChanged;
+  final ValueChanged<Rect> onChanged;
+  final VoidCallback onResetNet;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return _InfoPanel(
+      title: '检测区域',
+      icon: LucideIcons.target,
+      subtitle: '系统会先自动识别篮筐。紫色区域用于球轨迹，白色区域只覆盖篮网摆动范围；拖动或缩放后会自动保存到草稿。',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _RoiCanvas(
+            enabled: enabled,
+            previewPath: state.previewPath,
+            aspectRatio: aspectRatio,
+            roi: editingNet ? netRoi : roi,
+            secondaryRoi: editingNet ? roi : netRoi,
+            activeColor: editingNet ? Colors.white : c.indigo,
+            secondaryColor: editingNet ? c.indigo : Colors.white,
+            activeLabel: editingNet ? '篮网检测区' : '投篮分析区',
+            secondaryLabel: editingNet ? '投篮分析区' : '篮网检测区',
+            onRefreshPreview: null,
+            onChanged: onChanged,
+            onEditComplete: () {},
+          ),
+          const SizedBox(height: Spacing.sm),
+          Row(
+            children: [
+              _CalibrationTargetButton(
+                index: '1',
+                label: '投篮分析区',
+                color: c.indigo,
+                selected: !editingNet,
+                onPressed: enabled ? () => onEditNetChanged(false) : null,
+              ),
+              const SizedBox(width: Spacing.sm),
+              _CalibrationTargetButton(
+                index: '2',
+                label: '篮网检测区',
+                color: Colors.white,
+                selected: editingNet,
+                onPressed: enabled ? () => onEditNetChanged(true) : null,
+              ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: enabled ? onResetNet : null,
+                icon: const Icon(Icons.restart_alt_rounded, size: 16),
+                label: const Text('重置篮网区'),
+              ),
+            ],
+          ),
+          const SizedBox(height: Spacing.xs),
+          Text(
+            editingNet
+                ? '当前编辑白色篮网区域：覆盖篮圈下方到网底，尽量不要包含篮板、球员或地面。'
+                : '当前编辑紫色投篮分析区域：覆盖来球轨迹、篮圈和篮网下方的落球范围。',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: c.textSecondary,
+              height: 1.4,
+            ),
+          ),
+          if (state.roiDetecting) ...[
+            const SizedBox(height: Spacing.sm),
+            const LinearProgressIndicator(minHeight: 2),
+            const SizedBox(height: Spacing.xs),
+            Text(
+              '正在自动识别篮筐区域…',
+              style: Theme.of(
+                context,
+              ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryStep extends StatelessWidget {
+  const _SummaryStep({
+    required this.state,
+    required this.startMs,
+    required this.endMs,
+    required this.roi,
+    required this.netRoi,
+    required this.analysisMode,
+    required this.fastModeEnabled,
+    required this.onAnalysisModeChanged,
+  });
+  final ProjectState state;
+  final int startMs;
+  final int endMs;
+  final Rect? roi;
+  final Rect? netRoi;
+  final String analysisMode;
+  final bool fastModeEnabled;
+  final ValueChanged<String> onAnalysisModeChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final rows = <(String, String)>[
+      ('视频', state.video?['source_path']?.toString().split('/').last ?? '-'),
+      ('分析范围', '${_formatDuration(startMs)} - ${_formatDuration(endMs)}'),
+      ('投篮分析区', roi == null ? '未设置' : '已设置'),
+      ('篮网检测区', netRoi == null ? '自动推荐' : '已设置'),
+    ];
+    return _InfoPanel(
+      title: '确认配置',
+      icon: LucideIcons.listChecks,
+      subtitle: '确认后保存检测区域并开始分析；已有候选将被当前配置替换。',
+      child: Column(
+        children: [
+          for (final row in rows)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
+              child: Row(
+                children: [
+                  Text(row.$1, style: TextStyle(color: c.textSecondary)),
+                  const Spacer(),
+                  Flexible(child: Text(row.$2, textAlign: TextAlign.right)),
+                ],
+              ),
+            ),
+          if (fastModeEnabled)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
+              child: SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment<String>(
+                    value: 'standard',
+                    label: Text('标准分析'),
+                  ),
+                  ButtonSegment<String>(
+                    value: 'fast',
+                    label: Text('快速分析'),
+                  ),
+                ],
+                selected: {analysisMode},
+                onSelectionChanged: (selection) {
+                  if (selection.isNotEmpty) {
+                    onAnalysisModeChanged(selection.first);
+                  }
+                },
+              ),
+            ),
+          if (fastModeEnabled && analysisMode == 'fast')
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('快速分析使用低规格代理，可能漏检少量片段。'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoPanel extends StatelessWidget {
+  const _InfoPanel({
+    required this.title,
+    required this.icon,
+    required this.child,
+    this.subtitle,
+  });
+  final String title;
+  final IconData icon;
+  final String? subtitle;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final theme = Theme.of(context);
+    return CsCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 19, color: c.indigo),
+              const SizedBox(width: Spacing.sm),
+              Text(title, style: theme.textTheme.titleLarge),
+            ],
+          ),
+          if (subtitle != null) ...[
+            const SizedBox(height: Spacing.xs),
+            Text(
+              subtitle!,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: c.textSecondary,
+                height: 1.4,
+              ),
+            ),
+          ],
+          const SizedBox(height: Spacing.lg),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+Map<String, double>? _rectJson(Rect? rect) => rect == null
+    ? null
+    : <String, double>{
+        'x1': rect.left,
+        'y1': rect.top,
+        'x2': rect.right,
+        'y2': rect.bottom,
+      };
+
+Map<String, dynamic>? _rectMap(String key, Rect? rect) =>
+    rect == null ? null : <String, dynamic>{key: _rectJson(rect)};
+
+Rect? _rectFromJson(Object? raw) {
+  if (raw is! Map) return null;
+  final map = raw.cast<String, dynamic>();
+  final x1 = (map['x1'] as num?)?.toDouble();
+  final y1 = (map['y1'] as num?)?.toDouble();
+  final x2 = (map['x2'] as num?)?.toDouble();
+  final y2 = (map['y2'] as num?)?.toDouble();
+  if ([x1, y1, x2, y2].any((value) => value == null)) return null;
+  return Rect.fromLTRB(x1!, y1!, x2!, y2!);
+}
+
+String _videoSummary(JsonMap video) {
+  final w = video['width'] ?? '-';
+  final h = video['height'] ?? '-';
+  final fps = (video['fps'] as num?)?.toStringAsFixed(2) ?? '-';
+  final duration = (video['duration_ms'] as num?)?.toInt() ?? 0;
+  final codec = video['video_codec'] ?? '-';
+  final audio = video['audio_codec'] ?? '无音频';
+  return '$w×$h · $fps fps · ${_formatDuration(duration)} · $codec / $audio';
 }
 
 int _analysisStart(ProjectState state) =>
@@ -531,8 +1067,6 @@ int _analysisStart(ProjectState state) =>
 int _analysisEnd(ProjectState state) =>
     (state.video?['analysis_end_ms'] as num?)?.toInt() ??
     ((state.video?['duration_ms'] as num?)?.toInt() ?? 0);
-
-Rect? _netRoiFromState(ProjectState state) => state.netRoi;
 
 Rect? _recommendedNetRoi(Rect? analysisRoi, Rect? hoopBbox) {
   if (analysisRoi == null) return null;
@@ -581,19 +1115,6 @@ String _formatDuration(int milliseconds) {
       '${remaining.toString().padLeft(2, '0')}';
 }
 
-String _formatBytes(int bytes) {
-  if (bytes <= 0) return '-';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  var value = bytes.toDouble();
-  var unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit++;
-  }
-  final digits = value >= 100 || unit == 0 ? 0 : 1;
-  return '${value.toStringAsFixed(digits)} ${units[unit]}';
-}
-
 class _AnalysisRangeEditor extends StatefulWidget {
   const _AnalysisRangeEditor({
     required this.videoPath,
@@ -621,7 +1142,11 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
   Player? _player;
   VideoController? _controller;
   StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<bool>? _playingSubscription;
+  late int _startMs = widget.startMs;
+  late int _endMs = widget.endMs;
   int _positionMs = 0;
+  bool _playing = false;
   bool _ready = false;
   bool _saving = false;
 
@@ -634,12 +1159,18 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
   @override
   void didUpdateWidget(covariant _AnalysisRangeEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.videoPath != widget.videoPath) _openVideo();
+    if (oldWidget.videoPath != widget.videoPath) {
+      _openVideo();
+    } else {
+      if (oldWidget.startMs != widget.startMs) _startMs = widget.startMs;
+      if (oldWidget.endMs != widget.endMs) _endMs = widget.endMs;
+    }
   }
 
   Future<void> _openVideo() async {
     final path = widget.videoPath;
     await _positionSubscription?.cancel();
+    await _playingSubscription?.cancel();
     await _player?.dispose();
     _player = null;
     _controller = null;
@@ -654,25 +1185,32 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
       if (!mounted) return;
       final value = position.inMilliseconds;
       if ((value - _positionMs).abs() >= 100) {
-        setState(() => _positionMs = value);
+        setState(() => _positionMs = value.clamp(0, widget.durationMs));
       }
+    });
+    _playingSubscription = player.stream.playing.listen((playing) {
+      if (mounted) setState(() => _playing = playing);
     });
     await player.open(Media(Uri.file(path).toString()), play: false);
     if (mounted && identical(player, _player)) {
-      setState(() => _ready = true);
+      setState(() {
+        _ready = true;
+        _playing = player.state.playing;
+      });
     }
   }
 
   @override
   void dispose() {
     unawaited(_positionSubscription?.cancel());
+    unawaited(_playingSubscription?.cancel());
     unawaited(_player?.dispose());
     super.dispose();
   }
 
   Future<void> _seek(int value) async {
     final target = value.clamp(0, widget.durationMs).toInt();
-    setState(() => _positionMs = target);
+    if (mounted) setState(() => _positionMs = target);
     await _player?.seek(Duration(milliseconds: target));
   }
 
@@ -700,8 +1238,8 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
   Widget build(BuildContext context) {
     if (widget.durationMs <= 1000) return const SizedBox.shrink();
     final c = AppColors.of(context);
-    final start = widget.startMs.clamp(0, widget.durationMs - 1000).toInt();
-    final end = widget.endMs.clamp(start + 1000, widget.durationMs).toInt();
+    final start = _startMs.clamp(0, widget.durationMs - 1000).toInt();
+    final end = _endMs.clamp(start + 1000, widget.durationMs).toInt();
     final fullRange = start == 0 && end == widget.durationMs;
     final controller = _controller;
     return Container(
@@ -717,8 +1255,8 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
           Text('分析范围', style: Theme.of(context).textTheme.labelLarge),
           Text(
             fullRange
-                ? '默认扫描完整视频。播放视频后设定起点和终点，可排除热身或结束部分；原视频不会被裁剪。'
-                : '仅扫描 ${_formatDuration(start)} - ${_formatDuration(end)}，原视频不会被裁剪。',
+                ? '默认扫描完整视频。播放视频后设定起点和终点，可排除热身或结束部分。'
+                : '仅扫描 ${_formatDuration(start)} - ${_formatDuration(end)}。',
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: c.textSecondary,
               height: 1.4,
@@ -736,9 +1274,39 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
                   : Stack(
                       children: [
                         Positioned.fill(
-                          child: Video(
-                            controller: controller,
-                            controls: NoVideoControls,
+                          child: IgnorePointer(
+                            child: Video(
+                              controller: controller,
+                              controls: NoVideoControls,
+                            ),
+                          ),
+                        ),
+                        Positioned.fill(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: _ready
+                                ? () => unawaited(_togglePlayback())
+                                : null,
+                            child: AnimatedOpacity(
+                              opacity: _playing ? 0 : 1,
+                              duration: const Duration(milliseconds: 160),
+                              child: Center(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.62),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(14),
+                                    child: Icon(
+                                      Icons.play_arrow_rounded,
+                                      color: Colors.white,
+                                      size: 28,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                         Positioned(
@@ -774,9 +1342,7 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
                 tooltip: '播放/暂停',
                 onPressed: _ready ? () => unawaited(_togglePlayback()) : null,
                 icon: Icon(
-                  _player?.state.playing == true
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
+                  _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
                 ),
               ),
               const SizedBox(width: Spacing.xs),
@@ -788,29 +1354,23 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
               ),
             ],
           ),
-          RangeSlider(
-            min: 0,
-            max: widget.durationMs.toDouble(),
-            divisions: 1000,
-            values: RangeValues(start.toDouble(), end.toDouble()),
-            onChanged: widget.enabled
-                ? (value) {
-                    final nextStart = value.start.round();
-                    final nextEnd = value.end.round();
-                    final startMoved = (nextStart - start).abs();
-                    final endMoved = (nextEnd - end).abs();
-                    final seekTarget = startMoved >= endMoved
-                        ? nextStart
-                        : nextEnd;
-                    widget.onChanged(nextStart, nextEnd);
-                    unawaited(_seek(seekTarget));
-                  }
-                : null,
-            onChangeEnd: widget.enabled
-                ? (value) => unawaited(
-                    _commitRange(value.start.round(), value.end.round()),
-                  )
-                : null,
+          _AnalysisTimeline(
+            durationMs: widget.durationMs,
+            positionMs: _positionMs,
+            startMs: start,
+            endMs: end,
+            enabled: widget.enabled,
+            onSeek: (value) => unawaited(_seek(value)),
+            onRangeChanged: (nextStart, nextEnd, seekTarget) {
+              setState(() {
+                _startMs = nextStart;
+                _endMs = nextEnd;
+              });
+              widget.onChanged(nextStart, nextEnd);
+              unawaited(_seek(seekTarget));
+            },
+            onRangeCommit: (nextStart, nextEnd) =>
+                unawaited(_commitRange(nextStart, nextEnd)),
           ),
           Row(
             children: [
@@ -831,6 +1391,10 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
               TextButton.icon(
                 onPressed: widget.enabled
                     ? () {
+                        setState(() {
+                          _startMs = 0;
+                          _endMs = widget.durationMs;
+                        });
                         widget.onChanged(0, widget.durationMs);
                         unawaited(_commitRange(0, widget.durationMs));
                       }
@@ -844,6 +1408,283 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
       ),
     );
   }
+}
+
+class _AnalysisTimeline extends StatefulWidget {
+  const _AnalysisTimeline({
+    required this.durationMs,
+    required this.positionMs,
+    required this.startMs,
+    required this.endMs,
+    required this.enabled,
+    required this.onSeek,
+    required this.onRangeChanged,
+    required this.onRangeCommit,
+  });
+
+  final int durationMs;
+  final int positionMs;
+  final int startMs;
+  final int endMs;
+  final bool enabled;
+  final ValueChanged<int> onSeek;
+  final void Function(int startMs, int endMs, int seekTarget) onRangeChanged;
+  final void Function(int startMs, int endMs) onRangeCommit;
+
+  @override
+  State<_AnalysisTimeline> createState() => _AnalysisTimelineState();
+}
+
+class _AnalysisTimelineState extends State<_AnalysisTimeline> {
+  int _dragTarget = -1;
+  int _lastStartMs = 0;
+  int _lastEndMs = 0;
+
+  int _valueFor(double x, double width) {
+    if (width <= 0 || widget.durationMs <= 0) return 0;
+    return (x.clamp(0.0, width) / width * widget.durationMs).round();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return SizedBox(
+      height: 92,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth.isFinite
+              ? constraints.maxWidth
+              : 0.0;
+          double xFor(int value) =>
+              (value / widget.durationMs * width).clamp(0.0, width).toDouble();
+          final positionX = xFor(widget.positionMs);
+          final common = _AnalysisTimelineStyle(
+            rangeColor: c.indigo,
+            trackColor: c.surface3,
+            outsideColor: c.background.withValues(alpha: .58),
+            handleColor: c.textPrimary,
+            playheadColor: c.orange,
+          );
+          return Column(
+            children: [
+              Row(
+                children: [
+                  Text('播放进度', style: Theme.of(context).textTheme.labelSmall),
+                  const Spacer(),
+                  Text(
+                    _formatDuration(widget.positionMs),
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: c.textSecondary,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  Text('分析范围', style: Theme.of(context).textTheme.labelSmall),
+                  const Spacer(),
+                  Text(
+                    '${_formatDuration(widget.startMs)} - ${_formatDuration(widget.endMs)}',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: c.textSecondary,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 3),
+              SizedBox(
+                width: double.infinity,
+                height: 42,
+                child: MouseRegion(
+                  cursor: widget.enabled
+                      ? (_dragTarget >= 0
+                            ? SystemMouseCursors.resizeLeftRight
+                            : SystemMouseCursors.click)
+                      : SystemMouseCursors.basic,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapUp: widget.enabled
+                        ? (details) => widget.onSeek(
+                            _valueFor(details.localPosition.dx, width),
+                          )
+                        : null,
+                    onPanStart: widget.enabled
+                        ? (details) {
+                            final startX = xFor(widget.startMs);
+                            final endX = xFor(widget.endMs);
+                            final x = details.localPosition.dx;
+                            final startDistance = (x - startX).abs();
+                            final endDistance = (x - endX).abs();
+                            const handleHitSize = 30.0;
+                            if (startDistance <= handleHitSize ||
+                                endDistance <= handleHitSize) {
+                              _dragTarget = startDistance <= endDistance
+                                  ? 0
+                                  : 1;
+                            } else {
+                              _dragTarget = -1;
+                            }
+                            _lastStartMs = widget.startMs;
+                            _lastEndMs = widget.endMs;
+                          }
+                        : null,
+                    onPanUpdate: widget.enabled
+                        ? (details) {
+                            final value = _valueFor(
+                              details.localPosition.dx,
+                              width,
+                            );
+                            if (_dragTarget == 0) {
+                              final nextStart = value
+                                  .clamp(0, widget.endMs - 1000)
+                                  .toInt();
+                              _lastStartMs = nextStart;
+                              widget.onRangeChanged(
+                                nextStart,
+                                widget.endMs,
+                                nextStart,
+                              );
+                            } else if (_dragTarget == 1) {
+                              final nextEnd = value
+                                  .clamp(
+                                    widget.startMs + 1000,
+                                    widget.durationMs,
+                                  )
+                                  .toInt();
+                              _lastEndMs = nextEnd;
+                              widget.onRangeChanged(
+                                widget.startMs,
+                                nextEnd,
+                                nextEnd,
+                              );
+                            } else {
+                              widget.onSeek(value);
+                            }
+                          }
+                        : null,
+                    onPanEnd: widget.enabled
+                        ? (_) {
+                            final target = _dragTarget;
+                            _dragTarget = -1;
+                            if (target == 0 || target == 1) {
+                              widget.onRangeCommit(_lastStartMs, _lastEndMs);
+                            }
+                          }
+                        : null,
+                    onPanCancel: widget.enabled
+                        ? () => setState(() => _dragTarget = -1)
+                        : null,
+                    child: CustomPaint(
+                      size: Size(width, 42),
+                      painter: _UnifiedTimelinePainter(
+                        positionX: positionX,
+                        startX: xFor(widget.startMs),
+                        endX: xFor(widget.endMs),
+                        style: common,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AnalysisTimelineStyle {
+  const _AnalysisTimelineStyle({
+    required this.rangeColor,
+    required this.trackColor,
+    required this.outsideColor,
+    required this.handleColor,
+    required this.playheadColor,
+  });
+
+  final Color rangeColor;
+  final Color trackColor;
+  final Color outsideColor;
+  final Color handleColor;
+  final Color playheadColor;
+}
+
+class _UnifiedTimelinePainter extends CustomPainter {
+  const _UnifiedTimelinePainter({
+    required this.positionX,
+    required this.startX,
+    required this.endX,
+    required this.style,
+  });
+
+  final double positionX;
+  final double startX;
+  final double endX;
+  final _AnalysisTimelineStyle style;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final y = size.height / 2 + 1;
+    final trackLeft = 9.0;
+    final trackRight = size.width - 9.0;
+    final trackWidth = (trackRight - trackLeft).clamp(0.0, size.width);
+    final start = trackLeft + (startX / size.width * trackWidth);
+    final end = trackLeft + (endX / size.width * trackWidth);
+    final position = trackLeft + (positionX / size.width * trackWidth);
+    final track = RRect.fromRectAndRadius(
+      Rect.fromLTWH(trackLeft, y - 4, trackWidth, 8),
+      const Radius.circular(3),
+    );
+    canvas.drawRRect(track, Paint()..color = style.trackColor);
+    canvas.drawRect(
+      Rect.fromLTRB(trackLeft, y - 4, start, y + 4),
+      Paint()..color = style.outsideColor,
+    );
+    canvas.drawRect(
+      Rect.fromLTRB(end, y - 4, trackRight, y + 4),
+      Paint()..color = style.outsideColor,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTRB(start, y - 4, end, y + 4),
+        const Radius.circular(3),
+      ),
+      Paint()..color = style.rangeColor,
+    );
+    final playhead = Paint()
+      ..color = style.playheadColor
+      ..strokeWidth = 2;
+    canvas.drawLine(
+      Offset(position, y - 18),
+      Offset(position, y + 18),
+      playhead,
+    );
+    canvas.drawCircle(Offset(position, y - 18), 4, playhead);
+    for (final x in [start, end]) {
+      final handle = RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(x, y), width: 14, height: 28),
+        const Radius.circular(5),
+      );
+      canvas.drawRRect(handle, Paint()..color = style.handleColor);
+      canvas.drawLine(
+        Offset(x, y - 7),
+        Offset(x, y + 7),
+        Paint()
+          ..color = style.rangeColor
+          ..strokeWidth = 2,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _UnifiedTimelinePainter oldDelegate) =>
+      oldDelegate.positionX != positionX ||
+      oldDelegate.startX != startX ||
+      oldDelegate.endX != endX ||
+      oldDelegate.style.rangeColor != style.rangeColor;
 }
 
 class _CalibrationTargetButton extends StatelessWidget {
@@ -1075,7 +1916,7 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                                 Positioned.fill(
                                   child: Image.file(
                                     File(widget.previewPath!),
-                                    fit: BoxFit.contain,
+                                    fit: BoxFit.fill,
                                     errorBuilder: (context, error, _) => Center(
                                       child: Padding(
                                         padding: const EdgeInsets.all(

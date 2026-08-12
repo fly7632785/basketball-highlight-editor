@@ -8,25 +8,28 @@ class CsStepIndicator extends StatelessWidget {
   const CsStepIndicator({
     required this.steps,
     this.direction = Axis.horizontal,
+    this.onStepTap,
     super.key,
   });
 
   final List<CsStep> steps;
   final Axis direction;
+  final ValueChanged<int>? onStepTap;
 
   @override
   Widget build(BuildContext context) {
     if (steps.isEmpty) return const SizedBox.shrink();
     return direction == Axis.horizontal
-        ? _HorizontalSteps(steps: steps)
-        : _VerticalSteps(steps: steps);
+        ? _HorizontalSteps(steps: steps, onStepTap: onStepTap)
+        : _VerticalSteps(steps: steps, onStepTap: onStepTap);
   }
 }
 
 class _HorizontalSteps extends StatelessWidget {
-  const _HorizontalSteps({required this.steps});
+  const _HorizontalSteps({required this.steps, this.onStepTap});
 
   final List<CsStep> steps;
+  final ValueChanged<int>? onStepTap;
 
   @override
   Widget build(BuildContext context) {
@@ -36,51 +39,56 @@ class _HorizontalSteps extends StatelessWidget {
       children: [
         for (var index = 0; index < steps.length; index++)
           Expanded(
-            child: Semantics(
-              label:
-                  '${steps[index].title}，${steps[index].completed ? '已完成' : '未完成'}',
-              child: Column(
-                children: [
-                  SizedBox(
-                    height: 28,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: _Connector(
-                            color: index == 0
-                                ? Colors.transparent
-                                : steps[index - 1].completed
-                                ? c.indigo
-                                : c.border,
+            child: GestureDetector(
+              onTap: onStepTap == null || !steps[index].completed
+                  ? null
+                  : () => onStepTap!(index),
+              child: Semantics(
+                label:
+                    '${steps[index].title}，${steps[index].completed ? '已完成' : '未完成'}',
+                child: Column(
+                  children: [
+                    SizedBox(
+                      height: 28,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _Connector(
+                              color: index == 0
+                                  ? Colors.transparent
+                                  : steps[index - 1].completed
+                                  ? c.indigo
+                                  : c.border,
+                            ),
                           ),
-                        ),
-                        _StepNode(step: steps[index]),
-                        Expanded(
-                          child: _Connector(
-                            color: index == steps.length - 1
-                                ? Colors.transparent
-                                : steps[index].completed
-                                ? c.indigo
-                                : c.border,
+                          _StepNode(step: steps[index]),
+                          Expanded(
+                            child: _Connector(
+                              color: index == steps.length - 1
+                                  ? Colors.transparent
+                                  : steps[index].completed
+                                  ? c.indigo
+                                  : c.border,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    steps[index].title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: steps[index].completed
-                          ? c.textPrimary
-                          : c.textSecondary,
-                      fontSize: 11,
+                    const SizedBox(height: 6),
+                    Text(
+                      steps[index].title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: steps[index].completed
+                            ? c.textPrimary
+                            : c.textSecondary,
+                        fontSize: 11,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -90,9 +98,10 @@ class _HorizontalSteps extends StatelessWidget {
 }
 
 class _VerticalSteps extends StatelessWidget {
-  const _VerticalSteps({required this.steps});
+  const _VerticalSteps({required this.steps, this.onStepTap});
 
   final List<CsStep> steps;
+  final ValueChanged<int>? onStepTap;
 
   @override
   Widget build(BuildContext context) {
@@ -103,22 +112,27 @@ class _VerticalSteps extends StatelessWidget {
           Semantics(
             label:
                 '${steps[index].title}，${steps[index].completed ? '已完成' : '未完成'}',
-            child: Row(
-              children: [
-                _StepNode(step: steps[index]),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    steps[index].title,
-                    style: TextStyle(
-                      color: steps[index].completed
-                          ? c.textPrimary
-                          : c.textSecondary,
-                      fontSize: 12,
+            child: GestureDetector(
+              onTap: onStepTap == null || !steps[index].completed
+                  ? null
+                  : () => onStepTap!(index),
+              child: Row(
+                children: [
+                  _StepNode(step: steps[index]),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      steps[index].title,
+                      style: TextStyle(
+                        color: steps[index].completed
+                            ? c.textPrimary
+                            : c.textSecondary,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           if (index < steps.length - 1)

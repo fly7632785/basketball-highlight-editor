@@ -5,6 +5,8 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
+import '../core/contact_actions.dart';
+import '../features/about/about_dialog.dart';
 
 /// 桌面侧栏:`≥ md(900)` 时显示；展开/收缩由用户控制，宽度不足时自动使用折叠态。
 ///
@@ -26,7 +28,7 @@ class CsSidebarShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     return Container(
-      width: extended ? 232 : 76,
+      width: extended ? 224 : 68,
       decoration: BoxDecoration(
         color: c.surface,
         border: Border(right: BorderSide(color: c.border)),
@@ -34,54 +36,8 @@ class CsSidebarShell extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              extended ? Spacing.md : Spacing.xs,
-              Spacing.lg,
-              extended ? Spacing.md : Spacing.xs,
-              Spacing.lg,
-            ),
-            child: Row(
-              mainAxisAlignment: extended
-                  ? MainAxisAlignment.start
-                  : MainAxisAlignment.center,
-              children: <Widget>[
-                Icon(LucideIcons.volleyball, size: 22, color: c.orange),
-                if (extended) ...<Widget>[
-                  const SizedBox(width: Spacing.sm),
-                  Expanded(
-                    child: Text(
-                      'Courtside',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: c.textPrimary,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.2,
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(width: Spacing.xs),
-                SizedBox(
-                  width: 32,
-                  height: 32,
-                  child: IconButton(
-                    tooltip: extended ? '收缩侧栏' : '展开侧栏',
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onToggle,
-                    icon: Icon(
-                      extended
-                          ? LucideIcons.chevronLeft
-                          : LucideIcons.chevronRight,
-                      size: 16,
-                      color: c.textSecondary,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: Spacing.md),
+          _SidebarBrand(extended: extended, onToggle: onToggle),
+          const SizedBox(height: Spacing.sm),
           _NavItem(
             shell: shell,
             index: 0,
@@ -111,6 +67,18 @@ class CsSidebarShell extends StatelessWidget {
             extended: extended,
           ),
           const Spacer(),
+          _UtilityItem(
+            label: '反馈',
+            icon: LucideIcons.messageCircle,
+            extended: extended,
+            onTap: () => _openFeedback(context),
+          ),
+          _UtilityItem(
+            label: '关于',
+            icon: LucideIcons.info,
+            extended: extended,
+            onTap: () => showCourtsideAboutDialog(context),
+          ),
           if (extended)
             Padding(
               padding: const EdgeInsets.fromLTRB(
@@ -147,6 +115,68 @@ class CsSidebarShell extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _openFeedback(BuildContext context) async {
+    final opened = await openExternalUri(feedbackMailto());
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('未找到可用的邮件客户端，请手动联系反馈邮箱。')));
+    }
+  }
+}
+
+class _UtilityItem extends StatelessWidget {
+  const _UtilityItem({
+    required this.label,
+    required this.icon,
+    required this.extended,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool extended;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final child = Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: extended ? 10 : 12,
+        vertical: 2,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(CsRadius.sm),
+          onTap: onTap,
+          child: SizedBox(
+            height: 38,
+            child: Row(
+              mainAxisAlignment: extended
+                  ? MainAxisAlignment.start
+                  : MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 17, color: c.textTertiary),
+                if (extended) ...[
+                  const SizedBox(width: Spacing.sm + 2),
+                  Text(
+                    label,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: c.textSecondary),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    return extended ? child : Tooltip(message: label, child: child);
+  }
 }
 
 class _NavItem extends StatelessWidget {
@@ -176,9 +206,83 @@ class _NavItem extends StatelessWidget {
   }
 }
 
+class _SidebarBrand extends StatelessWidget {
+  const _SidebarBrand({required this.extended, required this.onToggle});
+
+  final bool extended;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final theme = Theme.of(context);
+    final brand = Container(
+      height: 42,
+      padding: EdgeInsets.symmetric(horizontal: extended ? 10 : 5),
+      decoration: BoxDecoration(
+        color: c.surface2,
+        borderRadius: BorderRadius.circular(CsRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      child: Row(
+        mainAxisSize: extended ? MainAxisSize.max : MainAxisSize.min,
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: c.orange.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(CsRadius.sm),
+            ),
+            child: Icon(
+              Icons.sports_basketball_rounded,
+              size: 19,
+              color: c.orange,
+            ),
+          ),
+          if (extended) ...[
+            const SizedBox(width: Spacing.sm),
+            Expanded(
+              child: Text(
+                'Courtside',
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: c.textPrimary,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -.1,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(width: 2),
+          SizedBox(
+            width: 26,
+            height: 30,
+            child: IconButton(
+              tooltip: extended ? '收缩侧栏' : '展开侧栏',
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              onPressed: onToggle,
+              icon: Icon(
+                extended ? LucideIcons.chevronLeft : LucideIcons.chevronRight,
+                size: 15,
+                color: c.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    return Padding(
+      padding: EdgeInsets.fromLTRB(10, 12, 10, 8),
+      child: extended ? brand : Center(child: brand),
+    );
+  }
+}
+
 /// 单个侧栏项。
 ///
-/// 选中态:左 3px indigo 条 + indigo 8% 背景 + 文字 w600 + 图标 indigo;
+/// 选中态:局部 indigo 背景 + 文字 w600 + 图标 indigo;
 /// 未选中:textSecondary。折叠态(extended=false)只显示图标 + Tooltip(label)。
 class CsSidebarItem extends StatelessWidget {
   const CsSidebarItem({
@@ -204,53 +308,51 @@ class CsSidebarItem extends StatelessWidget {
     final fg = selected ? c.indigo : c.textSecondary;
     final iconData = selected ? (selectedIcon ?? icon) : icon;
 
-    final inner = Material(
-      color: selected ? c.indigo.withValues(alpha: 0.08) : Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: extended ? Spacing.md : Spacing.sm,
-            vertical: Spacing.sm + 2,
-          ),
-          child: Row(
-            mainAxisAlignment: extended
-                ? MainAxisAlignment.start
-                : MainAxisAlignment.center,
-            children: <Widget>[
-              Icon(iconData, size: 18, color: fg),
-              if (extended) ...<Widget>[
-                const SizedBox(width: Spacing.sm + 2),
-                Text(
-                  label,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: selected ? c.textPrimary : c.textSecondary,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+    final inner = Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: extended ? 10 : 12,
+        vertical: 3,
+      ),
+      child: Material(
+        color: selected ? c.indigo.withValues(alpha: 0.10) : Colors.transparent,
+        borderRadius: BorderRadius.circular(CsRadius.sm),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(CsRadius.sm),
+          onTap: onTap,
+          child: SizedBox(
+            height: 42,
+            child: Row(
+              mainAxisAlignment: extended
+                  ? MainAxisAlignment.start
+                  : MainAxisAlignment.center,
+              children: <Widget>[
+                if (selected)
+                  Container(
+                    width: 3,
+                    height: 18,
+                    margin: const EdgeInsets.only(left: 6, right: 7),
+                    decoration: BoxDecoration(
+                      color: c.indigo,
+                      borderRadius: BorderRadius.circular(CsRadius.full),
+                    ),
                   ),
-                ),
+                Icon(iconData, size: 18, color: fg),
+                if (extended) ...<Widget>[
+                  const SizedBox(width: Spacing.sm + 2),
+                  Text(
+                    label,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: selected ? c.textPrimary : c.textSecondary,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
     );
-
-    final withMarker = Stack(
-      children: <Widget>[
-        inner,
-        if (selected)
-          Positioned(
-            left: 0,
-            top: 0,
-            bottom: 0,
-            child: Container(width: 3, color: c.indigo),
-          ),
-      ],
-    );
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: extended ? withMarker : Tooltip(message: label, child: withMarker),
-    );
+    return extended ? inner : Tooltip(message: label, child: inner);
   }
 }

@@ -9,6 +9,7 @@ from engine.python.basketball_engine.adapters.analysis import (
     PipelineCancelled,
     build_pipeline_commands,
     candidate_to_row,
+    flatten_coarse_matches,
     flatten_refined_matches,
     scale_roi_to_proxy,
     run_pipeline,
@@ -51,6 +52,41 @@ def test_flatten_refined_matches_prefers_made_over_higher_score_ambiguous():
     })
 
     assert matches == [{"time": 1.0, "score": 0.6, "verdict": "made"}]
+
+
+def test_flatten_coarse_matches_deduplicates_candidate_events():
+    matches = flatten_coarse_matches({
+        "candidates": [
+            {"time": 10.0, "score": 0.4},
+            {"time": 10.8, "score": 0.8},
+            {"time": 20.0, "score": 0.5},
+        ],
+    })
+
+    assert [match["time"] for match in matches] == [10.8, 20.0]
+
+
+def test_pipeline_commands_can_skip_refinement_for_fast_mode(tmp_path: Path):
+    commands = build_pipeline_commands(
+        repo_root=tmp_path,
+        source_video=Path("source.mp4"),
+        proxy_video=Path("proxy.mp4"),
+        model_path=Path("model.pt"),
+        coarse_detections=Path("coarse.json"),
+        coarse_candidates=Path("candidates.json"),
+        refined_output=Path("refined.json"),
+        proxy_roi=[10, 20, 100, 200],
+        source_roi=[20, 40, 200, 400],
+        cache_dir=Path("cache"),
+        include_refinement=False,
+    )
+
+    assert len(commands) == 3
+    assert all(
+        "refine_dynamic_candidates.py" not in part
+        for command in commands
+        for part in command
+    )
 
 
 def test_pipeline_commands_use_existing_scripts(tmp_path: Path):
@@ -169,6 +205,22 @@ def test_candidate_to_row_embeds_conservative_review_reason_suggestion():
     assert evidence["review_reason_suggestion"]["confidence"] == "high"
 
 
+def test_candidate_to_row_records_analysis_source_in_evidence():
+    row = candidate_to_row(
+        {"time": 2.5, "score": 0.7},
+        video_id="video-1",
+        roi_id="roi-1",
+        duration_ms=10_000,
+        before_seconds=1,
+        after_seconds=1,
+        detector_version="python-v1:fast",
+        analysis_source="coarse",
+    )
+
+    evidence = json.loads(row["evidence_json"])
+    assert evidence["analysis_source"] == "coarse"
+
+
 def test_run_pipeline_executes_commands_and_reads_refined_output(tmp_path: Path):
     refined = tmp_path / "refined.json"
     script = "from pathlib import Path; Path({!r}).write_text({!r}, encoding='utf-8')".format(
@@ -178,6 +230,7 @@ def test_run_pipeline_executes_commands_and_reads_refined_output(tmp_path: Path)
     result = run_pipeline([[sys.executable, "-c", script]], refined, lambda stage, _: stages.append(stage))
     assert result["refined"] == {"results": []}
     assert stages == ["prepare_proxy", "persist_candidates"]
+    assert result["stage_timings_ms"]["prepare_proxy"] >= 0
 
 
 def test_run_pipeline_honors_cancellation_before_start(tmp_path: Path):

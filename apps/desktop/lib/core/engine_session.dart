@@ -37,6 +37,44 @@ class EngineSession {
     });
   }
 
+  Future<JsonMap> getAnalysisMode({required String projectRoot}) {
+    return client.request('get_analysis_mode', <String, dynamic>{
+      'project_root': projectRoot,
+    });
+  }
+
+  Future<JsonMap> setAnalysisMode({
+    required String projectRoot,
+    required String mode,
+  }) {
+    return client.request('set_analysis_mode', <String, dynamic>{
+      'project_root': projectRoot,
+      'mode': mode,
+    });
+  }
+
+  Future<JsonMap> getWorkflowDraft({required String projectRoot}) {
+    return client.request('get_workflow_draft', <String, dynamic>{
+      'project_root': projectRoot,
+    });
+  }
+
+  Future<JsonMap> saveWorkflowDraft({
+    required String projectRoot,
+    required JsonMap draft,
+  }) {
+    return client.request('save_workflow_draft', <String, dynamic>{
+      'project_root': projectRoot,
+      'draft': draft,
+    });
+  }
+
+  Future<JsonMap> clearWorkflowDraft({required String projectRoot}) {
+    return client.request('clear_workflow_draft', <String, dynamic>{
+      'project_root': projectRoot,
+    });
+  }
+
   Future<JsonMap> openProject({required String projectRoot}) {
     return client.request('open_project', <String, dynamic>{
       'project_root': projectRoot,
@@ -173,6 +211,7 @@ class EngineSession {
     int? proxyHeight,
     double? proxyFps,
     String? modelPath,
+    String? mode,
   }) {
     return client.request('start_analysis', <String, dynamic>{
       'project_root': projectRoot,
@@ -185,6 +224,7 @@ class EngineSession {
       ...?_optionalEntry('proxy_height', proxyHeight),
       ...?_optionalEntry('proxy_fps', proxyFps),
       ...?_optionalEntry('model_path', modelPath),
+      ...?_optionalEntry('mode', mode),
     });
   }
 
@@ -200,6 +240,7 @@ class EngineSession {
     int? proxyHeight,
     double? proxyFps,
     String? modelPath,
+    String? mode,
   }) {
     return client.request('retry_analysis', <String, dynamic>{
       'project_root': projectRoot,
@@ -213,6 +254,7 @@ class EngineSession {
       ...?_optionalEntry('proxy_height', proxyHeight),
       ...?_optionalEntry('proxy_fps', proxyFps),
       ...?_optionalEntry('model_path', modelPath),
+      ...?_optionalEntry('mode', mode),
     });
   }
 

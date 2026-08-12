@@ -7,8 +7,17 @@ import 'dart:convert';
 import 'package:desktop/features/review/review_screen.dart';
 import 'package:desktop/features/review/media_readiness.dart';
 import 'package:desktop/providers/project_state.dart';
+import 'package:desktop/theme/tokens.dart';
 
 void main() {
+  test('does not autoplay the review video after opening', () {
+    expect(reviewVideoAutoPlayAfterOpen, isFalse);
+  });
+
+  test('autoplays after the user switches review video source', () {
+    expect(reviewVideoAutoPlayAfterSourceSwitch, isTrue);
+  });
+
   test('waits for a positive media duration before playback', () async {
     final duration = await waitForPlayableDuration(
       current: Duration.zero,
@@ -59,7 +68,58 @@ void main() {
       ),
     );
 
-    expect(find.text('分析完成 · 0 个候选 · 用时 12:30'), findsOneWidget);
+    expect(find.text('标准分析 · 0 个候选 · 用时 12:30'), findsOneWidget);
+  });
+
+  testWidgets('keeps review status and action areas inset from the edges', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+          },
+        ],
+      ),
+    );
+
+    final statusInset = tester.widget<Padding>(
+      find.byKey(const Key('review-status-inset')),
+    );
+    final controlsInset = tester.widget<Padding>(
+      find.byKey(const Key('review-video-controls-inset')),
+    );
+    final candidatePanel = tester.widget<Container>(
+      find.byKey(const Key('candidate-panel-inset')),
+    );
+    final candidateActions = tester.widget<Padding>(
+      find.byKey(const Key('candidate-actions-inset')),
+    );
+
+    expect(
+      statusInset.padding,
+      const EdgeInsets.symmetric(horizontal: Spacing.md),
+    );
+    expect(
+      controlsInset.padding,
+      const EdgeInsets.fromLTRB(Spacing.md, Spacing.xs, Spacing.md, Spacing.xs),
+    );
+    expect(
+      candidatePanel.padding,
+      const EdgeInsets.fromLTRB(
+        Spacing.md,
+        Spacing.sm,
+        Spacing.md,
+        Spacing.sm,
+      ),
+    );
+    expect(candidateActions.padding, const EdgeInsets.only(top: Spacing.xs));
   });
 
   testWidgets('shows recovery action for an interrupted analysis', (
@@ -204,6 +264,34 @@ void main() {
     expect(find.text('时长 9 秒'), findsOneWidget);
     expect(find.byTooltip('保留片段 (C / Enter)'), findsOneWidget);
     expect(find.byTooltip('排除片段 (X / Backspace)'), findsOneWidget);
+  });
+
+  testWidgets('always uses the original video for review playback', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        video: {
+          'id': 'video-1',
+          'source_path': '/tmp/original.mp4',
+        },
+        videoPath: '/tmp/working.mp4',
+        reviewVideoPath: '/tmp/review.mp4',
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+          },
+        ],
+      ),
+    );
+
+    expect(find.text('候选预览'), findsNothing);
+    expect(find.byTooltip('切换视频来源'), findsNothing);
   });
 
   testWidgets(
@@ -415,9 +503,9 @@ void main() {
     await tester.tap(find.text('已排除').last);
     await tester.pump();
 
-    expect(find.text('1. 00:09'), findsOneWidget);
-    expect(find.text('1. 00:03'), findsNothing);
-    expect(find.text('1. 00:15'), findsNothing);
+    expect(find.text('#1 00:09'), findsOneWidget);
+    expect(find.text('#1 00:03'), findsNothing);
+    expect(find.text('#1 00:15'), findsNothing);
   });
 
   testWidgets('exposes direct candidate editing actions below the video', (
@@ -468,8 +556,8 @@ void main() {
       ),
     );
 
-    final first = find.text('1. 00:03');
-    final second = find.text('2. 00:12');
+    final first = find.text('#1 00:03');
+    final second = find.text('#2 00:12');
     expect(first, findsOneWidget);
     expect(second, findsOneWidget);
     expect(tester.getTopLeft(first).dy, lessThan(tester.getTopLeft(second).dy));

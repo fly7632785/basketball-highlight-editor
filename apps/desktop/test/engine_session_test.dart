@@ -54,6 +54,20 @@ void main() {
     });
   });
 
+  test('EngineSession forwards the selected analysis mode', () async {
+    final transport = _FakeEngineTransport();
+    final session = EngineSession(transport);
+
+    await session.startAnalysis(
+      projectRoot: '/tmp/project',
+      videoId: 'video-1',
+      mode: 'fast',
+    );
+
+    expect(transport.commands, ['start_analysis']);
+    expect(transport.payloads.single['mode'], 'fast');
+  });
+
   test('EngineSession forwards delete_project', () async {
     final transport = _FakeEngineTransport()
       ..responses['delete_project'] = {

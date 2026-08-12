@@ -101,7 +101,7 @@ class HomeScreen extends ConsumerWidget {
       (
         index: '02',
         title: '框选 ROI',
-        icon: LucideIcons.crop,
+        icon: LucideIcons.target,
         completed: state.roiSource != null,
       ),
       (

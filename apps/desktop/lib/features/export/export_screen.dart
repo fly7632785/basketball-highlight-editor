@@ -223,7 +223,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                               label: const Text('重试导出'),
                               icon: LucideIcons.refreshCw,
                               size: CsButtonSize.sm,
-                              onPressed: state.busy
+                              onPressed: busy
                                   ? null
                                   : () => notifier.retryExport(),
                             ),

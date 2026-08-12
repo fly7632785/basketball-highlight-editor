@@ -44,7 +44,7 @@ def test_analysis_range_is_persisted_and_invalidates_candidates(tmp_path: Path):
     updated = store.set_analysis_range(video["id"], 5_000, 50_000)
     assert updated["analysis_start_ms"] == 5_000
     assert updated["analysis_end_ms"] == 50_000
-    assert store.list_candidates(video["id"]) == []
+    assert len(store.list_candidates(video["id"])) == 1
 
 
 def test_delete_project_removes_project_files_but_not_source_video(tmp_path: Path):
@@ -802,7 +802,7 @@ def test_start_export_runs_as_recoverable_job(tmp_path: Path):
     assert job["progress"] == pytest.approx(1.0)
 
 
-def test_list_candidates_returns_latest_existing_proxy_for_review(tmp_path: Path):
+def test_list_candidates_returns_original_video_even_when_proxy_exists(tmp_path: Path):
     project_root = tmp_path / "project"
     service = EngineService()
     service.handle("create_project", {"name": "代理审核", "root_path": str(project_root)})
@@ -837,7 +837,7 @@ def test_list_candidates_returns_latest_existing_proxy_for_review(tmp_path: Path
     )
 
     assert result["candidates"] == []
-    assert result["review_video_path"] == str(proxy.resolve())
+    assert result["review_video_path"] == str(Path(video["source_path"]).resolve())
 
 
 def test_open_project_rejects_missing_project_without_creating_files(tmp_path: Path):
@@ -1319,6 +1319,206 @@ def test_unexpected_analysis_error_is_persisted_as_failed(tmp_path: Path, monkey
     assert "unexpected pipeline failure" in current["error_message"]
 
 
+def _analysis_fixture(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "分析闭环", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"fixture")
+    video = store.link_video({
+        "source_path": str(source),
+        "source_size_bytes": source.stat().st_size,
+        "source_mtime_ns": source.stat().st_mtime_ns,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+    roi = store.save_roi(video["id"], {"x1": 10, "y1": 20, "x2": 100, "y2": 120})
+    old = {
+        "id": "old-analysis-candidate",
+        "video_id": video["id"],
+        "roi_id": roi["id"],
+        "event_time_ms": 1_000,
+        "default_start_ms": 0,
+        "default_end_ms": 4_000,
+        "review_start_ms": 0,
+        "review_end_ms": 4_000,
+        "detector_version": "test",
+        "evidence_json": "{}",
+    }
+    store.replace_candidates(video["id"], [old])
+    store.review_candidate(old["id"], "goal", "已确认")
+    model = tmp_path / "model.pt"
+    model.write_bytes(b"model")
+    return service, store, video, model
+
+
+def test_fast_analysis_uses_coarse_candidates_and_persists_timing_checkpoint(
+    tmp_path: Path,
+    monkeypatch,
+):
+    service, store, video, model = _analysis_fixture(tmp_path)
+    captured = {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        return [["fake", "proxy"], ["fake", "scan"], ["fake", "candidates"]]
+
+    def fake_run(commands, refined_output, *_args, **kwargs):
+        assert len(commands) == 3
+        assert len(kwargs["stage_outputs"]) == 3
+        Path(captured["coarse_detections"]).parent.mkdir(parents=True, exist_ok=True)
+        Path(captured["coarse_detections"]).write_text(
+            json.dumps({"records": [{"detections": [{"name": "ball"}]}]}),
+            encoding="utf-8",
+        )
+        Path(refined_output).write_text(
+            json.dumps({"candidates": [{"time": 1.5, "score": 0.8}]}),
+            encoding="utf-8",
+        )
+        return {
+            "refined": {"candidates": [{"time": 1.5, "score": 0.8}]},
+            "logs": [],
+            "cache_hits": 2,
+            "stage_timings_ms": {"prepare_proxy": 11, "coarse_scan": 22, "generate_candidates": 3},
+        }
+
+    monkeypatch.setattr("engine.python.basketball_engine.service.build_pipeline_commands", fake_build)
+    monkeypatch.setattr("engine.python.basketball_engine.service.run_pipeline", fake_run)
+    monkeypatch.setattr(
+        service,
+        "_prepare_candidate_previews",
+        lambda **_: {"generated": 1, "reused": 0, "failed": 0},
+    )
+    job = service._create_analysis_job({
+        "project_root": str(store.root),
+        "video_id": video["id"],
+        "model_path": str(model),
+        "mode": "fast",
+    })["job"]
+
+    service._run_analysis(
+        {
+            "project_root": str(store.root),
+            "video_id": video["id"],
+            "model_path": str(model),
+            "mode": "fast",
+        },
+        job["id"],
+    )
+
+    finished = store.get_job(job["id"])
+    assert finished is not None
+    assert finished["state"] == "completed"
+    checkpoint = json.loads(finished["checkpoint_json"])
+    assert checkpoint["mode"] == "fast"
+    assert checkpoint["analysis_parameters"]["proxy_width"] == 640
+    assert checkpoint["analysis_parameters"]["proxy_height"] == 480
+    assert checkpoint["analysis_parameters"]["proxy_fps"] == 3.0
+    assert checkpoint["cache_hits"] == 2
+    assert checkpoint["total_elapsed_ms"] >= 0
+    assert "prepare_review_previews" in checkpoint["stage_timings_ms"]
+    assert "persist_candidates" in checkpoint["stage_timings_ms"]
+    candidate = store.list_candidates(video["id"])[0]
+    assert json.loads(candidate["evidence_json"])["analysis_source"] == "coarse"
+    assert candidate["review_status"] == "goal"
+    assert candidate["note"] == "已确认"
+
+
+def test_analysis_failure_keeps_previous_candidates_and_records_elapsed_time(
+    tmp_path: Path,
+    monkeypatch,
+):
+    service, store, video, model = _analysis_fixture(tmp_path)
+
+    def fail_pipeline(*_args, **_kwargs):
+        raise RuntimeError("pipeline failed")
+
+    monkeypatch.setattr("engine.python.basketball_engine.service.run_pipeline", fail_pipeline)
+    job = service._create_analysis_job({
+        "project_root": str(store.root),
+        "video_id": video["id"],
+        "model_path": str(model),
+        "mode": "fast",
+    })["job"]
+    service._run_analysis(
+        {
+            "project_root": str(store.root),
+            "video_id": video["id"],
+            "model_path": str(model),
+            "mode": "fast",
+        },
+        job["id"],
+    )
+
+    finished = store.get_job(job["id"])
+    assert finished is not None
+    assert finished["state"] == "failed"
+    assert "pipeline failed" in finished["error_message"]
+    checkpoint = json.loads(finished["checkpoint_json"])
+    assert checkpoint["total_elapsed_ms"] >= 0
+    candidates = store.list_candidates(video["id"])
+    assert [candidate["id"] for candidate in candidates] == ["old-analysis-candidate"]
+    assert candidates[0]["review_status"] == "goal"
+
+
+def test_analysis_cancel_keeps_previous_candidates(tmp_path: Path, monkeypatch):
+    service, store, video, model = _analysis_fixture(tmp_path)
+    captured = {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        return [["fake", "proxy"], ["fake", "scan"], ["fake", "candidates"]]
+
+    def fake_run(_commands, refined_output, *_args, **kwargs):
+        Path(captured["coarse_detections"]).parent.mkdir(parents=True, exist_ok=True)
+        Path(captured["coarse_detections"]).write_text(
+            json.dumps({"records": [{"detections": [{"name": "ball"}]}]}),
+            encoding="utf-8",
+        )
+        Path(refined_output).write_text(
+            json.dumps({"candidates": [{"time": 2.0, "score": 0.8}]}),
+            encoding="utf-8",
+        )
+        return {"refined": {"candidates": [{"time": 2.0, "score": 0.8}]}, "logs": [], "stage_timings_ms": {}}
+
+    monkeypatch.setattr("engine.python.basketball_engine.service.build_pipeline_commands", fake_build)
+    monkeypatch.setattr("engine.python.basketball_engine.service.run_pipeline", fake_run)
+    job = service._create_analysis_job({
+        "project_root": str(store.root),
+        "video_id": video["id"],
+        "model_path": str(model),
+        "mode": "fast",
+    })["job"]
+    cancel_event = threading.Event()
+    service._job_cancel_events[job["id"]] = cancel_event
+    monkeypatch.setattr(
+        service,
+        "_prepare_candidate_previews",
+        lambda **_: (cancel_event.set() or {"generated": 0, "reused": 0, "failed": 0}),
+    )
+
+    service._run_analysis(
+        {
+            "project_root": str(store.root),
+            "video_id": video["id"],
+            "model_path": str(model),
+            "mode": "fast",
+        },
+        job["id"],
+    )
+
+    finished = store.get_job(job["id"])
+    assert finished is not None
+    assert finished["state"] == "cancelled"
+    candidates = store.list_candidates(video["id"])
+    assert [candidate["id"] for candidate in candidates] == ["old-analysis-candidate"]
+
+
 def test_engine_rejects_invalid_roi(tmp_path: Path):
     project_root = tmp_path / "project"
     service = EngineService()
@@ -1410,6 +1610,159 @@ def test_replace_candidates_preserves_existing_review_for_stable_id(tmp_path: Pa
     candidate = store.list_candidates(video["id"])[0]
     assert candidate["review_status"] == "goal"
     assert candidate["note"] == "确认"
+
+
+def test_analysis_mode_defaults_to_standard_and_is_persisted_per_project(tmp_path: Path):
+    store = ProjectStore(tmp_path / "project")
+    store.initialize()
+    store.create_project("project-1", "模式测试")
+
+    assert store.analysis_mode() == "standard"
+    store.set_analysis_mode("fast")
+    assert store.analysis_mode() == "fast"
+    assert store.context()["analysis_mode"] == "fast"
+
+
+def test_replace_candidates_inherits_review_from_nearby_event_and_shifts_manual_range(tmp_path: Path):
+    store = ProjectStore(tmp_path / "project")
+    store.initialize()
+    store.create_project("project-1", "继承测试")
+    video = store.link_video({
+        "source_path": str(tmp_path / "source.mp4"),
+        "source_size_bytes": 1,
+        "source_mtime_ns": 1,
+        "duration_ms": 30_000,
+        "width": 960,
+        "height": 720,
+    })
+    old = {
+        "id": "old-candidate", "video_id": video["id"], "roi_id": None,
+        "event_time_ms": 10_000, "default_start_ms": 4_000,
+        "default_end_ms": 13_000, "review_start_ms": 3_000,
+        "review_end_ms": 14_000, "detector_version": "test",
+        "evidence_json": "{}",
+    }
+    store.replace_candidates(video["id"], [old])
+    store.review_candidate(old["id"], "goal", "手动确认", "made")
+    store.set_candidate_player(old["id"], "player-1") if False else None
+
+    new = {
+        **old,
+        "id": "new-candidate",
+        "event_time_ms": 11_000,
+        "default_start_ms": 5_000,
+        "default_end_ms": 14_000,
+        "review_start_ms": 5_000,
+        "review_end_ms": 14_000,
+    }
+    store.replace_candidates(video["id"], [new])
+    candidate = store.list_candidates(video["id"])[0]
+
+    assert candidate["review_status"] == "goal"
+    assert candidate["review_reason"] == "made"
+    assert candidate["note"] == "手动确认"
+    assert candidate["review_start_ms"] == 4_000
+    assert candidate["review_end_ms"] == 15_000
+    assert candidate["reviewed_at"] is None
+    assert candidate["review_duration_ms"] is None
+
+
+def test_replace_candidates_clamps_inherited_manual_range_to_video_duration(tmp_path: Path):
+    store = ProjectStore(tmp_path / "project")
+    store.initialize()
+    store.create_project("project-1", "边界继承测试")
+    video = store.link_video({
+        "source_path": str(tmp_path / "source.mp4"),
+        "source_size_bytes": 1,
+        "source_mtime_ns": 1,
+        "duration_ms": 10_000,
+        "width": 960,
+        "height": 720,
+    })
+    old = {
+        "id": "old-boundary", "video_id": video["id"], "roi_id": None,
+        "event_time_ms": 8_500, "default_start_ms": 6_000,
+        "default_end_ms": 9_500, "review_start_ms": 8_000,
+        "review_end_ms": 9_900, "detector_version": "test",
+        "evidence_json": "{}",
+    }
+    store.replace_candidates(video["id"], [old])
+    store.review_candidate(old["id"], "goal")
+
+    new = {
+        **old,
+        "id": "new-boundary",
+        "event_time_ms": 9_500,
+        "default_start_ms": 7_000,
+        "default_end_ms": 10_000,
+        "review_start_ms": 7_000,
+        "review_end_ms": 10_000,
+    }
+    store.replace_candidates(video["id"], [new])
+    candidate = store.list_candidates(video["id"])[0]
+
+    assert candidate["review_status"] == "goal"
+    assert candidate["review_start_ms"] == 9_000
+    assert candidate["review_end_ms"] == 10_000
+
+
+def test_replace_candidates_does_not_reuse_exact_match_review_for_nearby_candidate(tmp_path: Path):
+    store = ProjectStore(tmp_path / "project")
+    store.initialize()
+    store.create_project("project-1", "继承唯一性测试")
+    video = store.link_video({
+        "source_path": str(tmp_path / "source.mp4"),
+        "source_size_bytes": 1,
+        "source_mtime_ns": 1,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+    })
+    old = {
+        "id": "exact-old", "video_id": video["id"], "roi_id": None,
+        "event_time_ms": 5_000, "default_start_ms": 4_000,
+        "default_end_ms": 6_000, "review_start_ms": 4_000,
+        "review_end_ms": 6_000, "detector_version": "test",
+        "evidence_json": "{}",
+    }
+    store.replace_candidates(video["id"], [old])
+    store.review_candidate(old["id"], "goal")
+
+    exact = {**old}
+    nearby = {
+        **old,
+        "id": "nearby-new",
+        "event_time_ms": 5_500,
+    }
+    store.replace_candidates(video["id"], [exact, nearby])
+    candidates = {item["id"]: item for item in store.list_candidates(video["id"])}
+
+    assert candidates["exact-old"]["review_status"] == "goal"
+    assert candidates["nearby-new"]["review_status"] == "pending"
+
+
+def test_list_candidates_returns_original_video_for_review(tmp_path: Path):
+    project_root = tmp_path / "project"
+    source = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10",
+            "-t", "1", "-pix_fmt", "yuv420p", str(source),
+        ],
+        check=True,
+    )
+    service = EngineService()
+    service.handle("create_project", {"name": "原视频审核", "root_path": str(project_root)})
+    video = service.handle("link_video", {
+        "project_root": str(project_root), "video_path": str(source),
+    })["video"]
+
+    result = service.handle("list_candidates", {
+        "project_root": str(project_root), "video_id": video["id"],
+    })
+
+    assert result["review_video_path"] == str(source.resolve())
 
 
 def test_start_export_uses_only_goal_reviews(tmp_path: Path):

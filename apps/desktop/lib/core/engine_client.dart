@@ -104,13 +104,10 @@ class EngineClient implements EngineTransport {
       throw EngineException('ENGINE_WRITE_FAILED', '无法向 Engine 发送请求：$error');
     }
     final response = await completer.future.timeout(
-      requestTimeout,
+      _timeoutFor(command),
       onTimeout: () {
         _pending.remove(requestId);
-        throw EngineException(
-          'ENGINE_TIMEOUT',
-          'Engine 请求超时：$command（${requestTimeout.inSeconds} 秒）',
-        );
+        throw EngineException('ENGINE_TIMEOUT', '请求处理超时：$command');
       },
     );
     if (response['ok'] != true) {
@@ -124,6 +121,10 @@ class EngineClient implements EngineTransport {
     return payloadValue is Map<String, dynamic>
         ? payloadValue
         : <String, dynamic>{};
+  }
+
+  Duration _timeoutFor(String command) {
+    return requestTimeout;
   }
 
   Future<void> dispose() async {

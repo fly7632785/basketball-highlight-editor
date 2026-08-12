@@ -253,6 +253,17 @@ class ProjectSession {
     );
   }
 
+  Future<JsonMap> getAnalysisMode() {
+    return engine.getAnalysisMode(projectRoot: _requireProjectRoot());
+  }
+
+  Future<JsonMap> setAnalysisMode(String mode) {
+    return engine.setAnalysisMode(
+      projectRoot: _requireProjectRoot(),
+      mode: mode,
+    );
+  }
+
   Future<List<JsonMap>> loadRecentProjects({
     required String knownRoot,
     int limit = 20,
@@ -313,6 +324,21 @@ class ProjectSession {
     );
   }
 
+  Future<JsonMap> getWorkflowDraft() {
+    return engine.getWorkflowDraft(projectRoot: _requireProjectRoot());
+  }
+
+  Future<JsonMap> saveWorkflowDraft(JsonMap draft) {
+    return engine.saveWorkflowDraft(
+      projectRoot: _requireProjectRoot(),
+      draft: draft,
+    );
+  }
+
+  Future<JsonMap> clearWorkflowDraft() {
+    return engine.clearWorkflowDraft(projectRoot: _requireProjectRoot());
+  }
+
   Future<JsonMap> suggestRoi({
     String? modelPath,
     double? sampleFps,
@@ -360,6 +386,7 @@ class ProjectSession {
     int? proxyHeight,
     double? proxyFps,
     String? modelPath,
+    String? mode,
   }) {
     return engine.startAnalysis(
       projectRoot: _requireProjectRoot(),
@@ -372,6 +399,7 @@ class ProjectSession {
       proxyHeight: proxyHeight,
       proxyFps: proxyFps,
       modelPath: modelPath,
+      mode: mode,
     );
   }
 
@@ -385,6 +413,7 @@ class ProjectSession {
     int? proxyHeight,
     double? proxyFps,
     String? modelPath,
+    String? mode,
   }) {
     return engine.retryAnalysis(
       projectRoot: _requireProjectRoot(),
@@ -398,6 +427,7 @@ class ProjectSession {
       proxyHeight: proxyHeight,
       proxyFps: proxyFps,
       modelPath: modelPath,
+      mode: mode,
     );
   }
 

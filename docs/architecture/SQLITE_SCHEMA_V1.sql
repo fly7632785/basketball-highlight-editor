@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS projects (
     root_path TEXT NOT NULL,
     language TEXT NOT NULL DEFAULT 'zh-CN',
     theme_mode TEXT NOT NULL DEFAULT 'system',
+    workflow_draft_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

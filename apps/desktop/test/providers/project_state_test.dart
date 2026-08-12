@@ -119,7 +119,7 @@ void main() {
   );
 
   test(
-    'retryAnalysis clears the previous candidate result immediately',
+    'retryAnalysis keeps the previous candidate result while the new job runs',
     () async {
       final fakeSession = _FakeProjectSession()..clearCandidatesOnRetry = true;
       final container = ProviderContainer(
@@ -142,8 +142,7 @@ void main() {
 
       final state = container.read(projectProvider);
       expect(state.job?['id'], 'retry-job');
-      expect(state.candidates, isEmpty);
-      expect(state.reviewVideoPath, isNull);
+      expect(state.candidates, isNotEmpty);
     },
   );
 
@@ -647,6 +646,7 @@ class _FakeProjectSession extends ProjectSession {
 
   @override
   Future<JsonMap> startAnalysis({
+    String? mode,
     double? sampleFps,
     double? windowSeconds,
     double? beforeSeconds,
@@ -665,6 +665,7 @@ class _FakeProjectSession extends ProjectSession {
   @override
   Future<JsonMap> retryAnalysis({
     required String jobId,
+    String? mode,
     double? sampleFps,
     double? windowSeconds,
     double? beforeSeconds,

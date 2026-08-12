@@ -99,6 +99,21 @@ def flatten_refined_matches(data: Dict[str, Any], dedupe_seconds: float = 2.0) -
     return dedupe_candidates(matches, dedupe_seconds)
 
 
+def flatten_coarse_matches(data: Dict[str, Any], dedupe_seconds: float = 2.0) -> list[Dict[str, Any]]:
+    """Normalize coarse candidates for the fast path.
+
+    Coarse candidates already use source-video timestamps (``scan_video``
+    applies the analysis-range offset), so the fast path only needs the same
+    conservative de-duplication used by the refined path.
+    """
+    matches = [
+        dict(candidate)
+        for candidate in data.get("candidates", [])
+        if isinstance(candidate, dict) and "time" in candidate
+    ]
+    return dedupe_candidates(matches, dedupe_seconds)
+
+
 def candidate_to_row(
     match: Dict[str, Any],
     video_id: str,
@@ -107,12 +122,15 @@ def candidate_to_row(
     before_seconds: float,
     after_seconds: float,
     detector_version: str,
+    analysis_source: str | None = None,
 ) -> Dict[str, Any]:
     event_time_ms = round(float(match["time"]) * 1000)
     start_ms = max(0, event_time_ms - round(before_seconds * 1000))
     end_ms = min(duration_ms, event_time_ms + round(after_seconds * 1000))
     timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     evidence = dict(match)
+    if analysis_source:
+        evidence["analysis_source"] = analysis_source
     evidence["review_reason_suggestion"] = suggest_review_reasons(match)
     return {
         "id": f"candidate_{uuid5(NAMESPACE_URL, f'{video_id}:{roi_id}:{detector_version}:{event_time_ms}').hex}",
@@ -161,6 +179,7 @@ def build_pipeline_commands(
     analysis_start_ms: int = 0,
     analysis_end_ms: int | None = None,
     net_roi: Iterable[float] | None = None,
+    include_refinement: bool = True,
 ) -> list[list[str]]:
     proxy_roi_args = [str(round(float(value))) for value in proxy_roi]
     source_roi_args = [str(round(float(value))) for value in source_roi]
@@ -172,7 +191,7 @@ def build_pipeline_commands(
     proxy_range_args = ["--start-time", str(analysis_start_seconds)]
     if analysis_duration_seconds is not None:
         proxy_range_args += ["--duration", str(analysis_duration_seconds)]
-    return [
+    commands = [
         [
             sys.executable, _script(repo_root, "create_proxy.py"),
             "--video", str(source_video), "--output", str(proxy_video),
@@ -193,7 +212,9 @@ def build_pipeline_commands(
             sys.executable, _script(repo_root, "generate_candidates.py"),
             "--detections", str(coarse_detections), "--output", str(coarse_candidates),
         ],
-        [
+    ]
+    if include_refinement:
+        commands.append([
             sys.executable, _script(repo_root, "refine_dynamic_candidates.py"),
             "--video", str(source_video), "--model", str(model_path),
             "--coarse", str(coarse_candidates), "--roi", *source_roi_args,
@@ -203,8 +224,8 @@ def build_pipeline_commands(
             "--batch", str(batch), "--cache-dir", str(cache_dir / "refine"),
             *( ["--net-roi", *net_roi_args] if net_roi_args else [] ),
             "--output", str(refined_output),
-        ],
-    ]
+        ])
+    return commands
 
 
 def run_pipeline(
@@ -234,6 +255,7 @@ def run_pipeline(
         )
     logs: list[str] = []
     cache_hits = 0
+    stage_timings_ms: dict[str, int] = {}
     outputs = list(stage_outputs or [None] * len(commands))
     if len(outputs) != len(commands):
         raise ValueError("PIPELINE_STAGE_OUTPUTS_INVALID")
@@ -281,6 +303,7 @@ def run_pipeline(
         if cancel_check and cancel_check():
             raise PipelineCancelled("JOB_CANCELLED")
         stage = stages[index] if index < len(stages) else f"stage_{index + 1}"
+        stage_started = time.perf_counter()
         output = outputs[index]
         previous = manifest.get("stages", {}).get(stage, {})
         if (
@@ -289,6 +312,7 @@ def run_pipeline(
             and artifact_valid(output)
         ):
             cache_hits += 1
+            stage_timings_ms[stage] = round((time.perf_counter() - stage_started) * 1000)
             logs.append(f"{stage}: reused {output}")
             if stage_callback:
                 stage_callback(stage, stage_ranges[index][1])
@@ -411,6 +435,7 @@ def run_pipeline(
             logs.append(completed_stdout[-4000:])
         if completed_stderr:
             logs.append(completed_stderr[-4000:])
+        stage_timings_ms[stage] = round((time.perf_counter() - stage_started) * 1000)
     if cancel_check and cancel_check():
         raise PipelineCancelled("JOB_CANCELLED")
     if stage_callback:
@@ -420,4 +445,5 @@ def run_pipeline(
         "logs": logs,
         "manifest": manifest,
         "cache_hits": cache_hits,
+        "stage_timings_ms": stage_timings_ms,
     }

@@ -18,6 +18,7 @@ from . import __version__
 from .adapters.analysis import (
     build_pipeline_commands,
     candidate_to_row,
+    flatten_coarse_matches,
     flatten_refined_matches,
     PipelineCancelled,
     run_pipeline,
@@ -33,7 +34,7 @@ ANALYSIS_ALGORITHM_VERSION = "python-v2.10-white-net-trajectory"
 
 
 class EngineService:
-    _MIN_WORKING_SPACE_BYTES = 512 * 1024 * 1024
+    _MIN_PROCESSING_SPACE_BYTES = 512 * 1024 * 1024
 
     def __init__(self) -> None:
         self.stores: dict[str, ProjectStore] = {}
@@ -83,6 +84,11 @@ class EngineService:
             "hello": self.hello,
             "create_project": self.create_project,
             "update_project_settings": self.update_project_settings,
+            "get_analysis_mode": self.get_analysis_mode,
+            "set_analysis_mode": self.set_analysis_mode,
+            "get_workflow_draft": self.get_workflow_draft,
+            "save_workflow_draft": self.save_workflow_draft,
+            "clear_workflow_draft": self.clear_workflow_draft,
             "open_project": self.open_project,
             "delete_project": self.delete_project,
             "list_recent_projects": self.list_recent_projects,
@@ -250,6 +256,47 @@ class EngineService:
             raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
         return {"project": updated}
 
+    def get_analysis_mode(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            mode = self._require_store(payload).analysis_mode()
+        except (LookupError, ValueError) as exc:
+            raise ProtocolError("PROJECT_INVALID", str(exc)) from exc
+        return {"mode": mode}
+
+    def set_analysis_mode(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        mode = payload.get("mode")
+        if mode not in {"fast", "standard"}:
+            raise ProtocolError("ANALYSIS_MODE_INVALID", "分析模式必须是 fast 或 standard")
+        try:
+            saved = self._require_store(payload).set_analysis_mode(mode)
+        except (LookupError, ValueError) as exc:
+            raise ProtocolError("ANALYSIS_MODE_INVALID", str(exc)) from exc
+        return {"mode": saved}
+
+    def get_workflow_draft(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            draft = self._require_store(payload).workflow_draft()
+        except (LookupError, ValueError) as exc:
+            raise ProtocolError("WORKFLOW_DRAFT_INVALID", str(exc)) from exc
+        return {"draft": draft}
+
+    def save_workflow_draft(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        draft = payload.get("draft")
+        if not isinstance(draft, dict):
+            raise ProtocolError("WORKFLOW_DRAFT_INVALID", "配置草稿必须是对象")
+        try:
+            saved = self._require_store(payload).save_workflow_draft(draft)
+        except (LookupError, ValueError) as exc:
+            raise ProtocolError("WORKFLOW_DRAFT_INVALID", str(exc)) from exc
+        return {"draft": saved}
+
+    def clear_workflow_draft(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            self._require_store(payload).clear_workflow_draft()
+        except (LookupError, ValueError) as exc:
+            raise ProtocolError("WORKFLOW_DRAFT_INVALID", str(exc)) from exc
+        return {"cleared": True}
+
     def list_recent_projects(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         roots = payload.get("roots")
         if not isinstance(roots, list) or not roots:
@@ -340,8 +387,8 @@ class EngineService:
         fps = self._parse_ratio(video_stream.get("r_frame_rate"))
         duration_ms = round(float(probe.get("format", {}).get("duration", 0)) * 1000)
         disk = shutil.disk_usage(path.parent)
-        estimated_working_space = max(
-            self._MIN_WORKING_SPACE_BYTES,
+        estimated_processing_space = max(
+            self._MIN_PROCESSING_SPACE_BYTES,
             round(path.stat().st_size * 0.20),
         )
         return {
@@ -358,8 +405,8 @@ class EngineService:
             "video_codec": video_stream.get("codec_name"),
             "audio_codec": audio_stream.get("codec_name") if audio_stream else None,
             "available_disk_bytes": disk.free,
-            "estimated_working_space_bytes": estimated_working_space,
-            "disk_space_sufficient": disk.free >= estimated_working_space,
+            "estimated_processing_space_bytes": estimated_processing_space,
+            "disk_space_sufficient": disk.free >= estimated_processing_space,
         }
 
     def _ensure_disk_space(self, workspace: Path, source: Path) -> None:
@@ -367,7 +414,7 @@ class EngineService:
             return
         disk = shutil.disk_usage(workspace)
         required = max(
-            self._MIN_WORKING_SPACE_BYTES,
+            self._MIN_PROCESSING_SPACE_BYTES,
             round(source.stat().st_size * 0.20),
         )
         if disk.free < required:
@@ -381,8 +428,33 @@ class EngineService:
                 },
             )
 
+    def _latest_proxy_video(self, store: ProjectStore, video_id: str) -> Path | None:
+        project = store.project()
+        video = store.video(video_id)
+        if not project or not video:
+            return None
+        jobs = store.list_jobs(
+            project_id=project["id"],
+            job_type="analysis",
+            states=("completed",),
+            video_id=video_id,
+        )
+        source_path = str(Path(video["source_path"]).resolve())
+        for job in reversed(jobs):
+            checkpoint = self._decode_checkpoint(job)
+            parameters = checkpoint.get("analysis_parameters")
+            if isinstance(parameters, dict) and parameters.get("source_path") not in {None, source_path}:
+                continue
+            candidate = checkpoint.get("proxy_video")
+            if not isinstance(candidate, str) or not candidate:
+                continue
+            path = Path(candidate).expanduser()
+            if path.is_file() and path.stat().st_size > 0:
+                return path.resolve()
+        return None
+
     @staticmethod
-    def _validated_source(video: Dict[str, Any]) -> Path:
+    def _validated_original_source(video: Dict[str, Any]) -> Path:
         source = Path(video["source_path"])
         if not source.is_file():
             raise ProtocolError("VIDEO_NOT_FOUND", f"原始视频不存在: {source}")
@@ -402,6 +474,8 @@ class EngineService:
                 "原视频内容已变化，请重新导入视频并校准篮筐区域",
             )
         return source
+
+    _validated_source = _validated_original_source
 
     def suggest_roi(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Find a stable hoop in a short full-frame scan and suggest a ball ROI."""
@@ -549,7 +623,8 @@ class EngineService:
         video = store.video(video_id) if isinstance(video_id, str) else None
         if not video:
             raise ProtocolError("VIDEO_NOT_FOUND", "预览任务缺少有效视频")
-        source = self._latest_proxy_video(store, video_id) or self._validated_source(video)
+        # Calibration and review previews share the original source coordinate system.
+        source = self._validated_source(video)
         try:
             time_ms = max(0, min(int(payload.get("time_ms", 1000)), int(video.get("duration_ms") or 1000)))
         except (TypeError, ValueError) as exc:
@@ -588,25 +663,6 @@ class EngineService:
             raise ProtocolError("VIDEO_OPEN_FAILED", "预览帧未生成")
         return {"path": str(output_path), "time_ms": time_ms}
 
-    def _latest_proxy_video(self, store: ProjectStore, video_id: str) -> Path | None:
-        project = store.project()
-        if not project:
-            return None
-        jobs = store.list_jobs(
-            project_id=project["id"],
-            job_type="analysis",
-            states=("completed",),
-            video_id=video_id,
-        )
-        for job in reversed(jobs):
-            candidate = self._decode_checkpoint(job).get("proxy_video")
-            if not isinstance(candidate, str) or not candidate:
-                continue
-            path = Path(candidate).expanduser()
-            if path.is_file() and path.stat().st_size > 0:
-                return path.resolve()
-        return None
-
     @staticmethod
     def _preview_path(
         store: ProjectStore,
@@ -614,7 +670,10 @@ class EngineService:
         time_ms: int,
     ) -> Path:
         fingerprint = hashlib.sha256(
-            f"{video.get('source_size_bytes')}:{video.get('source_mtime_ns')}".encode("utf-8")
+            (
+                f"{video.get('source_size_bytes')}:{video.get('source_mtime_ns')}:"
+                f"{video.get('source_path')}"
+            ).encode("utf-8")
         ).hexdigest()[:12]
         return (
             store.root
@@ -739,9 +798,14 @@ class EngineService:
             raise ProtocolError("VIDEO_NOT_FOUND", "分析任务缺少有效视频")
         if not store.active_roi(video_id):
             raise ProtocolError("ROI_INVALID", "分析前必须保存篮筐 ROI")
+        mode = payload.get("mode") or store.analysis_mode()
+        if mode not in {"fast", "standard"}:
+            raise ProtocolError("ANALYSIS_MODE_INVALID", "分析模式必须是 fast 或 standard")
+        store.set_analysis_mode(mode)
         video = store.video(video_id)
         if video:
-            self._ensure_disk_space(store.root, Path(video["source_path"]))
+            source_for_space = Path(video["source_path"])
+            self._ensure_disk_space(store.root, source_for_space)
         try:
             sample_fps = float(payload.get("sample_fps", 10))
             window_seconds = float(payload.get("window_seconds", 2.5))
@@ -761,6 +825,7 @@ class EngineService:
         if analysis_end_ms <= analysis_start_ms:
             raise ProtocolError("ANALYSIS_RANGE_INVALID", "分析范围无效")
         checkpoint = {
+            "mode": mode,
             "sample_fps": sample_fps,
             "window_seconds": window_seconds,
             "before_seconds": before_seconds,
@@ -851,6 +916,7 @@ class EngineService:
         retry_payload = dict(payload)
         retry_payload.pop("job_id", None)
         for key in (
+            "mode",
             "sample_fps", "window_seconds", "before_seconds", "after_seconds",
             "proxy_width", "proxy_height", "proxy_fps", "coarse_scale",
             "refine_scale", "conf", "model_path",
@@ -891,7 +957,7 @@ class EngineService:
         retry_payload = {
             "project_root": str(store.root),
             "video_id": job.get("video_id"),
-            "mode": checkpoint.get("mode", "separate"),
+            "mode": checkpoint.get("mode", "standard"),
         }
         if checkpoint.get("output_dir") is not None:
             retry_payload["output_dir"] = checkpoint["output_dir"]
@@ -901,20 +967,43 @@ class EngineService:
 
     def _run_analysis(self, payload: Dict[str, Any], job_id: str) -> None:
         store = self._require_store(payload)
+        analysis_started = time.perf_counter()
+        checkpoint: Dict[str, Any] = {}
+
+        def checkpoint_with_elapsed() -> Dict[str, Any]:
+            return {
+                **checkpoint,
+                "total_elapsed_ms": round(
+                    (time.perf_counter() - analysis_started) * 1000
+                ),
+            }
+
         try:
             video_id = payload["video_id"]
             video = store.video(video_id)
             roi = store.active_roi(video_id)
             if not video or not roi:
                 raise ProtocolError("VIDEO_NOT_FOUND", "分析任务数据已失效")
+            # Analysis and review currently share the linked source video.
+            # Keep this explicit: the review/export path must never fall back
+            # to an analysis proxy unless a future working-video field is
+            # added to the persisted video contract.
             source_video = self._validated_source(video)
             repo_root = Path(__file__).resolve().parents[3]
             model_path = Path(payload.get("model_path") or (repo_root / "third_party" / "basketball-shot-detection" / "bball_model.pt")).expanduser().resolve()
             if not model_path.is_file():
                 raise ProtocolError("MODEL_LOAD_FAILED", f"模型不存在: {model_path}")
-            proxy_width = int(payload.get("proxy_width", 960))
-            proxy_height = int(payload.get("proxy_height", 720))
-            proxy_fps = float(payload.get("proxy_fps", 5))
+            mode = payload.get("mode", "standard")
+            if mode not in {"fast", "standard"}:
+                raise ProtocolError("ANALYSIS_MODE_INVALID", "分析模式必须是 fast 或 standard")
+            if mode == "fast":
+                proxy_width = 640
+                proxy_height = 480
+                proxy_fps = 3.0
+            else:
+                proxy_width = int(payload.get("proxy_width", 960))
+                proxy_height = int(payload.get("proxy_height", 720))
+                proxy_fps = float(payload.get("proxy_fps", 5))
             source_width = int(video.get("width") or 0)
             source_height = int(video.get("height") or 0)
             if source_width <= 0 or source_height <= 0:
@@ -942,6 +1031,7 @@ class EngineService:
             )
             analysis_parameters = {
                 "algorithm_version": ANALYSIS_ALGORITHM_VERSION,
+                "mode": mode,
                 "source_path": str(source_video),
                 "source_size_bytes": video.get("source_size_bytes"),
                 "source_mtime_ns": video.get("source_mtime_ns"),
@@ -996,9 +1086,11 @@ class EngineService:
                 analysis_start_ms=int(video.get("analysis_start_ms") or 0),
                 analysis_end_ms=int(video.get("analysis_end_ms") or video.get("duration_ms") or 0),
                 net_roi=net_roi,
+                include_refinement=mode == "standard",
             )
 
             checkpoint = {
+                "mode": mode,
                 "analysis_key": analysis_key,
                 "analysis_parameters": analysis_parameters,
                 "proxy_video": str(proxy_video),
@@ -1027,17 +1119,25 @@ class EngineService:
             cancel_event = self._job_cancel_events.get(job_id)
             pipeline = run_pipeline(
                 commands,
-                refined_output,
+                refined_output if mode == "standard" else coarse_candidates,
                 on_stage,
                 cancel_check=cancel_event.is_set if cancel_event else None,
                 process_callback=lambda process: self._set_job_process(job_id, process),
                 manifest_path=manifest_path,
-                stage_outputs=[proxy_video, coarse_detections, coarse_candidates, refined_output],
+                stage_outputs=(
+                    [proxy_video, coarse_detections, coarse_candidates]
+                    if mode == "fast"
+                    else [proxy_video, coarse_detections, coarse_candidates, refined_output]
+                ),
                 manifest_version=ANALYSIS_ALGORITHM_VERSION,
             )
             if cancel_event and cancel_event.is_set():
                 raise PipelineCancelled("JOB_CANCELLED")
-            matches = flatten_refined_matches(pipeline["refined"])
+            matches = (
+                flatten_refined_matches(pipeline["refined"])
+                if mode == "standard"
+                else flatten_coarse_matches(pipeline["refined"])
+            )
             detection_counts = self._detection_counts(coarse_detections)
             rows = [
                 candidate_to_row(
@@ -1047,7 +1147,8 @@ class EngineService:
                     duration_ms=int(video.get("duration_ms") or 0),
                     before_seconds=float(payload.get("before_seconds", 6)),
                     after_seconds=float(payload.get("after_seconds", 3)),
-                    detector_version=ANALYSIS_ALGORITHM_VERSION,
+                    detector_version=f"{ANALYSIS_ALGORITHM_VERSION}:{mode}",
+                    analysis_source="coarse" if mode == "fast" else "refined",
                 )
                 for match in matches
             ]
@@ -1064,19 +1165,28 @@ class EngineService:
                 progress=0.96,
             )
             eager_preview_rows = rows[:12]
+            preview_started = time.perf_counter()
             preview_counts = self._prepare_candidate_previews(
                 store=store,
-                source=proxy_video,
+                source=source_video,
                 video=video,
                 video_id=video_id,
                 rows=eager_preview_rows,
                 job_id=job_id,
                 cancel_event=cancel_event,
             )
+            stage_timings_ms = dict(pipeline.get("stage_timings_ms", {}))
+            stage_timings_ms["prepare_review_previews"] = round(
+                (time.perf_counter() - preview_started) * 1000
+            )
             preview_counts["deferred"] = len(rows) - len(eager_preview_rows)
             if cancel_event and cancel_event.is_set():
                 raise PipelineCancelled("JOB_CANCELLED")
+            persist_started = time.perf_counter()
             store.replace_candidates(video_id, rows)
+            stage_timings_ms["persist_candidates"] = round(
+                (time.perf_counter() - persist_started) * 1000
+            )
             checkpoint = {
                 **checkpoint,
                 "candidate_count": len(rows),
@@ -1084,6 +1194,10 @@ class EngineService:
                 "preview_counts": preview_counts,
                 "logs": pipeline["logs"],
                 "cache_hits": pipeline.get("cache_hits", 0),
+                "stage_timings_ms": stage_timings_ms,
+                "total_elapsed_ms": round(
+                    (time.perf_counter() - analysis_started) * 1000
+                ),
             }
             store.update_job(job_id, state="completed", stage="persist_candidates", progress=1.0, checkpoint=checkpoint)
         except PipelineCancelled:
@@ -1093,11 +1207,26 @@ class EngineService:
                 stage="analysis",
                 error_code="JOB_CANCELLED",
                 error_message="任务已取消",
+                checkpoint=checkpoint_with_elapsed(),
             )
         except ProtocolError as exc:
-            store.update_job(job_id, state="failed", stage="analysis", error_code=exc.code, error_message=exc.message)
+            store.update_job(
+                job_id,
+                state="failed",
+                stage="analysis",
+                error_code=exc.code,
+                error_message=exc.message,
+                checkpoint=checkpoint_with_elapsed(),
+            )
         except Exception as exc:
-            store.update_job(job_id, state="failed", stage="analysis", error_code="ANALYSIS_FAILED", error_message=str(exc))
+            store.update_job(
+                job_id,
+                state="failed",
+                stage="analysis",
+                error_code="ANALYSIS_FAILED",
+                error_message=str(exc),
+                checkpoint=checkpoint_with_elapsed(),
+            )
         finally:
             with self._job_lock:
                 self._job_threads.pop(job_id, None)
@@ -1247,11 +1376,11 @@ class EngineService:
                 )
                 if preview_path.is_file() and preview_path.stat().st_size > 0:
                     candidate["preview_path"] = str(preview_path)
-        review_video_path = None
-        if context.get("project") and isinstance(video_id, str) and video_id:
-            proxy = self._latest_proxy_video(store, video_id)
-            if proxy is not None:
-                review_video_path = str(proxy)
+        review_video_path = (
+            str(Path(video["source_path"]).resolve())
+            if context.get("project") and video
+            else None
+        )
         return {
             "candidates": candidates,
             "review_video_path": review_video_path,

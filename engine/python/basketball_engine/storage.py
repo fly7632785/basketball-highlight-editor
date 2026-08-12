@@ -68,7 +68,7 @@ class ProjectStore:
 
     def initialize(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        for name in ("artifacts/proxies", "artifacts/detections", "artifacts/review_clips", "artifacts/exports", "logs", "telemetry_outbox"):
+        for name in ("artifacts/proxies", "artifacts/detections", "artifacts/review_clips", "artifacts/exports", "artifacts/previews", "logs", "telemetry_outbox"):
             (self.root / name).mkdir(parents=True, exist_ok=True)
         schema_path = Path(__file__).resolve().parents[3] / "docs/architecture/SQLITE_SCHEMA_V1.sql"
         with sqlite3.connect(self.db_path, timeout=30.0) as connection:
@@ -102,6 +102,11 @@ class ProjectStore:
         ):
             if name not in video_columns:
                 connection.execute(f"ALTER TABLE videos ADD COLUMN {name} {definition}")
+        project_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(projects)").fetchall()
+        }
+        if "workflow_draft_json" not in project_columns:
+            connection.execute("ALTER TABLE projects ADD COLUMN workflow_draft_json TEXT")
         columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(candidate_reviews)").fetchall()
@@ -138,6 +143,75 @@ class ProjectStore:
         with self.connect() as connection:
             row = connection.execute("SELECT * FROM projects LIMIT 1").fetchone()
         return dict(row) if row else None
+
+    def analysis_mode(self) -> str:
+        project = self.project()
+        if not project:
+            raise LookupError("PROJECT_NOT_FOUND")
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT value_json FROM settings WHERE key = ?",
+                (f"project:{project['id']}:analysis_mode",),
+            ).fetchone()
+        if not row:
+            return "standard"
+        try:
+            value = json.loads(row["value_json"])
+        except (TypeError, json.JSONDecodeError):
+            return "standard"
+        return value if value in {"fast", "standard"} else "standard"
+
+    def set_analysis_mode(self, mode: str) -> str:
+        if mode not in {"fast", "standard"}:
+            raise ValueError("ANALYSIS_MODE_INVALID")
+        project = self.project()
+        if not project:
+            raise LookupError("PROJECT_NOT_FOUND")
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO settings (key, value_json, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json,
+                                                updated_at = excluded.updated_at
+                """,
+                (f"project:{project['id']}:analysis_mode", json.dumps(mode), now_iso()),
+            )
+        return mode
+
+    def workflow_draft(self) -> Dict[str, Any] | None:
+        project = self.project()
+        if not project:
+            raise LookupError("PROJECT_NOT_FOUND")
+        raw = project.get("workflow_draft_json")
+        if not raw:
+            return None
+        try:
+            draft = json.loads(raw)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("WORKFLOW_DRAFT_INVALID") from exc
+        return draft if isinstance(draft, dict) else None
+
+    def save_workflow_draft(self, draft: Dict[str, Any]) -> Dict[str, Any]:
+        project = self.project()
+        if not project:
+            raise LookupError("PROJECT_NOT_FOUND")
+        encoded = json.dumps(draft, ensure_ascii=False)
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE projects SET workflow_draft_json = ?, updated_at = ? WHERE id = ?",
+                (encoded, now_iso(), project["id"]),
+            )
+        return draft
+
+    def clear_workflow_draft(self) -> None:
+        project = self.project()
+        if not project:
+            raise LookupError("PROJECT_NOT_FOUND")
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE projects SET workflow_draft_json = NULL, updated_at = ? WHERE id = ?",
+                (now_iso(), project["id"]),
+            )
 
     def update_project_settings(
         self,
@@ -199,6 +273,8 @@ class ProjectStore:
             "database_path": str(self.db_path),
             "project_root": str(self.root),
             "project": project,
+            "analysis_mode": self.analysis_mode(),
+            "workflow_draft": self.workflow_draft(),
             "video": video,
             "roi": roi,
             "statistics": self.statistics(),
@@ -263,7 +339,6 @@ class ProjectStore:
                 "UPDATE videos SET analysis_start_ms = ?, analysis_end_ms = ?, updated_at = ? WHERE id = ?",
                 (start_ms, end_ms, now_iso(), video_id),
             )
-            connection.execute("DELETE FROM candidates WHERE video_id = ?", (video_id,))
         updated = self.video(video_id)
         if not updated:
             raise LookupError("VIDEO_NOT_FOUND")
@@ -292,7 +367,8 @@ class ProjectStore:
                 UPDATE videos SET
                     source_path = ?, source_size_bytes = ?, source_mtime_ns = ?,
                     duration_ms = ?, width = ?, height = ?, fps = ?,
-                    video_codec = ?, audio_codec = ?, status = 'linked', updated_at = ?
+                    video_codec = ?, audio_codec = ?,
+                    status = 'linked', updated_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -411,6 +487,22 @@ class ProjectStore:
     def replace_candidates(self, video_id: str, rows: list[Dict[str, Any]]) -> None:
         timestamp = now_iso()
         with self.connect() as connection:
+            video_row = connection.execute(
+                "SELECT duration_ms FROM videos WHERE id = ?",
+                (video_id,),
+            ).fetchone()
+            if not video_row:
+                raise LookupError("VIDEO_NOT_FOUND")
+            duration_ms = video_row["duration_ms"]
+            duration_ms = int(duration_ms) if duration_ms is not None else None
+            existing_candidates = {
+                row["id"]: dict(row)
+                for row in connection.execute(
+                    "SELECT id, roi_id, event_time_ms, default_start_ms, default_end_ms, review_start_ms, review_end_ms "
+                    "FROM candidates WHERE video_id = ?",
+                    (video_id,),
+                ).fetchall()
+            }
             existing_reviews = {
                 row["candidate_id"]: dict(row)
                 for row in connection.execute(
@@ -420,6 +512,52 @@ class ProjectStore:
                     (video_id,),
                 ).fetchall()
             }
+            matches: dict[str, dict[str, Any]] = {}
+            used_old: set[str] = set()
+            for row in rows:
+                candidate_id = str(row["id"])
+                review = existing_reviews.get(candidate_id)
+                old_candidate = existing_candidates.get(candidate_id)
+                if review is not None and old_candidate is not None:
+                    # An exact ID match consumes the old review so a second
+                    # nearby new candidate cannot inherit it as well.
+                    used_old.add(candidate_id)
+                if review is None:
+                    candidates = [
+                        (abs(int(old["event_time_ms"]) - int(row["event_time_ms"])), old_id, old)
+                        for old_id, old in existing_candidates.items()
+                        if old_id not in used_old
+                        and old.get("roi_id") == row.get("roi_id")
+                        and abs(int(old["event_time_ms"]) - int(row["event_time_ms"])) <= 2_000
+                        and old_id in existing_reviews
+                    ]
+                    candidates.sort(key=lambda item: (item[0], item[1]))
+                    if candidates and (
+                        len(candidates) == 1
+                        or candidates[0][0] < candidates[1][0]
+                    ):
+                        _, old_id, old_candidate = candidates[0]
+                        review = existing_reviews[old_id]
+                        used_old.add(old_id)
+                        event_delta = int(row["event_time_ms"]) - int(old_candidate["event_time_ms"])
+                        old_default_start = int(old_candidate["default_start_ms"])
+                        old_default_end = int(old_candidate["default_end_ms"])
+                        if (
+                            int(old_candidate["review_start_ms"]) != old_default_start
+                            or int(old_candidate["review_end_ms"]) != old_default_end
+                        ):
+                            shifted_start = int(old_candidate["review_start_ms"]) + event_delta
+                            shifted_end = int(old_candidate["review_end_ms"]) + event_delta
+                            if duration_ms is not None and duration_ms > 0:
+                                shifted_start = max(0, min(shifted_start, duration_ms - 1))
+                                shifted_end = max(shifted_start + 1, min(shifted_end, duration_ms))
+                            else:
+                                shifted_start = max(0, shifted_start)
+                                shifted_end = max(shifted_start + 1, shifted_end)
+                            row["review_start_ms"] = shifted_start
+                            row["review_end_ms"] = shifted_end
+                if review is not None:
+                    matches[candidate_id] = review
             connection.execute("DELETE FROM candidates WHERE video_id = ?", (video_id,))
             for row in rows:
                 connection.execute(
@@ -448,7 +586,7 @@ class ProjectStore:
                         row.get("updated_at", timestamp),
                     ),
                 )
-                review = existing_reviews.get(row["id"])
+                review = matches.get(row["id"])
                 connection.execute(
                     """
                     INSERT INTO candidate_reviews (
@@ -462,9 +600,9 @@ class ProjectStore:
                         review["status"] if review else "pending",
                         review["reason"] if review else None,
                         review["note"] if review else None,
-                        review["reviewed_at"] if review else None,
-                        review["review_started_at"] if review else None,
-                        review["review_duration_ms"] if review else None,
+                        None,
+                        None,
+                        None,
                         timestamp,
                     ),
                 )
@@ -609,6 +747,7 @@ class ProjectStore:
             "net_no_motion",
             "duplicate",
             "uncertain",
+            "made",
             "other",
         }:
             raise ValueError("INVALID_REVIEW_REASON")

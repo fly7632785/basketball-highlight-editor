@@ -19,6 +19,10 @@ import 'media_readiness.dart';
 
 bool _annotationHintSeen = false;
 
+/// Opening the review video must not start playback without user input.
+const bool reviewVideoAutoPlayAfterOpen = false;
+const bool reviewVideoAutoPlayAfterSourceSwitch = true;
+
 /// 审核工作台：视频优先，候选默认保留，用户只需要打叉剔除误检。
 class ReviewScreen extends ConsumerStatefulWidget {
   const ReviewScreen({super.key});
@@ -33,7 +37,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   bool _batchMode = false;
   final Set<String> _reviewStartedCandidateIds = <String>{};
   String _candidateFilter = 'all';
-  final GlobalKey<_VideoPaneState> _videoKey = GlobalKey<_VideoPaneState>();
+  final _VideoPaneController _videoController = _VideoPaneController();
+  final int _videoSourceSwitchToken = 0;
   final FocusNode _shortcutFocusNode = FocusNode(
     debugLabel: 'review-shortcut-focus',
   );
@@ -119,30 +124,14 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   }
 
   Future<String?> _promptPlayerName() async {
-    final controller = TextEditingController();
     final name = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('添加球员'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: '例如：科比、罗斯'),
-          onSubmitted: (value) => Navigator.pop(dialogContext, value),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, controller.text),
-            child: const Text('添加'),
-          ),
-        ],
+      builder: (_) => const _TextEntryDialog(
+        title: '添加球员',
+        hintText: '例如：科比、罗斯',
+        confirmLabel: '添加',
       ),
     );
-    controller.dispose();
     return name?.trim().isEmpty == true ? null : name?.trim();
   }
 
@@ -152,21 +141,41 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   ) {
     return showDialog<String>(
       context: dialogContext,
-      builder: (context) => SimpleDialog(
+      builder: (context) => AlertDialog(
         title: const Text('选择球员'),
-        children: [
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, _clearPlayerChoice),
-            child: const Text('清除标签'),
+        contentPadding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        content: SizedBox(
+          width: 320,
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _PlayerChoiceButton(
+                label: '未标记',
+                icon: Icons.person_off_outlined,
+                color: AppColors.of(context).textTertiary,
+                onPressed: () => Navigator.pop(context, _clearPlayerChoice),
+              ),
+              for (var index = 0; index < players.length; index++)
+                _PlayerChoiceButton(
+                  label: players[index]['name']?.toString() ?? '',
+                  color: _playerColor(players[index]['id']?.toString(), index),
+                  onPressed: () =>
+                      Navigator.pop(context, players[index]['id']?.toString()),
+                ),
+              _PlayerChoiceButton(
+                label: '新建球员',
+                icon: Icons.add,
+                color: AppColors.of(context).indigo,
+                onPressed: () => Navigator.pop(context, _newPlayerChoice),
+              ),
+            ],
           ),
-          for (final player in players)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, player['id']?.toString()),
-              child: Text(player['name']?.toString() ?? ''),
-            ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, _newPlayerChoice),
-            child: const Text('新建球员'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
           ),
         ],
       ),
@@ -214,11 +223,11 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   }
 
   void _togglePlayback() {
-    unawaited(_videoKey.currentState?.togglePlayPause());
+    unawaited(_videoController.togglePlayPause());
   }
 
   void _toggleCandidateLoop() {
-    _videoKey.currentState?.toggleCandidateLoop();
+    _videoController.toggleCandidateLoop();
   }
 
   void _focusReviewShortcuts() {
@@ -227,7 +236,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
 
   void _seekBySeconds(double seconds) {
     unawaited(
-      _videoKey.currentState?.seekBy(
+      _videoController.seekBy(
         Duration(
           milliseconds: (seconds * Duration.millisecondsPerSecond).round(),
         ),
@@ -255,7 +264,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     } else if (key == LogicalKeyboardKey.space) {
       _togglePlayback();
     } else if (key == LogicalKeyboardKey.keyA) {
-      _videoKey.currentState?.toggleAnnotations();
+      _videoController.toggleAnnotations();
     } else if (key == LogicalKeyboardKey.keyR) {
       _requestReplay();
     } else if (key == LogicalKeyboardKey.keyL) {
@@ -305,35 +314,16 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   }
 
   Future<void> _editCandidateNote(Map<String, dynamic> candidate) async {
-    final controller = TextEditingController(
-      text: candidate['note']?.toString() ?? '',
-    );
     final note = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('候选备注'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLines: 4,
-          decoration: const InputDecoration(
-            hintText: '例如：补篮、擦框、镜头遮挡',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, controller.text),
-            child: const Text('保存'),
-          ),
-        ],
+      builder: (_) => _TextEntryDialog(
+        title: '候选备注',
+        initialText: candidate['note']?.toString() ?? '',
+        hintText: '例如：补篮、擦框、镜头遮挡',
+        maxLines: 4,
+        confirmLabel: '保存',
       ),
     );
-    controller.dispose();
     if (!mounted || note == null) return;
     await ref
         .read(projectProvider.notifier)
@@ -414,8 +404,10 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final progress = ((job?['progress'] as num?)?.toDouble() ?? 0)
         .clamp(0.0, 1.0)
         .toDouble();
-    final playbackPath = _resolvePlaybackPath(state, analyzing: analyzing);
-    final reviewLocked = analyzing || state.busy || state.hydrating;
+    final originalVideoPath = _resolveOriginalVideoPath(state);
+    final showingOriginalVideo = originalVideoPath != null;
+    final playbackPath = originalVideoPath;
+    final reviewLocked = state.busy || state.hydrating;
     if (!reviewLocked && selectedId != null && selectedId.isNotEmpty) {
       _ensureReviewStarted(selectedId);
     }
@@ -442,37 +434,48 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                 jobState == 'failed' ||
                 jobState == 'cancelled' ||
                 job?['recoverable'] == true)
-              _AnalysisBar(
-                state: jobState,
-                stage: job?['stage']?.toString() ?? '',
-                progress: progress,
-                startedAt: job?['started_at']?.toString(),
-                errorMessage: job?['error_message']?.toString(),
-                recoverable: job?['recoverable'] == true && !analyzing,
-                onCancel: analyzing ? () => notifier.cancelAnalysis() : null,
-                onRetry:
-                    (jobState == 'failed' || job?['recoverable'] == true) &&
-                        !state.busy
-                    ? () => notifier.retryAnalysis()
-                    : null,
-                onReanalyze: !analyzing && !state.busy
-                    ? _confirmReanalyze
-                    : null,
+              Padding(
+                key: const Key('review-status-inset'),
+                padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
+                child: _AnalysisBar(
+                  state: jobState,
+                  stage: job?['stage']?.toString() ?? '',
+                  progress: progress,
+                  startedAt: job?['started_at']?.toString(),
+                  errorMessage: job?['error_message']?.toString(),
+                  recoverable: job?['recoverable'] == true && !analyzing,
+                  onCancel: analyzing ? () => notifier.cancelAnalysis() : null,
+                  onRetry:
+                      (jobState == 'failed' || job?['recoverable'] == true) &&
+                          !state.busy
+                      ? () => notifier.retryAnalysis()
+                      : null,
+                  onReanalyze: !analyzing && !state.busy
+                      ? _confirmReanalyze
+                      : null,
+                ),
               )
             else if (jobState == 'completed')
-              _CompletedLine(
-                candidateCount: allCandidates.length,
-                startedAt: job?['started_at']?.toString(),
-                finishedAt: job?['finished_at']?.toString(),
+              Padding(
+                key: const Key('review-status-inset'),
+                padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
+                child: _CompletedLine(
+                  candidateCount: allCandidates.length,
+                  startedAt: job?['started_at']?.toString(),
+                  finishedAt: job?['finished_at']?.toString(),
+                  mode: state.analysisMode,
+                ),
               ),
             const SizedBox(height: Spacing.xs),
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final video = _VideoPane(
-                    key: _videoKey,
+                    controller: _videoController,
                     videoPath: playbackPath,
                     candidate: selected,
+                    isOriginalVideo: showingOriginalVideo,
+                    sourceSwitchToken: _videoSourceSwitchToken,
                     replayToken: _replayToken,
                     frameSize: _videoFrameSize(state.video),
                     hasPrevious: _candidateIndex(candidates, selected) > 0,
@@ -481,6 +484,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                         candidates.length - 1,
                     onPrevious: () => _moveCandidate(candidates, -1),
                     onNext: () => _moveCandidate(candidates, 1),
+                    onToggleVideoSource: null,
                     onInteraction: _focusReviewShortcuts,
                     onEditRange: selected == null || reviewLocked
                         ? null
@@ -492,8 +496,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       if (!reviewLocked) unawaited(notifier.undoReview());
                     },
                   );
-                  final queueWidth = (constraints.maxWidth * 0.28)
-                      .clamp(296.0, 360.0)
+                  final queueWidth = (constraints.maxWidth * 0.30)
+                      .clamp(360.0, 460.0)
                       .toDouble();
                   final queue = _CandidatePanel(
                     candidates: candidates,
@@ -509,6 +513,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     onSelect: _selectCandidate,
                     onSetPlayer: (candidate) =>
                         _setPlayerForCandidate(candidate, state, notifier),
+                    players: state.players,
                     batchMode: _batchMode,
                     selectedForBatch: _selectedForBatch,
                     onToggleBatch: _toggleBatchMode,
@@ -540,7 +545,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       if (!reviewLocked) unawaited(notifier.undoReview());
                     },
                     onGoImport: () => context.go('/import'),
-                    onExport: includedCount == 0 || reviewLocked
+                    onExport: includedCount == 0 || reviewLocked || analyzing
                         ? null
                         : () => context.go('/export'),
                   );
@@ -821,11 +826,13 @@ class _CompletedLine extends StatelessWidget {
     required this.candidateCount,
     required this.startedAt,
     required this.finishedAt,
+    required this.mode,
   });
 
   final int candidateCount;
   final String? startedAt;
   final String? finishedAt;
+  final String mode;
 
   @override
   Widget build(BuildContext context) {
@@ -838,7 +845,7 @@ class _CompletedLine extends StatelessWidget {
           Icon(Icons.check_circle_outline, size: 14, color: c.goal),
           const SizedBox(width: Spacing.xs),
           Text(
-            '分析完成 · $candidateCount 个候选${duration.isEmpty ? '' : ' · 用时 $duration'}',
+            '${mode == 'fast' ? '快速分析' : '标准分析'} · $candidateCount 个候选${duration.isEmpty ? '' : ' · 用时 $duration'}',
             style: Theme.of(
               context,
             ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
@@ -872,31 +879,104 @@ class _SmallAction extends StatelessWidget {
   );
 }
 
+class _TextEntryDialog extends StatefulWidget {
+  const _TextEntryDialog({
+    required this.title,
+    required this.hintText,
+    required this.confirmLabel,
+    this.initialText = '',
+    this.maxLines = 1,
+  });
+
+  final String title;
+  final String hintText;
+  final String confirmLabel;
+  final String initialText;
+  final int maxLines;
+
+  @override
+  State<_TextEntryDialog> createState() => _TextEntryDialogState();
+}
+
+class _TextEntryDialogState extends State<_TextEntryDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialText,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(_controller.text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return AlertDialog(
+      backgroundColor: c.surface,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(CsRadius.md),
+        side: BorderSide(color: c.borderStrong),
+      ),
+      title: Text(widget.title),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        maxLines: widget.maxLines,
+        decoration: InputDecoration(
+          hintText: widget.hintText,
+          border: widget.maxLines > 1 ? const OutlineInputBorder() : null,
+        ),
+        onSubmitted: widget.maxLines == 1 ? (_) => _submit() : null,
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: Text(widget.confirmLabel)),
+      ],
+    );
+  }
+}
+
 class _VideoPane extends StatefulWidget {
   const _VideoPane({
-    super.key,
+    required this.controller,
     required this.videoPath,
     required this.candidate,
+    required this.isOriginalVideo,
+    required this.sourceSwitchToken,
     required this.replayToken,
     required this.frameSize,
     required this.hasPrevious,
     required this.hasNext,
     required this.onPrevious,
     required this.onNext,
+    required this.onToggleVideoSource,
     required this.onInteraction,
     required this.onEditRange,
     required this.onEditNote,
     required this.onUndo,
   });
 
+  final _VideoPaneController controller;
   final String? videoPath;
   final Map<String, dynamic>? candidate;
+  final bool isOriginalVideo;
+  final int sourceSwitchToken;
   final int replayToken;
   final Size frameSize;
   final bool hasPrevious;
   final bool hasNext;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
+  final VoidCallback? onToggleVideoSource;
   final VoidCallback onInteraction;
   final VoidCallback? onEditRange;
   final VoidCallback? onEditNote;
@@ -927,8 +1007,9 @@ class _VideoPaneState extends State<_VideoPane> {
   @override
   void initState() {
     super.initState();
+    widget.controller._attach(this);
     final candidate = widget.candidate;
-    if (candidate != null && candidate.isNotEmpty) {
+    if (!widget.isOriginalVideo && candidate != null && candidate.isNotEmpty) {
       _clipEndMs = _clipEnd(candidate);
     }
     _ensurePlayer();
@@ -981,35 +1062,49 @@ class _VideoPaneState extends State<_VideoPane> {
   @override
   void didUpdateWidget(covariant _VideoPane oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.videoPath != widget.videoPath) {
+    if (oldWidget.videoPath != widget.videoPath ||
+        oldWidget.isOriginalVideo != widget.isOriginalVideo) {
       _ensurePlayer();
       _ready = false;
       _loading = false;
       _error = null;
       final candidate = widget.candidate;
-      _clipEndMs = candidate == null || candidate.isEmpty
+      _clipEndMs =
+          widget.isOriginalVideo || candidate == null || candidate.isEmpty
           ? null
           : _clipEnd(candidate);
       _clipEndHandled = false;
-      unawaited(_queueOpen(widget.videoPath));
+      if (widget.isOriginalVideo) _loopCandidate = false;
+      unawaited(
+        _queueOpen(
+          widget.videoPath,
+          playAfterOpen:
+              oldWidget.sourceSwitchToken != widget.sourceSwitchToken,
+        ),
+      );
     } else if (oldWidget.replayToken != widget.replayToken) {
-      unawaited(_queueCandidatePlayback());
+      if (!widget.isOriginalVideo) {
+        unawaited(_queueCandidatePlayback());
+      }
     } else if (_candidateSignature(oldWidget.candidate) !=
         _candidateSignature(widget.candidate)) {
       final candidate = widget.candidate;
       if (candidate != null && candidate.isNotEmpty) {
-        setState(() {
-          _clipEndMs = _clipEnd(candidate);
-          _clipEndHandled = false;
-        });
-        _showAnnotationHintOnce();
+        if (!widget.isOriginalVideo) {
+          setState(() {
+            _clipEndMs = _clipEnd(candidate);
+            _clipEndHandled = false;
+          });
+          _showAnnotationHintOnce();
+        }
       }
-      unawaited(_queueCandidatePlayback());
+      unawaited(_queueCandidatePosition());
     }
   }
 
   @override
   void dispose() {
+    widget.controller._detach(this);
     _disposed = true;
     _mediaGeneration++;
     _playbackToken++;
@@ -1026,12 +1121,12 @@ class _VideoPaneState extends State<_VideoPane> {
     super.dispose();
   }
 
-  Future<void> _queueOpen(String? path) {
+  Future<void> _queueOpen(String? path, {bool playAfterOpen = false}) {
     final generation = ++_mediaGeneration;
     _playbackToken++;
     return _enqueueMediaAction(() async {
       if (!_isCurrent(generation)) return;
-      await _open(path, generation);
+      await _open(path, generation, playAfterOpen: playAfterOpen);
     });
   }
 
@@ -1057,6 +1152,20 @@ class _VideoPaneState extends State<_VideoPane> {
     return _enqueueMediaAction(() async {
       if (!_isCurrent(generation, playbackToken: playbackToken)) return;
       await _playCandidate(candidate, generation, playbackToken: playbackToken);
+    });
+  }
+
+  Future<void> _queueCandidatePosition() {
+    final candidate = widget.candidate;
+    final generation = _mediaGeneration;
+    final playbackToken = ++_playbackToken;
+    return _enqueueMediaAction(() async {
+      if (!_isCurrent(generation, playbackToken: playbackToken)) return;
+      await _prepareCandidate(
+        candidate,
+        generation,
+        playbackToken: playbackToken,
+      );
     });
   }
 
@@ -1086,7 +1195,11 @@ class _VideoPaneState extends State<_VideoPane> {
     return _mediaQueue;
   }
 
-  Future<void> _open(String? path, int generation) async {
+  Future<void> _open(
+    String? path,
+    int generation, {
+    bool playAfterOpen = false,
+  }) async {
     final player = _player;
     if (player == null) return;
     if (_isCurrent(generation)) setState(() => _loading = true);
@@ -1112,12 +1225,25 @@ class _VideoPaneState extends State<_VideoPane> {
         _loading = false;
         _error = null;
       });
-      _showAnnotationHintOnce();
-      await _playCandidate(
-        widget.candidate,
-        generation,
-        playbackToken: _playbackToken,
-      );
+      if (!widget.isOriginalVideo) _showAnnotationHintOnce();
+      if (!widget.isOriginalVideo) {
+        await _prepareCandidate(
+          widget.candidate,
+          generation,
+          playbackToken: _playbackToken,
+        );
+      }
+      if (reviewVideoAutoPlayAfterOpen || playAfterOpen) {
+        if (widget.isOriginalVideo) {
+          await player.play();
+        } else {
+          await _playCandidate(
+            widget.candidate,
+            generation,
+            playbackToken: _playbackToken,
+          );
+        }
+      }
     } catch (error) {
       if (_isCurrent(generation)) {
         setState(() {
@@ -1145,13 +1271,42 @@ class _VideoPaneState extends State<_VideoPane> {
     final start = _clipStart(candidate);
     final end = _clipEnd(candidate);
     setState(() {
-      _clipEndMs = end;
+      _clipEndMs = widget.isOriginalVideo ? null : end;
       _clipEndHandled = false;
     });
     try {
       await player.seek(Duration(milliseconds: start));
       if (!_isCurrent(generation, playbackToken: playbackToken)) return;
       await player.play();
+    } catch (error) {
+      if (_isCurrent(generation)) {
+        setState(() => _error = error.toString());
+      }
+    }
+  }
+
+  Future<void> _prepareCandidate(
+    Map<String, dynamic>? candidate,
+    int generation, {
+    int? playbackToken,
+  }) async {
+    final player = _player;
+    if (player == null ||
+        !_isCurrent(generation, playbackToken: playbackToken) ||
+        !_ready ||
+        candidate == null ||
+        candidate.isEmpty) {
+      return;
+    }
+    final start = _clipStart(candidate);
+    final end = _clipEnd(candidate);
+    setState(() {
+      _clipEndMs = widget.isOriginalVideo ? null : end;
+      _clipEndHandled = false;
+    });
+    try {
+      await player.pause();
+      await player.seek(Duration(milliseconds: start));
     } catch (error) {
       if (_isCurrent(generation)) {
         setState(() => _error = error.toString());
@@ -1168,7 +1323,8 @@ class _VideoPaneState extends State<_VideoPane> {
       action: (player) async {
         if (player.state.playing) {
           await player.pause();
-        } else if (_clipEndMs != null &&
+        } else if (!widget.isOriginalVideo &&
+            _clipEndMs != null &&
             player.state.position.inMilliseconds >= _clipEndMs!) {
           await _playCandidate(
             widget.candidate,
@@ -1191,8 +1347,14 @@ class _VideoPaneState extends State<_VideoPane> {
   }
 
   Future<void> seekBy(Duration offset) async {
-    final start = widget.candidate == null ? 0 : _clipStart(widget.candidate!);
-    final end = widget.candidate == null ? null : _clipEnd(widget.candidate!);
+    final start = widget.isOriginalVideo
+        ? 0
+        : widget.candidate == null
+        ? 0
+        : _clipStart(widget.candidate!);
+    final end = widget.isOriginalVideo || widget.candidate == null
+        ? null
+        : _clipEnd(widget.candidate!);
     final requested = _player?.state.position.inMilliseconds ?? start;
     final targetRequested = requested + offset.inMilliseconds;
     final target =
@@ -1278,7 +1440,7 @@ class _VideoPaneState extends State<_VideoPane> {
                             : Icons.error_outline,
                         title: !hasVideo ? '还没有视频' : _error ?? '视频加载失败',
                         description: _error == null && hasVideo
-                            ? '分析完成后会在这里播放候选片段'
+                            ? '分析完成后会在这里预览候选片段，点击播放开始'
                             : null,
                         action: _error != null && hasVideo
                             ? CsButton(
@@ -1295,11 +1457,15 @@ class _VideoPaneState extends State<_VideoPane> {
                           child: Stack(
                             fit: StackFit.expand,
                             children: [
-                              Video(
-                                controller: controller,
-                                controls: NoVideoControls,
+                              IgnorePointer(
+                                child: Video(
+                                  controller: controller,
+                                  controls: NoVideoControls,
+                                ),
                               ),
-                              if (_showAnnotations && widget.candidate != null)
+                              if (!widget.isOriginalVideo &&
+                                  _showAnnotations &&
+                                  widget.candidate != null)
                                 StreamBuilder<Duration>(
                                   stream: player?.stream.position,
                                   initialData:
@@ -1317,7 +1483,7 @@ class _VideoPaneState extends State<_VideoPane> {
                         ),
                       ),
                     if (_ready && _error == null && player != null)
-                      Positioned.fill(
+                      Center(
                         child: _CenterPlaybackOverlay(
                           player: player,
                           onPressed: () {
@@ -1327,11 +1493,22 @@ class _VideoPaneState extends State<_VideoPane> {
                         ),
                       ),
                     if (_loading)
-                      const ColoredBox(
-                        color: Colors.black26,
-                        child: Center(child: CircularProgressIndicator()),
+                      const IgnorePointer(
+                        child: ColoredBox(
+                          color: Colors.black26,
+                          child: Center(child: CircularProgressIndicator()),
+                        ),
                       ),
-                    if (widget.candidate != null)
+                    if (widget.onToggleVideoSource != null)
+                      Positioned(
+                        top: Spacing.sm,
+                        left: Spacing.sm,
+                        child: _VideoSourceToggle(
+                          showingOriginal: widget.isOriginalVideo,
+                          onPressed: widget.onToggleVideoSource!,
+                        ),
+                      ),
+                    if (!widget.isOriginalVideo && widget.candidate != null)
                       Positioned(
                         top: Spacing.sm,
                         right: Spacing.sm,
@@ -1357,15 +1534,16 @@ class _VideoPaneState extends State<_VideoPane> {
           Divider(height: 1, thickness: 1, color: c.border),
           _VideoControls(
             player: player,
-            clipStartMs: widget.candidate == null
+            clipStartMs: widget.isOriginalVideo || widget.candidate == null
                 ? null
                 : _clipStart(widget.candidate!),
-            clipEndMs: widget.candidate == null
+            clipEndMs: widget.isOriginalVideo || widget.candidate == null
                 ? null
                 : _clipEnd(widget.candidate!),
-            eventTimeMs: widget.candidate == null
+            eventTimeMs: widget.isOriginalVideo || widget.candidate == null
                 ? null
                 : _candidateTime(widget.candidate!),
+            isOriginalVideo: widget.isOriginalVideo,
             enabled: _ready && _error == null,
             hasPrevious: widget.hasPrevious,
             hasNext: widget.hasNext,
@@ -1378,7 +1556,7 @@ class _VideoPaneState extends State<_VideoPane> {
             loopEnabled: _loopCandidate,
             onToggleLoop: toggleCandidateLoop,
           ),
-          if (widget.candidate != null)
+          if (!widget.isOriginalVideo && widget.candidate != null)
             _CandidateEvidencePanel(
               candidate: widget.candidate!,
               onEditRange: widget.onEditRange,
@@ -1389,6 +1567,25 @@ class _VideoPaneState extends State<_VideoPane> {
       ),
     );
   }
+}
+
+class _VideoPaneController {
+  _VideoPaneState? _state;
+
+  void _attach(_VideoPaneState state) => _state = state;
+
+  void _detach(_VideoPaneState state) {
+    if (identical(_state, state)) _state = null;
+  }
+
+  Future<void> togglePlayPause() => _state?.togglePlayPause() ?? Future.value();
+
+  Future<void> seekBy(Duration offset) =>
+      _state?.seekBy(offset) ?? Future.value();
+
+  void toggleCandidateLoop() => _state?.toggleCandidateLoop();
+
+  void toggleAnnotations() => _state?.toggleAnnotations();
 }
 
 class _CenterPlaybackOverlay extends StatefulWidget {
@@ -1458,18 +1655,16 @@ class _CenterPlaybackOverlayState extends State<_CenterPlaybackOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      onHover: (_) => _reveal(),
-      child: Center(
-        child: IgnorePointer(
-          ignoring: !_visible,
-          child: AnimatedOpacity(
-            duration: DurationD.fast,
-            opacity: _visible ? 1 : 0,
-            child: _CenterPlaybackButton(
-              playing: _playing,
-              onPressed: widget.onPressed,
-            ),
+    return IgnorePointer(
+      ignoring: !_visible,
+      child: MouseRegion(
+        onHover: (_) => _reveal(),
+        child: AnimatedOpacity(
+          duration: DurationD.fast,
+          opacity: _visible ? 1 : 0,
+          child: _CenterPlaybackButton(
+            playing: _playing,
+            onPressed: widget.onPressed,
           ),
         ),
       ),
@@ -1518,24 +1713,159 @@ class _AnnotationToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return Material(
-      color: c.background.withValues(alpha: 0.82),
-      borderRadius: BorderRadius.circular(CsRadius.md),
-      child: Padding(
-        padding: const EdgeInsets.only(left: Spacing.sm),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('标注', style: TextStyle(color: c.textPrimary, fontSize: 11)),
-            Tooltip(
-              message: enabled ? '关闭标注（A）' : '显示标注（A）',
-              child: Switch(
-                value: enabled,
-                onChanged: onChanged,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
+    final accent = enabled ? c.indigo : c.textTertiary;
+    return Tooltip(
+      message: enabled ? '关闭标注（A）' : '显示标注（A）',
+      child: Material(
+        color: c.background.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(CsRadius.full),
+        child: InkWell(
+          onTap: () => onChanged(!enabled),
+          borderRadius: BorderRadius.circular(CsRadius.full),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(9, 5, 7, 5),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.auto_awesome_outlined, size: 13, color: accent),
+                const SizedBox(width: 5),
+                Text(
+                  '标注',
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                AnimatedContainer(
+                  duration: DurationD.fast,
+                  width: 22,
+                  height: 12,
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: enabled ? c.indigo : c.surface3,
+                    borderRadius: BorderRadius.circular(CsRadius.full),
+                    border: Border.all(
+                      color: enabled
+                          ? c.indigo.withValues(alpha: 0.8)
+                          : c.borderStrong,
+                    ),
+                  ),
+                  child: Align(
+                    alignment: enabled
+                        ? Alignment.centerRight
+                        : Alignment.centerLeft,
+                    child: AnimatedContainer(
+                      duration: DurationD.fast,
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: enabled ? Colors.white : c.textTertiary,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoSourceToggle extends StatelessWidget {
+  const _VideoSourceToggle({
+    required this.showingOriginal,
+    required this.onPressed,
+  });
+
+  final bool showingOriginal;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Tooltip(
+      message: '切换视频来源',
+      child: Material(
+        color: c.background.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(CsRadius.full),
+        child: Padding(
+          padding: const EdgeInsets.all(3),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _VideoSourceOption(
+                label: '候选预览',
+                icon: Icons.video_library_outlined,
+                selected: !showingOriginal,
+                onPressed: showingOriginal ? onPressed : null,
+              ),
+              _VideoSourceOption(
+                label: '原视频',
+                icon: Icons.movie_filter_outlined,
+                selected: showingOriginal,
+                onPressed: showingOriginal ? null : onPressed,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoSourceOption extends StatelessWidget {
+  const _VideoSourceOption({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: selected ? '正在查看$label' : '切换到$label',
+      child: Material(
+        color: selected ? c.indigo.withValues(alpha: 0.18) : Colors.transparent,
+        borderRadius: BorderRadius.circular(CsRadius.full),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(CsRadius.full),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 13,
+                  color: selected ? c.indigo : c.textSecondary,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: selected ? c.textPrimary : c.textSecondary,
+                    fontSize: 10,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -1783,6 +2113,7 @@ class _CandidateAnnotationPainter extends CustomPainter {
 class _VideoControls extends StatefulWidget {
   const _VideoControls({
     required this.player,
+    required this.isOriginalVideo,
     required this.clipStartMs,
     required this.clipEndMs,
     required this.eventTimeMs,
@@ -1800,6 +2131,7 @@ class _VideoControls extends StatefulWidget {
   });
 
   final Player? player;
+  final bool isOriginalVideo;
   final int? clipStartMs;
   final int? clipEndMs;
   final int? eventTimeMs;
@@ -1833,7 +2165,18 @@ class _VideoControlsState extends State<_VideoControls> {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
     final player = widget.player;
-    if (player == null) return const SizedBox(height: 32);
+    if (player == null) {
+      return const Padding(
+        key: Key('review-video-controls-inset'),
+        padding: EdgeInsets.fromLTRB(
+          Spacing.md,
+          Spacing.xs,
+          Spacing.md,
+          Spacing.xs,
+        ),
+        child: SizedBox(height: 32),
+      );
+    }
     return StreamBuilder<Duration>(
       stream: player.stream.position,
       initialData: player.state.position,
@@ -1861,7 +2204,13 @@ class _VideoControlsState extends State<_VideoControls> {
                   .toInt();
           final value = positionMs.clamp(rangeStart, rangeEnd).toDouble();
           return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
+            key: const Key('review-video-controls-inset'),
+            padding: const EdgeInsets.fromLTRB(
+              Spacing.md,
+              Spacing.xs,
+              Spacing.md,
+              Spacing.xs,
+            ),
             child: Column(
               children: [
                 SizedBox(
@@ -1894,7 +2243,15 @@ class _VideoControlsState extends State<_VideoControls> {
                 ),
                 Row(
                   children: [
-                    if (widget.eventTimeMs != null) ...[
+                    if (widget.isOriginalVideo) ...[
+                      Text(
+                        '原视频',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: c.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(width: Spacing.sm),
+                    ] else if (widget.eventTimeMs != null) ...[
                       Text(
                         '候选 ${_formatMs(widget.eventTimeMs!)}',
                         style: theme.textTheme.labelSmall?.copyWith(
@@ -2012,34 +2369,38 @@ class _VideoControlsState extends State<_VideoControls> {
                       padding: EdgeInsets.zero,
                       visualDensity: VisualDensity.compact,
                     ),
-                    IconButton(
-                      tooltip: '重播当前片段 (R)',
-                      onPressed: widget.enabled
-                          ? () => unawaited(widget.onReplayCandidate())
-                          : null,
-                      icon: const Icon(Icons.replay, size: 18),
-                      constraints: const BoxConstraints.tightFor(
-                        width: 34,
-                        height: 34,
+                    if (!widget.isOriginalVideo) ...[
+                      IconButton(
+                        tooltip: '重播当前片段 (R)',
+                        onPressed: widget.enabled
+                            ? () => unawaited(widget.onReplayCandidate())
+                            : null,
+                        icon: const Icon(Icons.replay, size: 18),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 34,
+                          height: 34,
+                        ),
+                        padding: EdgeInsets.zero,
+                        visualDensity: VisualDensity.compact,
                       ),
-                      padding: EdgeInsets.zero,
-                      visualDensity: VisualDensity.compact,
-                    ),
-                    IconButton(
-                      tooltip: widget.loopEnabled ? '关闭循环播放 (L)' : '循环当前片段 (L)',
-                      onPressed: widget.enabled ? widget.onToggleLoop : null,
-                      icon: Icon(
-                        Icons.repeat,
-                        size: 18,
-                        color: widget.loopEnabled ? c.indigo : null,
+                      IconButton(
+                        tooltip: widget.loopEnabled
+                            ? '关闭循环播放 (L)'
+                            : '循环当前片段 (L)',
+                        onPressed: widget.enabled ? widget.onToggleLoop : null,
+                        icon: Icon(
+                          Icons.repeat,
+                          size: 18,
+                          color: widget.loopEnabled ? c.indigo : null,
+                        ),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 34,
+                          height: 34,
+                        ),
+                        padding: EdgeInsets.zero,
+                        visualDensity: VisualDensity.compact,
                       ),
-                      constraints: const BoxConstraints.tightFor(
-                        width: 34,
-                        height: 34,
-                      ),
-                      padding: EdgeInsets.zero,
-                      visualDensity: VisualDensity.compact,
-                    ),
+                    ],
                   ],
                 ),
               ],
@@ -2183,43 +2544,46 @@ class _CandidateEvidencePanel extends StatelessWidget {
           ),
           Container(
             decoration: BoxDecoration(color: c.surface3),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: '调整片段范围',
-                  onPressed: onEditRange,
-                  icon: const Icon(Icons.tune_rounded, size: 17),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 34,
-                    height: 34,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: '调整片段范围',
+                    onPressed: onEditRange,
+                    icon: const Icon(Icons.tune_rounded, size: 17),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 34,
+                      height: 34,
+                    ),
+                    visualDensity: VisualDensity.compact,
                   ),
-                  visualDensity: VisualDensity.compact,
-                ),
-                IconButton(
-                  tooltip: '编辑备注',
-                  onPressed: onEditNote,
-                  icon: const Icon(Icons.edit_outlined, size: 17),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 34,
-                    height: 34,
+                  IconButton(
+                    tooltip: '编辑备注',
+                    onPressed: onEditNote,
+                    icon: const Icon(Icons.edit_outlined, size: 17),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 34,
+                      height: 34,
+                    ),
+                    visualDensity: VisualDensity.compact,
                   ),
-                  visualDensity: VisualDensity.compact,
-                ),
-                IconButton(
-                  tooltip: '撤销上一次审核 (Cmd/Ctrl+Z)',
-                  onPressed: onUndo,
-                  icon: const Icon(Icons.undo_rounded, size: 17),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 34,
-                    height: 34,
+                  IconButton(
+                    tooltip: '撤销上一次审核 (Cmd/Ctrl+Z)',
+                    onPressed: onUndo,
+                    icon: const Icon(Icons.undo_rounded, size: 17),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 34,
+                      height: 34,
+                    ),
+                    visualDensity: VisualDensity.compact,
                   ),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -2335,6 +2699,12 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
     final end = _endMs.clamp(start + 1000, contextEnd).toInt();
     final controller = _controller;
     return Dialog(
+      backgroundColor: c.surface,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(CsRadius.md),
+        side: BorderSide(color: c.borderStrong),
+      ),
       insetPadding: const EdgeInsets.all(Spacing.lg),
       child: SizedBox(
         width: 860,
@@ -2553,6 +2923,7 @@ class _CandidatePanel extends StatelessWidget {
     required this.hasVideo,
     required this.onSelect,
     required this.onSetPlayer,
+    required this.players,
     required this.batchMode,
     required this.selectedForBatch,
     required this.onToggleBatch,
@@ -2582,6 +2953,7 @@ class _CandidatePanel extends StatelessWidget {
   final bool hasVideo;
   final ValueChanged<Map<String, dynamic>> onSelect;
   final Future<void> Function(Map<String, dynamic>) onSetPlayer;
+  final List<Map<String, dynamic>> players;
   final bool batchMode;
   final Set<String> selectedForBatch;
   final VoidCallback onToggleBatch;
@@ -2603,12 +2975,13 @@ class _CandidatePanel extends StatelessWidget {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
     return Container(
+      key: const Key('candidate-panel-inset'),
       color: c.surface,
       padding: const EdgeInsets.fromLTRB(
+        Spacing.md,
         Spacing.sm,
-        Spacing.xs,
+        Spacing.md,
         Spacing.sm,
-        Spacing.xs,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2722,6 +3095,10 @@ class _CandidatePanel extends StatelessWidget {
                         busy: busy,
                         onTap: () => onSelect(candidate),
                         onSetPlayer: () => unawaited(onSetPlayer(candidate)),
+                        playerColor: _playerColor(
+                          candidate['player_id']?.toString(),
+                          _playerIndex(candidate, players),
+                        ),
                         onToggleBatch: () => onToggleBatchCandidate(id),
                         onInclude: () => unawaited(onSetStatus(id, 'included')),
                         onExclude: () => unawaited(onSetStatus(id, 'excluded')),
@@ -2731,26 +3108,39 @@ class _CandidatePanel extends StatelessWidget {
                   ),
           ),
           const SizedBox(height: Spacing.xs),
-          Row(
-            children: [
-              Expanded(
-                child: CsButton(
-                  label: Text('导出 $includedCount 个片段'),
-                  icon: Icons.file_upload_outlined,
-                  size: CsButtonSize.sm,
-                  onPressed: onExport,
+          Padding(
+            key: const Key('candidate-actions-inset'),
+            padding: const EdgeInsets.only(top: Spacing.xs),
+            child: Row(
+              children: [
+                Expanded(
+                  child: CsButton(
+                    label: Text('导出 $includedCount 个片段'),
+                    icon: Icons.file_upload_outlined,
+                    size: CsButtonSize.sm,
+                    onPressed: onExport,
+                  ),
                 ),
-              ),
-              if (onReanalyze != null) ...[
-                const SizedBox(width: Spacing.xs),
-                IconButton(
-                  tooltip: '重新分析当前视频',
-                  onPressed: onReanalyze,
-                  icon: const Icon(Icons.replay, size: 18),
-                  visualDensity: VisualDensity.compact,
-                ),
+                if (hasVideo) ...[
+                  const SizedBox(width: Spacing.xs),
+                  IconButton(
+                    tooltip: '重新配置分析区域和范围',
+                    onPressed: busy ? null : onGoImport,
+                    icon: const Icon(Icons.tune_rounded, size: 18),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+                if (onReanalyze != null) ...[
+                  const SizedBox(width: Spacing.xs),
+                  IconButton(
+                    tooltip: '重新分析当前视频',
+                    onPressed: onReanalyze,
+                    icon: const Icon(Icons.replay, size: 18),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ],
       ),
@@ -2826,7 +3216,9 @@ class _EmptyCandidates extends StatelessWidget {
     return CsEmptyState(
       icon: Icons.inbox_outlined,
       title: hasVideo ? '暂未找到候选片段' : '还没有分析结果',
-      description: hasVideo ? '可以重新分析当前视频，或先调整篮筐区域。' : '先导入视频并框选篮筐区域，再开始分析。',
+      description: hasVideo
+          ? '重新分析直接使用当前配置；重新配置可以修改分析范围和篮筐区域。'
+          : '先导入视频并完成配置，再开始分析。',
       action: Wrap(
         alignment: WrapAlignment.center,
         spacing: Spacing.xs,
@@ -2838,8 +3230,8 @@ class _EmptyCandidates extends StatelessWidget {
               onPressed: onReanalyze,
             ),
           CsButton(
-            label: Text(hasVideo ? '调整区域' : '去导入视频'),
-            icon: hasVideo ? Icons.crop : Icons.upload_file,
+            label: Text(hasVideo ? '重新配置' : '去导入视频'),
+            icon: hasVideo ? Icons.tune : Icons.upload_file,
             variant: CsButtonVariant.secondary,
             onPressed: onGoImport,
           ),
@@ -2860,6 +3252,7 @@ class _CandidateRow extends StatelessWidget {
     required this.busy,
     required this.onTap,
     required this.onSetPlayer,
+    required this.playerColor,
     required this.onToggleBatch,
     required this.onInclude,
     required this.onExclude,
@@ -2876,6 +3269,7 @@ class _CandidateRow extends StatelessWidget {
   final bool busy;
   final VoidCallback onTap;
   final VoidCallback onSetPlayer;
+  final Color playerColor;
   final VoidCallback onToggleBatch;
   final VoidCallback onInclude;
   final VoidCallback onExclude;
@@ -2906,6 +3300,7 @@ class _CandidateRow extends StatelessWidget {
                 : null,
           ),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               if (batchMode)
                 Padding(
@@ -2923,8 +3318,9 @@ class _CandidateRow extends StatelessWidget {
                     onTap: onTap,
                     borderRadius: BorderRadius.circular(CsRadius.sm),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      padding: const EdgeInsets.symmetric(vertical: 4),
                       child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           _CandidateCover(
                             future: coverFuture,
@@ -2937,7 +3333,9 @@ class _CandidateRow extends StatelessWidget {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(
-                                  '${index + 1}. ${_formatMs(_candidateTime(candidate))}',
+                                  '#${index + 1} ${_formatMs(_candidateTime(candidate))}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: theme.textTheme.labelLarge?.copyWith(
                                     color: excluded
                                         ? c.textTertiary
@@ -2947,22 +3345,34 @@ class _CandidateRow extends StatelessWidget {
                                     ],
                                   ),
                                 ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '时长 ${_formatClipDuration(_clipEnd(candidate) - _clipStart(candidate))}',
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: c.textTertiary,
-                                    fontFeatures: const [
-                                      FontFeature.tabularFigures(),
-                                    ],
-                                  ),
+                                const SizedBox(height: 3),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '时长 ${_formatClipDuration(_clipEnd(candidate) - _clipStart(candidate))}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: theme.textTheme.labelSmall
+                                            ?.copyWith(
+                                              color: c.textTertiary,
+                                              fontFeatures: const [
+                                                FontFeature.tabularFigures(),
+                                              ],
+                                            ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: Spacing.xs),
+                                    _PlayerChip(
+                                      name: candidate['player_name']
+                                          ?.toString(),
+                                      color: playerColor,
+                                      onTap: onSetPlayer,
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
-                          ),
-                          _PlayerChip(
-                            name: candidate['player_name']?.toString(),
-                            onTap: onSetPlayer,
                           ),
                         ],
                       ),
@@ -3046,32 +3456,40 @@ class _DecisionButton extends StatelessWidget {
 }
 
 class _PlayerChip extends StatelessWidget {
-  const _PlayerChip({required this.name, required this.onTap});
+  const _PlayerChip({
+    required this.name,
+    required this.color,
+    required this.onTap,
+  });
 
   final String? name;
+  final Color color;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final c = AppColors.of(context);
     return Tooltip(
       message: '设置球员标签',
       child: Material(
-        color: c.surface3,
-        borderRadius: BorderRadius.circular(CsRadius.sm),
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(CsRadius.full),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(CsRadius.sm),
+          borderRadius: BorderRadius.circular(CsRadius.full),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.person_outline, size: 14, color: c.textTertiary),
+                Icon(Icons.person_outline, size: 14, color: color),
                 const SizedBox(width: 3),
                 Text(
-                  name == null || name!.isEmpty ? '球员' : name!,
-                  style: TextStyle(color: c.textSecondary, fontSize: 10),
+                  name == null || name!.isEmpty ? '未标记' : name!,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ],
             ),
@@ -3080,6 +3498,68 @@ class _PlayerChip extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PlayerChoiceButton extends StatelessWidget {
+  const _PlayerChoiceButton({
+    required this.label,
+    required this.color,
+    required this.onPressed,
+    this.icon,
+  });
+
+  final String label;
+  final Color color;
+  final VoidCallback onPressed;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 140,
+      height: 38,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon ?? Icons.person, size: 15, color: color),
+        label: Text(label, overflow: TextOverflow.ellipsis),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: color,
+          side: BorderSide(color: color.withValues(alpha: 0.45)),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          visualDensity: VisualDensity.compact,
+        ),
+      ),
+    );
+  }
+}
+
+Color _playerColor(String? playerId, [int fallbackIndex = -1]) {
+  const palette = <Color>[
+    Color(0xFF5B8CFF),
+    Color(0xFFB277FF),
+    Color(0xFF22C7A8),
+    Color(0xFFFFB454),
+    Color(0xFFFF6B8A),
+    Color(0xFF4CC9F0),
+  ];
+  if (playerId == null || playerId.isEmpty) {
+    return const Color(0xFF8B93A7);
+  }
+  final hash = playerId.codeUnits.fold<int>(
+    0,
+    (value, unit) => value * 31 + unit,
+  );
+  final index = hash.abs() % palette.length;
+  return palette[index >= 0 ? index : fallbackIndex % palette.length];
+}
+
+int _playerIndex(
+  Map<String, dynamic> candidate,
+  List<Map<String, dynamic>> players,
+) {
+  final playerId = candidate['player_id']?.toString();
+  if (playerId == null || playerId.isEmpty) return -1;
+  return players.indexWhere((player) => player['id']?.toString() == playerId);
 }
 
 class _CandidateCover extends StatefulWidget {
@@ -3385,19 +3865,10 @@ String _playbackRateLabel(double rate) {
   return '$text×';
 }
 
-String? _resolvePlaybackPath(ProjectState state, {required bool analyzing}) {
-  final paths = analyzing
-      ? <String?>[state.reviewVideoPath, state.videoPath]
-      : <String?>[state.videoPath, state.reviewVideoPath];
-  for (final path in paths) {
-    if (path != null && path.isNotEmpty && File(path).existsSync()) {
-      return path;
-    }
-  }
-  for (final path in paths) {
-    if (path != null && path.isNotEmpty) return path;
-  }
-  return null;
+String? _resolveOriginalVideoPath(ProjectState state) {
+  final path = state.video?['source_path']?.toString();
+  if (path == null || path.isEmpty) return null;
+  return path;
 }
 
 String _stageLabel(String stage) =>

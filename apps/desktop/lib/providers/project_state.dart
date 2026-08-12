@@ -27,6 +27,9 @@ const _recentProjectRootsKey = 'basketball_recent_project_roots';
   if (raw.contains('ROI_TOO_SMALL')) {
     return (title: '投篮分析区太小', description: '请扩大紫色区域，覆盖篮筐、篮网和球落下的位置。');
   }
+  if (raw.contains('ENGINE_TIMEOUT')) {
+    return (title: '处理时间较长', description: '请稍候查看任务状态，原始视频不会被修改。');
+  }
   return (title: raw, description: null);
 }
 
@@ -65,9 +68,12 @@ class ProjectState {
     this.hydrating = false,
     this.hydrateError,
     this.busy = false,
+    this.busyMessage,
     this.recentLoading = false,
     this.recentError,
     this.knownProjectsRoot,
+    this.workflowDraft,
+    this.analysisMode = 'standard',
   });
 
   final JsonMap? video;
@@ -91,9 +97,12 @@ class ProjectState {
   final bool hydrating;
   final String? hydrateError;
   final bool busy;
+  final String? busyMessage;
   final bool recentLoading;
   final String? recentError;
   final String? knownProjectsRoot;
+  final JsonMap? workflowDraft;
+  final String analysisMode;
 
   bool get exportRunning {
     final jobState = exportJob?['state']?.toString();
@@ -128,6 +137,8 @@ class ProjectState {
     Object? statistics = _unset,
     Object? recentError = _unset,
     Object? knownProjectsRoot = _unset,
+    Object? workflowDraft = _unset,
+    Object? analysisMode = _unset,
     List<JsonMap>? candidates,
     List<JsonMap>? players,
     List<JsonMap>? recentProjects,
@@ -135,6 +146,7 @@ class ProjectState {
     bool? hydrating,
     Object? hydrateError = _unset,
     bool? busy,
+    Object? busyMessage = _unset,
     bool? recentLoading,
   }) {
     return ProjectState(
@@ -179,6 +191,9 @@ class ProjectState {
           ? this.hydrateError
           : hydrateError as String?,
       busy: busy ?? this.busy,
+      busyMessage: identical(busyMessage, _unset)
+          ? this.busyMessage
+          : busyMessage as String?,
       recentLoading: recentLoading ?? this.recentLoading,
       recentError: identical(recentError, _unset)
           ? this.recentError
@@ -186,6 +201,12 @@ class ProjectState {
       knownProjectsRoot: identical(knownProjectsRoot, _unset)
           ? this.knownProjectsRoot
           : knownProjectsRoot as String?,
+      workflowDraft: identical(workflowDraft, _unset)
+          ? this.workflowDraft
+          : workflowDraft as JsonMap?,
+      analysisMode: identical(analysisMode, _unset)
+          ? this.analysisMode
+          : analysisMode as String,
     );
   }
 }
@@ -239,113 +260,114 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   Future<void> selectVideo(String path) async {
     await flushReviewQueue();
-    await _runBusy(() async {
-      _projectLoadGeneration++;
-      await ref.read(engineBootstrapProvider.notifier).ensure();
-      final session = ref.read(projectSessionProvider);
-      final checkpoint = session.checkpoint();
-      final source = File(path).absolute;
-      final stem = source.uri.pathSegments.last.replaceFirst(
-        RegExp(r'\.[^.]+$'),
-        '',
-      );
-      final knownRoot = state.knownProjectsRoot ?? _projectsRoot;
-      final projectRoot =
-          '$knownRoot/$stem-${DateTime.now().millisecondsSinceEpoch}';
-      late final JsonMap linked;
-      var projectCreated = false;
-      try {
-        await session.createProject(name: stem, rootPath: projectRoot);
-        projectCreated = true;
-        linked = await session.linkVideo(path);
-      } catch (_) {
-        if (projectCreated) {
-          await session.deleteProject(projectRoot);
-        }
-        session.restore(checkpoint);
-        rethrow;
-      }
-      final linkedVideo = (linked['video'] as Map?)?.cast<String, dynamic>();
-      state = state.copyWith(
-        knownProjectsRoot: knownRoot,
-        videoPath: path,
-        reviewVideoPath: null,
-        previewPath: null,
-        suggestedRoi: null,
-        netRoi: null,
-        hoopBbox: null,
-        roiSource: null,
-        roiConfidence: null,
-        roiSuggestionError: null,
-        roiDetecting: true,
-        video: linkedVideo,
-        job: null,
-        exportJob: null,
-        statistics: null,
-        candidates: const <JsonMap>[],
-        players: const <JsonMap>[],
-        exportHistory: const <JsonMap>[],
-      );
-      await _rememberProjectsRoot(knownRoot);
-      ref.read(sidebarExtendedProvider.notifier).collapseForProjectCreation();
-      final duration = (linkedVideo?['duration_ms'] as num?)?.toInt() ?? 1001;
-      try {
-        final preview = await session.extractPreview(
-          timeMs: duration > 1000 ? 1000 : duration,
+    await _runBusy(
+      () async {
+        _projectLoadGeneration++;
+        await ref.read(engineBootstrapProvider.notifier).ensure();
+        final session = ref.read(projectSessionProvider);
+        final checkpoint = session.checkpoint();
+        final source = File(path).absolute;
+        final stem = source.uri.pathSegments.last.replaceFirst(
+          RegExp(r'\.[^.]+$'),
+          '',
         );
-        if (!_disposed && state.videoPath == path) {
-          state = state.copyWith(previewPath: preview['path']?.toString());
-        }
-      } catch (error) {
-        if (!_disposed && state.videoPath == path) {
-          _pushNotice('视频预览加载失败：$error', NoticeSeverity.error);
-        }
-      }
-      Rect? suggestedRoi;
-      Rect? hoopBbox;
-      String? roiSource;
-      double? roiConfidence;
-      String? roiSuggestionError;
-      try {
-        final suggestion = await session.suggestRoi(
-          duration: 12,
-          sampleFps: 1,
-          maxSamples: 8,
-          confidence: 0.05,
-        );
-        final roi = (suggestion['roi'] as Map?)?.cast<String, dynamic>();
-        if (roi != null && linkedVideo != null) {
-          suggestedRoi = _normalizeRoi(roi, linkedVideo);
-          final calibration = (suggestion['calibration'] as Map?)
-              ?.cast<String, dynamic>();
-          final rawHoopBbox = calibration?['hoop_bbox'];
-          if (rawHoopBbox is List) {
-            hoopBbox = _normalizeBbox(rawHoopBbox, linkedVideo);
+        final knownRoot = state.knownProjectsRoot ?? _projectsRoot;
+        final projectRoot =
+            '$knownRoot/$stem-${DateTime.now().millisecondsSinceEpoch}';
+        late final JsonMap linked;
+        var projectCreated = false;
+        try {
+          await session.createProject(name: stem, rootPath: projectRoot);
+          projectCreated = true;
+          linked = await session.linkVideo(path);
+        } catch (_) {
+          if (projectCreated) {
+            await session.deleteProject(projectRoot);
           }
-          await session.saveRoi(
-            x1: roi['x1'] as num,
-            y1: roi['y1'] as num,
-            x2: roi['x2'] as num,
-            y2: roi['y2'] as num,
-            calibration: calibration,
-          );
-          roiSource = 'auto';
-          roiConfidence = (calibration?['confidence'] as num?)?.toDouble();
+          session.restore(checkpoint);
+          rethrow;
         }
-      } catch (error) {
-        // 自动 ROI 是便利功能,失败不应阻塞导入,用户可手动框选。
-        roiSuggestionError = error.toString();
-      }
-      state = state.copyWith(
-        suggestedRoi: suggestedRoi,
-        hoopBbox: hoopBbox,
-        roiSource: roiSource,
-        roiConfidence: roiConfidence,
-        roiSuggestionError: roiSuggestionError,
-        roiDetecting: false,
-      );
-      _reviewHistory.clear();
-    }, successMessage: '视频已加载，已优先尝试自动识别篮筐区域');
+        final linkedVideo = (linked['video'] as Map?)?.cast<String, dynamic>();
+        state = state.copyWith(
+          knownProjectsRoot: knownRoot,
+          videoPath: _playbackVideoPath(linkedVideo) ?? path,
+          reviewVideoPath: null,
+          previewPath: null,
+          suggestedRoi: null,
+          netRoi: null,
+          hoopBbox: null,
+          roiSource: null,
+          roiConfidence: null,
+          roiSuggestionError: null,
+          roiDetecting: true,
+          video: linkedVideo,
+          job: null,
+          exportJob: null,
+          statistics: null,
+          candidates: const <JsonMap>[],
+          players: const <JsonMap>[],
+          exportHistory: const <JsonMap>[],
+          workflowDraft: null,
+        );
+        await _rememberProjectsRoot(knownRoot);
+        ref.read(sidebarExtendedProvider.notifier).collapseForProjectCreation();
+        state = state.copyWith(busyMessage: '正在生成视频预览…');
+        final duration = (linkedVideo?['duration_ms'] as num?)?.toInt() ?? 1001;
+        try {
+          final preview = await session.extractPreview(
+            timeMs: duration > 1000 ? 1000 : duration,
+          );
+          if (!_disposed && state.videoPath == path) {
+            state = state.copyWith(previewPath: preview['path']?.toString());
+          }
+        } catch (error) {
+          if (!_disposed && state.videoPath == path) {
+            _pushNotice('视频预览加载失败：$error', NoticeSeverity.error);
+          }
+        }
+        state = state.copyWith(busyMessage: '正在识别篮筐区域…');
+        Rect? suggestedRoi;
+        Rect? hoopBbox;
+        String? roiSource;
+        double? roiConfidence;
+        String? roiSuggestionError;
+        try {
+          final suggestion = await session.suggestRoi(
+            duration: 12,
+            sampleFps: 1,
+            maxSamples: 8,
+            confidence: 0.05,
+          );
+          final roi = (suggestion['roi'] as Map?)?.cast<String, dynamic>();
+          if (roi != null && linkedVideo != null) {
+            suggestedRoi = _normalizeRoi(roi, linkedVideo);
+            final calibration = (suggestion['calibration'] as Map?)
+                ?.cast<String, dynamic>();
+            final rawHoopBbox = calibration?['hoop_bbox'];
+            if (rawHoopBbox is List) {
+              hoopBbox = _normalizeBbox(rawHoopBbox, linkedVideo);
+            }
+            // 自动建议只进入会话草稿，最终由 applyWorkflowDraft 写入生效配置。
+            roiSource = 'auto';
+            roiConfidence = (calibration?['confidence'] as num?)?.toDouble();
+          }
+        } catch (error) {
+          // 自动 ROI 是便利功能,失败不应阻塞导入,用户可手动框选。
+          roiSuggestionError = error.toString();
+        }
+        state = state.copyWith(
+          suggestedRoi: suggestedRoi,
+          hoopBbox: hoopBbox,
+          roiSource: roiSource,
+          roiConfidence: roiConfidence,
+          roiSuggestionError: roiSuggestionError,
+          roiDetecting: false,
+        );
+        _reviewHistory.clear();
+      },
+      busyMessage: '正在准备视频…',
+      successMessage: '视频已加载，已优先尝试自动识别篮筐区域',
+    );
   }
 
   Future<void> refreshPreview() async {
@@ -358,6 +380,111 @@ class ProjectNotifier extends Notifier<ProjectState> {
           .extractPreview(timeMs: duration > 1000 ? 1000 : duration);
       state = state.copyWith(previewPath: preview['path']?.toString());
     }, successMessage: '视频预览已刷新');
+  }
+
+  Future<JsonMap?> loadWorkflowDraft() async {
+    final session = ref.read(projectSessionProvider);
+    if (session.projectRoot == null) return state.workflowDraft;
+    final payload = await session.getWorkflowDraft();
+    final draft = (payload['draft'] as Map?)?.cast<String, dynamic>();
+    state = state.copyWith(workflowDraft: draft);
+    return draft;
+  }
+
+  Future<void> saveWorkflowDraft(JsonMap draft) async {
+    await ref.read(projectSessionProvider).saveWorkflowDraft(draft);
+    state = state.copyWith(workflowDraft: draft);
+  }
+
+  Future<void> clearWorkflowDraft() async {
+    await ref.read(projectSessionProvider).clearWorkflowDraft();
+    state = state.copyWith(workflowDraft: null);
+  }
+
+  Future<bool> applyWorkflowDraft(JsonMap draft) async {
+    var applied = false;
+    await _runBusy(() async {
+      final video = state.video;
+      if (video == null) {
+        throw const SessionStateException('请先选择视频');
+      }
+      final session = ref.read(projectSessionProvider);
+      final roi = _draftRect(draft['roi']);
+      if (roi == null) {
+        throw const SessionStateException('请先设置投篮分析区');
+      }
+      final range = (draft['analysis_range'] as Map?)?.cast<String, dynamic>();
+      final startMs = (range?['start_ms'] as num?)?.toInt() ?? 0;
+      final endMs =
+          (range?['end_ms'] as num?)?.toInt() ??
+          (video['duration_ms'] as num?)?.toInt() ??
+          0;
+      final rangePayload = await session.setAnalysisRange(
+        startMs: startMs,
+        endMs: endMs,
+      );
+      final rangedVideo = (rangePayload['video'] as Map?)
+          ?.cast<String, dynamic>();
+
+      final net = _draftRect(draft['net_roi']);
+      final hoop = _draftRect(draft['hoop_bbox']);
+      final mappedRoi = roi;
+      final mappedNet = net;
+      final mappedHoop = hoop;
+      final nextWidth = ((video['width'] as num?)?.toDouble() ?? 1).clamp(
+        1,
+        double.infinity,
+      );
+      final nextHeight = ((video['height'] as num?)?.toDouble() ?? 1).clamp(
+        1,
+        double.infinity,
+      );
+      final calibration = <String, dynamic>{'source': 'manual'};
+      if (mappedHoop != null) {
+        calibration['hoop_bbox'] = <double>[
+          mappedHoop.left * nextWidth,
+          mappedHoop.top * nextHeight,
+          mappedHoop.right * nextWidth,
+          mappedHoop.bottom * nextHeight,
+        ];
+      }
+      if (mappedNet != null) {
+        calibration['net_roi'] = <String, double>{
+          'x1': mappedNet.left * nextWidth,
+          'y1': mappedNet.top * nextHeight,
+          'x2': mappedNet.right * nextWidth,
+          'y2': mappedNet.bottom * nextHeight,
+        };
+      }
+      await session.saveRoi(
+        x1: mappedRoi.left * nextWidth,
+        y1: mappedRoi.top * nextHeight,
+        x2: mappedRoi.right * nextWidth,
+        y2: mappedRoi.bottom * nextHeight,
+        calibration: calibration,
+      );
+      await session.clearWorkflowDraft();
+      final savedMode = draft['analysis_mode']?.toString();
+      final mode = savedMode == 'fast' ? 'fast' : 'standard';
+      await session.setAnalysisMode(mode);
+      state = state.copyWith(
+        video: rangedVideo ?? video,
+        videoPath: state.videoPath,
+        reviewVideoPath: null,
+        previewPath: null,
+        suggestedRoi: mappedRoi,
+        hoopBbox: mappedHoop,
+        netRoi: mappedNet,
+        roiSource: 'manual',
+        roiConfidence: null,
+        roiSuggestionError: null,
+        statistics: null,
+        workflowDraft: null,
+        analysisMode: mode,
+      );
+      applied = true;
+    }, busyMessage: '正在保存配置…');
+    return applied;
   }
 
   /// 等价 app.dart:_chooseOpenProject(297)。
@@ -580,7 +707,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
       state = state.copyWith(
         knownProjectsRoot: Directory(canonicalProjectPath(root)).parent.path,
         video: video,
-        videoPath: sourceMissing ? null : video?['source_path']?.toString(),
+        videoPath: sourceMissing ? null : _playbackVideoPath(video),
         reviewVideoPath: null,
         previewPath: null,
         suggestedRoi: restoredRoiRect,
@@ -595,6 +722,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
         exportHistory: const <JsonMap>[],
         hydrating: video != null && session.videoId != null,
         hydrateError: null,
+        workflowDraft: (payload['workflow_draft'] as Map?)
+            ?.cast<String, dynamic>(),
+        analysisMode: payload['analysis_mode']?.toString() == 'fast'
+            ? 'fast'
+            : 'standard',
       );
       await _rememberProjectsRoot(
         Directory(canonicalProjectPath(root)).parent.path,
@@ -629,6 +761,20 @@ class ProjectNotifier extends Notifier<ProjectState> {
     ProjectSessionScope scope,
   ) async {
     final duration = (video['duration_ms'] as num?)?.toInt() ?? 1000;
+    try {
+      final modePayload = await scope.engine.getAnalysisMode(
+        projectRoot: scope.projectRoot,
+      );
+      if (generation == _projectLoadGeneration) {
+        state = state.copyWith(
+          analysisMode: modePayload['mode']?.toString() == 'fast'
+              ? 'fast'
+              : 'standard',
+        );
+      }
+    } catch (_) {
+      // 旧项目没有模式记录时保持 standard。
+    }
     try {
       final candidatePayload = await scope.listCandidates();
       final candidates =
@@ -816,8 +962,6 @@ class ProjectNotifier extends Notifier<ProjectState> {
       if (video != null) {
         state = state.copyWith(
           video: video,
-          candidates: const <JsonMap>[],
-          reviewVideoPath: null,
           statistics: null,
         );
       }
@@ -842,15 +986,13 @@ class ProjectNotifier extends Notifier<ProjectState> {
             activeId is String) {
           final result = await session.retryAnalysis(
             jobId: activeId,
+            mode: state.analysisMode,
             sampleFps: 10,
             beforeSeconds: 6,
             afterSeconds: 3,
           );
           state = state.copyWith(
             job: (result['job'] as Map?)?.cast<String, dynamic>(),
-            candidates: const <JsonMap>[],
-            reviewVideoPath: null,
-            statistics: null,
           );
           started = true;
           _pushNotice('已重新开始分析', NoticeSeverity.success);
@@ -867,22 +1009,20 @@ class ProjectNotifier extends Notifier<ProjectState> {
         return;
       }
       final result = await session.startAnalysis(
+        mode: state.analysisMode,
         sampleFps: 10,
         beforeSeconds: 6,
         afterSeconds: 3,
       );
       state = state.copyWith(
         job: (result['job'] as Map?)?.cast<String, dynamic>(),
-        candidates: const <JsonMap>[],
-        reviewVideoPath: null,
-        statistics: null,
       );
       started = true;
       _pushNotice('分析已开始，完成后会显示候选片段', NoticeSeverity.success);
       final jobId = state.job?['id'];
       if (jobId is! String) return;
       unawaited(pollJob(jobId));
-    });
+    }, busyMessage: '正在启动分析…');
     return started;
   }
 
@@ -982,15 +1122,13 @@ class ProjectNotifier extends Notifier<ProjectState> {
           .read(projectSessionProvider)
           .retryAnalysis(
             jobId: jobId,
+            mode: state.analysisMode,
             sampleFps: 10,
             beforeSeconds: 6,
             afterSeconds: 3,
           );
       state = state.copyWith(
         job: (result['job'] as Map?)?.cast<String, dynamic>(),
-        candidates: const <JsonMap>[],
-        reviewVideoPath: null,
-        statistics: null,
       );
       _pushNotice('已重新开始分析', NoticeSeverity.success);
       final newJobId = state.job?['id'];
@@ -1053,6 +1191,14 @@ class ProjectNotifier extends Notifier<ProjectState> {
           .map((item) => item.cast<String, dynamic>())
           .toList(),
       reviewVideoPath: reviewVideo,
+    );
+  }
+
+  Future<void> setAnalysisMode(String mode) async {
+    if (mode != 'fast' && mode != 'standard') return;
+    final result = await ref.read(projectSessionProvider).setAnalysisMode(mode);
+    state = state.copyWith(
+      analysisMode: result['mode']?.toString() == 'fast' ? 'fast' : 'standard',
     );
   }
 
@@ -1469,10 +1615,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
   Future<void> _runBusy(
     Future<void> Function() action, {
     String? successMessage,
+    String? busyMessage,
   }) async {
     if (_disposed) return;
     if (state.busy) return;
-    state = state.copyWith(busy: true);
+    state = state.copyWith(busy: true, busyMessage: busyMessage);
     final completer = Completer<void>();
     _busyOperation = completer.future;
     try {
@@ -1486,7 +1633,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
       _pushNotice(error.toString(), NoticeSeverity.error);
     } finally {
       if (!completer.isCompleted) completer.complete();
-      if (!_disposed) state = state.copyWith(busy: false);
+      if (!_disposed) state = state.copyWith(busy: false, busyMessage: null);
     }
   }
 
@@ -1578,6 +1725,17 @@ class ProjectNotifier extends Notifier<ProjectState> {
         : state.copyWith(job: recoverable);
   }
 
+  Rect? _draftRect(Object? raw) {
+    if (raw is! Map) return null;
+    final map = raw.cast<String, dynamic>();
+    final x1 = (map['x1'] as num?)?.toDouble();
+    final y1 = (map['y1'] as num?)?.toDouble();
+    final x2 = (map['x2'] as num?)?.toDouble();
+    final y2 = (map['y2'] as num?)?.toDouble();
+    if ([x1, y1, x2, y2].any((value) => value == null)) return null;
+    return Rect.fromLTRB(x1!, y1!, x2!, y2!);
+  }
+
   /// 等价 app.dart:_normalizeRoi(430)。原始像素坐标 → 归一化 [0,1]。
   Rect _normalizeRoi(Map<String, dynamic> roi, Map<String, dynamic> video) {
     final width = (video['width'] as num?)?.toDouble() ?? 1;
@@ -1615,6 +1773,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
 final NotifierProvider<ProjectNotifier, ProjectState> projectProvider =
     NotifierProvider<ProjectNotifier, ProjectState>(ProjectNotifier.new);
+
+String? _playbackVideoPath(JsonMap? video) => video?['source_path']?.toString();
 
 List<JsonMap> _jsonList(Object? raw) {
   if (raw is! List) return <JsonMap>[];

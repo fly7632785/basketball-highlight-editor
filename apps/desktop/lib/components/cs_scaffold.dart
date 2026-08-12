@@ -10,6 +10,8 @@ import '../providers/sidebar_provider.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
+import '../core/contact_actions.dart';
+import '../features/about/about_dialog.dart';
 import 'cs_bottom_nav.dart';
 import 'cs_sidebar_shell.dart';
 
@@ -130,6 +132,19 @@ class CsTopBar extends ConsumerWidget {
             ),
             const SizedBox(width: Spacing.md),
           ],
+          PopupMenuButton<String>(
+            tooltip: '更多',
+            icon: Icon(
+              LucideIcons.moreHorizontal,
+              size: 18,
+              color: c.textSecondary,
+            ),
+            onSelected: (value) => _handleUtilityAction(context, value),
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'feedback', child: Text('反馈')),
+              PopupMenuItem(value: 'about', child: Text('关于 Courtside')),
+            ],
+          ),
           IconButton(
             tooltip: '切换主题',
             icon: Icon(
@@ -160,6 +175,19 @@ class CsTopBar extends ConsumerWidget {
         return ThemeMode.dark;
       case ThemeMode.dark:
         return ThemeMode.system;
+    }
+  }
+
+  Future<void> _handleUtilityAction(BuildContext context, String value) async {
+    if (value == 'about') {
+      await showCourtsideAboutDialog(context);
+      return;
+    }
+    final opened = await openExternalUri(feedbackMailto());
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('未找到可用的邮件客户端，请手动联系反馈邮箱。')));
     }
   }
 }

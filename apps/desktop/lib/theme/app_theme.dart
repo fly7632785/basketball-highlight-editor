@@ -27,6 +27,51 @@ ThemeData appTheme(Brightness brightness) {
   );
   return base.copyWith(
     textTheme: _buildTextTheme(colors),
+    dialogTheme: DialogThemeData(
+      backgroundColor: colors.surface,
+      surfaceTintColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: .64),
+      shadowColor: Colors.black.withValues(alpha: .28),
+      elevation: 18,
+      alignment: Alignment.center,
+      clipBehavior: Clip.antiAlias,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(CsRadius.md),
+        side: BorderSide(color: colors.borderStrong),
+      ),
+      titleTextStyle: TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 17,
+        fontWeight: FontWeight.w600,
+        color: colors.textPrimary,
+      ),
+      contentTextStyle: TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 13,
+        height: 1.5,
+        color: colors.textSecondary,
+      ),
+      actionsPadding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+      iconColor: colors.indigo,
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        backgroundColor: colors.indigo,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(CsRadius.sm),
+        ),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(CsRadius.sm),
+        ),
+      ),
+    ),
     cardTheme: CardThemeData(
       color: colors.surface,
       elevation: 0,
