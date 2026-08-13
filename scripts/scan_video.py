@@ -4,10 +4,6 @@ import json
 import time
 from pathlib import Path
 
-import cv2
-import torch
-from ultralytics import YOLO
-
 from cache_io import read_json_cache, write_json_cache
 
 
@@ -34,9 +30,23 @@ def parse_args():
 def select_device(requested):
     if requested != "auto":
         return requested
+    import torch
+
     if torch.cuda.is_available():
         return "cuda"
     return "mps" if torch.backends.mps.is_available() else "cpu"
+
+
+def load_yolo_model(model_path):
+    from ultralytics import YOLO
+
+    return YOLO(str(model_path))
+
+
+def open_video(video):
+    import cv2
+
+    return cv2.VideoCapture(str(video))
 
 
 def scan_video(args):
@@ -44,7 +54,7 @@ def scan_video(args):
     model_path = Path(args.model)
     output = Path(args.output)
     x1, y1, x2, y2 = args.roi
-    device = select_device(args.device)
+    device = args.device
 
     cache_path = None
     cache_key = None
@@ -79,8 +89,11 @@ def scan_video(args):
                 print(f"output={output}")
                 return
 
-    model = YOLO(str(model_path))
-    cap = cv2.VideoCapture(str(video))
+    device = select_device(args.device)
+    import cv2
+
+    model = load_yolo_model(model_path)
+    cap = open_video(video)
     if not cap.isOpened():
         raise RuntimeError(f"Unable to open video: {video}")
 

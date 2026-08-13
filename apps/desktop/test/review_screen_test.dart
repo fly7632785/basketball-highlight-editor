@@ -14,8 +14,32 @@ void main() {
     expect(reviewVideoAutoPlayAfterOpen, isFalse);
   });
 
-  test('autoplays after the user switches review video source', () {
+  test('autoplays after switching review source or candidate', () {
     expect(reviewVideoAutoPlayAfterSourceSwitch, isTrue);
+    expect(reviewVideoAutoPlayAfterCandidateSwitch, isTrue);
+  });
+
+  test(
+    'uses the full original-video timeline even when a candidate is selected',
+    () {
+      final bounds = reviewTimelineBounds(
+        isOriginalVideo: true,
+        candidate: const {'default_start_ms': 6000, 'default_end_ms': 15000},
+      );
+
+      expect(bounds.startMs, 0);
+      expect(bounds.endMs, isNull);
+    },
+  );
+
+  test('keeps candidate bounds for an isolated preview source', () {
+    final bounds = reviewTimelineBounds(
+      isOriginalVideo: false,
+      candidate: const {'default_start_ms': 6000, 'default_end_ms': 15000},
+    );
+
+    expect(bounds.startMs, 6000);
+    expect(bounds.endMs, 15000);
   });
 
   test('waits for a positive media duration before playback', () async {
@@ -71,6 +95,47 @@ void main() {
     expect(find.text('标准分析 · 0 个候选 · 用时 12:30'), findsOneWidget);
   });
 
+  testWidgets('shows fast-mode risk and persisted analysis details', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        analysisMode: 'fast',
+        job: {
+          'state': 'completed',
+          'started_at': '2026-08-11T10:00:00.000+00:00',
+          'finished_at': '2026-08-11T10:00:08.000+00:00',
+          'checkpoint_json':
+              '{"stage_timings_ms":{"prepare_proxy":1250,"coarse_scan":2300,"refine_candidates":4700},"cache_hits":2}',
+        },
+      ),
+    );
+
+    expect(find.text('快速分析 · 可能漏检 · 0 个候选 · 用时 00:08'), findsOneWidget);
+    expect(
+      find.text('分析详情：代理 1.3 秒 · 粗扫 2.3 秒 · 精筛 4.7 秒 · 缓存命中 2'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('explains standard reanalysis for an empty fast result', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        analysisMode: 'fast',
+        video: {'id': 'video-1', 'source_path': '/tmp/original.mp4'},
+        videoPath: '/tmp/original.mp4',
+        job: {'state': 'completed'},
+      ),
+    );
+
+    expect(find.text('快速分析未找到候选 · 可能漏检'), findsOneWidget);
+    expect(find.text('用标准模式重新分析', skipOffstage: false), findsOneWidget);
+  });
+
   testWidgets('keeps review status and action areas inset from the edges', (
     tester,
   ) async {
@@ -102,22 +167,14 @@ void main() {
       find.byKey(const Key('candidate-actions-inset')),
     );
 
-    expect(
-      statusInset.padding,
-      const EdgeInsets.symmetric(horizontal: Spacing.md),
-    );
+    expect(statusInset.padding, EdgeInsets.zero);
     expect(
       controlsInset.padding,
       const EdgeInsets.fromLTRB(Spacing.md, Spacing.xs, Spacing.md, Spacing.xs),
     );
     expect(
       candidatePanel.padding,
-      const EdgeInsets.fromLTRB(
-        Spacing.md,
-        Spacing.sm,
-        Spacing.md,
-        Spacing.sm,
-      ),
+      const EdgeInsets.fromLTRB(Spacing.md, Spacing.sm, Spacing.md, Spacing.sm),
     );
     expect(candidateActions.padding, const EdgeInsets.only(top: Spacing.xs));
   });
@@ -266,16 +323,114 @@ void main() {
     expect(find.byTooltip('排除片段 (X / Backspace)'), findsOneWidget);
   });
 
-  testWidgets('always uses the original video for review playback', (
+  testWidgets('opens the player picker next to the candidate row', (
     tester,
   ) async {
     await _pumpReview(
       tester,
       const ProjectState(
-        video: {
-          'id': 'video-1',
-          'source_path': '/tmp/original.mp4',
-        },
+        job: {'state': 'completed'},
+        players: [
+          {'id': 'player-1', 'name': '科比'},
+        ],
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+          },
+        ],
+      ),
+    );
+
+    await tester.tap(find.byTooltip('设置球员标签'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('选择球员'), findsOneWidget);
+    expect(find.text('科比'), findsOneWidget);
+    expect(find.text('新建球员'), findsOneWidget);
+  });
+
+  testWidgets('keeps player chips in a fixed aligned column', (tester) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        players: [
+          {'id': 'player-1', 'name': '科比'},
+          {'id': 'player-2', 'name': '非常长的球员名称'},
+        ],
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+            'player_id': 'player-1',
+            'player_name': '科比',
+          },
+          {
+            'id': 'candidate-2',
+            'event_time_ms': 24000,
+            'default_start_ms': 18000,
+            'default_end_ms': 27000,
+            'player_id': 'player-2',
+            'player_name': '非常长的球员名称',
+          },
+        ],
+      ),
+    );
+
+    final first = tester.getTopLeft(
+      find.byKey(const ValueKey('player-chip-candidate-1')),
+    );
+    final second = tester.getTopLeft(
+      find.byKey(const ValueKey('player-chip-candidate-2')),
+    );
+    expect(second.dx, first.dx);
+  });
+
+  testWidgets(
+    'shows coarse fast-analysis evidence instead of blank pending values',
+    (tester) async {
+      await _pumpReview(
+        tester,
+        ProjectState(
+          analysisMode: 'fast',
+          job: const {'state': 'completed'},
+          candidates: [
+            {
+              'id': 'candidate-1',
+              'event_time_ms': 12000,
+              'default_start_ms': 6000,
+              'default_end_ms': 15000,
+              'confidence': 'medium',
+              'score': 0.62,
+              'evidence_json': jsonEncode({
+                'analysis_source': 'coarse',
+                'coarse_detection_confidence': 0.62,
+                'trajectory': {'trajectory_score': 0.62},
+              }),
+            },
+          ],
+        ),
+      );
+
+      expect(find.text('中'), findsOneWidget);
+      expect(find.text('62%'), findsWidgets);
+    },
+  );
+
+  testWidgets('defaults review playback to the candidate preview', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        video: {'id': 'video-1', 'source_path': '/tmp/original.mp4'},
         videoPath: '/tmp/working.mp4',
         reviewVideoPath: '/tmp/review.mp4',
         job: {'state': 'completed'},
@@ -290,8 +445,9 @@ void main() {
       ),
     );
 
-    expect(find.text('候选预览'), findsNothing);
-    expect(find.byTooltip('切换视频来源'), findsNothing);
+    expect(find.text('候选预览'), findsOneWidget);
+    expect(find.text('原视频'), findsOneWidget);
+    expect(find.byTooltip('切换视频来源'), findsOneWidget);
   });
 
   testWidgets(
@@ -528,6 +684,8 @@ void main() {
 
     expect(find.byTooltip('调整片段范围'), findsOneWidget);
     expect(find.byTooltip('编辑备注'), findsOneWidget);
+    expect(find.byTooltip('补漏'), findsOneWidget);
+    expect(find.byTooltip('从原视频当前时间补漏候选'), findsOneWidget);
     expect(find.byTooltip('撤销上一次审核 (Cmd/Ctrl+Z)'), findsOneWidget);
     expect(find.byTooltip('候选操作'), findsNothing);
   });

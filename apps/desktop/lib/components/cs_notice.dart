@@ -52,7 +52,7 @@ class _CsNoticeState extends State<CsNotice>
       NoticeSeverity.success => (c.success, LucideIcons.circleCheck),
       NoticeSeverity.error => (c.error, LucideIcons.circleX),
       NoticeSeverity.warning => (c.warning, LucideIcons.triangleAlert),
-      NoticeSeverity.info => (c.indigo, LucideIcons.info),
+      NoticeSeverity.info => (c.orange, LucideIcons.info),
     };
     return MouseRegion(
       onEnter: (_) => _timer?.cancel(),
@@ -123,7 +123,7 @@ class _CsNoticeState extends State<CsNotice>
                               child: Text(
                                 widget.message.actionLabel!,
                                 style: TextStyle(
-                                  color: c.indigo,
+                                  color: c.orange,
                                   fontSize: 11,
                                   fontWeight: FontWeight.w500,
                                 ),

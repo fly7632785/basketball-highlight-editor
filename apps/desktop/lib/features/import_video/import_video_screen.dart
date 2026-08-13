@@ -34,7 +34,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   static const _stepCount = 4;
   static const _fastAnalysisEnabled = bool.fromEnvironment(
     'ENABLE_FAST_ANALYSIS',
-    defaultValue: false,
+    defaultValue: true,
   );
 
   int _step = 0;
@@ -418,7 +418,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                       height: 13,
                       child: CircularProgressIndicator(
                         strokeWidth: 1.8,
-                        color: c.indigo,
+                        color: c.orange,
                       ),
                     ),
                     const SizedBox(width: Spacing.sm),
@@ -532,9 +532,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           fastModeEnabled: _fastAnalysisEnabled,
           onAnalysisModeChanged: (mode) {
             setState(() => _analysisMode = mode);
-            unawaited(
-              ref.read(projectProvider.notifier).setAnalysisMode(mode),
-            );
+            unawaited(ref.read(projectProvider.notifier).setAnalysisMode(mode));
             unawaited(_persistDraft());
           },
         );
@@ -558,12 +556,12 @@ class _DraftBanner extends StatelessWidget {
         vertical: Spacing.sm,
       ),
       decoration: BoxDecoration(
-        color: c.indigo.withValues(alpha: .10),
-        border: Border.all(color: c.indigo.withValues(alpha: .35)),
+        color: c.orange.withValues(alpha: .10),
+        border: Border.all(color: c.orange.withValues(alpha: .35)),
       ),
       child: Row(
         children: [
-          Icon(Icons.restore_rounded, size: 17, color: c.indigo),
+          Icon(Icons.restore_rounded, size: 17, color: c.orange),
           const SizedBox(width: Spacing.sm),
           const Expanded(child: Text('检测到上次未完成的配置。')),
           TextButton(onPressed: onDiscard, child: const Text('放弃草稿')),
@@ -588,7 +586,7 @@ class _VideoStep extends StatelessWidget {
         child: Column(
           children: [
             const SizedBox(height: Spacing.lg),
-            Icon(LucideIcons.fileVideo, size: 42, color: c.indigo),
+            Icon(LucideIcons.fileVideo, size: 42, color: c.orange),
             const SizedBox(height: Spacing.md),
             Text('选择原始视频', style: theme.textTheme.titleLarge),
             const SizedBox(height: Spacing.xs),
@@ -833,7 +831,7 @@ class _DetectionStep extends StatelessWidget {
     return _InfoPanel(
       title: '检测区域',
       icon: LucideIcons.target,
-      subtitle: '系统会先自动识别篮筐。紫色区域用于球轨迹，白色区域只覆盖篮网摆动范围；拖动或缩放后会自动保存到草稿。',
+      subtitle: '系统会先自动识别篮筐。橙色区域用于球轨迹，白色区域只覆盖篮网摆动范围；拖动或缩放后会自动保存到草稿。',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -843,8 +841,8 @@ class _DetectionStep extends StatelessWidget {
             aspectRatio: aspectRatio,
             roi: editingNet ? netRoi : roi,
             secondaryRoi: editingNet ? roi : netRoi,
-            activeColor: editingNet ? Colors.white : c.indigo,
-            secondaryColor: editingNet ? c.indigo : Colors.white,
+            activeColor: editingNet ? Colors.white : c.orange,
+            secondaryColor: editingNet ? c.orange : Colors.white,
             activeLabel: editingNet ? '篮网检测区' : '投篮分析区',
             secondaryLabel: editingNet ? '投篮分析区' : '篮网检测区',
             onRefreshPreview: null,
@@ -857,7 +855,7 @@ class _DetectionStep extends StatelessWidget {
               _CalibrationTargetButton(
                 index: '1',
                 label: '投篮分析区',
-                color: c.indigo,
+                color: c.orange,
                 selected: !editingNet,
                 onPressed: enabled ? () => onEditNetChanged(false) : null,
               ),
@@ -881,7 +879,7 @@ class _DetectionStep extends StatelessWidget {
           Text(
             editingNet
                 ? '当前编辑白色篮网区域：覆盖篮圈下方到网底，尽量不要包含篮板、球员或地面。'
-                : '当前编辑紫色投篮分析区域：覆盖来球轨迹、篮圈和篮网下方的落球范围。',
+                : '当前编辑橙色投篮分析区域：覆盖来球轨迹、篮圈和篮网下方的落球范围。',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: c.textSecondary,
               height: 1.4,
@@ -933,6 +931,13 @@ class _SummaryStep extends StatelessWidget {
       ('投篮分析区', roi == null ? '未设置' : '已设置'),
       ('篮网检测区', netRoi == null ? '自动推荐' : '已设置'),
     ];
+    final estimate = estimateAnalysisDuration(
+      startMs: startMs,
+      endMs: endMs,
+      width: (state.video?['width'] as num?)?.toInt() ?? 0,
+      height: (state.video?['height'] as num?)?.toInt() ?? 0,
+      mode: analysisMode,
+    );
     return _InfoPanel(
       title: '确认配置',
       icon: LucideIcons.listChecks,
@@ -955,14 +960,8 @@ class _SummaryStep extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
               child: SegmentedButton<String>(
                 segments: const [
-                  ButtonSegment<String>(
-                    value: 'standard',
-                    label: Text('标准分析'),
-                  ),
-                  ButtonSegment<String>(
-                    value: 'fast',
-                    label: Text('快速分析'),
-                  ),
+                  ButtonSegment<String>(value: 'standard', label: Text('标准分析')),
+                  ButtonSegment<String>(value: 'fast', label: Text('快速分析')),
                 ],
                 selected: {analysisMode},
                 onSelectionChanged: (selection) {
@@ -977,10 +976,104 @@ class _SummaryStep extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: Text('快速分析使用低规格代理，可能漏检少量片段。'),
             ),
+          const SizedBox(height: Spacing.sm),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+              horizontal: Spacing.md,
+              vertical: Spacing.sm,
+            ),
+            decoration: BoxDecoration(
+              color: c.surface2,
+              border: Border.all(color: c.border),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.schedule_outlined, size: 17, color: c.textSecondary),
+                const SizedBox(width: Spacing.sm),
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        const TextSpan(text: '开始前预计耗时：'),
+                        TextSpan(
+                          text: estimate.label,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        const TextSpan(text: '\n实际耗时会受视频编码、磁盘和设备负载影响。'),
+                      ],
+                    ),
+                    style: TextStyle(color: c.textSecondary, height: 1.4),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
+}
+
+class AnalysisDurationEstimate {
+  const AnalysisDurationEstimate({
+    required this.minimum,
+    required this.maximum,
+    required this.label,
+  });
+
+  final Duration minimum;
+  final Duration maximum;
+  final String label;
+}
+
+/// Gives a deliberately broad preflight estimate rather than pretending to
+/// predict the exact runtime before the engine has run on this device.
+AnalysisDurationEstimate estimateAnalysisDuration({
+  required int startMs,
+  required int endMs,
+  required int width,
+  required int height,
+  required String mode,
+}) {
+  final durationSeconds = ((endMs - startMs).clamp(0, 1 << 31) / 1000)
+      .toDouble();
+  if (durationSeconds <= 0) {
+    return const AnalysisDurationEstimate(
+      minimum: Duration.zero,
+      maximum: Duration.zero,
+      label: '暂无法估算',
+    );
+  }
+  final resolutionFactor = width >= 3840 || height >= 2160
+      ? 1.8
+      : width >= 2560 || height >= 1440
+      ? 1.35
+      : width > 0 && height > 0 && width <= 1280
+      ? 0.85
+      : 1.0;
+  final fast = mode == 'fast';
+  final minimumSeconds =
+      durationSeconds * (fast ? 0.06 : 0.12) * resolutionFactor;
+  final maximumSeconds =
+      durationSeconds * (fast ? 0.18 : 0.28) * resolutionFactor;
+  final minimum = Duration(seconds: minimumSeconds.ceil());
+  final maximum = Duration(seconds: maximumSeconds.ceil());
+  final minimumMinutes = _formatEstimateMinutes(minimum);
+  final maximumMinutes = _formatEstimateMinutes(maximum);
+  return AnalysisDurationEstimate(
+    minimum: minimum,
+    maximum: maximum,
+    label: minimumMinutes == maximumMinutes
+        ? '约 $minimumMinutes 分钟'
+        : '约 $minimumMinutes–$maximumMinutes 分钟',
+  );
+}
+
+String _formatEstimateMinutes(Duration duration) {
+  final minutes = (duration.inSeconds / 60).ceil();
+  return '${minutes <= 1 ? 1 : minutes}';
 }
 
 class _InfoPanel extends StatelessWidget {
@@ -1005,7 +1098,7 @@ class _InfoPanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 19, color: c.indigo),
+              Icon(icon, size: 19, color: c.orange),
               const SizedBox(width: Spacing.sm),
               Text(title, style: theme.textTheme.titleLarge),
             ],
@@ -1459,7 +1552,7 @@ class _AnalysisTimelineState extends State<_AnalysisTimeline> {
               (value / widget.durationMs * width).clamp(0.0, width).toDouble();
           final positionX = xFor(widget.positionMs);
           final common = _AnalysisTimelineStyle(
-            rangeColor: c.indigo,
+            rangeColor: c.orange,
             trackColor: c.surface3,
             outsideColor: c.background.withValues(alpha: .58),
             handleColor: c.textPrimary,
@@ -1705,14 +1798,18 @@ class _CalibrationTargetButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final selectedColor = color == Colors.white ? c.orange : color;
     return OutlinedButton(
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
         foregroundColor: selected ? c.textPrimary : c.textSecondary,
         backgroundColor: selected
-            ? color.withValues(alpha: color == Colors.white ? 0.12 : 0.20)
+            ? selectedColor.withValues(alpha: 0.14)
             : Colors.transparent,
-        side: BorderSide(color: selected ? color : c.borderStrong),
+        side: BorderSide(
+          color: selected ? selectedColor : c.borderStrong,
+          width: selected ? 1.5 : 1,
+        ),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       ),
       child: Row(
@@ -1723,7 +1820,7 @@ class _CalibrationTargetButton extends StatelessWidget {
             height: 16,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: color,
+              color: selected ? selectedColor : color,
               borderRadius: BorderRadius.circular(3),
             ),
             child: Text(
@@ -1743,7 +1840,7 @@ class _CalibrationTargetButton extends StatelessWidget {
 }
 
 /// ROI 拖拽画布。pan 逻辑迁移自 3700bbc(原样),仅视觉精致化:
-/// 边框 `border` → 激活 `indigo`,选区 `indigo` 18% + 2px + 四角手柄。
+/// 边框 `border` → 激活 `orange`,选区 `orange` 18% + 2px + 四角手柄。
 class _RoiCanvas extends StatefulWidget {
   const _RoiCanvas({
     required this.enabled,
@@ -1857,7 +1954,7 @@ class _RoiCanvasState extends State<_RoiCanvas> {
               color: widget.enabled ? c.surface2 : c.surface3,
               borderRadius: BorderRadius.circular(CsRadius.lg),
               border: Border.all(
-                color: widget.enabled ? c.indigo : c.border,
+                color: widget.enabled ? c.orange : c.border,
                 width: widget.enabled ? 1.5 : 1,
               ),
             ),

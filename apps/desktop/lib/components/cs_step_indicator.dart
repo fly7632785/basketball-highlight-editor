@@ -57,7 +57,7 @@ class _HorizontalSteps extends StatelessWidget {
                               color: index == 0
                                   ? Colors.transparent
                                   : steps[index - 1].completed
-                                  ? c.indigo
+                                  ? c.orange
                                   : c.border,
                             ),
                           ),
@@ -67,7 +67,7 @@ class _HorizontalSteps extends StatelessWidget {
                               color: index == steps.length - 1
                                   ? Colors.transparent
                                   : steps[index].completed
-                                  ? c.indigo
+                                  ? c.orange
                                   : c.border,
                             ),
                           ),
@@ -142,7 +142,7 @@ class _VerticalSteps extends StatelessWidget {
                 width: 2,
                 height: 20,
                 margin: const EdgeInsets.only(left: 13),
-                color: steps[index].completed ? c.indigo : c.border,
+                color: steps[index].completed ? c.orange : c.border,
               ),
             ),
         ],
@@ -172,7 +172,7 @@ class _StepNode extends StatelessWidget {
       return Container(
         width: 28,
         height: 28,
-        decoration: BoxDecoration(color: c.indigo, shape: BoxShape.circle),
+        decoration: BoxDecoration(color: c.orange, shape: BoxShape.circle),
         child: Icon(step.icon, size: 14, color: Colors.white),
       );
     }
@@ -187,7 +187,7 @@ class _StepNode extends StatelessWidget {
       child: Text(
         step.index,
         style: TextStyle(
-          color: c.indigo,
+          color: c.orange,
           fontSize: 12,
           fontWeight: FontWeight.w600,
           fontFeatures: const [FontFeature.tabularFigures()],

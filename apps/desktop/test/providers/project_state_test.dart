@@ -22,7 +22,7 @@ void main() {
       userFacingNotice(
         const EngineException('ROI_INVALID', 'ROI_TOO_SMALL: 检测区域太小'),
       ),
-      (title: '投篮分析区太小', description: '请扩大紫色区域，覆盖篮筐、篮网和球落下的位置。'),
+      (title: '投篮分析区太小', description: '请扩大橙色区域，覆盖篮筐、篮网和球落下的位置。'),
     );
   });
 
@@ -145,6 +145,33 @@ void main() {
       expect(state.candidates, isNotEmpty);
     },
   );
+
+  test('retryAnalysis uses the mode persisted on the previous job', () async {
+    final fakeSession = _FakeProjectSession()
+      ..activeAnalysisJobs = <JsonMap>[
+        <String, dynamic>{
+          'id': 'old-job',
+          'state': 'failed',
+          'checkpoint': <String, dynamic>{'mode': 'fast'},
+        },
+      ]
+      ..retryAnalysisResult = <String, dynamic>{
+        'job': <String, dynamic>{'id': 'retry-job', 'state': 'queued'},
+      };
+    final container = ProviderContainer(
+      overrides: <Override>[
+        projectSessionProvider.overrideWithValue(fakeSession),
+        engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final notifier = container.read(projectProvider.notifier);
+    await notifier.startAnalysis();
+    await notifier.retryAnalysis();
+
+    expect(fakeSession.lastRetryMode, 'fast');
+  });
 
   test(
     'engine transport failure makes a running analysis recoverable',
@@ -556,6 +583,7 @@ class _FakeProjectSession extends ProjectSession {
   final List<String> reviewCalls = <String>[];
   int startAnalysisCalls = 0;
   List<JsonMap> activeAnalysisJobs = <JsonMap>[];
+  String? lastRetryMode;
   JsonMap retryAnalysisResult = <String, dynamic>{
     'job': <String, dynamic>{'id': 'retry-job', 'state': 'queued'},
   };
@@ -676,6 +704,7 @@ class _FakeProjectSession extends ProjectSession {
     String? modelPath,
   }) async {
     retryAnalysisCalls.add(jobId);
+    lastRetryMode = mode;
     if (clearCandidatesOnRetry) _candidates.clear();
     return retryAnalysisResult;
   }

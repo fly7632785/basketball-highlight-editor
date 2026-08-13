@@ -28,7 +28,7 @@ class CsSidebarShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     return Container(
-      width: extended ? 224 : 68,
+      width: extended ? 224 : 76,
       decoration: BoxDecoration(
         color: c.surface,
         border: Border(right: BorderSide(color: c.border)),
@@ -37,7 +37,7 @@ class CsSidebarShell extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           _SidebarBrand(extended: extended, onToggle: onToggle),
-          const SizedBox(height: Spacing.sm),
+          const SizedBox(height: 2),
           _NavItem(
             shell: shell,
             index: 0,
@@ -145,7 +145,7 @@ class _UtilityItem extends StatelessWidget {
     final child = Padding(
       padding: EdgeInsets.symmetric(
         horizontal: extended ? 10 : 12,
-        vertical: 2,
+        vertical: 1,
       ),
       child: Material(
         color: Colors.transparent,
@@ -153,7 +153,7 @@ class _UtilityItem extends StatelessWidget {
           borderRadius: BorderRadius.circular(CsRadius.sm),
           onTap: onTap,
           child: SizedBox(
-            height: 38,
+            height: 34,
             child: Row(
               mainAxisAlignment: extended
                   ? MainAxisAlignment.start
@@ -217,19 +217,19 @@ class _SidebarBrand extends StatelessWidget {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
     final brand = Container(
-      height: 42,
-      padding: EdgeInsets.symmetric(horizontal: extended ? 10 : 5),
+      height: 46,
+      padding: EdgeInsets.symmetric(horizontal: extended ? 10 : 6),
       decoration: BoxDecoration(
         color: c.surface2,
         borderRadius: BorderRadius.circular(CsRadius.md),
         border: Border.all(color: c.border),
       ),
       child: Row(
-        mainAxisSize: extended ? MainAxisSize.max : MainAxisSize.min,
+        mainAxisSize: MainAxisSize.max,
         children: [
           Container(
-            width: 30,
-            height: 30,
+            width: extended ? 30 : 32,
+            height: extended ? 30 : 32,
             decoration: BoxDecoration(
               color: c.orange.withValues(alpha: .12),
               borderRadius: BorderRadius.circular(CsRadius.sm),
@@ -254,27 +254,49 @@ class _SidebarBrand extends StatelessWidget {
               ),
             ),
           ],
-          const SizedBox(width: 2),
-          SizedBox(
-            width: 26,
-            height: 30,
-            child: IconButton(
-              tooltip: extended ? '收缩侧栏' : '展开侧栏',
-              padding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
-              onPressed: onToggle,
-              icon: Icon(
-                extended ? LucideIcons.chevronLeft : LucideIcons.chevronRight,
-                size: 15,
-                color: c.textSecondary,
+          if (extended) ...[
+            const SizedBox(width: 2),
+            SizedBox(
+              width: 26,
+              height: 30,
+              child: IconButton(
+                tooltip: '收缩侧栏',
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                onPressed: onToggle,
+                icon: Icon(
+                  LucideIcons.chevronLeft,
+                  size: 15,
+                  color: c.textSecondary,
+                ),
               ),
             ),
-          ),
+          ] else ...[
+            const SizedBox(width: 2),
+            Expanded(
+              child: Tooltip(
+                message: '展开侧栏',
+                child: InkWell(
+                  hoverColor: Colors.transparent,
+                  splashColor: Colors.transparent,
+                  highlightColor: Colors.transparent,
+                  onTap: onToggle,
+                  borderRadius: BorderRadius.circular(CsRadius.sm),
+                  child: const SizedBox(
+                    height: 32,
+                    child: Center(
+                      child: Icon(LucideIcons.chevronRight, size: 14),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
     return Padding(
-      padding: EdgeInsets.fromLTRB(10, 12, 10, 8),
+      padding: EdgeInsets.fromLTRB(extended ? 10 : 0, 8, extended ? 10 : 0, 4),
       child: extended ? brand : Center(child: brand),
     );
   }
@@ -282,7 +304,7 @@ class _SidebarBrand extends StatelessWidget {
 
 /// 单个侧栏项。
 ///
-/// 选中态:局部 indigo 背景 + 文字 w600 + 图标 indigo;
+/// 选中态:局部橙色背景 + 文字 w600 + 图标橙色;
 /// 未选中:textSecondary。折叠态(extended=false)只显示图标 + Tooltip(label)。
 class CsSidebarItem extends StatelessWidget {
   const CsSidebarItem({
@@ -305,37 +327,30 @@ class CsSidebarItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    final fg = selected ? c.indigo : c.textSecondary;
+    final fg = selected ? c.orange : c.textSecondary;
     final iconData = selected ? (selectedIcon ?? icon) : icon;
 
     final inner = Padding(
       padding: EdgeInsets.symmetric(
-        horizontal: extended ? 10 : 12,
-        vertical: 3,
+        horizontal: extended ? 14 : 12,
+        vertical: extended ? 2 : 1,
       ),
       child: Material(
-        color: selected ? c.indigo.withValues(alpha: 0.10) : Colors.transparent,
+        color: selected ? c.orange.withValues(alpha: 0.10) : Colors.transparent,
         borderRadius: BorderRadius.circular(CsRadius.sm),
         child: InkWell(
+          hoverColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
           borderRadius: BorderRadius.circular(CsRadius.sm),
           onTap: onTap,
           child: SizedBox(
-            height: 42,
+            height: extended ? 38 : 36,
             child: Row(
               mainAxisAlignment: extended
                   ? MainAxisAlignment.start
                   : MainAxisAlignment.center,
               children: <Widget>[
-                if (selected)
-                  Container(
-                    width: 3,
-                    height: 18,
-                    margin: const EdgeInsets.only(left: 6, right: 7),
-                    decoration: BoxDecoration(
-                      color: c.indigo,
-                      borderRadius: BorderRadius.circular(CsRadius.full),
-                    ),
-                  ),
                 Icon(iconData, size: 18, color: fg),
                 if (extended) ...<Widget>[
                   const SizedBox(width: Spacing.sm + 2),

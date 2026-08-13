@@ -5,7 +5,7 @@ import 'package:desktop/theme/app_colors.dart';
 
 void main() {
   test('dark brand colors match spec', () {
-    expect(darkAppColors.indigo, const Color(0xFF5E6AD2));
+    expect(darkAppColors.indigo, const Color(0xFFF0B35A));
     expect(darkAppColors.orange, const Color(0xFFFF6B2C));
     expect(darkAppColors.background, const Color(0xFF0B0E14));
     expect(darkAppColors.surface, const Color(0xFF121620));

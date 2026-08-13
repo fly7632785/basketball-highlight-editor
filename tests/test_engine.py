@@ -521,6 +521,120 @@ def test_get_active_jobs_exposes_checkpoint_and_stale_recovery_state(tmp_path: P
     assert store.get_job(job["id"])["state"] == "running"
 
 
+def test_get_latest_job_returns_terminal_checkpoint_for_reopened_project(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "已完成项目", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    video = store.link_video({
+        "source_path": str(tmp_path / "source.mp4"),
+        "source_size_bytes": 1,
+        "source_mtime_ns": 1,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+    store.save_roi(video["id"], {"x1": 10, "y1": 20, "x2": 100, "y2": 120})
+    job = service._create_analysis_job({
+        "project_root": str(project_root),
+        "video_id": video["id"],
+        "mode": "fast",
+    })["job"]
+    store.update_job(
+        job["id"],
+        state="completed",
+        stage="persist_candidates",
+        progress=1.0,
+        checkpoint={"mode": "fast", "total_elapsed_ms": 1234},
+    )
+
+    latest = EngineService().handle("get_latest_job", {
+        "project_root": str(project_root),
+        "video_id": video["id"],
+    })
+
+    assert latest["job"]["id"] == job["id"]
+    assert latest["job"]["state"] == "completed"
+    assert latest["job"]["checkpoint"]["mode"] == "fast"
+
+
+def test_get_latest_job_uses_a_stable_tiebreaker_for_equal_created_at(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "排序项目", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    project = store.project()
+    assert project is not None
+    first = store.create_job(project["id"], None, "analysis", {"marker": "first"})
+    second = store.create_job(project["id"], None, "analysis", {"marker": "second"})
+
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE jobs SET created_at = ?, updated_at = ? WHERE id IN (?, ?)",
+            ("2026-08-13T00:00:00.000+00:00", "2026-08-13T00:00:00.000+00:00", first["id"], second["id"]),
+        )
+
+    latest = service.handle("get_latest_job", {"project_root": str(project_root)})
+
+    assert latest["job"]["id"] == max(first["id"], second["id"])
+
+
+def test_candidate_previews_use_at_most_two_ffmpeg_processes(
+    tmp_path: Path,
+    monkeypatch,
+):
+    service, store, video, _ = _analysis_fixture(tmp_path)
+    project = store.project()
+    assert project is not None
+    job = store.create_job(project["id"], video["id"], "analysis")
+    rows = [
+        {"event_time_ms": 1_000},
+        {"event_time_ms": 2_000},
+        {"event_time_ms": 3_000},
+    ]
+    active = 0
+    maximum = 0
+    lock = threading.Lock()
+
+    class FakeProcess:
+        def __init__(self, command, **_kwargs):
+            nonlocal active, maximum
+            self.returncode = 0
+            self._released = False
+            Path(command[-1]).parent.mkdir(parents=True, exist_ok=True)
+            Path(command[-1]).write_bytes(b"frame")
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+
+        def communicate(self, timeout=None):
+            nonlocal active
+            if not self._released:
+                time.sleep(0.03)
+                self._released = True
+                with lock:
+                    active -= 1
+            return "", ""
+
+    monkeypatch.setattr("engine.python.basketball_engine.service.subprocess.Popen", FakeProcess)
+
+    counts = service._prepare_candidate_previews(
+        store=store,
+        source=tmp_path / "source.mp4",
+        video=video,
+        video_id=video["id"],
+        rows=rows,
+        job_id=job["id"],
+        cancel_event=threading.Event(),
+    )
+
+    assert counts == {"generated": 3, "reused": 0, "failed": 0}
+    assert maximum == 2
+
+
 def test_get_active_jobs_does_not_start_duplicate_work_and_marks_live_worker(tmp_path: Path):
     project_root = tmp_path / "project"
     service = EngineService()
@@ -802,6 +916,57 @@ def test_start_export_runs_as_recoverable_job(tmp_path: Path):
     assert job["progress"] == pytest.approx(1.0)
 
 
+def test_completed_export_keeps_retry_parameters_in_checkpoint(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "导出参数", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"fixture")
+    video = store.link_video({
+        "source_path": str(source),
+        "source_size_bytes": source.stat().st_size,
+        "source_mtime_ns": source.stat().st_mtime_ns,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+    store.replace_candidates(video["id"], [{
+        "id": "candidate-1", "video_id": video["id"], "event_time_ms": 1_000,
+        "default_start_ms": 0, "default_end_ms": 4_000,
+        "review_start_ms": 0, "review_end_ms": 4_000,
+        "detector_version": "test", "evidence_json": "{}",
+    }])
+    player = store.create_player("#1")
+    store.set_candidate_player("candidate-1", player["id"])
+    service._execute_export = lambda payload, **_kwargs: {
+        "export": {"id": "export-1"},
+        "files": ["/tmp/highlights.mp4"],
+    }
+
+    started = service.handle("start_export", {
+        "project_root": str(project_root),
+        "video_id": video["id"],
+        "mode": "merge",
+        "output_path": str(tmp_path / "highlights.mp4"),
+        "player_ids": [player["id"]],
+        "include_unassigned": False,
+    })
+    job_id = started["job"]["id"]
+    service._job_threads[job_id].join(timeout=2)
+
+    checkpoint = json.loads(store.get_job(job_id)["checkpoint_json"])
+    assert checkpoint["mode"] == "merge"
+    assert checkpoint["output_path"] == str(tmp_path / "highlights.mp4")
+    assert checkpoint["player_ids"] == [player["id"]]
+    assert checkpoint["include_unassigned"] is False
+    assert checkpoint["export"] == {"id": "export-1"}
+    assert checkpoint["files"] == ["/tmp/highlights.mp4"]
+
+
 def test_list_candidates_returns_original_video_even_when_proxy_exists(tmp_path: Path):
     project_root = tmp_path / "project"
     service = EngineService()
@@ -981,6 +1146,52 @@ def test_persist_candidates_creates_pending_reviews(tmp_path: Path):
     candidates = store.list_candidates(video["id"])
     assert candidates[0]["id"] == "candidate-1"
     assert candidates[0]["review_status"] == "pending"
+
+
+def test_create_manual_candidate_is_included_and_survives_reanalysis(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "手动片段", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    video = store.link_video({
+        "source_path": str(tmp_path / "source.mp4"),
+        "source_size_bytes": 1,
+        "source_mtime_ns": 1,
+        "duration_ms": 60_000,
+        "width": 960,
+        "height": 720,
+    })
+
+    created = service.handle("create_manual_candidate", {
+        "project_root": str(project_root),
+        "video_id": video["id"],
+        "start_ms": 12_000,
+        "end_ms": 21_000,
+        "event_time_ms": 16_000,
+    })["candidate"]
+
+    assert created["detector_version"] == "manual-v1"
+    assert created["confidence"] == "manual"
+    assert created["selection_status"] == "included"
+
+    store.replace_candidates(video["id"], [{
+        "id": "detected-1",
+        "video_id": video["id"],
+        "event_time_ms": 30_000,
+        "default_start_ms": 24_000,
+        "default_end_ms": 33_000,
+        "review_start_ms": 24_000,
+        "review_end_ms": 33_000,
+        "detector_version": "test",
+        "confidence": "review",
+        "evidence_json": "{}",
+    }])
+
+    candidates = store.list_candidates(video["id"])
+    assert {candidate["id"] for candidate in candidates} == {
+        created["id"],
+        "detected-1",
+    }
 
 
 def test_list_candidates_exposes_default_included_selection(tmp_path: Path):

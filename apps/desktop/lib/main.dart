@@ -5,20 +5,33 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'providers/session_provider.dart';
+import 'providers/theme_provider.dart';
+import 'theme/app_colors.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+  final themeMode = await loadSavedThemeMode();
+  ThemeModeNotifier.startupMode = themeMode;
+  final brightness = switch (themeMode) {
+    ThemeMode.light => Brightness.light,
+    ThemeMode.dark => Brightness.dark,
+    ThemeMode.system =>
+      WidgetsBinding.instance.platformDispatcher.platformBrightness,
+  };
+  final colors = brightness == Brightness.light
+      ? lightAppColors
+      : darkAppColors;
   await windowManager.ensureInitialized();
-  const windowOptions = WindowOptions(
-    size: Size(1440, 900),
-    minimumSize: Size(1180, 720),
+  final windowOptions = WindowOptions(
+    size: const Size(1440, 900),
+    minimumSize: const Size(1180, 720),
     center: true,
-    backgroundColor: Color(0xFF0B0E14),
+    backgroundColor: colors.background,
     titleBarStyle: TitleBarStyle.normal,
   );
   windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.setBrightness(Brightness.dark);
+    await windowManager.setBrightness(brightness);
     await windowManager.show();
     await windowManager.focus();
   });

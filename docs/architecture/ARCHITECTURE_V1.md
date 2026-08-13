@@ -16,7 +16,7 @@ V1 的目标是跑通一条可用的桌面闭环：
 - 单项目单视频、单 ROI，底层预留多视频和多 ROI；
 - 原始视频默认只引用，不复制、不移动；
 - 代理视频用于审核，原始视频用于精确导出；
-- 只有人工确认的片段才能导出；
+- 候选默认保留，只有用户明确排除的片段不进入导出；
 - 同一时间只运行一个重型分析任务；
 - 主题支持跟随系统、浅色、深色。
 
@@ -34,7 +34,7 @@ flowchart LR
     Engine -->|precise export| Source[Original Video]
 ```
 
-### 2.1 Flutter UI（当前已完成骨架）
+### 2.1 Flutter UI（已完成 V1 桌面工作台）
 
 职责：
 
@@ -48,7 +48,7 @@ flowchart LR
 
 当前已落地：Material 3 主题、系统/浅色/深色切换、响应式导航、视频元数据、预览帧 ROI 标注、分析进度、候选审核、片段范围调整和单独/合并导出。视频处理与数据写入继续由 Engine 负责，UI 不直接操作 SQLite。
 
-UI 不直接调用 YOLO、OpenCV、FFmpeg，也不直接修改 SQLite。
+UI 不直接调用 YOLO、OpenCV、FFmpeg，也不直接修改 SQLite。项目状态由 Riverpod 管理，页面路由由 go_router 管理。
 
 ### 2.2 Local Engine（协议基座已完成）
 
@@ -82,8 +82,6 @@ apps/desktop/                 Flutter UI
 engine/python/                Engine 进程和协议适配
 engine/python/adapters/       现有算法脚本适配层
 engine/python/storage/        SQLite 仓储
-packages/protocol/            协议模型和 JSON Schema
-packages/domain/              项目、候选、审核、导出领域模型
 docs/architecture/            架构和协议文档
 ```
 
@@ -155,7 +153,7 @@ V1 不实现完整移动端，但保留独立布局契约：
 
 设计源文件：
 
-`design-system/basketball-highlight-editor/MASTER.md`
+`design-system/courtside/MASTER.md`
 
 产品覆盖规则：
 

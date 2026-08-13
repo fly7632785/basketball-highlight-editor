@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
@@ -40,7 +41,7 @@ class EngineService:
         self.stores: dict[str, ProjectStore] = {}
         self._job_threads: dict[str, threading.Thread] = {}
         self._job_cancel_events: dict[str, threading.Event] = {}
-        self._job_processes: dict[str, subprocess.Popen] = {}
+        self._job_processes: dict[str, set[subprocess.Popen]] = {}
         self._store_lock = threading.Lock()
         self._job_lock = threading.Lock()
 
@@ -48,7 +49,11 @@ class EngineService:
         with self._job_lock:
             thread_items = list(self._job_threads.items())
             cancel_events = list(self._job_cancel_events.values())
-            processes = list(self._job_processes.values())
+            processes = [
+                process
+                for job_processes in self._job_processes.values()
+                for process in job_processes
+            ]
         for event in cancel_events:
             event.set()
         for process in processes:
@@ -103,11 +108,14 @@ class EngineService:
             "cancel_job": self.cancel_job,
             "get_job": self.get_job,
             "get_active_jobs": self.get_active_jobs,
+            "get_latest_job": self.get_latest_job,
             "retry_analysis": self.retry_analysis,
             "retry_export": self.retry_export,
             "list_candidates": self.list_candidates,
+            "create_manual_candidate": self.create_manual_candidate,
             "list_players": self.list_players,
             "create_player": self.create_player,
+            "delete_player": self.delete_player,
             "set_candidate_player": self.set_candidate_player,
             "set_candidates_player": self.set_candidates_player,
             "start_review": self.start_review,
@@ -699,68 +707,91 @@ class EngineService:
         reused = 0
         failed = 0
         total = max(1, len(rows))
-        for index, row in enumerate(rows):
+
+        def prepare_one(index: int, row: Dict[str, Any]) -> str:
             if cancel_event and cancel_event.is_set():
                 raise PipelineCancelled("JOB_CANCELLED")
             time_ms = max(0, int(row["event_time_ms"]))
             output_path = self._preview_path(store, video, time_ms)
             if output_path.is_file() and output_path.stat().st_size > 0:
-                reused += 1
-            else:
-                temporary_path = output_path.with_name(
-                    f".{output_path.stem}.{job_id}.tmp{output_path.suffix}"
-                )
-                command = [
-                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                    "-ss", f"{time_ms / 1000:.3f}", "-i", str(source),
-                    "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3",
-                    str(temporary_path),
-                ]
-                popen_kwargs: Dict[str, Any] = {
-                    "stdout": subprocess.PIPE,
-                    "stderr": subprocess.PIPE,
-                    "text": True,
-                }
-                if os.name == "nt":
-                    popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-                else:
-                    popen_kwargs["start_new_session"] = True
-                process = subprocess.Popen(command, **popen_kwargs)
-                self._set_job_process(job_id, process)
-                try:
-                    while True:
-                        try:
-                            _, stderr = process.communicate(timeout=0.1)
-                            break
-                        except subprocess.TimeoutExpired:
-                            if cancel_event and cancel_event.is_set():
-                                terminate_process(process)
-                                process.communicate()
-                                raise PipelineCancelled("JOB_CANCELLED")
-                    if (
-                        process.returncode == 0
-                        and temporary_path.is_file()
-                        and temporary_path.stat().st_size > 0
-                    ):
-                        temporary_path.replace(output_path)
-                        generated += 1
-                    else:
-                        temporary_path.unlink(missing_ok=True)
-                        failed += 1
-                        if stderr:
-                            print(
-                                f"candidate preview failed at {time_ms}ms: {stderr[-500:]}",
-                                file=sys.stderr,
-                            )
-                finally:
-                    temporary_path.unlink(missing_ok=True)
-                    self._set_job_process(job_id, None)
-            store.update_job(
-                job_id,
-                state="running",
-                stage="prepare_review_previews",
-                progress=0.96 + 0.035 * ((index + 1) / total),
+                return "reused"
+            temporary_path = output_path.with_name(
+                f".{output_path.stem}.{job_id}.{index}.tmp{output_path.suffix}"
             )
+            command = [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", f"{time_ms / 1000:.3f}", "-i", str(source),
+                "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3",
+                str(temporary_path),
+            ]
+            popen_kwargs: Dict[str, Any] = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+            }
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                popen_kwargs["start_new_session"] = True
+            process = subprocess.Popen(command, **popen_kwargs)
+            self._set_job_process(job_id, process)
+            try:
+                while True:
+                    try:
+                        _, stderr = process.communicate(timeout=0.1)
+                        break
+                    except subprocess.TimeoutExpired:
+                        if cancel_event and cancel_event.is_set():
+                            terminate_process(process)
+                            process.communicate()
+                            raise PipelineCancelled("JOB_CANCELLED")
+                if (
+                    process.returncode == 0
+                    and temporary_path.is_file()
+                    and temporary_path.stat().st_size > 0
+                ):
+                    temporary_path.replace(output_path)
+                    return "generated"
+                if stderr:
+                    print(
+                        f"candidate preview failed at {time_ms}ms: {stderr[-500:]}",
+                        file=sys.stderr,
+                    )
+                return "failed"
+            finally:
+                temporary_path.unlink(missing_ok=True)
+                self._clear_job_process(job_id, process)
+
+        with ThreadPoolExecutor(
+            max_workers=min(2, max(1, len(rows))),
+            thread_name_prefix=f"preview-{job_id}",
+        ) as executor:
+            futures = [
+                executor.submit(prepare_one, index, row)
+                for index, row in enumerate(rows)
+            ]
+            try:
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result == "generated":
+                        generated += 1
+                    elif result == "reused":
+                        reused += 1
+                    else:
+                        failed += 1
+                    completed = generated + reused + failed
+                    store.update_job(
+                        job_id,
+                        state="running",
+                        stage="prepare_review_previews",
+                        progress=0.96 + 0.035 * (completed / total),
+                    )
+            except PipelineCancelled:
+                if cancel_event:
+                    cancel_event.set()
+                for future in futures:
+                    future.cancel()
+                raise
         return {"generated": generated, "reused": reused, "failed": failed}
 
     def save_roi(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -801,7 +832,6 @@ class EngineService:
         mode = payload.get("mode") or store.analysis_mode()
         if mode not in {"fast", "standard"}:
             raise ProtocolError("ANALYSIS_MODE_INVALID", "分析模式必须是 fast 或 standard")
-        store.set_analysis_mode(mode)
         video = store.video(video_id)
         if video:
             source_for_space = Path(video["source_path"])
@@ -834,6 +864,7 @@ class EngineService:
             "analysis_end_ms": analysis_end_ms,
             "algorithm_version": ANALYSIS_ALGORITHM_VERSION,
         }
+        store.set_analysis_mode(mode)
         return {"job": store.create_job(project["id"], video_id, "analysis", checkpoint)}
 
     @staticmethod
@@ -1238,7 +1269,23 @@ class EngineService:
             if process is None:
                 self._job_processes.pop(job_id, None)
             else:
-                self._job_processes[job_id] = process
+                self._job_processes.setdefault(job_id, set()).add(process)
+
+    def _clear_job_process(
+        self,
+        job_id: str,
+        process: subprocess.Popen | None,
+    ) -> None:
+        with self._job_lock:
+            if process is None:
+                self._job_processes.pop(job_id, None)
+                return
+            processes = self._job_processes.get(job_id)
+            if not processes:
+                return
+            processes.discard(process)
+            if not processes:
+                self._job_processes.pop(job_id, None)
 
     @staticmethod
     def _detection_counts(path: Path) -> dict[str, int]:
@@ -1265,15 +1312,15 @@ class EngineService:
             return {"job": job}
         with self._job_lock:
             cancel_event = self._job_cancel_events.get(job_id)
-            process = self._job_processes.get(job_id)
+            processes = set(self._job_processes.get(job_id, set()))
             if cancel_event:
                 cancel_event.set()
-            should_persist = not cancel_event and not process
+            should_persist = not cancel_event and not processes
         # Do not hold _job_lock while waiting for the process group. The
         # worker needs the same lock to clear its process handle in finally.
-        if process:
+        for process in processes:
             terminate_process(process)
-        if cancel_event or process:
+        if cancel_event or processes:
             job = store.update_job(
                 job_id,
                 state=job["state"],
@@ -1362,6 +1409,34 @@ class EngineService:
             )
         return {"jobs": active_jobs, "count": len(active_jobs)}
 
+    def get_latest_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        store, context = self._existing_store(payload)
+        project = context.get("project")
+        if not project:
+            raise ProtocolError("PROJECT_INVALID", "项目尚未初始化")
+
+        video_id = payload.get("video_id")
+        if video_id is not None:
+            if not isinstance(video_id, str) or not video_id:
+                raise ProtocolError("INVALID_REQUEST", "video_id 必须是非空字符串")
+            if not store.video(video_id):
+                raise ProtocolError("VIDEO_NOT_FOUND", "视频不存在")
+
+        job_type = payload.get("job_type", "analysis")
+        if job_type not in {"analysis", "export"}:
+            raise ProtocolError("INVALID_REQUEST", "job_type 只支持 analysis 或 export")
+
+        jobs = store.list_jobs(
+            project_id=project["id"],
+            job_type=job_type,
+            video_id=video_id,
+            descending=True,
+        )
+        if not jobs:
+            return {"job": None}
+        job = jobs[0]
+        return {"job": {**job, "checkpoint": self._decode_checkpoint(job)}}
+
     def list_candidates(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         store, context = self._existing_store(payload)
         video_id = payload.get("video_id")
@@ -1387,6 +1462,27 @@ class EngineService:
             "players": store.list_players(),
         }
 
+    def create_manual_candidate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        video_id = payload.get("video_id")
+        if not isinstance(video_id, str) or not video_id:
+            raise ProtocolError("INVALID_REQUEST", "缺少 video_id")
+        try:
+            start_ms = int(payload["start_ms"])
+            end_ms = int(payload["end_ms"])
+            event_time_ms = payload.get("event_time_ms")
+            event_time_ms = None if event_time_ms is None else int(event_time_ms)
+            candidate = self._require_store(payload).create_manual_candidate(
+                video_id,
+                start_ms,
+                end_ms,
+                event_time_ms,
+            )
+        except KeyError as exc:
+            raise ProtocolError("INVALID_REQUEST", f"缺少字段: {exc.args[0]}") from exc
+        except (TypeError, ValueError, LookupError) as exc:
+            raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
+        return {"candidate": candidate}
+
     def list_players(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"players": self._require_store(payload).list_players()}
 
@@ -1399,6 +1495,16 @@ class EngineService:
         except ValueError as exc:
             raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
         return {"player": player}
+
+    def delete_player(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        player_id = payload.get("player_id")
+        if not isinstance(player_id, str) or not player_id:
+            raise ProtocolError("INVALID_REQUEST", "缺少 player_id")
+        try:
+            self._require_store(payload).delete_player(player_id)
+        except (ValueError, LookupError) as exc:
+            raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
+        return {"deleted": True}
 
     def set_candidate_player(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         candidate_id = payload.get("candidate_id")
@@ -1661,6 +1767,8 @@ class EngineService:
     def _run_export(self, payload: Dict[str, Any], job_id: str) -> None:
         store = self._require_store(payload)
         cancel_event = self._job_cancel_events.get(job_id)
+        initial_job = store.get_job(job_id) or {}
+        initial_checkpoint = self._decode_checkpoint(initial_job)
 
         def on_progress(stage: str, progress: float) -> None:
             if cancel_event and cancel_event.is_set():
@@ -1687,7 +1795,11 @@ class EngineService:
                 state="completed",
                 stage="persist_export",
                 progress=1.0,
-                checkpoint={"export": result.get("export"), "files": result.get("files", [])},
+                checkpoint={
+                    **initial_checkpoint,
+                    "export": result.get("export"),
+                    "files": result.get("files", []),
+                },
             )
         except PipelineCancelled:
             store.update_job(

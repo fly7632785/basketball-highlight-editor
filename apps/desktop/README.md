@@ -5,8 +5,8 @@ Flutter desktop application for V1. The UI talks to the local Python Engine thro
 ## Current stack
 
 - Flutter / Dart
-- Lightweight `StatefulWidget` session layer for V1
-- Riverpod / go_router remain optional follow-up refactors
+- Riverpod `ProjectNotifier` session layer
+- go_router `StatefulShellRoute` with four desktop sections
 - Material 3 with project Design Tokens
 - JSON Lines connection to `engine/python`
 
@@ -34,5 +34,5 @@ The application modules follow:
 
 - `docs/architecture/ARCHITECTURE_V1.md`
 - `docs/architecture/ENGINE_PROTOCOL_V1.md`
-- `design-system/basketball-highlight-editor/MASTER.md`
-- `design-system/basketball-highlight-editor/pages/review.md`
+- `design-system/courtside/MASTER.md`
+- `design-system/courtside/pages/review.md`

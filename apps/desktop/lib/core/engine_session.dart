@@ -287,6 +287,18 @@ class EngineSession {
     });
   }
 
+  Future<JsonMap> getLatestJob({
+    required String projectRoot,
+    String? videoId,
+    String jobType = 'analysis',
+  }) {
+    return client.request('get_latest_job', <String, dynamic>{
+      'project_root': projectRoot,
+      ...?_optionalEntry('job_type', jobType == 'analysis' ? null : jobType),
+      ...?_optionalEntry('video_id', videoId),
+    });
+  }
+
   Future<JsonMap> cancelJob({
     required String projectRoot,
     required String jobId,
@@ -336,6 +348,22 @@ class EngineSession {
     });
   }
 
+  Future<JsonMap> createManualCandidate({
+    required String projectRoot,
+    required String videoId,
+    required int startMs,
+    required int endMs,
+    int? eventTimeMs,
+  }) {
+    return client.request('create_manual_candidate', <String, dynamic>{
+      'project_root': projectRoot,
+      'video_id': videoId,
+      'start_ms': startMs,
+      'end_ms': endMs,
+      ...?_optionalEntry('event_time_ms', eventTimeMs),
+    });
+  }
+
   Future<JsonMap> listPlayers({required String projectRoot}) {
     return client.request('list_players', <String, dynamic>{
       'project_root': projectRoot,
@@ -349,6 +377,16 @@ class EngineSession {
     return client.request('create_player', <String, dynamic>{
       'project_root': projectRoot,
       'name': name,
+    });
+  }
+
+  Future<JsonMap> deletePlayer({
+    required String projectRoot,
+    required String playerId,
+  }) {
+    return client.request('delete_player', <String, dynamic>{
+      'project_root': projectRoot,
+      'player_id': playerId,
     });
   }
 

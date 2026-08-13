@@ -6,15 +6,11 @@ import sys
 import time
 from pathlib import Path
 
-import torch
-from ultralytics import YOLO
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from basketball_highlight.events import find_refined_crossings
 from basketball_highlight.ranking import dedupe_candidates
 from cache_io import read_json_cache, write_json_cache
-from refine_candidates import scan_window
 
 
 DETECTION_CACHE_VERSION = "python-v2.5-white-net-region"
@@ -56,9 +52,23 @@ def parse_args():
 def select_device(requested):
     if requested != "auto":
         return requested
+    import torch
+
     if torch.cuda.is_available():
         return "cuda"
     return "mps" if torch.backends.mps.is_available() else "cpu"
+
+
+def load_yolo_model(model_path):
+    from ultralytics import YOLO
+
+    return YOLO(str(model_path))
+
+
+def load_scan_window():
+    from refine_candidates import scan_window
+
+    return scan_window
 
 
 def scale_rim(rim, factor, correct_plane=True):
@@ -193,8 +203,9 @@ def main(args):
     video_fingerprint = file_fingerprint(video)
     model_fingerprint = file_fingerprint(model_path)
     coarse_data = json.loads(Path(args.coarse).read_text(encoding="utf-8"))
-    device = select_device(args.device)
-    model = YOLO(str(model_path))
+    device = args.device
+    model = None
+    scan_window = None
     started = time.perf_counter()
     results = []
     if args.cache_dir:
@@ -256,7 +267,12 @@ def main(args):
     missing_centers = [float(candidates[index]["time"]) for index in missing_indices]
     missing_rims = [rims_by_index[index][0] for index in missing_indices]
     scan_groups = build_scan_windows(missing_centers, args.window, missing_rims)
+    if scan_groups:
+        device = select_device(args.device)
     for group_index, group in enumerate(scan_groups, 1):
+        if model is None:
+            model = load_yolo_model(model_path)
+            scan_window = load_scan_window()
         group_indices = [missing_indices[item] for item in group["indices"]]
         group_rim = rims_by_index[group_indices[0]][0]
         merged_records = scan_window(

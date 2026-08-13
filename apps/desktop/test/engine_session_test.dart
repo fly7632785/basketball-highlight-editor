@@ -206,6 +206,50 @@ void main() {
     });
   });
 
+  test('EngineSession forwards manual candidate creation', () async {
+    final transport = _FakeEngineTransport()
+      ..responses['create_manual_candidate'] = {
+        'candidate': {'id': 'manual-1'},
+      };
+    final session = EngineSession(transport);
+
+    final result = await session.createManualCandidate(
+      projectRoot: '/tmp/project',
+      videoId: 'video-1',
+      startMs: 12000,
+      endMs: 21000,
+      eventTimeMs: 16000,
+    );
+
+    expect(result['candidate'], isA<Map<String, dynamic>>());
+    expect(transport.commands, ['create_manual_candidate']);
+    expect(transport.payloads.single, {
+      'project_root': '/tmp/project',
+      'video_id': 'video-1',
+      'start_ms': 12000,
+      'end_ms': 21000,
+      'event_time_ms': 16000,
+    });
+  });
+
+  test('EngineSession forwards player deletion', () async {
+    final transport = _FakeEngineTransport()
+      ..responses['delete_player'] = {'deleted': true};
+    final session = EngineSession(transport);
+
+    final result = await session.deletePlayer(
+      projectRoot: '/tmp/project',
+      playerId: 'player-1',
+    );
+
+    expect(result['deleted'], isTrue);
+    expect(transport.commands, ['delete_player']);
+    expect(transport.payloads.single, {
+      'project_root': '/tmp/project',
+      'player_id': 'player-1',
+    });
+  });
+
   test('EngineSession exposes recovery and export history commands', () async {
     final transport = _FakeEngineTransport()
       ..responses['get_active_jobs'] = {
@@ -234,6 +278,29 @@ void main() {
     expect(transport.payloads, [
       {'project_root': '/tmp/project', 'video_id': 'video-1'},
       {'project_root': '/tmp/project', 'limit': 5},
+    ]);
+  });
+
+  test('EngineSession forwards latest-job type and video filters', () async {
+    final transport = _FakeEngineTransport()
+      ..responses['get_latest_job'] = {
+        'job': {'id': 'export-job', 'state': 'completed'},
+      };
+    final session = EngineSession(transport);
+
+    final latest = await session.getLatestJob(
+      projectRoot: '/tmp/project',
+      videoId: 'video-1',
+      jobType: 'export',
+    );
+
+    expect(latest['job'], isA<Map<String, dynamic>>());
+    expect(transport.payloads, [
+      {
+        'project_root': '/tmp/project',
+        'job_type': 'export',
+        'video_id': 'video-1',
+      },
     ]);
   });
 

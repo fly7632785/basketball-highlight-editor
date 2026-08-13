@@ -8,7 +8,7 @@
 
 **Project:** Courtside
 **Generated:** 2026-08-07 16:30:42
-**Category:** Social Media App
+**Category:** Desktop Video Review Tool
 
 ---
 
@@ -18,13 +18,13 @@
 
 | Role | Hex | CSS Variable |
 |------|-----|--------------|
-| Primary | `#0F0F23` | `--color-primary` |
-| Secondary | `#1E1B4B` | `--color-secondary` |
-| CTA/Accent | `#E11D48` | `--color-cta` |
+| Primary surface | `#121620` | `--color-surface` |
+| Secondary surface | `#1A1F2B` | `--color-surface-2` |
+| CTA/Accent | `#FF6B2C` | `--color-cta` |
 | Background | `#000000` | `--color-background` |
 | Text | `#F8FAFC` | `--color-text` |
 
-**Color Notes:** Cinema dark + play red
+**Color Notes:** Cinema dark + warm orange action accent; no saturated blue text on dark surfaces
 
 ### Typography
 
@@ -68,7 +68,7 @@
 ```css
 /* Primary Button */
 .btn-primary {
-  background: #E11D48;
+  background: #FF6B2C;
   color: white;
   padding: 12px 24px;
   border-radius: 8px;
@@ -85,8 +85,8 @@
 /* Secondary Button */
 .btn-secondary {
   background: transparent;
-  color: #0F0F23;
-  border: 2px solid #0F0F23;
+  color: #E6E8EE;
+  border: 1px solid #31343F;
   padding: 12px 24px;
   border-radius: 8px;
   font-weight: 600;
@@ -153,21 +153,21 @@
 
 ## Style Guidelines
 
-**Style:** Vibrant & Block-based
+**Style:** Restrained Dark Desktop Workspace
 
-**Keywords:** Bold, energetic, playful, block layout, geometric shapes, high color contrast, duotone, modern, energetic
+**Keywords:** Dense but calm, video-first, editorial, focused, keyboard-friendly, low-noise
 
-**Best For:** Startups, creative agencies, gaming, social media, youth-focused, entertainment, consumer
+**Best For:** Desktop tools for reviewing video analysis results and exporting selected clips
 
-**Key Effects:** Large sections (48px+ gaps), animated patterns, bold hover (color shift), scroll-snap, large type (32px+), 200-300ms
+**Key Effects:** Subtle transitions, clear focus states, compact rows, stable layouts, 150-300ms motion
 
 ### Page Pattern
 
-**Pattern Name:** Video-First Hero
+**Pattern Name:** Video Review Workspace
 
-- **Conversion Strategy:** 86% higher engagement with video. Add captions for accessibility. Compress video for performance.
-- **CTA Placement:** Overlay on video (center/bottom) + Bottom section
-- **Section Order:** 1. Hero with video background, 2. Key features overlay, 3. Benefits section, 4. CTA
+- **Interaction Strategy:** Keep the video, candidate queue, and decision controls visible together.
+- **CTA Placement:** Contextual actions beside the current candidate and in the export footer.
+- **Section Order:** 1. Project context, 2. Video workspace, 3. Candidate queue, 4. Export summary
 
 ---
 
@@ -175,6 +175,8 @@
 
 - ❌ Heavy skeuomorphism
 - ❌ Accessibility ignored
+- ❌ Marketing landing-page patterns inside the desktop workspace
+- ❌ Nested cards that hide the active video and review action
 
 ### Additional Forbidden Patterns
 

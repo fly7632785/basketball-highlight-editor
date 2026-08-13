@@ -22,6 +22,7 @@ bool _annotationHintSeen = false;
 /// Opening the review video must not start playback without user input.
 const bool reviewVideoAutoPlayAfterOpen = false;
 const bool reviewVideoAutoPlayAfterSourceSwitch = true;
+const bool reviewVideoAutoPlayAfterCandidateSwitch = true;
 
 /// 审核工作台：视频优先，候选默认保留，用户只需要打叉剔除误检。
 class ReviewScreen extends ConsumerStatefulWidget {
@@ -33,16 +34,19 @@ class ReviewScreen extends ConsumerStatefulWidget {
 
 class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   String? _selectedCandidateId;
+  bool _showOriginalVideo = false;
   final Set<String> _selectedForBatch = <String>{};
   bool _batchMode = false;
   final Set<String> _reviewStartedCandidateIds = <String>{};
   String _candidateFilter = 'all';
   final _VideoPaneController _videoController = _VideoPaneController();
-  final int _videoSourceSwitchToken = 0;
+  int _videoSourceSwitchToken = 0;
   final FocusNode _shortcutFocusNode = FocusNode(
     debugLabel: 'review-shortcut-focus',
   );
   final Map<String, Future<String?>> _coverCache = <String, Future<String?>>{};
+  final Map<String, GlobalKey> _candidateRowKeys = <String, GlobalKey>{};
+  final ScrollController _candidateScrollController = ScrollController();
   final List<Future<void> Function()> _previewQueue =
       <Future<void> Function()>[];
   int _activePreviewLoads = 0;
@@ -85,6 +89,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       } else {
         setState(() => _selectedCandidateId = id);
       }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _ensureCandidateVisible(id);
+      });
     }
   }
 
@@ -101,25 +108,23 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     setState(() => _replayToken++);
   }
 
+  void _toggleVideoSource() {
+    final state = ref.read(projectProvider);
+    final hasReviewSource =
+        (state.reviewVideoPath ?? state.previewPath)?.isNotEmpty == true;
+    if (!hasReviewSource) return;
+    setState(() {
+      _showOriginalVideo = !_showOriginalVideo;
+      _videoSourceSwitchToken++;
+    });
+  }
+
   Future<void> _setPlayerForCandidate(
     Map<String, dynamic> candidate,
-    ProjectState state,
     ProjectNotifier notifier,
+    String? playerId,
   ) async {
-    final playerId = await _choosePlayer(context, state.players);
-    if (!mounted || playerId == null) return;
-    if (playerId == _clearPlayerChoice) {
-      await notifier.setCandidatePlayer(candidate['id'].toString(), null);
-      return;
-    }
-    if (playerId == _newPlayerChoice) {
-      final name = await _promptPlayerName();
-      if (!mounted || name == null) return;
-      final createdId = await notifier.createPlayer(name);
-      if (createdId == null) return;
-      await notifier.setCandidatePlayer(candidate['id'].toString(), createdId);
-      return;
-    }
+    if (!mounted) return;
     await notifier.setCandidatePlayer(candidate['id'].toString(), playerId);
   }
 
@@ -135,55 +140,16 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     return name?.trim().isEmpty == true ? null : name?.trim();
   }
 
-  Future<String?> _choosePlayer(
-    BuildContext dialogContext,
-    List<Map<String, dynamic>> players,
-  ) {
-    return showDialog<String>(
-      context: dialogContext,
-      builder: (context) => AlertDialog(
-        title: const Text('选择球员'),
-        contentPadding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-        content: SizedBox(
-          width: 320,
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _PlayerChoiceButton(
-                label: '未标记',
-                icon: Icons.person_off_outlined,
-                color: AppColors.of(context).textTertiary,
-                onPressed: () => Navigator.pop(context, _clearPlayerChoice),
-              ),
-              for (var index = 0; index < players.length; index++)
-                _PlayerChoiceButton(
-                  label: players[index]['name']?.toString() ?? '',
-                  color: _playerColor(players[index]['id']?.toString(), index),
-                  onPressed: () =>
-                      Navigator.pop(context, players[index]['id']?.toString()),
-                ),
-              _PlayerChoiceButton(
-                label: '新建球员',
-                icon: Icons.add,
-                color: AppColors.of(context).indigo,
-                onPressed: () => Navigator.pop(context, _newPlayerChoice),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-        ],
-      ),
-    );
+  Future<void> _createPlayerForCandidate(
+    Map<String, dynamic> candidate,
+    ProjectNotifier notifier,
+  ) async {
+    final name = await _promptPlayerName();
+    if (!mounted || name == null) return;
+    final playerId = await notifier.createPlayer(name);
+    if (!mounted || playerId == null) return;
+    await notifier.setCandidatePlayer(candidate['id'].toString(), playerId);
   }
-
-  static const _newPlayerChoice = '__new_player__';
-  static const _clearPlayerChoice = '__clear_player__';
 
   void _toggleBatchMode() {
     setState(() {
@@ -200,26 +166,43 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   }
 
   Future<void> _setPlayerForBatch(
-    ProjectState state,
     ProjectNotifier notifier,
+    String? playerId,
   ) async {
     if (_selectedForBatch.isEmpty) return;
-    final playerId = await _choosePlayer(context, state.players);
-    if (!mounted || playerId == null) return;
-    String? selectedPlayerId;
-    if (playerId == _newPlayerChoice) {
-      final name = await _promptPlayerName();
-      if (!mounted || name == null) return;
-      selectedPlayerId = await notifier.createPlayer(name);
-      if (selectedPlayerId == null) return;
-    } else if (playerId != _clearPlayerChoice) {
-      selectedPlayerId = playerId;
-    }
-    await notifier.setCandidatesPlayer(
-      _selectedForBatch.toList(),
-      selectedPlayerId,
-    );
+    await notifier.setCandidatesPlayer(_selectedForBatch.toList(), playerId);
     if (mounted) setState(() => _selectedForBatch.clear());
+  }
+
+  Future<void> _createPlayerForBatch(ProjectNotifier notifier) async {
+    if (_selectedForBatch.isEmpty) return;
+    final name = await _promptPlayerName();
+    if (!mounted || name == null) return;
+    final playerId = await notifier.createPlayer(name);
+    if (!mounted || playerId == null) return;
+    await _setPlayerForBatch(notifier, playerId);
+  }
+
+  Future<void> _deletePlayer(String playerId, String playerName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除球员？'),
+        content: Text('删除“$playerName”后，已标记的候选会变为未标记。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await ref.read(projectProvider.notifier).deletePlayer(playerId);
   }
 
   void _togglePlayback() {
@@ -313,6 +296,39 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         );
   }
 
+  Future<void> _createManualCandidate() async {
+    final state = ref.read(projectProvider);
+    if (state.videoPath == null || state.videoPath!.isEmpty) return;
+    final durationMs = _number(state.video?['duration_ms']).round();
+    if (durationMs <= 0) return;
+    final positionMs = _videoController.currentPositionMs.clamp(0, durationMs);
+    final startMs = (positionMs - 4000).clamp(0, durationMs - 1000).toInt();
+    final endMs = (positionMs + 5000).clamp(startMs + 1000, durationMs).toInt();
+    final result = await showDialog<({int startMs, int endMs})>(
+      context: context,
+      builder: (dialogContext) => _ClipRangeDialog(
+        videoPath: state.videoPath,
+        startMs: startMs,
+        endMs: endMs,
+        durationMs: durationMs,
+        title: '补漏片段',
+        description: '已定位到原视频当前时间。调整起止时间后加入候选。',
+        confirmLabel: '加入候选',
+      ),
+    );
+    if (!mounted || result == null) return;
+    final created = await ref
+        .read(projectProvider.notifier)
+        .createManualCandidate(
+          startMs: result.startMs,
+          endMs: result.endMs,
+          eventTimeMs: positionMs.clamp(result.startMs, result.endMs).toInt(),
+        );
+    if (mounted && created?['id'] != null) {
+      setState(() => _selectedCandidateId = created!['id'].toString());
+    }
+  }
+
   Future<void> _editCandidateNote(Map<String, dynamic> candidate) async {
     final note = await showDialog<String>(
       context: context,
@@ -362,11 +378,20 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   }
 
   Future<void> _confirmReanalyze() async {
+    await _confirmReanalyzeWithMode();
+  }
+
+  Future<void> _confirmReanalyzeWithMode({bool forceStandard = false}) async {
+    final targetMode = forceStandard ? 'standard' : null;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('重新分析当前视频？'),
-        content: const Text('重新分析会替换当前候选列表，但不会删除原始视频。'),
+        content: Text(
+          forceStandard
+              ? '快速分析可能漏检，建议改用标准模式重新分析。当前候选会在新结果成功后替换，原始视频不会被删除。'
+              : '重新分析会替换当前候选列表，但不会删除原始视频。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -374,7 +399,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('重新分析'),
+            child: Text(forceStandard ? '用标准模式重新分析' : '重新分析'),
           ),
         ],
       ),
@@ -382,7 +407,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     if (confirmed == true && mounted) {
       await ref
           .read(projectProvider.notifier)
-          .startAnalysis(replaceRecoverable: true);
+          .startAnalysis(replaceRecoverable: true, mode: targetMode);
     }
   }
 
@@ -405,8 +430,14 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         .clamp(0.0, 1.0)
         .toDouble();
     final originalVideoPath = _resolveOriginalVideoPath(state);
-    final showingOriginalVideo = originalVideoPath != null;
-    final playbackPath = originalVideoPath;
+    final reviewVideoPath = state.reviewVideoPath ?? state.previewPath;
+    final showingOriginalVideo =
+        _showOriginalVideo ||
+        reviewVideoPath == null ||
+        reviewVideoPath.isEmpty;
+    final playbackPath = showingOriginalVideo
+        ? originalVideoPath
+        : reviewVideoPath;
     final reviewLocked = state.busy || state.hydrating;
     if (!reviewLocked && selectedId != null && selectedId.isNotEmpty) {
       _ensureReviewStarted(selectedId);
@@ -414,6 +445,11 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final includedCount = allCandidates
         .where((candidate) => !_isExcluded(candidate))
         .length;
+    final fastCompleted =
+        state.analysisMode == 'fast' && jobState == 'completed';
+    final reanalyze = fastCompleted
+        ? () => _confirmReanalyzeWithMode(forceStandard: true)
+        : _confirmReanalyze;
 
     return Focus(
       key: const Key('review-shortcut-focus'),
@@ -427,7 +463,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         notifier: notifier,
       ),
       child: Padding(
-        padding: const EdgeInsets.only(top: Spacing.xs, bottom: Spacing.xs),
+        padding: EdgeInsets.zero,
         child: Column(
           children: [
             if (analyzing ||
@@ -436,7 +472,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                 job?['recoverable'] == true)
               Padding(
                 key: const Key('review-status-inset'),
-                padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
+                padding: EdgeInsets.zero,
                 child: _AnalysisBar(
                   state: jobState,
                   stage: job?['stage']?.toString() ?? '',
@@ -450,23 +486,21 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                           !state.busy
                       ? () => notifier.retryAnalysis()
                       : null,
-                  onReanalyze: !analyzing && !state.busy
-                      ? _confirmReanalyze
-                      : null,
+                  onReanalyze: !analyzing && !state.busy ? reanalyze : null,
                 ),
               )
             else if (jobState == 'completed')
               Padding(
                 key: const Key('review-status-inset'),
-                padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
+                padding: EdgeInsets.zero,
                 child: _CompletedLine(
                   candidateCount: allCandidates.length,
                   startedAt: job?['started_at']?.toString(),
                   finishedAt: job?['finished_at']?.toString(),
                   mode: state.analysisMode,
+                  checkpoint: _decodeJobCheckpoint(job),
                 ),
               ),
-            const SizedBox(height: Spacing.xs),
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
@@ -484,7 +518,10 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                         candidates.length - 1,
                     onPrevious: () => _moveCandidate(candidates, -1),
                     onNext: () => _moveCandidate(candidates, 1),
-                    onToggleVideoSource: null,
+                    onToggleVideoSource:
+                        reviewVideoPath != null && reviewVideoPath.isNotEmpty
+                        ? _toggleVideoSource
+                        : null,
                     onInteraction: _focusReviewShortcuts,
                     onEditRange: selected == null || reviewLocked
                         ? null
@@ -492,6 +529,10 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     onEditNote: selected == null || reviewLocked
                         ? null
                         : () => _editCandidateNote(selected),
+                    onCreateManualCandidate:
+                        reviewLocked || !showingOriginalVideo
+                        ? null
+                        : _createManualCandidate,
                     onUndo: () {
                       if (!reviewLocked) unawaited(notifier.undoReview());
                     },
@@ -509,17 +550,26 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     hydrating: state.hydrating,
                     hydrateError: state.hydrateError,
                     analyzing: analyzing,
-                    hasVideo: state.videoPath != null,
+                    hasVideo: state.videoPath != null || state.video != null,
+                    analysisMode: state.analysisMode,
+                    analysisCompleted: jobState == 'completed',
                     onSelect: _selectCandidate,
-                    onSetPlayer: (candidate) =>
-                        _setPlayerForCandidate(candidate, state, notifier),
+                    candidateRowKeys: _candidateRowKeys,
+                    candidateScrollController: _candidateScrollController,
+                    onSetPlayer: (candidate, playerId) =>
+                        _setPlayerForCandidate(candidate, notifier, playerId),
+                    onCreatePlayer: (candidate) =>
+                        _createPlayerForCandidate(candidate, notifier),
                     players: state.players,
                     batchMode: _batchMode,
                     selectedForBatch: _selectedForBatch,
                     onToggleBatch: _toggleBatchMode,
                     onToggleBatchCandidate: _toggleBatchCandidate,
-                    onSetPlayerForBatch: () =>
-                        _setPlayerForBatch(state, notifier),
+                    onSetPlayerForBatch: (playerId) =>
+                        _setPlayerForBatch(notifier, playerId),
+                    onCreatePlayerForBatch: () =>
+                        _createPlayerForBatch(notifier),
+                    onDeletePlayer: _deletePlayer,
                     onSetStatus: (id, status) =>
                         _setCandidateStatus(id, status),
                     onLoadCover: state.video == null
@@ -529,7 +579,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     onFilterChanged: (value) =>
                         setState(() => _candidateFilter = value),
                     onReanalyze: !analyzing && !state.busy && !state.hydrating
-                        ? _confirmReanalyze
+                        ? reanalyze
                         : null,
                     onRetryHydration:
                         state.hydrateError != null && !state.hydrating
@@ -541,6 +591,10 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     onEditNote: selected == null || reviewLocked
                         ? null
                         : () => _editCandidateNote(selected),
+                    onCreateManualCandidate:
+                        reviewLocked || !showingOriginalVideo
+                        ? null
+                        : _createManualCandidate,
                     onUndo: () {
                       if (!reviewLocked) unawaited(notifier.undoReview());
                     },
@@ -612,6 +666,39 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final current = _candidateIndex(candidates, selected);
     final next = (current + delta).clamp(0, candidates.length - 1).toInt();
     _selectCandidate(candidates[next]);
+  }
+
+  void _ensureCandidateVisible(String id) {
+    final targetContext = _candidateRowKeys[id]?.currentContext;
+    if (targetContext != null) {
+      unawaited(
+        Scrollable.ensureVisible(
+          targetContext,
+          duration: DurationD.fast,
+          curve: Curves.easeOut,
+          alignment: 0.18,
+        ),
+      );
+      return;
+    }
+    if (!_candidateScrollController.hasClients) return;
+    final state = ref.read(projectProvider);
+    final candidates = _filterCandidates(
+      _orderedCandidates(state.candidates),
+      _candidateFilter,
+    );
+    final index = candidates.indexWhere(
+      (candidate) => candidate['id']?.toString() == id,
+    );
+    if (index < 0) return;
+    final position = _candidateScrollController.position;
+    unawaited(
+      _candidateScrollController.animateTo(
+        (index * 92.0).clamp(0.0, position.maxScrollExtent),
+        duration: DurationD.fast,
+        curve: Curves.easeOut,
+      ),
+    );
   }
 
   Future<String?> _loadCandidateCover(
@@ -688,6 +775,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     _previewGeneration++;
     _previewQueue.clear();
     _coverCache.clear();
+    _candidateScrollController.dispose();
     _shortcutFocusNode.dispose();
     super.dispose();
   }
@@ -727,7 +815,12 @@ class _AnalysisBar extends StatelessWidget {
         ? c.error
         : interrupted
         ? c.warning
-        : c.indigo;
+        : c.orange;
+    final background = failed
+        ? c.error.withValues(alpha: 0.06)
+        : interrupted
+        ? c.warning.withValues(alpha: 0.07)
+        : c.surface2;
     final title = failed
         ? '分析失败'
         : interrupted
@@ -743,14 +836,10 @@ class _AnalysisBar extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(
-        horizontal: Spacing.md,
-        vertical: Spacing.sm,
-      ),
+      padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(CsRadius.md),
-        border: Border.all(color: color.withValues(alpha: 0.28)),
+        color: background,
+        border: Border(bottom: BorderSide(color: c.borderStrong)),
       ),
       child: Row(
         children: [
@@ -767,6 +856,15 @@ class _AnalysisBar extends StatelessWidget {
                 Row(
                   children: [
                     Text(title, style: Theme.of(context).textTheme.labelLarge),
+                    if (active)
+                      Padding(
+                        padding: const EdgeInsets.only(left: Spacing.xs),
+                        child: Text(
+                          '分析进行中',
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(color: c.textSecondary),
+                        ),
+                      ),
                     const SizedBox(width: Spacing.sm),
                     Expanded(
                       child: Text(
@@ -781,17 +879,24 @@ class _AnalysisBar extends StatelessWidget {
                   ],
                 ),
                 if (active) ...[
-                  const SizedBox(height: Spacing.xs),
-                  const Text('分析进行中', style: TextStyle(fontSize: 10)),
-                  if (elapsed.isNotEmpty)
-                    Text(
-                      remaining.isEmpty
-                          ? '已用 $elapsed'
-                          : '已用 $elapsed · 预计剩余约 $remaining',
-                      style: TextStyle(fontSize: 10, color: c.textSecondary),
-                    ),
-                  const SizedBox(height: Spacing.xs),
-                  CsProgressTrack(value: value),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(child: CsProgressTrack(value: value)),
+                      if (elapsed.isNotEmpty) ...[
+                        const SizedBox(width: Spacing.sm),
+                        Text(
+                          remaining.isEmpty
+                              ? '已用 $elapsed'
+                              : '已用 $elapsed · 剩余约 $remaining',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: c.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ],
               ],
             ),
@@ -827,29 +932,59 @@ class _CompletedLine extends StatelessWidget {
     required this.startedAt,
     required this.finishedAt,
     required this.mode,
+    required this.checkpoint,
   });
 
   final int candidateCount;
   final String? startedAt;
   final String? finishedAt;
   final String mode;
+  final Map<String, dynamic> checkpoint;
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final duration = _formatCompletedDuration(startedAt, finishedAt);
-    return SizedBox(
-      height: 24,
-      child: Row(
+    final modeLabel = mode == 'fast' ? '快速分析 · 可能漏检' : '标准分析';
+    final detail = _analysisDetailLabel(checkpoint);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 9),
+      decoration: BoxDecoration(
+        color: c.surface2,
+        border: Border(bottom: BorderSide(color: c.borderStrong)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.check_circle_outline, size: 14, color: c.goal),
-          const SizedBox(width: Spacing.xs),
-          Text(
-            '${mode == 'fast' ? '快速分析' : '标准分析'} · $candidateCount 个候选${duration.isEmpty ? '' : ' · 用时 $duration'}',
-            style: Theme.of(
-              context,
-            ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
+          Row(
+            children: [
+              Icon(Icons.check_circle_outline, size: 14, color: c.goal),
+              const SizedBox(width: Spacing.xs),
+              Expanded(
+                child: Text(
+                  '$modeLabel · $candidateCount 个候选${duration.isEmpty ? '' : ' · 用时 $duration'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
+                ),
+              ),
+            ],
           ),
+          if (detail.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 22, top: 2),
+              child: Text(
+                detail,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: c.textTertiary),
+              ),
+            ),
         ],
       ),
     );
@@ -962,6 +1097,7 @@ class _VideoPane extends StatefulWidget {
     required this.onInteraction,
     required this.onEditRange,
     required this.onEditNote,
+    required this.onCreateManualCandidate,
     required this.onUndo,
   });
 
@@ -980,6 +1116,7 @@ class _VideoPane extends StatefulWidget {
   final VoidCallback onInteraction;
   final VoidCallback? onEditRange;
   final VoidCallback? onEditNote;
+  final VoidCallback? onCreateManualCandidate;
   final VoidCallback onUndo;
 
   @override
@@ -1008,10 +1145,10 @@ class _VideoPaneState extends State<_VideoPane> {
   void initState() {
     super.initState();
     widget.controller._attach(this);
-    final candidate = widget.candidate;
-    if (!widget.isOriginalVideo && candidate != null && candidate.isNotEmpty) {
-      _clipEndMs = _clipEnd(candidate);
-    }
+    _clipEndMs = reviewTimelineBounds(
+      isOriginalVideo: widget.isOriginalVideo,
+      candidate: widget.candidate,
+    ).endMs;
     _ensurePlayer();
     unawaited(_queueOpen(widget.videoPath));
   }
@@ -1068,37 +1205,50 @@ class _VideoPaneState extends State<_VideoPane> {
       _ready = false;
       _loading = false;
       _error = null;
-      final candidate = widget.candidate;
-      _clipEndMs =
-          widget.isOriginalVideo || candidate == null || candidate.isEmpty
-          ? null
-          : _clipEnd(candidate);
+      _clipEndMs = reviewTimelineBounds(
+        isOriginalVideo: widget.isOriginalVideo,
+        candidate: widget.candidate,
+      ).endMs;
       _clipEndHandled = false;
       if (widget.isOriginalVideo) _loopCandidate = false;
       unawaited(
         _queueOpen(
           widget.videoPath,
           playAfterOpen:
+              reviewVideoAutoPlayAfterSourceSwitch &&
               oldWidget.sourceSwitchToken != widget.sourceSwitchToken,
         ),
       );
     } else if (oldWidget.replayToken != widget.replayToken) {
-      if (!widget.isOriginalVideo) {
+      if (widget.candidate != null && widget.candidate!.isNotEmpty) {
+        _showAnnotationHintOnce();
         unawaited(_queueCandidatePlayback());
       }
     } else if (_candidateSignature(oldWidget.candidate) !=
         _candidateSignature(widget.candidate)) {
       final candidate = widget.candidate;
-      if (candidate != null && candidate.isNotEmpty) {
-        if (!widget.isOriginalVideo) {
-          setState(() {
-            _clipEndMs = _clipEnd(candidate);
-            _clipEndHandled = false;
-          });
-          _showAnnotationHintOnce();
-        }
+      if (!widget.isOriginalVideo &&
+          candidate != null &&
+          candidate.isNotEmpty) {
+        setState(() {
+          _clipEndMs = reviewTimelineBounds(
+            isOriginalVideo: false,
+            candidate: candidate,
+          ).endMs;
+          _clipEndHandled = false;
+        });
+        _showAnnotationHintOnce();
+      } else if (widget.isOriginalVideo) {
+        setState(() {
+          _clipEndMs = null;
+          _clipEndHandled = false;
+        });
       }
-      unawaited(_queueCandidatePosition());
+      if (reviewVideoAutoPlayAfterCandidateSwitch) {
+        unawaited(_queueCandidatePlayback());
+      } else {
+        unawaited(_queueCandidatePosition());
+      }
     }
   }
 
@@ -1225,8 +1375,8 @@ class _VideoPaneState extends State<_VideoPane> {
         _loading = false;
         _error = null;
       });
-      if (!widget.isOriginalVideo) _showAnnotationHintOnce();
-      if (!widget.isOriginalVideo) {
+      if (widget.candidate != null && widget.candidate!.isNotEmpty) {
+        _showAnnotationHintOnce();
         await _prepareCandidate(
           widget.candidate,
           generation,
@@ -1269,9 +1419,11 @@ class _VideoPaneState extends State<_VideoPane> {
       return;
     }
     final start = _clipStart(candidate);
-    final end = _clipEnd(candidate);
     setState(() {
-      _clipEndMs = widget.isOriginalVideo ? null : end;
+      _clipEndMs = reviewTimelineBounds(
+        isOriginalVideo: widget.isOriginalVideo,
+        candidate: candidate,
+      ).endMs;
       _clipEndHandled = false;
     });
     try {
@@ -1299,9 +1451,11 @@ class _VideoPaneState extends State<_VideoPane> {
       return;
     }
     final start = _clipStart(candidate);
-    final end = _clipEnd(candidate);
     setState(() {
-      _clipEndMs = widget.isOriginalVideo ? null : end;
+      _clipEndMs = reviewTimelineBounds(
+        isOriginalVideo: widget.isOriginalVideo,
+        candidate: candidate,
+      ).endMs;
       _clipEndHandled = false;
     });
     try {
@@ -1314,6 +1468,8 @@ class _VideoPaneState extends State<_VideoPane> {
     }
   }
 
+  int get currentPositionMs => _player?.state.position.inMilliseconds ?? 0;
+
   Future<void> togglePlayPause() async {
     final generation = _mediaGeneration;
     final playbackToken = _playbackToken;
@@ -1323,8 +1479,7 @@ class _VideoPaneState extends State<_VideoPane> {
       action: (player) async {
         if (player.state.playing) {
           await player.pause();
-        } else if (!widget.isOriginalVideo &&
-            _clipEndMs != null &&
+        } else if (_clipEndMs != null &&
             player.state.position.inMilliseconds >= _clipEndMs!) {
           await _playCandidate(
             widget.candidate,
@@ -1347,14 +1502,12 @@ class _VideoPaneState extends State<_VideoPane> {
   }
 
   Future<void> seekBy(Duration offset) async {
-    final start = widget.isOriginalVideo
-        ? 0
-        : widget.candidate == null
-        ? 0
-        : _clipStart(widget.candidate!);
-    final end = widget.isOriginalVideo || widget.candidate == null
-        ? null
-        : _clipEnd(widget.candidate!);
+    final bounds = reviewTimelineBounds(
+      isOriginalVideo: widget.isOriginalVideo,
+      candidate: widget.candidate,
+    );
+    final start = bounds.startMs;
+    final end = bounds.endMs;
     final requested = _player?.state.position.inMilliseconds ?? start;
     final targetRequested = requested + offset.inMilliseconds;
     final target =
@@ -1463,9 +1616,7 @@ class _VideoPaneState extends State<_VideoPane> {
                                   controls: NoVideoControls,
                                 ),
                               ),
-                              if (!widget.isOriginalVideo &&
-                                  _showAnnotations &&
-                                  widget.candidate != null)
+                              if (_showAnnotations && widget.candidate != null)
                                 StreamBuilder<Duration>(
                                   stream: player?.stream.position,
                                   initialData:
@@ -1508,7 +1659,7 @@ class _VideoPaneState extends State<_VideoPane> {
                           onPressed: widget.onToggleVideoSource!,
                         ),
                       ),
-                    if (!widget.isOriginalVideo && widget.candidate != null)
+                    if (widget.candidate != null)
                       Positioned(
                         top: Spacing.sm,
                         right: Spacing.sm,
@@ -1534,12 +1685,14 @@ class _VideoPaneState extends State<_VideoPane> {
           Divider(height: 1, thickness: 1, color: c.border),
           _VideoControls(
             player: player,
-            clipStartMs: widget.isOriginalVideo || widget.candidate == null
-                ? null
-                : _clipStart(widget.candidate!),
-            clipEndMs: widget.isOriginalVideo || widget.candidate == null
-                ? null
-                : _clipEnd(widget.candidate!),
+            clipStartMs: reviewTimelineBounds(
+              isOriginalVideo: widget.isOriginalVideo,
+              candidate: widget.candidate,
+            ).startMs,
+            clipEndMs: reviewTimelineBounds(
+              isOriginalVideo: widget.isOriginalVideo,
+              candidate: widget.candidate,
+            ).endMs,
             eventTimeMs: widget.isOriginalVideo || widget.candidate == null
                 ? null
                 : _candidateTime(widget.candidate!),
@@ -1556,7 +1709,7 @@ class _VideoPaneState extends State<_VideoPane> {
             loopEnabled: _loopCandidate,
             onToggleLoop: toggleCandidateLoop,
           ),
-          if (!widget.isOriginalVideo && widget.candidate != null)
+          if (widget.candidate != null)
             _CandidateEvidencePanel(
               candidate: widget.candidate!,
               onEditRange: widget.onEditRange,
@@ -1571,6 +1724,8 @@ class _VideoPaneState extends State<_VideoPane> {
 
 class _VideoPaneController {
   _VideoPaneState? _state;
+
+  int get currentPositionMs => _state?.currentPositionMs ?? 0;
 
   void _attach(_VideoPaneState state) => _state = state;
 
@@ -1713,7 +1868,7 @@ class _AnnotationToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    final accent = enabled ? c.indigo : c.textTertiary;
+    final accent = enabled ? c.orange : c.textTertiary;
     return Tooltip(
       message: enabled ? '关闭标注（A）' : '显示标注（A）',
       child: Material(
@@ -1744,11 +1899,11 @@ class _AnnotationToggle extends StatelessWidget {
                   height: 12,
                   padding: const EdgeInsets.all(2),
                   decoration: BoxDecoration(
-                    color: enabled ? c.indigo : c.surface3,
+                    color: enabled ? c.orange : c.surface3,
                     borderRadius: BorderRadius.circular(CsRadius.full),
                     border: Border.all(
                       color: enabled
-                          ? c.indigo.withValues(alpha: 0.8)
+                          ? c.orange.withValues(alpha: 0.8)
                           : c.borderStrong,
                     ),
                   ),
@@ -1839,7 +1994,7 @@ class _VideoSourceOption extends StatelessWidget {
       selected: selected,
       label: selected ? '正在查看$label' : '切换到$label',
       child: Material(
-        color: selected ? c.indigo.withValues(alpha: 0.18) : Colors.transparent,
+        color: selected ? c.orange.withValues(alpha: 0.18) : Colors.transparent,
         borderRadius: BorderRadius.circular(CsRadius.full),
         child: InkWell(
           onTap: onPressed,
@@ -1852,7 +2007,7 @@ class _VideoSourceOption extends StatelessWidget {
                 Icon(
                   icon,
                   size: 13,
-                  color: selected ? c.indigo : c.textSecondary,
+                  color: selected ? c.orange : c.textSecondary,
                 ),
                 const SizedBox(width: 4),
                 Text(
@@ -2004,7 +2159,7 @@ class _CandidateAnnotationPainter extends CustomPainter {
       canvas.drawPath(
         path,
         Paint()
-          ..color = const Color(0xFF9AA6FF)
+          ..color = const Color(0xFFFFB454)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.0
           ..strokeCap = StrokeCap.round,
@@ -2029,7 +2184,7 @@ class _CandidateAnnotationPainter extends CustomPainter {
       _CrossingDisplay.confirmed => const Color(0xFF65C982),
       _CrossingDisplay.inferred => const Color(0xFFFFB454),
       _CrossingDisplay.rejected => const Color(0xFFF17D76),
-      _CrossingDisplay.unknown => const Color(0xFF9AA6FF),
+      _CrossingDisplay.unknown => const Color(0xFFFFB454),
     };
 
     if (points.isNotEmpty && crossingTime > current) {
@@ -2040,7 +2195,7 @@ class _CandidateAnnotationPainter extends CustomPainter {
           points.last,
           Offset(_pointX(prediction['landing_x'], size.width), rimY),
           Paint()
-            ..color = const Color(0xFF9AA6FF)
+            ..color = const Color(0xFFFFB454)
             ..strokeWidth = 1.0,
         );
       }
@@ -2369,7 +2524,7 @@ class _VideoControlsState extends State<_VideoControls> {
                       padding: EdgeInsets.zero,
                       visualDensity: VisualDensity.compact,
                     ),
-                    if (!widget.isOriginalVideo) ...[
+                    if (widget.eventTimeMs != null) ...[
                       IconButton(
                         tooltip: '重播当前片段 (R)',
                         onPressed: widget.enabled
@@ -2391,7 +2546,7 @@ class _VideoControlsState extends State<_VideoControls> {
                         icon: Icon(
                           Icons.repeat,
                           size: 18,
-                          color: widget.loopEnabled ? c.indigo : null,
+                          color: widget.loopEnabled ? c.orange : null,
                         ),
                         constraints: const BoxConstraints.tightFor(
                           width: 34,
@@ -2433,6 +2588,14 @@ class _CandidateEvidencePanel extends StatelessWidget {
       ['verification', 'trajectory_cross'],
       ['trajectory_cross'],
     ]);
+    final prediction = _candidateEvidenceValue(candidate, evidence, const [
+      ['prediction', 'predict_score'],
+      ['predict_score'],
+    ]);
+    final trajectoryScore = _candidateEvidenceValue(candidate, evidence, const [
+      ['trajectory', 'trajectory_score'],
+      ['trajectory_score'],
+    ]);
     final net = _candidateEvidenceValue(candidate, evidence, const [
       ['signals', 'net_inside_motion_score'],
       ['net_inside_motion_score'],
@@ -2462,6 +2625,9 @@ class _CandidateEvidencePanel extends StatelessWidget {
       verdict: verdict,
       completeCrossing: completeCrossing,
     );
+    final isCoarse =
+        evidence['analysis_source']?.toString() == 'coarse' ||
+        candidate['detector_version']?.toString().endsWith(':fast') == true;
     final reason = _candidateEvidenceValue(candidate, evidence, const [
       ['review_reason_suggestion', 'primary'],
       ['review_reason'],
@@ -2500,41 +2666,63 @@ class _CandidateEvidencePanel extends StatelessWidget {
                         candidate['note']?.toString().trim().isNotEmpty == true
                         ? candidate['note']!.toString()
                         : '—',
-                    width: 150,
+                    width: 112,
                     color: c.textSecondary,
                   ),
                   _EvidenceCell(
                     label: '候选置信度',
-                    value: _candidateConfidence(candidate) ?? '—',
+                    value: _candidateConfidence(candidate, evidence) ?? '—',
                     width: 72,
                     color: c.textPrimary,
                     tooltip: '综合轨迹穿框、篮网运动和反弹等信号得出，只用于排序和辅助审核。',
                   ),
                   _EvidenceCell(
+                    label: '轨迹评分',
+                    value: _formatScore(trajectoryScore),
+                    width: 72,
+                    color: c.textSecondary,
+                  ),
+                  _EvidenceCell(
+                    label: '预测评分',
+                    value: _formatScore(prediction),
+                    width: 72,
+                    color: c.textSecondary,
+                  ),
+                  _EvidenceCell(
                     label: '轨迹穿框',
-                    value: _formatCrossing(crossingState),
+                    value: isCoarse && crossingState == _CrossingDisplay.unknown
+                        ? '粗扫通过'
+                        : _formatCrossing(crossingState),
                     width: 92,
-                    color: _crossingColor(c, crossingState),
+                    color: isCoarse && crossingState == _CrossingDisplay.unknown
+                        ? c.warning
+                        : _crossingColor(c, crossingState),
                     tooltip: '判断篮球轨迹是否从篮筐上方进入，并在篮筐横向范围内向下穿过。',
                   ),
                   _EvidenceCell(
                     label: '篮网运动',
-                    value: _formatSignal(net),
+                    value: net == null && isCoarse ? '未计算' : _formatSignal(net),
                     width: 82,
-                    color: _signalColor(c, net),
+                    color: net == null && isCoarse
+                        ? c.textTertiary
+                        : _signalColor(c, net),
                     tooltip: '检测白色篮网区域在球经过后的运动强度；光线、球员遮挡会影响该信号。',
                   ),
                   _EvidenceCell(
                     label: '反弹判断',
-                    value: _formatRebound(rebound),
+                    value: rebound == null && isCoarse
+                        ? '未计算'
+                        : _formatRebound(rebound),
                     width: 82,
-                    color: _reboundColor(c, rebound),
+                    color: rebound == null && isCoarse
+                        ? c.textTertiary
+                        : _reboundColor(c, rebound),
                     tooltip: '检测篮球撞框后向上或向外回弹；出现反弹通常降低进球可能性。',
                   ),
                   _EvidenceCell(
                     label: '系统说明',
                     value: _reviewReasonLabel(reason),
-                    width: 135,
+                    width: 118,
                     color: c.textSecondary,
                     tooltip: '当前候选被纳入审核列表的主要原因。',
                   ),
@@ -2598,12 +2786,18 @@ class _ClipRangeDialog extends StatefulWidget {
     required this.startMs,
     required this.endMs,
     required this.durationMs,
+    this.title = '调整片段范围',
+    this.description = '拖动时间轴两端即可调整。视频会跳到正在拖动的一端；原视频不会被修改。',
+    this.confirmLabel = '应用',
   });
 
   final String? videoPath;
   final int startMs;
   final int endMs;
   final int durationMs;
+  final String title;
+  final String description;
+  final String confirmLabel;
 
   @override
   State<_ClipRangeDialog> createState() => _ClipRangeDialogState();
@@ -2615,6 +2809,8 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
   StreamSubscription<Duration>? _positionSubscription;
   late int _startMs;
   late int _endMs;
+  late final TextEditingController _startController;
+  late final TextEditingController _endController;
   int _positionMs = 0;
   bool _ready = false;
   String? _error;
@@ -2624,6 +2820,8 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
     super.initState();
     _startMs = widget.startMs;
     _endMs = widget.endMs;
+    _startController = TextEditingController(text: _formatMs(_startMs));
+    _endController = TextEditingController(text: _formatMs(_endMs));
     _positionMs = _startMs;
     unawaited(_openVideo());
   }
@@ -2660,6 +2858,8 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
   void dispose() {
     unawaited(_positionSubscription?.cancel());
     unawaited(_player?.dispose());
+    _startController.dispose();
+    _endController.dispose();
     super.dispose();
   }
 
@@ -2680,11 +2880,70 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
   }
 
   void _restoreDefault() {
-    setState(() {
-      _startMs = widget.startMs;
-      _endMs = widget.endMs;
-    });
+    _setRange(widget.startMs, widget.endMs);
     unawaited(_seek(_startMs));
+  }
+
+  void _setRange(int startMs, int endMs) {
+    setState(() {
+      _startMs = startMs;
+      _endMs = endMs;
+      _startController.text = _formatMs(startMs);
+      _endController.text = _formatMs(endMs);
+    });
+  }
+
+  void _submitTimeField({required bool isStart}) {
+    final controller = isStart ? _startController : _endController;
+    final parsed = _parseTimeMs(controller.text);
+    if (parsed == null) {
+      controller.text = _formatMs(isStart ? _startMs : _endMs);
+      return;
+    }
+    final value = parsed.clamp(0, widget.durationMs).toInt();
+    if (isStart) {
+      if (value >= _endMs - 1000) {
+        controller.text = _formatMs(_startMs);
+        return;
+      }
+      _setRange(value, _endMs);
+      unawaited(_seek(value));
+    } else {
+      if (value <= _startMs + 1000) {
+        controller.text = _formatMs(_endMs);
+        return;
+      }
+      _setRange(_startMs, value);
+      unawaited(_seek(value));
+    }
+  }
+
+  int? _parseTimeMs(String value) {
+    final parts = value.trim().split(':');
+    if (parts.length == 1) {
+      final seconds = int.tryParse(parts.first);
+      return seconds == null ? null : seconds * 1000;
+    }
+    if (parts.length == 2) {
+      final minutes = int.tryParse(parts[0]);
+      final seconds = int.tryParse(parts[1]);
+      if (minutes == null || seconds == null || seconds > 59) return null;
+      return (minutes * 60 + seconds) * 1000;
+    }
+    if (parts.length == 3) {
+      final hours = int.tryParse(parts[0]);
+      final minutes = int.tryParse(parts[1]);
+      final seconds = int.tryParse(parts[2]);
+      if (hours == null ||
+          minutes == null ||
+          seconds == null ||
+          minutes > 59 ||
+          seconds > 59) {
+        return null;
+      }
+      return (hours * 3600 + minutes * 60 + seconds) * 1000;
+    }
+    return null;
   }
 
   @override
@@ -2714,10 +2973,13 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('调整片段范围', style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                widget.title,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               const SizedBox(height: Spacing.xs),
               Text(
-                '拖动时间轴两端即可调整。视频会跳到正在拖动的一端；原视频不会被修改。',
+                widget.description,
                 style: Theme.of(
                   context,
                 ).textTheme.bodySmall?.copyWith(color: c.textSecondary),
@@ -2792,10 +3054,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
                         final nextEnd = value.end.round();
                         final startMoved = (nextStart - start).abs();
                         final endMoved = (nextEnd - end).abs();
-                        setState(() {
-                          _startMs = nextStart;
-                          _endMs = nextEnd;
-                        });
+                        _setRange(nextStart, nextEnd);
                         unawaited(
                           _seek(startMoved >= endMoved ? nextStart : nextEnd),
                         );
@@ -2821,15 +3080,45 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
               ),
               const SizedBox(height: Spacing.sm),
               Row(
+                children: [
+                  Expanded(
+                    child: _ClipTimeField(
+                      label: '开始',
+                      controller: _startController,
+                      onSubmitted: () => _submitTimeField(isStart: true),
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: Spacing.sm),
+                    child: Icon(Icons.arrow_forward, size: 16),
+                  ),
+                  Expanded(
+                    child: _ClipTimeField(
+                      label: '结束',
+                      controller: _endController,
+                      onSubmitted: () => _submitTimeField(isStart: false),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: Spacing.md),
+              Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
                     onPressed: _restoreDefault,
+                    style: TextButton.styleFrom(
+                      foregroundColor: c.textSecondary,
+                    ),
                     child: const Text('恢复默认'),
                   ),
-                  const SizedBox(width: Spacing.sm),
-                  TextButton(
+                  const SizedBox(width: Spacing.xs),
+                  OutlinedButton(
                     onPressed: () => Navigator.pop(context),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: c.textPrimary,
+                      side: BorderSide(color: c.borderStrong),
+                    ),
                     child: const Text('取消'),
                   ),
                   const SizedBox(width: Spacing.sm),
@@ -2840,12 +3129,54 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
                             endMs: end,
                           ))
                         : null,
-                    child: const Text('应用'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: c.orange,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: c.surface3,
+                      disabledForegroundColor: c.textTertiary,
+                    ),
+                    child: Text(widget.confirmLabel),
                   ),
                 ],
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ClipTimeField extends StatelessWidget {
+  const _ClipTimeField({
+    required this.label,
+    required this.controller,
+    required this.onSubmitted,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final VoidCallback onSubmitted;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return TextField(
+      controller: controller,
+      onSubmitted: (_) => onSubmitted(),
+      textInputAction: TextInputAction.done,
+      keyboardType: TextInputType.number,
+      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+        color: c.textPrimary,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: '00:00',
+        suffixText: '时:分:秒',
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: Spacing.sm,
+          vertical: 10,
         ),
       ),
     );
@@ -2921,14 +3252,21 @@ class _CandidatePanel extends StatelessWidget {
     required this.hydrateError,
     required this.analyzing,
     required this.hasVideo,
+    required this.analysisMode,
+    required this.analysisCompleted,
     required this.onSelect,
+    required this.candidateRowKeys,
+    required this.candidateScrollController,
     required this.onSetPlayer,
+    required this.onCreatePlayer,
     required this.players,
     required this.batchMode,
     required this.selectedForBatch,
     required this.onToggleBatch,
     required this.onToggleBatchCandidate,
     required this.onSetPlayerForBatch,
+    required this.onCreatePlayerForBatch,
+    required this.onDeletePlayer,
     required this.onSetStatus,
     required this.onLoadCover,
     required this.onFilterChanged,
@@ -2936,6 +3274,7 @@ class _CandidatePanel extends StatelessWidget {
     required this.onRetryHydration,
     required this.onEditRange,
     required this.onEditNote,
+    required this.onCreateManualCandidate,
     required this.onUndo,
     required this.onGoImport,
     required this.onExport,
@@ -2951,14 +3290,21 @@ class _CandidatePanel extends StatelessWidget {
   final String? hydrateError;
   final bool analyzing;
   final bool hasVideo;
+  final String analysisMode;
+  final bool analysisCompleted;
   final ValueChanged<Map<String, dynamic>> onSelect;
-  final Future<void> Function(Map<String, dynamic>) onSetPlayer;
+  final Map<String, GlobalKey> candidateRowKeys;
+  final ScrollController candidateScrollController;
+  final Future<void> Function(Map<String, dynamic>, String?) onSetPlayer;
+  final Future<void> Function(Map<String, dynamic>) onCreatePlayer;
   final List<Map<String, dynamic>> players;
   final bool batchMode;
   final Set<String> selectedForBatch;
   final VoidCallback onToggleBatch;
   final ValueChanged<String> onToggleBatchCandidate;
-  final VoidCallback onSetPlayerForBatch;
+  final ValueChanged<String?> onSetPlayerForBatch;
+  final VoidCallback onCreatePlayerForBatch;
+  final Future<void> Function(String, String) onDeletePlayer;
   final Future<void> Function(String, String) onSetStatus;
   final Future<String?> Function(String, int)? onLoadCover;
   final ValueChanged<String> onFilterChanged;
@@ -2966,9 +3312,32 @@ class _CandidatePanel extends StatelessWidget {
   final VoidCallback? onRetryHydration;
   final VoidCallback? onEditRange;
   final VoidCallback? onEditNote;
+  final VoidCallback? onCreateManualCandidate;
   final VoidCallback onUndo;
   final VoidCallback onGoImport;
   final VoidCallback? onExport;
+
+  void _showBatchPlayerMenu(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => _PlayerPickerMenuContent(
+        players: players,
+        onSelected: (playerId) {
+          Navigator.of(context).pop();
+          onSetPlayerForBatch(playerId);
+        },
+        onCreate: () {
+          Navigator.of(context).pop();
+          onCreatePlayerForBatch();
+        },
+        onDelete: (playerId, playerName) async {
+          Navigator.of(context).pop();
+          await onDeletePlayer(playerId, playerName);
+        },
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2986,75 +3355,145 @@ class _CandidatePanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text('候选片段', style: theme.textTheme.titleSmall),
-              const SizedBox(width: Spacing.sm),
-              Text(
-                '已选 $includedCount / $totalCount',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: c.textSecondary,
-                ),
-              ),
-              const Spacer(),
-              if (batchMode && selectedForBatch.isNotEmpty) ...[
-                Text(
-                  '批量 ${selectedForBatch.length} 个',
-                  style: theme.textTheme.labelSmall?.copyWith(color: c.indigo),
-                ),
-                IconButton(
-                  tooltip: '设置批量球员标签',
-                  onPressed: busy ? null : onSetPlayerForBatch,
-                  icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
-              IconButton(
-                tooltip: batchMode ? '退出批量选择' : '批量选择候选',
-                onPressed: busy ? null : onToggleBatch,
-                icon: Icon(
-                  batchMode ? Icons.close_fullscreen : Icons.checklist_outlined,
-                  size: 18,
-                ),
-                visualDensity: VisualDensity.compact,
-              ),
-              PopupMenuButton<String>(
-                tooltip: '筛选候选',
-                initialValue: filter,
-                onSelected: onFilterChanged,
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'all', child: Text('全部候选')),
-                  PopupMenuItem(value: 'pending', child: Text('待审核')),
-                  PopupMenuItem(value: 'confirmed', child: Text('已确认')),
-                  PopupMenuItem(value: 'excluded', child: Text('已排除')),
-                  PopupMenuItem(value: 'low', child: Text('低置信度')),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final heading = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '候选片段',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: Spacing.sm),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: c.surface3,
+                      borderRadius: BorderRadius.circular(CsRadius.full),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      child: Text(
+                        '已选 $includedCount / $totalCount',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: c.textSecondary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
+              );
+              final actions = Wrap(
+                alignment: WrapAlignment.end,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 0,
+                runSpacing: 0,
+                children: [
+                  if (batchMode && selectedForBatch.isNotEmpty) ...[
                     Text(
-                      _candidateFilterLabel(filter),
+                      '批量 ${selectedForBatch.length} 个',
                       style: theme.textTheme.labelSmall?.copyWith(
+                        color: c.orange,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '设置批量球员标签',
+                      onPressed: busy
+                          ? null
+                          : () => _showBatchPlayerMenu(context),
+                      icon: const Icon(
+                        Icons.person_add_alt_1_outlined,
+                        size: 18,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                  IconButton(
+                    tooltip: batchMode ? '退出批量选择' : '批量选择候选',
+                    onPressed: busy ? null : onToggleBatch,
+                    icon: Icon(
+                      batchMode
+                          ? Icons.close_fullscreen
+                          : Icons.checklist_outlined,
+                      size: 18,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  PopupMenuButton<String>(
+                    tooltip: '筛选候选',
+                    initialValue: filter,
+                    onSelected: onFilterChanged,
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(value: 'all', child: Text('全部候选')),
+                      PopupMenuItem(value: 'pending', child: Text('待审核')),
+                      PopupMenuItem(value: 'confirmed', child: Text('已确认')),
+                      PopupMenuItem(value: 'excluded', child: Text('已排除')),
+                      PopupMenuItem(value: 'low', child: Text('低置信度')),
+                    ],
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: c.surface2,
+                        borderRadius: BorderRadius.circular(CsRadius.sm),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _candidateFilterLabel(filter),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: c.textSecondary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Icon(
+                            Icons.expand_more,
+                            size: 15,
+                            color: c.textSecondary,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Tooltip(
+                    message:
+                        '快捷键\nSpace  播放/暂停\nR  重播当前\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒\nC / Enter  保留\nX / Backspace  排除\nCmd/Ctrl+Z  撤销',
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Icon(
+                        Icons.keyboard_outlined,
+                        size: 17,
                         color: c.textSecondary,
                       ),
                     ),
-                    Icon(Icons.expand_more, size: 15, color: c.textSecondary),
-                  ],
-                ),
-              ),
-              Tooltip(
-                message:
-                    '快捷键\nSpace  播放/暂停\nR  重播当前\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒\nC / Enter  保留\nX / Backspace  排除\nCmd/Ctrl+Z  撤销',
-                child: Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: Icon(
-                    Icons.keyboard_outlined,
-                    size: 17,
-                    color: c.textSecondary,
                   ),
-                ),
-              ),
-            ],
+                ],
+              );
+              if (constraints.maxWidth < 430) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    heading,
+                    const SizedBox(height: Spacing.xs),
+                    actions,
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: heading),
+                  actions,
+                ],
+              );
+            },
           ),
           const SizedBox(height: Spacing.xs),
           Expanded(
@@ -3064,6 +3503,8 @@ class _CandidatePanel extends StatelessWidget {
                     hydrateError: hydrateError,
                     analyzing: analyzing,
                     hasVideo: hasVideo,
+                    analysisMode: analysisMode,
+                    analysisCompleted: analysisCompleted,
                     filterEmpty: totalCount > 0,
                     onClearFilter: filter == 'all'
                         ? null
@@ -3073,11 +3514,10 @@ class _CandidatePanel extends StatelessWidget {
                     onGoImport: onGoImport,
                   )
                 : ListView.separated(
+                    controller: candidateScrollController,
                     itemCount: candidates.length,
-                    separatorBuilder: (_, _) => Divider(
-                      height: 1,
-                      color: c.border.withValues(alpha: 0.7),
-                    ),
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(height: Spacing.xs),
                     itemBuilder: (context, index) {
                       final candidate = candidates[index];
                       final id = candidate['id']?.toString() ?? '';
@@ -3085,7 +3525,7 @@ class _CandidatePanel extends StatelessWidget {
                           ? null
                           : onLoadCover!(id, _candidateTime(candidate));
                       return _CandidateRow(
-                        key: ValueKey(id),
+                        key: candidateRowKeys.putIfAbsent(id, GlobalKey.new),
                         candidate: candidate,
                         index: index,
                         selected: id == selectedId,
@@ -3094,7 +3534,12 @@ class _CandidatePanel extends StatelessWidget {
                         excluded: _isExcluded(candidate),
                         busy: busy,
                         onTap: () => onSelect(candidate),
-                        onSetPlayer: () => unawaited(onSetPlayer(candidate)),
+                        onSetPlayer: (playerId) =>
+                            unawaited(onSetPlayer(candidate, playerId)),
+                        onCreatePlayer: () =>
+                            unawaited(onCreatePlayer(candidate)),
+                        onDeletePlayer: onDeletePlayer,
+                        players: players,
                         playerColor: _playerColor(
                           candidate['player_id']?.toString(),
                           _playerIndex(candidate, players),
@@ -3121,6 +3566,19 @@ class _CandidatePanel extends StatelessWidget {
                     onPressed: onExport,
                   ),
                 ),
+                if (onCreateManualCandidate != null) ...[
+                  const SizedBox(width: Spacing.xs),
+                  Tooltip(
+                    message: '从原视频当前时间补漏候选',
+                    child: IconButton(
+                      key: const Key('create-manual-candidate'),
+                      tooltip: '补漏',
+                      onPressed: onCreateManualCandidate,
+                      icon: const Icon(Icons.playlist_add_rounded, size: 18),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                ],
                 if (hasVideo) ...[
                   const SizedBox(width: Spacing.xs),
                   IconButton(
@@ -3154,6 +3612,8 @@ class _EmptyCandidates extends StatelessWidget {
     required this.hydrating,
     required this.hydrateError,
     required this.hasVideo,
+    required this.analysisMode,
+    required this.analysisCompleted,
     required this.filterEmpty,
     required this.onClearFilter,
     required this.onReanalyze,
@@ -3165,6 +3625,8 @@ class _EmptyCandidates extends StatelessWidget {
   final bool hydrating;
   final String? hydrateError;
   final bool hasVideo;
+  final String analysisMode;
+  final bool analysisCompleted;
   final bool filterEmpty;
   final VoidCallback? onClearFilter;
   final VoidCallback? onReanalyze;
@@ -3213,11 +3675,18 @@ class _EmptyCandidates extends StatelessWidget {
               ),
       );
     }
+    final fastEmpty = hasVideo && analysisCompleted && analysisMode == 'fast';
     return CsEmptyState(
       icon: Icons.inbox_outlined,
-      title: hasVideo ? '暂未找到候选片段' : '还没有分析结果',
+      title: fastEmpty
+          ? '快速分析未找到候选 · 可能漏检'
+          : hasVideo
+          ? '暂未找到候选片段'
+          : '还没有分析结果',
       description: hasVideo
-          ? '重新分析直接使用当前配置；重新配置可以修改分析范围和篮筐区域。'
+          ? fastEmpty
+                ? '快速模式可能漏检，建议用标准模式重新分析。'
+                : '重新分析直接使用当前配置；重新配置可以修改分析范围和篮筐区域。'
           : '先导入视频并完成配置，再开始分析。',
       action: Wrap(
         alignment: WrapAlignment.center,
@@ -3225,7 +3694,7 @@ class _EmptyCandidates extends StatelessWidget {
         children: [
           if (hasVideo)
             CsButton(
-              label: const Text('重新分析'),
+              label: Text(fastEmpty ? '用标准模式重新分析' : '重新分析'),
               icon: Icons.replay,
               onPressed: onReanalyze,
             ),
@@ -3252,6 +3721,9 @@ class _CandidateRow extends StatelessWidget {
     required this.busy,
     required this.onTap,
     required this.onSetPlayer,
+    required this.onCreatePlayer,
+    required this.onDeletePlayer,
+    required this.players,
     required this.playerColor,
     required this.onToggleBatch,
     required this.onInclude,
@@ -3268,7 +3740,10 @@ class _CandidateRow extends StatelessWidget {
   final bool excluded;
   final bool busy;
   final VoidCallback onTap;
-  final VoidCallback onSetPlayer;
+  final ValueChanged<String?> onSetPlayer;
+  final VoidCallback onCreatePlayer;
+  final Future<void> Function(String, String) onDeletePlayer;
+  final List<Map<String, dynamic>> players;
   final Color playerColor;
   final VoidCallback onToggleBatch;
   final VoidCallback onInclude;
@@ -3290,14 +3765,18 @@ class _CandidateRow extends StatelessWidget {
           duration: DurationD.fast,
           padding: const EdgeInsets.symmetric(
             horizontal: Spacing.xs,
-            vertical: 4,
+            vertical: 2,
           ),
           decoration: BoxDecoration(
-            color: selected ? c.indigo.withValues(alpha: 0.10) : null,
-            borderRadius: BorderRadius.circular(CsRadius.sm),
-            border: selected
-                ? Border.all(color: c.indigo.withValues(alpha: 0.45))
-                : null,
+            color: selected
+                ? c.orange.withValues(alpha: 0.09)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(CsRadius.md),
+            border: Border.all(
+              color: selected
+                  ? c.orange.withValues(alpha: 0.45)
+                  : Colors.transparent,
+            ),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
@@ -3316,15 +3795,25 @@ class _CandidateRow extends StatelessWidget {
                   color: Colors.transparent,
                   child: InkWell(
                     onTap: onTap,
+                    focusColor: Colors.transparent,
+                    hoverColor: Colors.transparent,
+                    splashColor: Colors.transparent,
+                    highlightColor: Colors.transparent,
+                    overlayColor: const WidgetStatePropertyAll(
+                      Colors.transparent,
+                    ),
                     borderRadius: BorderRadius.circular(CsRadius.sm),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      padding: const EdgeInsets.fromLTRB(8, 8, 6, 8),
                       child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _CandidateCover(
-                            future: coverFuture,
-                            excluded: excluded,
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: _CandidateCover(
+                              future: coverFuture,
+                              excluded: excluded,
+                            ),
                           ),
                           const SizedBox(width: Spacing.sm),
                           Expanded(
@@ -3336,7 +3825,8 @@ class _CandidateRow extends StatelessWidget {
                                   '#${index + 1} ${_formatMs(_candidateTime(candidate))}',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.labelLarge?.copyWith(
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
                                     color: excluded
                                         ? c.textTertiary
                                         : c.textPrimary,
@@ -3346,30 +3836,57 @@ class _CandidateRow extends StatelessWidget {
                                   ),
                                 ),
                                 const SizedBox(height: 3),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        '时长 ${_formatClipDuration(_clipEnd(candidate) - _clipStart(candidate))}',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: theme.textTheme.labelSmall
-                                            ?.copyWith(
-                                              color: c.textTertiary,
-                                              fontFeatures: const [
-                                                FontFeature.tabularFigures(),
-                                              ],
-                                            ),
+                                LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    final duration = Text(
+                                      '时长 ${_formatClipDuration(_clipEnd(candidate) - _clipStart(candidate))}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.labelSmall
+                                          ?.copyWith(
+                                            color: c.textTertiary,
+                                            fontFeatures: const [
+                                              FontFeature.tabularFigures(),
+                                            ],
+                                          ),
+                                    );
+                                    final playerChip = _PlayerChip(
+                                      key: ValueKey(
+                                        'player-chip-${candidate['id']}',
                                       ),
-                                    ),
-                                    const SizedBox(width: Spacing.xs),
-                                    _PlayerChip(
                                       name: candidate['player_name']
                                           ?.toString(),
                                       color: playerColor,
-                                      onTap: onSetPlayer,
-                                    ),
-                                  ],
+                                      players: players,
+                                      onSelected: onSetPlayer,
+                                      onCreate: onCreatePlayer,
+                                      onDelete: onDeletePlayer,
+                                    );
+                                    if (constraints.maxWidth < 190) {
+                                      return Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          duration,
+                                          const SizedBox(height: 3),
+                                          Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: playerChip,
+                                          ),
+                                        ],
+                                      );
+                                    }
+                                    return Row(
+                                      children: [
+                                        Expanded(child: duration),
+                                        const SizedBox(width: Spacing.xs),
+                                        Flexible(
+                                          fit: FlexFit.loose,
+                                          child: playerChip,
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
                               ],
                             ),
@@ -3381,22 +3898,35 @@ class _CandidateRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: Spacing.xs),
-              _DecisionButton(
-                tooltip: '保留片段 (C / Enter)',
-                icon: Icons.check_rounded,
-                active: !excluded,
-                color: c.goal,
-                enabled: !busy,
-                onPressed: onInclude,
-              ),
-              const SizedBox(width: Spacing.xs),
-              _DecisionButton(
-                tooltip: '排除片段 (X / Backspace)',
-                icon: Icons.close_rounded,
-                active: excluded,
-                color: c.error,
-                enabled: !busy,
-                onPressed: onExclude,
+              Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: c.surface2,
+                  borderRadius: BorderRadius.circular(CsRadius.md),
+                  border: Border.all(color: c.border),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _DecisionButton(
+                      tooltip: '保留片段 (C / Enter)',
+                      icon: Icons.check_rounded,
+                      active: !excluded,
+                      color: c.goal,
+                      enabled: !busy,
+                      onPressed: onInclude,
+                    ),
+                    const SizedBox(width: 3),
+                    _DecisionButton(
+                      tooltip: '排除片段 (X / Backspace)',
+                      icon: Icons.close_rounded,
+                      active: excluded,
+                      color: c.error,
+                      enabled: !busy,
+                      onPressed: onExclude,
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -3444,7 +3974,7 @@ class _DecisionButton extends StatelessWidget {
             onTap: enabled ? onPressed : null,
             borderRadius: BorderRadius.circular(CsRadius.sm),
             child: SizedBox(
-              width: 52,
+              width: 48,
               height: 44,
               child: Icon(icon, size: 21, color: foreground),
             ),
@@ -3455,43 +3985,85 @@ class _DecisionButton extends StatelessWidget {
   }
 }
 
-class _PlayerChip extends StatelessWidget {
+class _PlayerChip extends StatefulWidget {
   const _PlayerChip({
     required this.name,
     required this.color,
-    required this.onTap,
+    required this.players,
+    required this.onSelected,
+    required this.onCreate,
+    required this.onDelete,
+    super.key,
   });
 
   final String? name;
   final Color color;
-  final VoidCallback onTap;
+  final List<Map<String, dynamic>> players;
+  final ValueChanged<String?> onSelected;
+  final VoidCallback onCreate;
+  final Future<void> Function(String, String) onDelete;
+
+  @override
+  State<_PlayerChip> createState() => _PlayerChipState();
+}
+
+class _PlayerChipState extends State<_PlayerChip> {
+  final MenuController _menuController = MenuController();
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
       message: '设置球员标签',
-      child: Material(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(CsRadius.full),
-        child: InkWell(
-          onTap: onTap,
+      child: MenuAnchor(
+        controller: _menuController,
+        alignmentOffset: const Offset(0, 4),
+        menuChildren: [
+          _PlayerPickerMenuContent(
+            players: widget.players,
+            onSelected: (playerId) {
+              _menuController.close();
+              widget.onSelected(playerId);
+            },
+            onCreate: () {
+              _menuController.close();
+              widget.onCreate();
+            },
+            onDelete: (playerId, playerName) async {
+              _menuController.close();
+              await widget.onDelete(playerId, playerName);
+            },
+          ),
+        ],
+        builder: (context, controller, child) => Material(
+          color: widget.color.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(CsRadius.full),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.person_outline, size: 14, color: color),
-                const SizedBox(width: 3),
-                Text(
-                  name == null || name!.isEmpty ? '未标记' : name!,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
+          child: InkWell(
+            onTap: () =>
+                controller.isOpen ? controller.close() : controller.open(),
+            borderRadius: BorderRadius.circular(CsRadius.full),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.person_outline, size: 14, color: widget.color),
+                  const SizedBox(width: 3),
+                  Flexible(
+                    child: Text(
+                      widget.name == null || widget.name!.isEmpty
+                          ? '未标记'
+                          : widget.name!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: widget.color,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -3500,33 +4072,144 @@ class _PlayerChip extends StatelessWidget {
   }
 }
 
-class _PlayerChoiceButton extends StatelessWidget {
-  const _PlayerChoiceButton({
+class _PlayerPickerMenuContent extends StatelessWidget {
+  const _PlayerPickerMenuContent({
+    required this.players,
+    required this.onSelected,
+    required this.onCreate,
+    required this.onDelete,
+  });
+
+  final List<Map<String, dynamic>> players;
+  final ValueChanged<String?> onSelected;
+  final VoidCallback onCreate;
+  final Future<void> Function(String, String)? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Material(
+      color: c.surface,
+      borderRadius: BorderRadius.circular(CsRadius.sm),
+      child: SizedBox(
+        width: 276,
+        height: 330,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
+                child: Text(
+                  '选择球员',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: c.textSecondary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              _PlayerPickerOption(
+                label: '未标记',
+                icon: Icons.person_off_outlined,
+                color: c.textTertiary,
+                onTap: () => onSelected(null),
+              ),
+              Expanded(
+                child: players.isNotEmpty
+                    ? ListView.builder(
+                        primary: false,
+                        itemCount: players.length,
+                        itemBuilder: (context, index) {
+                          final player = players[index];
+                          final id = player['id']?.toString();
+                          final name = player['name']?.toString() ?? '';
+                          return _PlayerPickerOption(
+                            label: name,
+                            color: _playerColor(id, index),
+                            onTap: id == null ? null : () => onSelected(id),
+                            trailing: onDelete == null || id == null
+                                ? null
+                                : IconButton(
+                                    tooltip: '删除$name',
+                                    onPressed: () => onDelete!(id, name),
+                                    icon: const Icon(
+                                      Icons.delete_outline,
+                                      size: 16,
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                          );
+                        },
+                      )
+                    : Align(
+                        alignment: Alignment.topLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Text(
+                            '暂无球员',
+                            style: TextStyle(
+                              color: c.textTertiary,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+              ),
+              const Divider(height: 8),
+              _PlayerPickerOption(
+                label: '新建球员',
+                icon: Icons.add,
+                color: c.orange,
+                onTap: onCreate,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlayerPickerOption extends StatelessWidget {
+  const _PlayerPickerOption({
     required this.label,
     required this.color,
-    required this.onPressed,
+    required this.onTap,
     this.icon,
+    this.trailing,
   });
 
   final String label;
   final Color color;
-  final VoidCallback onPressed;
+  final VoidCallback? onTap;
   final IconData? icon;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 140,
-      height: 38,
-      child: OutlinedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon ?? Icons.person, size: 15, color: color),
-        label: Text(label, overflow: TextOverflow.ellipsis),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: color,
-          side: BorderSide(color: color.withValues(alpha: 0.45)),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          visualDensity: VisualDensity.compact,
+      height: 34,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(CsRadius.sm),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            children: [
+              Icon(icon ?? Icons.person_outline, size: 16, color: color),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: color, fontSize: 12),
+                ),
+              ),
+              ?trailing,
+            ],
+          ),
         ),
       ),
     );
@@ -3535,22 +4218,24 @@ class _PlayerChoiceButton extends StatelessWidget {
 
 Color _playerColor(String? playerId, [int fallbackIndex = -1]) {
   const palette = <Color>[
-    Color(0xFF5B8CFF),
-    Color(0xFFB277FF),
-    Color(0xFF22C7A8),
     Color(0xFFFFB454),
+    Color(0xFF7DD3A8),
+    Color(0xFF5CC8C0),
     Color(0xFFFF6B8A),
     Color(0xFF4CC9F0),
+    Color(0xFFB6A1FF),
   ];
   if (playerId == null || playerId.isEmpty) {
     return const Color(0xFF8B93A7);
+  }
+  if (fallbackIndex >= 0) {
+    return palette[fallbackIndex % palette.length];
   }
   final hash = playerId.codeUnits.fold<int>(
     0,
     (value, unit) => value * 31 + unit,
   );
-  final index = hash.abs() % palette.length;
-  return palette[index >= 0 ? index : fallbackIndex % palette.length];
+  return palette[hash.abs() % palette.length];
 }
 
 int _playerIndex(
@@ -3606,8 +4291,8 @@ class _CandidateCoverState extends State<_CandidateCover> {
         return Opacity(
           opacity: widget.excluded ? 0.45 : 1,
           child: SizedBox(
-            width: 82,
-            height: 52,
+            width: 112,
+            height: 68,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(CsRadius.sm),
               child: cover,
@@ -3777,6 +4462,11 @@ String _formatCrossing(_CrossingDisplay state) => switch (state) {
   _CrossingDisplay.unknown => '—',
 };
 
+String _formatScore(dynamic value) {
+  if (value is num) return '${(value.clamp(0, 1) * 100).round()}%';
+  return '—';
+}
+
 String _formatSignal(dynamic value) {
   if (value is bool) return value ? '有支持' : '信号较弱';
   if (value is num) {
@@ -3816,9 +4506,12 @@ Color _signalColor(AppColors c, dynamic value) =>
 Color _reboundColor(AppColors c, dynamic value) =>
     value is bool && value ? c.warning : c.textSecondary;
 
-String? _candidateConfidence(Map<String, dynamic> candidate) {
-  final raw = candidate['confidence']?.toString();
-  if (raw != null && raw.isNotEmpty) {
+String? _candidateConfidence(
+  Map<String, dynamic> candidate, [
+  Map<String, dynamic>? evidence,
+]) {
+  final raw = candidate['confidence']?.toString().toLowerCase();
+  if (raw != null && raw.isNotEmpty && raw != 'pending') {
     return const <String, String>{
           'high': '高',
           'review': '复核',
@@ -3827,9 +4520,31 @@ String? _candidateConfidence(Map<String, dynamic> candidate) {
         }[raw] ??
         raw;
   }
-  final score = candidate['score'];
+  final score =
+      candidate['score'] ?? _coarseDetectionConfidence(candidate, evidence);
   if (score is num) return '${(score.clamp(0, 1) * 100).round()}%';
   return null;
+}
+
+double? _coarseDetectionConfidence(
+  Map<String, dynamic> candidate,
+  Map<String, dynamic>? evidence,
+) {
+  final direct =
+      candidate['coarse_detection_confidence'] ??
+      evidence?['coarse_detection_confidence'];
+  if (direct is num) return direct.toDouble();
+  final source = evidence ?? candidate;
+  final above = source['above'];
+  final below = source['below'];
+  final values = [above, below]
+      .whereType<Map>()
+      .map((point) => point['confidence'])
+      .whereType<num>()
+      .map((value) => value.toDouble())
+      .toList();
+  if (values.isEmpty) return null;
+  return values.reduce((left, right) => left + right) / values.length;
 }
 
 String _formatClipDuration(int milliseconds) {
@@ -3869,6 +4584,78 @@ String? _resolveOriginalVideoPath(ProjectState state) {
   final path = state.video?['source_path']?.toString();
   if (path == null || path.isEmpty) return null;
   return path;
+}
+
+/// Returns the seek/playback bounds for the review timeline.
+///
+/// The review player always opens the original video. A candidate only changes
+/// the initial seek position; it must not shorten the original video's
+/// timeline or make playback stop at the candidate end.
+ReviewTimelineBounds reviewTimelineBounds({
+  required bool isOriginalVideo,
+  Map<String, dynamic>? candidate,
+}) {
+  if (isOriginalVideo || candidate == null || candidate.isEmpty) {
+    return const ReviewTimelineBounds(startMs: 0, endMs: null);
+  }
+  return ReviewTimelineBounds(
+    startMs: _clipStart(candidate),
+    endMs: _clipEnd(candidate),
+  );
+}
+
+class ReviewTimelineBounds {
+  const ReviewTimelineBounds({required this.startMs, required this.endMs});
+
+  final int startMs;
+  final int? endMs;
+}
+
+Map<String, dynamic> _decodeJobCheckpoint(Map<String, dynamic>? job) {
+  if (job == null) return const <String, dynamic>{};
+  final checkpoint = job['checkpoint'];
+  if (checkpoint is Map) return checkpoint.cast<String, dynamic>();
+  final raw = job['checkpoint_json'];
+  if (raw is! String || raw.isEmpty) return const <String, dynamic>{};
+  try {
+    final decoded = jsonDecode(raw);
+    return decoded is Map
+        ? decoded.cast<String, dynamic>()
+        : const <String, dynamic>{};
+  } on FormatException {
+    return const <String, dynamic>{};
+  }
+}
+
+String _analysisDetailLabel(Map<String, dynamic> checkpoint) {
+  final rawTimings = checkpoint['stage_timings_ms'];
+  final timings = rawTimings is Map
+      ? rawTimings.cast<String, dynamic>()
+      : const <String, dynamic>{};
+  final parts = <String>[];
+  for (final entry in const <String, String>{
+    'prepare_proxy': '代理',
+    'coarse_scan': '粗扫',
+    'generate_candidates': '候选',
+    'refine_candidates': '精筛',
+    'prepare_review_previews': '封面',
+    'persist_candidates': '落库',
+  }.entries) {
+    final value = timings[entry.key];
+    if (value is num) {
+      parts.add('${entry.value} ${_formatSeconds(value / 1000)}');
+    }
+  }
+  final cacheHits = checkpoint['cache_hits'];
+  if (cacheHits is num) parts.add('缓存命中 ${cacheHits.toInt()}');
+  return parts.isEmpty ? '' : '分析详情：${parts.join(' · ')}';
+}
+
+String _formatSeconds(double value) {
+  final rounded = (value * 10).round() / 10;
+  return rounded == rounded.roundToDouble()
+      ? '${rounded.round()} 秒'
+      : '$rounded 秒';
 }
 
 String _stageLabel(String stage) =>

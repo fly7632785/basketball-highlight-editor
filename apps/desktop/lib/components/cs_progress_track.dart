@@ -15,7 +15,7 @@ class CsProgressTrack extends StatelessWidget {
       borderRadius: BorderRadius.circular(CsRadius.full),
       child: LinearProgressIndicator(
         value: indeterminate ? null : value,
-        minHeight: 6,
+        minHeight: 4,
         backgroundColor: c.surface3,
         valueColor: AlwaysStoppedAnimation<Color>(c.indigo),
       ),

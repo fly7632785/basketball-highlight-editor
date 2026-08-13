@@ -9,7 +9,7 @@ import '../theme/app_colors.dart';
 ///
 /// M3 `NavigationBar`,4 destination(项目/导入/审核/导出 + Lucide 图标)。
 /// `onDestinationSelected` → `shell.goBranch(index)`。selected 图标与指示器
-/// 用 indigo;unselected 用 textSecondary。
+/// 用橙色;unselected 用 textSecondary。
 class CsBottomNav extends StatelessWidget {
   const CsBottomNav({required this.shell, super.key});
 
@@ -22,26 +22,26 @@ class CsBottomNav extends StatelessWidget {
       selectedIndex: shell.currentIndex,
       onDestinationSelected: (i) => shell.goBranch(i),
       backgroundColor: c.surface,
-      indicatorColor: c.indigo.withValues(alpha: 0.16),
+      indicatorColor: c.orange.withValues(alpha: 0.16),
       destinations: <NavigationDestination>[
         NavigationDestination(
           icon: Icon(LucideIcons.home, color: c.textSecondary),
-          selectedIcon: Icon(LucideIcons.home, color: c.indigo),
+          selectedIcon: Icon(LucideIcons.home, color: c.orange),
           label: '项目',
         ),
         NavigationDestination(
           icon: Icon(LucideIcons.upload, color: c.textSecondary),
-          selectedIcon: Icon(LucideIcons.upload, color: c.indigo),
+          selectedIcon: Icon(LucideIcons.upload, color: c.orange),
           label: '导入',
         ),
         NavigationDestination(
           icon: Icon(LucideIcons.folderCheck, color: c.textSecondary),
-          selectedIcon: Icon(LucideIcons.folderCheck, color: c.indigo),
+          selectedIcon: Icon(LucideIcons.folderCheck, color: c.orange),
           label: '审核',
         ),
         NavigationDestination(
           icon: Icon(LucideIcons.download, color: c.textSecondary),
-          selectedIcon: Icon(LucideIcons.download, color: c.indigo),
+          selectedIcon: Icon(LucideIcons.download, color: c.orange),
           label: '导出',
         ),
       ],

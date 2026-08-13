@@ -1,5 +1,6 @@
 // lib/providers/project_state.dart
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
@@ -25,7 +26,7 @@ const _recentProjectRootsKey = 'basketball_recent_project_roots';
     return (title: '检测区域超出画面', description: '请把四个手柄拖回预览画面内。');
   }
   if (raw.contains('ROI_TOO_SMALL')) {
-    return (title: '投篮分析区太小', description: '请扩大紫色区域，覆盖篮筐、篮网和球落下的位置。');
+    return (title: '投篮分析区太小', description: '请扩大橙色区域，覆盖篮筐、篮网和球落下的位置。');
   }
   if (raw.contains('ENGINE_TIMEOUT')) {
     return (title: '处理时间较长', description: '请稍候查看任务状态，原始视频不会被修改。');
@@ -817,21 +818,31 @@ class ProjectNotifier extends Notifier<ProjectState> {
       }
     }
     try {
-      final jobs = await Future.wait<List<JsonMap>>([
+      final jobs = await Future.wait<dynamic>([
         scope.getActiveJobs(),
         scope.getActiveJobs(jobType: 'export'),
+        scope.getLatestJob(),
+        scope.getLatestJob(jobType: 'export'),
       ]);
       if (!_disposed && generation == _projectLoadGeneration) {
         final analysisJob = jobs[0].isEmpty ? null : jobs[0].last;
-        final exportJob = jobs[1].isEmpty ? null : jobs[1].last;
-        state = state.copyWith(job: analysisJob, exportJob: exportJob);
+        final activeExportJob = jobs[1].isEmpty ? null : jobs[1].last;
+        final latestAnalysisJob = jobs[2] as JsonMap?;
+        final latestExportJob = jobs[3] as JsonMap?;
+        state = state.copyWith(
+          job: analysisJob ?? latestAnalysisJob,
+          exportJob: activeExportJob ?? latestExportJob,
+          analysisMode:
+              _jobAnalysisMode(analysisJob ?? latestAnalysisJob) ??
+              state.analysisMode,
+        );
         final analysisId = analysisJob?['id'];
         if (analysisJob?['recovery_state'] == 'worker_attached' &&
             analysisId is String) {
           unawaited(pollJob(analysisId, scope: scope));
         }
-        final exportId = exportJob?['id'];
-        if (exportJob?['recovery_state'] == 'worker_attached' &&
+        final exportId = activeExportJob?['id'];
+        if (activeExportJob?['recovery_state'] == 'worker_attached' &&
             exportId is String) {
           unawaited(pollExportJob(exportId, scope: scope));
         }
@@ -960,10 +971,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
           .setAnalysisRange(startMs: startMs, endMs: endMs);
       final video = (result['video'] as Map?)?.cast<String, dynamic>();
       if (video != null) {
-        state = state.copyWith(
-          video: video,
-          statistics: null,
-        );
+        state = state.copyWith(video: video, statistics: null);
       }
       saved = true;
     }, successMessage: showNotice ? '分析范围已保存' : null);
@@ -971,8 +979,14 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   /// 等价 app.dart:_startAnalysis(445)。
-  Future<bool> startAnalysis({bool replaceRecoverable = false}) async {
+  Future<bool> startAnalysis({
+    bool replaceRecoverable = false,
+    String? mode,
+  }) async {
     var started = false;
+    final requestedMode = mode == 'fast' || mode == 'standard'
+        ? mode
+        : state.analysisMode;
     await _runBusy(() async {
       await flushReviewQueue();
       await ref.read(engineBootstrapProvider.notifier).ensure();
@@ -986,13 +1000,14 @@ class ProjectNotifier extends Notifier<ProjectState> {
             activeId is String) {
           final result = await session.retryAnalysis(
             jobId: activeId,
-            mode: state.analysisMode,
+            mode: requestedMode,
             sampleFps: 10,
             beforeSeconds: 6,
             afterSeconds: 3,
           );
           state = state.copyWith(
             job: (result['job'] as Map?)?.cast<String, dynamic>(),
+            analysisMode: requestedMode,
           );
           started = true;
           _pushNotice('已重新开始分析', NoticeSeverity.success);
@@ -1009,13 +1024,14 @@ class ProjectNotifier extends Notifier<ProjectState> {
         return;
       }
       final result = await session.startAnalysis(
-        mode: state.analysisMode,
+        mode: requestedMode,
         sampleFps: 10,
         beforeSeconds: 6,
         afterSeconds: 3,
       );
       state = state.copyWith(
         job: (result['job'] as Map?)?.cast<String, dynamic>(),
+        analysisMode: requestedMode,
       );
       started = true;
       _pushNotice('分析已开始，完成后会显示候选片段', NoticeSeverity.success);
@@ -1113,27 +1129,48 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   /// 等价 app.dart:_retryAnalysis(521)。
-  Future<void> retryAnalysis() async {
+  Future<void> retryAnalysis({String? mode}) async {
     final jobId = state.job?['id'];
     if (jobId is! String) return;
+    final requestedMode = mode == 'fast' || mode == 'standard'
+        ? mode
+        : _jobAnalysisMode(state.job) ?? state.analysisMode;
     await _runBusy(() async {
       await ref.read(engineBootstrapProvider.notifier).ensure();
       final result = await ref
           .read(projectSessionProvider)
           .retryAnalysis(
             jobId: jobId,
-            mode: state.analysisMode,
+            mode: requestedMode,
             sampleFps: 10,
             beforeSeconds: 6,
             afterSeconds: 3,
           );
       state = state.copyWith(
         job: (result['job'] as Map?)?.cast<String, dynamic>(),
+        analysisMode: requestedMode,
       );
       _pushNotice('已重新开始分析', NoticeSeverity.success);
       final newJobId = state.job?['id'];
       if (newJobId is String) unawaited(pollJob(newJobId));
     });
+  }
+
+  String? _jobAnalysisMode(JsonMap? job) {
+    final checkpoint = job?['checkpoint'];
+    if (checkpoint is Map) {
+      final mode = checkpoint['mode']?.toString();
+      if (mode == 'fast' || mode == 'standard') return mode;
+    }
+    final raw = job?['checkpoint_json']?.toString();
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      final mode = decoded is Map ? decoded['mode']?.toString() : null;
+      return mode == 'fast' || mode == 'standard' ? mode : null;
+    } on FormatException {
+      return null;
+    }
   }
 
   /// 等价 app.dart:_cancelAnalysis(538)。
@@ -1421,6 +1458,27 @@ class ProjectNotifier extends Notifier<ProjectState> {
     }, successMessage: '片段范围已更新');
   }
 
+  Future<JsonMap?> createManualCandidate({
+    required int startMs,
+    required int endMs,
+    int? eventTimeMs,
+  }) async {
+    JsonMap? created;
+    await _runBusy(() async {
+      final payload = await ref
+          .read(projectSessionProvider)
+          .createManualCandidate(
+            startMs: startMs,
+            endMs: endMs,
+            eventTimeMs: eventTimeMs,
+          );
+      final raw = payload['candidate'];
+      if (raw is Map) created = Map<String, dynamic>.from(raw);
+      await refreshCandidates();
+    }, successMessage: '补漏片段已加入候选');
+    return created;
+  }
+
   Future<String?> createPlayer(String name) async {
     String? playerId;
     await _runBusy(() async {
@@ -1430,6 +1488,18 @@ class ProjectNotifier extends Notifier<ProjectState> {
       state = state.copyWith(players: _jsonList(payload['players']));
     }, successMessage: '球员已添加');
     return playerId;
+  }
+
+  Future<bool> deletePlayer(String playerId) async {
+    var deleted = false;
+    await _runBusy(() async {
+      await ref.read(projectSessionProvider).deletePlayer(playerId);
+      final payload = await ref.read(projectSessionProvider).listPlayers();
+      state = state.copyWith(players: _jsonList(payload['players']));
+      await refreshCandidates();
+      deleted = true;
+    }, successMessage: '球员已删除');
+    return deleted;
   }
 
   Future<void> setCandidatePlayer(String candidateId, String? playerId) async {

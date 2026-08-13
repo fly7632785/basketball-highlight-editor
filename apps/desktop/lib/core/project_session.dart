@@ -123,6 +123,16 @@ class ProjectSessionScope {
     return _mapList(payload['jobs']);
   }
 
+  Future<JsonMap?> getLatestJob({String jobType = 'analysis'}) async {
+    final payload = await engine.getLatestJob(
+      projectRoot: projectRoot,
+      videoId: videoId,
+      jobType: jobType,
+    );
+    final job = payload['job'];
+    return job is Map ? job.cast<String, dynamic>() : null;
+  }
+
   Future<List<JsonMap>> listExports({int limit = 20}) async {
     final payload = await engine.listExports(
       projectRoot: projectRoot,
@@ -468,12 +478,33 @@ class ProjectSession {
     );
   }
 
+  Future<JsonMap> createManualCandidate({
+    required int startMs,
+    required int endMs,
+    int? eventTimeMs,
+  }) {
+    return engine.createManualCandidate(
+      projectRoot: _requireProjectRoot(),
+      videoId: _requireVideoId(),
+      startMs: startMs,
+      endMs: endMs,
+      eventTimeMs: eventTimeMs,
+    );
+  }
+
   Future<JsonMap> listPlayers() {
     return engine.listPlayers(projectRoot: _requireProjectRoot());
   }
 
   Future<JsonMap> createPlayer(String name) {
     return engine.createPlayer(projectRoot: _requireProjectRoot(), name: name);
+  }
+
+  Future<JsonMap> deletePlayer(String playerId) {
+    return engine.deletePlayer(
+      projectRoot: _requireProjectRoot(),
+      playerId: playerId,
+    );
   }
 
   Future<JsonMap> setCandidatePlayer({

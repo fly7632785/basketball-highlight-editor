@@ -33,7 +33,7 @@ class CsCard extends StatelessWidget {
     return _CardBox(
       color: base,
       border: c.border,
-      accent: selectedAccent ? (accentColor ?? c.indigo) : null,
+      accent: selectedAccent ? (accentColor ?? c.orange) : null,
       onTap: onTap,
       child: Padding(padding: padding, child: child),
     );

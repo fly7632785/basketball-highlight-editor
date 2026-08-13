@@ -8,6 +8,7 @@ import 'components/cs_notice_overlay.dart';
 import 'providers/project_state.dart';
 import 'providers/theme_provider.dart';
 import 'router/app_router.dart';
+import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
 
 class CourtsideApp extends ConsumerStatefulWidget {
@@ -43,6 +44,11 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
     };
     try {
       await windowManager.setBrightness(brightness);
+      await windowManager.setBackgroundColor(
+        brightness == Brightness.light
+            ? lightAppColors.background
+            : darkAppColors.background,
+      );
     } catch (_) {
       // Widget tests and non-desktop hosts do not expose the native channel.
     }

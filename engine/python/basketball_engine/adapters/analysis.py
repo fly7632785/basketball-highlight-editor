@@ -104,13 +104,34 @@ def flatten_coarse_matches(data: Dict[str, Any], dedupe_seconds: float = 2.0) ->
 
     Coarse candidates already use source-video timestamps (``scan_video``
     applies the analysis-range offset), so the fast path only needs the same
-    conservative de-duplication used by the refined path.
+    conservative de-duplication used by the refined path. Preserve the two
+    detections that formed the crossing so the review screen can explain that
+    this is a coarse result instead of displaying ``pending`` with no evidence.
     """
-    matches = [
-        dict(candidate)
-        for candidate in data.get("candidates", [])
-        if isinstance(candidate, dict) and "time" in candidate
-    ]
+    matches = []
+    for candidate in data.get("candidates", []):
+        if not isinstance(candidate, dict) or "time" not in candidate:
+            continue
+        normalized = dict(candidate)
+        above = normalized.get("above") if isinstance(normalized.get("above"), dict) else {}
+        below = normalized.get("below") if isinstance(normalized.get("below"), dict) else {}
+        confidences = [
+            float(value)
+            for value in (above.get("confidence"), below.get("confidence"))
+            if isinstance(value, (int, float))
+        ]
+        if confidences:
+            score = round(sum(confidences) / len(confidences), 3)
+            normalized["coarse_detection_confidence"] = score
+            normalized["score"] = normalized.get("score") or score
+            raw_confidence = normalized.get("confidence")
+            if raw_confidence is None or str(raw_confidence).lower() == "pending":
+                normalized["confidence"] = (
+                    "high" if score >= 0.65 else "medium" if score >= 0.4 else "low"
+                )
+        if confidences:
+            normalized["coarse_crossing"] = True
+        matches.append(normalized)
     return dedupe_candidates(matches, dedupe_seconds)
 
 

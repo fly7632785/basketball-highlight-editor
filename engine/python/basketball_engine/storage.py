@@ -484,6 +484,77 @@ class ProjectStore:
         with self.connect() as connection:
             return [dict(row) for row in connection.execute(query, tuple(params)).fetchall()]
 
+    def create_manual_candidate(
+        self,
+        video_id: str,
+        start_ms: int,
+        end_ms: int,
+        event_time_ms: int | None = None,
+    ) -> Dict[str, Any]:
+        if start_ms < 0 or end_ms <= start_ms:
+            raise ValueError("INVALID_CLIP_RANGE")
+        video = self.video(video_id)
+        if not video:
+            raise LookupError("VIDEO_NOT_FOUND")
+        duration_ms = video.get("duration_ms")
+        if duration_ms is not None and end_ms > int(duration_ms):
+            raise ValueError("INVALID_CLIP_RANGE")
+        timestamp = now_iso()
+        event_time_ms = (
+            (start_ms + end_ms) // 2
+            if event_time_ms is None
+            else int(event_time_ms)
+        )
+        if event_time_ms < start_ms or event_time_ms > end_ms:
+            raise ValueError("INVALID_EVENT_TIME")
+        roi = self.active_roi(video_id)
+        candidate_id = new_id("candidate")
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO candidates (
+                    id, video_id, roi_id, group_id, event_time_ms,
+                    default_start_ms, default_end_ms, review_start_ms, review_end_ms,
+                    detector_version, score, confidence, evidence_json, created_at, updated_at
+                ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                """,
+                (
+                    candidate_id,
+                    video_id,
+                    roi["id"] if roi else None,
+                    event_time_ms,
+                    start_ms,
+                    end_ms,
+                    start_ms,
+                    end_ms,
+                    "manual-v1",
+                    "manual",
+                    json.dumps(
+                        {
+                            "source": "manual",
+                            "analysis_source": "manual",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO candidate_reviews (
+                    candidate_id, status, updated_at
+                ) VALUES (?, 'pending', ?)
+                """,
+                (candidate_id, timestamp),
+            )
+        candidate = next(
+            candidate
+            for candidate in self.list_candidates(video_id)
+            if candidate["id"] == candidate_id
+        )
+        return candidate
+
     def replace_candidates(self, video_id: str, rows: list[Dict[str, Any]]) -> None:
         timestamp = now_iso()
         with self.connect() as connection:
@@ -495,6 +566,23 @@ class ProjectStore:
                 raise LookupError("VIDEO_NOT_FOUND")
             duration_ms = video_row["duration_ms"]
             duration_ms = int(duration_ms) if duration_ms is not None else None
+            manual_rows = [
+                dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT id, roi_id, group_id, event_time_ms,
+                           default_start_ms, default_end_ms,
+                           review_start_ms, review_end_ms,
+                           detector_version, score, confidence,
+                           evidence_json, created_at, updated_at
+                    FROM candidates
+                    WHERE video_id = ? AND detector_version = 'manual-v1'
+                    """,
+                    (video_id,),
+                ).fetchall()
+            ]
+            existing_ids = {str(row.get("id")) for row in rows}
+            rows = [*rows, *[row for row in manual_rows if str(row["id"]) not in existing_ids]]
             existing_candidates = {
                 row["id"]: dict(row)
                 for row in connection.execute(
@@ -637,6 +725,19 @@ class ProjectStore:
         except sqlite3.IntegrityError as exc:
             raise ValueError("PLAYER_ALREADY_EXISTS") from exc
         return player
+
+    def delete_player(self, player_id: str) -> None:
+        project = self.project()
+        if not project:
+            raise ValueError("PROJECT_NOT_INITIALIZED")
+        with self.connect() as connection:
+            player = connection.execute(
+                "SELECT id FROM players WHERE id = ? AND project_id = ?",
+                (player_id, project["id"]),
+            ).fetchone()
+            if not player:
+                raise LookupError("PLAYER_NOT_FOUND")
+            connection.execute("DELETE FROM players WHERE id = ?", (player_id,))
 
     def set_candidate_player(self, candidate_id: str, player_id: str | None) -> None:
         with self.connect() as connection:
@@ -896,6 +997,7 @@ class ProjectStore:
         job_type: str | None = None,
         states: Iterable[str] | None = None,
         video_id: str | None = None,
+        descending: bool = False,
     ) -> list[Dict[str, Any]]:
         clauses = ["project_id = ?"]
         params: list[Any] = [project_id]
@@ -915,7 +1017,7 @@ class ProjectStore:
         query = (
             "SELECT * FROM jobs WHERE "
             + " AND ".join(clauses)
-            + " ORDER BY created_at ASC"
+            + f" ORDER BY created_at {'DESC' if descending else 'ASC'}, id {'DESC' if descending else 'ASC'}"
         )
         with self.connect() as connection:
             return [dict(row) for row in connection.execute(query, tuple(params)).fetchall()]

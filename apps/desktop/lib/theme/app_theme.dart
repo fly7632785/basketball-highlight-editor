@@ -6,7 +6,7 @@ import 'tokens.dart';
 ThemeData appTheme(Brightness brightness) {
   final colors = brightness == Brightness.dark ? darkAppColors : lightAppColors;
   final scheme = ColorScheme.fromSeed(
-    seedColor: colors.indigo,
+    seedColor: colors.orange,
     brightness: brightness,
     surface: colors.surface,
   );
@@ -14,7 +14,7 @@ ThemeData appTheme(Brightness brightness) {
     useMaterial3: true,
     brightness: brightness,
     colorScheme: scheme.copyWith(
-      primary: colors.indigo,
+      primary: colors.orange,
       onPrimary: Colors.white,
       secondary: colors.orange,
       onSecondary: Colors.white,
@@ -53,11 +53,17 @@ ThemeData appTheme(Brightness brightness) {
         color: colors.textSecondary,
       ),
       actionsPadding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
-      iconColor: colors.indigo,
+      iconColor: colors.orange,
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        foregroundColor: colors.textSecondary,
+        overlayColor: colors.orange.withValues(alpha: 0.10),
+      ),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: colors.indigo,
+        backgroundColor: colors.orange,
         foregroundColor: Colors.white,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
         shape: RoundedRectangleBorder(
@@ -67,6 +73,8 @@ ThemeData appTheme(Brightness brightness) {
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
+        foregroundColor: colors.textPrimary,
+        side: BorderSide(color: colors.borderStrong),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(CsRadius.sm),
         ),
@@ -95,9 +103,18 @@ ThemeData appTheme(Brightness brightness) {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(CsRadius.md),
-        borderSide: BorderSide(color: colors.indigo, width: 2),
+        borderSide: BorderSide(color: colors.orange, width: 2),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(CsRadius.md),
+        borderSide: BorderSide(color: colors.error, width: 2),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+    ),
+    textSelectionTheme: TextSelectionThemeData(
+      cursorColor: colors.orange,
+      selectionColor: colors.orange.withValues(alpha: 0.25),
+      selectionHandleColor: colors.orange,
     ),
     dividerTheme: DividerThemeData(color: colors.border, thickness: 1),
     snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
@@ -115,7 +132,7 @@ ThemeData appTheme(Brightness brightness) {
     ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: colors.surface,
-      indicatorColor: colors.indigo.withValues(alpha: 0.15),
+      indicatorColor: colors.orange.withValues(alpha: 0.15),
       labelTextStyle: WidgetStatePropertyAll(
         TextStyle(
           color: colors.textSecondary,

@@ -30,6 +30,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
   final Set<String> _selectedPlayerIds = <String>{};
   bool _includeUnassigned = true;
   bool _playerFilterActive = false;
+  bool _showFastRisk = true;
 
   @override
   Widget build(BuildContext context) {
@@ -154,7 +155,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(Spacing.sm),
                         decoration: BoxDecoration(
-                          color: c.indigo.withValues(alpha: 0.12),
+                          color: c.orange.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(CsRadius.md),
                         ),
                         child: Column(
@@ -196,6 +197,46 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                         '视频仍在分析，分析完成后才能导出新的候选结果。',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: c.warning,
+                        ),
+                      ),
+                    ],
+                    if (state.analysisMode == 'fast' && _showFastRisk) ...[
+                      const SizedBox(height: Spacing.sm),
+                      Container(
+                        key: const Key('fast-analysis-export-risk'),
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(Spacing.sm),
+                        decoration: BoxDecoration(
+                          color: c.warning.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(CsRadius.md),
+                          border: Border.all(
+                            color: c.warning.withValues(alpha: 0.28),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.info_outline,
+                              size: 17,
+                              color: c.warning,
+                            ),
+                            const SizedBox(width: Spacing.sm),
+                            Expanded(
+                              child: Text(
+                                '当前结果来自快速分析，可能漏检；如需更完整结果，建议先用标准模式重新分析。',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: c.textSecondary,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: '关闭提示',
+                              onPressed: () =>
+                                  setState(() => _showFastRisk = false),
+                              icon: const Icon(Icons.close, size: 16),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ],
                         ),
                       ),
                     ],

@@ -70,9 +70,12 @@
 | `start_analysis` | 异步启动代理、粗扫、候选生成和精筛任务 |
 | `get_job` | 查询任务状态 |
 | `get_active_jobs` | 查询未完成的分析任务及恢复状态，不启动任务 |
+| `get_latest_job` | 查询指定项目/视频最近一条分析或导出任务，用于重开项目恢复终态信息 |
 | `retry_analysis` | 结束已中断的分析任务并从头重新开始，不覆盖原始视频 |
 | `cancel_job` | 请求取消任务 |
 | `list_candidates` | 按事件时间查询候选、保留/排除语义和审核用代理视频路径 |
+| `create_manual_candidate` | 从原视频当前时间段创建手动候选，默认保留并可导出 |
+| `delete_player` | 删除项目球员，并将已关联候选置为未标记 |
 | `start_review` | 记录开始审核某个候选的时间 |
 | `review_candidate` | 写入确认 / 排除 / 暂缓状态、原因和备注，并结算审核耗时 |
 | `list_review_history` | 查询候选的审核操作历史 |
@@ -237,7 +240,7 @@ JOB_CANCELLED
 
 `review_video_path` 仅用于审核播放；原始视频路径仍由 `videos.source_path` 保存并只用于精确导出。代理不存在时该字段为 `null`，调用方应回退到原始视频或提示重新生成分析。
 
-每个候选都返回 `selection_status`：`included` 表示默认保留，`excluded` 表示用户已打叉剔除。
+每个候选都返回 `selection_status`：`included` 表示默认保留，`excluded` 表示用户已打叉剔除。手动候选的 `detector_version` 为 `manual-v1`，`confidence` 为 `manual`，证据中的 `source` 为 `manual`。
 旧版 `review_status` 仍保留用于兼容历史项目；导出以 `selection_status` 为准，未排除候选都会进入输出。
 
 审核接口约定：调用方进入候选时可发送 `start_review`，payload 为
@@ -246,6 +249,10 @@ JOB_CANCELLED
 `review_started_at`；Engine 会把 `review_started_at`、`reviewed_at` 和非负的
 `review_duration_ms` 写入候选审核记录。旧客户端不调用 `start_review` 时，提交动作仍然有效，
 审核耗时按 0 记录。`list_review_history` 返回每次审核动作及其状态、原因、备注、时间和耗时。
+
+`delete_player` 请求 payload 为 `{ "project_root": "...", "player_id": "player-1" }`。删除使用项目范围校验；数据库的 `ON DELETE SET NULL` 会把已关联候选安全地恢复为未标记。
+
+`create_manual_candidate` 请求 payload 为 `{ "project_root": "...", "video_id": "...", "start_ms": 12000, "end_ms": 21000, "event_time_ms": 16000 }`。`event_time_ms` 可省略，省略时取片段中点；手动候选直接写入当前候选列表，默认保留。重新分析时会保留手动候选，不被新批次替换。
 
 `get_statistics` 的 `statistics` 对象包含候选数、待审核数、已审核数、确认数、排除数、
 `confirmation_rate`、`avg_review_duration_ms`、`reason_distribution` 和
@@ -277,4 +284,4 @@ JOB_CANCELLED
 
 安全边界：`roots` 必须由调用方显式提供；Engine 只检查每个 root 自身及其一级子目录中的 `project.db`，不递归扫描用户目录，也不跟随一级子目录中的符号链接。结果按项目数据库最近修改时间倒序排列。
 
-当前已可运行的最小闭环命令：`hello`、`create_project`、`update_project_settings`、`open_project`、`delete_project`、`list_recent_projects`、`inspect_video`、`link_video`、`relink_video`、`extract_preview`、`save_roi`、`start_analysis`、`retry_analysis`、`cancel_job`、`get_job`、`get_active_jobs`、`list_candidates`、`start_review`、`review_candidate`、`list_review_history`、`update_clip_range`、`start_export`、`retry_export`、`get_statistics`、`set_telemetry_consent`、`cleanup_artifacts`。
+当前已可运行的最小闭环命令：`hello`、`create_project`、`update_project_settings`、`open_project`、`delete_project`、`list_recent_projects`、`inspect_video`、`link_video`、`relink_video`、`extract_preview`、`save_roi`、`start_analysis`、`retry_analysis`、`cancel_job`、`get_job`、`get_active_jobs`、`get_latest_job`、`list_candidates`、`create_manual_candidate`、`delete_player`、`start_review`、`review_candidate`、`list_review_history`、`update_clip_range`、`start_export`、`retry_export`、`get_statistics`、`set_telemetry_consent`、`cleanup_artifacts`。

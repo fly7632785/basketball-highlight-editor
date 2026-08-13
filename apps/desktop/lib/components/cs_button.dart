@@ -175,7 +175,7 @@ class _RawState extends State<_Raw> {
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(CsRadius.md),
       side: BorderSide(
-        color: c.indigo.withValues(alpha: _focused ? 0.9 : 0.0),
+        color: c.orange.withValues(alpha: _focused ? 0.9 : 0.0),
         width: 2,
       ),
     ),

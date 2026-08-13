@@ -242,6 +242,15 @@ def test_players_can_be_created_assigned_and_cleared(tmp_path: Path):
     assert candidates[0]["player_id"] is None
     assert candidates[1]["player_id"] == created["id"]
 
+    deleted = service.handle("delete_player", {
+        "project_root": str(project_root),
+        "player_id": created["id"],
+    })
+    assert deleted["deleted"] is True
+    candidates = store.list_candidates(rows[0]["video_id"])
+    assert all(item["player_id"] is None for item in candidates)
+    assert store.list_players() == []
+
 
 def test_export_snapshot_filters_by_player_and_unassigned(tmp_path: Path, monkeypatch):
     service, store, project_root = _create_project(tmp_path)

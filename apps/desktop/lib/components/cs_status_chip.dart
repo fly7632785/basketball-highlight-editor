@@ -15,14 +15,15 @@ class CsStatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final (label, color, icon) = switch (status) {
-      ReviewStatus.goal     => ('已确认', c.goal,     LucideIcons.check),
-      ReviewStatus.pending  => ('待审核', c.pending,  LucideIcons.hourglass),
+      ReviewStatus.goal => ('已确认', c.goal, LucideIcons.check),
+      ReviewStatus.pending => ('待审核', c.pending, LucideIcons.hourglass),
       ReviewStatus.excluded => ('已排除', c.excluded, LucideIcons.ban),
     };
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? Spacing.sm : Spacing.md,
-        vertical: compact ? 2 : 4),
+        vertical: compact ? 2 : 4,
+      ),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.16),
         borderRadius: BorderRadius.circular(CsRadius.full),
@@ -32,11 +33,15 @@ class CsStatusChip extends StatelessWidget {
         children: [
           Icon(icon, size: compact ? 11 : 13, color: color),
           SizedBox(width: compact ? 3 : 5),
-          Text(label, style: TextStyle(
-            color: color, fontSize: compact ? 10 : 12,
-            fontWeight: FontWeight.w600,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          )),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: compact ? 10 : 12,
+              fontWeight: FontWeight.w600,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
         ],
       ),
     );

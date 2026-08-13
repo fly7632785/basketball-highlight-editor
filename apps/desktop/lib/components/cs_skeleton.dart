@@ -12,7 +12,8 @@ class CsSkeleton extends StatefulWidget {
   State<CsSkeleton> createState() => _CsSkeletonState();
 }
 
-class _CsSkeletonState extends State<CsSkeleton> with SingleTickerProviderStateMixin {
+class _CsSkeletonState extends State<CsSkeleton>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
 
   @override

@@ -158,7 +158,7 @@ class HomeScreen extends ConsumerWidget {
                             Icon(
                               LucideIcons.sparkles,
                               size: 20,
-                              color: c.indigo,
+                              color: c.orange,
                             ),
                             const SizedBox(width: Spacing.sm),
                             Text('从视频开始', style: theme.textTheme.titleLarge),

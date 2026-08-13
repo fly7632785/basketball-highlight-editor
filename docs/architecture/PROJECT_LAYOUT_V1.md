@@ -10,10 +10,7 @@ basketball-highlight-editor/
 │   └── python/
 │       ├── basketball_engine/      Engine 进程
 │       └── README.md
-├── packages/
-│   ├── domain/                     跨层领域模型文档
-│   └── protocol/                   JSON Lines 协议定义
-├── src/                            当前算法库
+├── src/                            当前算法库（如存在）
 ├── scripts/                        当前算法脚本
 ├── data/                           本地研发数据，不进入正式项目目录
 ├── docs/
@@ -27,7 +24,6 @@ basketball-highlight-editor/
 ```text
 <project-root>/
 ├── project.db
-├── project.json
 ├── artifacts/
 │   ├── proxies/
 │   ├── detections/
