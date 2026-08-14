@@ -50,6 +50,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   int _analysisStartMs = 0;
   int _analysisEndMs = 0;
   String _analysisMode = 'standard';
+  Timer? _previewPlaybackTimer;
+  bool _previewPlaying = false;
 
   @override
   void initState() {
@@ -298,9 +300,60 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     await _persistDraft(step: 1);
   }
 
+  @override
+  void dispose() {
+    _previewPlaybackTimer?.cancel();
+    super.dispose();
+  }
+
+  void _stopPreviewPlayback() {
+    _previewPlaybackTimer?.cancel();
+    _previewPlaybackTimer = null;
+    if (mounted) {
+      setState(() => _previewPlaying = false);
+    } else {
+      _previewPlaying = false;
+    }
+  }
+
+  Future<void> _refreshPreviewAt(int timeMs) async {
+    final refreshed = await ref
+        .read(projectProvider.notifier)
+        .refreshPreviewAt(timeMs);
+    if (!refreshed && mounted) _stopPreviewPlayback();
+  }
+
+  void _togglePreviewPlayback() {
+    final state = ref.read(projectProvider);
+    final duration = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
+    if (_previewPlaying) {
+      _stopPreviewPlayback();
+      return;
+    }
+    if (duration <= 0 ||
+        state.previewTimeMs >= duration ||
+        state.previewRefreshing) {
+      return;
+    }
+    setState(() => _previewPlaying = true);
+    _previewPlaybackTimer = Timer.periodic(const Duration(milliseconds: 500), (
+      _,
+    ) {
+      final current = ref.read(projectProvider);
+      if (current.previewRefreshing || current.busy) return;
+      final next = current.previewTimeMs + 500;
+      if (next >= duration) {
+        _stopPreviewPlayback();
+        return;
+      }
+      unawaited(_refreshPreviewAt(next));
+    });
+  }
+
   Future<void> _next() async {
     if (!_canLeaveStep(_step)) return;
     final next = math.min(_step + 1, _stepCount - 1);
+    if (_step == 2 && next != 2) _stopPreviewPlayback();
     setState(() => _step = next);
     await _persistDraft(step: next);
   }
@@ -308,6 +361,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   Future<void> _back() async {
     if (_step == 0) return;
     final next = _step - 1;
+    if (_step == 2 && next != 2) _stopPreviewPlayback();
     setState(() => _step = next);
     await _persistDraft(step: next);
   }
@@ -367,6 +421,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           previousVideoId != nextVideoId ||
           previous?.videoPath != next.videoPath;
       if (!projectChanged) return;
+      _stopPreviewPlayback();
       if (next.video == null) {
         setState(() {
           _draftLoaded = false;
@@ -483,6 +538,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                       ? null
                       : (index) {
                           if (index < _step) {
+                            if (_step == 2 && index != 2) {
+                              _stopPreviewPlayback();
+                            }
                             setState(() => _step = index);
                             unawaited(_persistDraft(step: index));
                           }
@@ -606,6 +664,12 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           enabled: state.video != null && !busy,
           aspectRatio: sourceWidth / sourceHeight,
           onEditNetChanged: (value) => setState(() => _editingNet = value),
+          onPreviewTimeChanged: (timeMs) =>
+              unawaited(_refreshPreviewAt(timeMs)),
+          onRefreshPreview: () =>
+              unawaited(_refreshPreviewAt(state.previewTimeMs)),
+          onPreviewPlaybackToggled: _togglePreviewPlayback,
+          previewPlaying: _previewPlaying,
           onChanged: (value) {
             setState(() {
               if (_editingNet) {
@@ -920,6 +984,10 @@ class _DetectionStep extends StatelessWidget {
     required this.enabled,
     required this.aspectRatio,
     required this.onEditNetChanged,
+    required this.onPreviewTimeChanged,
+    required this.onPreviewPlaybackToggled,
+    required this.onRefreshPreview,
+    required this.previewPlaying,
     required this.onChanged,
     required this.onResetNet,
   });
@@ -931,6 +999,10 @@ class _DetectionStep extends StatelessWidget {
   final bool enabled;
   final double aspectRatio;
   final ValueChanged<bool> onEditNetChanged;
+  final ValueChanged<int> onPreviewTimeChanged;
+  final VoidCallback onPreviewPlaybackToggled;
+  final VoidCallback onRefreshPreview;
+  final bool previewPlaying;
   final ValueChanged<Rect> onChanged;
   final VoidCallback onResetNet;
 
@@ -944,8 +1016,24 @@ class _DetectionStep extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (state.roiSource == 'auto') ...[
+            Text(
+              '系统已自动选择 ${_formatPreviewTime(state.previewTimeMs)} 作为标记画面',
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: Spacing.xs),
+            Text(
+              '篮筐可见度较高，如被遮挡可调整画面时间。',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: c.textSecondary),
+            ),
+            const SizedBox(height: Spacing.sm),
+          ],
           _RoiCanvas(
-            enabled: enabled,
+            enabled: enabled && !state.previewRefreshing,
             previewPath: state.previewPath,
             aspectRatio: aspectRatio,
             roi: editingNet ? netRoi : roi,
@@ -954,10 +1042,41 @@ class _DetectionStep extends StatelessWidget {
             secondaryColor: editingNet ? c.orange : Colors.white,
             activeLabel: editingNet ? '篮网检测区' : '投篮分析区',
             secondaryLabel: editingNet ? '投篮分析区' : '篮网检测区',
-            onRefreshPreview: null,
+            onRefreshPreview: onRefreshPreview,
             onChanged: onChanged,
             onEditComplete: () {},
           ),
+          const SizedBox(height: Spacing.sm),
+          _PreviewTimeControls(
+            timeMs: state.previewTimeMs,
+            durationMs: (state.video?['duration_ms'] as num?)?.toInt() ?? 0,
+            enabled: enabled && !state.roiDetecting && !state.previewRefreshing,
+            playing: previewPlaying,
+            onStep: onPreviewTimeChanged,
+            onTogglePlayback: onPreviewPlaybackToggled,
+          ),
+          if (state.previewRefreshing) ...[
+            const SizedBox(height: Spacing.xs),
+            Row(
+              children: [
+                SizedBox(
+                  width: 13,
+                  height: 13,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.8,
+                    color: c.orange,
+                  ),
+                ),
+                const SizedBox(width: Spacing.xs),
+                Text(
+                  '正在切换标记画面…',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: Spacing.sm),
           Row(
             children: [
@@ -1302,6 +1421,16 @@ Rect? _recommendedNetRoi(Rect? analysisRoi, Rect? hoopBbox) {
     width,
     height.clamp(0.03, analysisRoi.bottom - top),
   );
+}
+
+String _formatPreviewTime(int milliseconds) {
+  final safe = milliseconds.clamp(0, 24 * 60 * 60 * 1000).toInt();
+  final seconds = safe ~/ 1000;
+  final tenths = (safe % 1000) ~/ 100;
+  final minutes = seconds ~/ 60;
+  final remaining = seconds % 60;
+  return '${minutes.toString().padLeft(2, '0')}:'
+      '${remaining.toString().padLeft(2, '0')}.$tenths';
 }
 
 String _formatDuration(int milliseconds) {
@@ -1921,6 +2050,65 @@ class _UnifiedTimelinePainter extends CustomPainter {
       oldDelegate.startX != startX ||
       oldDelegate.endX != endX ||
       oldDelegate.style.rangeColor != style.rangeColor;
+}
+
+class _PreviewTimeControls extends StatelessWidget {
+  const _PreviewTimeControls({
+    required this.timeMs,
+    required this.durationMs,
+    required this.enabled,
+    required this.playing,
+    required this.onStep,
+    required this.onTogglePlayback,
+  });
+
+  final int timeMs;
+  final int durationMs;
+  final bool enabled;
+  final bool playing;
+  final ValueChanged<int> onStep;
+  final VoidCallback onTogglePlayback;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final step = (timeMs + 5000).clamp(0, durationMs).toInt();
+    final back = (timeMs - 5000).clamp(0, durationMs).toInt();
+    return Row(
+      children: [
+        Text('标记画面', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(width: Spacing.sm),
+        Text(
+          _formatPreviewTime(timeMs),
+          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+            color: c.orange,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+        const Spacer(),
+        OutlinedButton(
+          onPressed: enabled && timeMs > 0 ? () => onStep(back) : null,
+          child: const Text('−5 秒'),
+        ),
+        const SizedBox(width: Spacing.xs),
+        OutlinedButton.icon(
+          onPressed: enabled && (playing || timeMs < durationMs)
+              ? onTogglePlayback
+              : null,
+          icon: Icon(
+            playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            size: 16,
+          ),
+          label: Text(playing ? '暂停' : '播放'),
+        ),
+        const SizedBox(width: Spacing.xs),
+        OutlinedButton(
+          onPressed: enabled && timeMs < durationMs ? () => onStep(step) : null,
+          child: const Text('+5 秒'),
+        ),
+      ],
+    );
+  }
 }
 
 class _CalibrationTargetButton extends StatelessWidget {

@@ -74,13 +74,53 @@ void main() {
       );
       addTearDown(container.dispose);
 
-      await container.read(projectProvider.notifier).selectVideo('/path/sample.mp4');
+      await container
+          .read(projectProvider.notifier)
+          .selectVideo('/path/sample.mp4');
 
       expect(fakeSession.loadRecentProjectsCalls, greaterThan(0));
       expect(
         container.read(projectProvider).recentProjects.single['project_root'],
         '/tmp/projects/sample-1',
       );
+    });
+
+    test('切换标记画面时显示处理提示', () async {
+      final fakeSession = _FakeProjectSession()
+        ..previewDelay = const Duration(milliseconds: 20);
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+      final notifier = container.read(projectProvider.notifier);
+      await notifier.selectVideo('/tmp/sample.mp4');
+
+      final refresh = notifier.refreshPreviewAt(5000);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      expect(container.read(projectProvider).previewRefreshing, isTrue);
+      expect(container.read(projectProvider).busyMessage, isNull);
+      await refresh;
+      expect(container.read(projectProvider).previewRefreshing, isFalse);
+    });
+
+    test('自动 ROI 返回最佳帧时更新标记画面时间', () async {
+      final fakeSession = _FakeProjectSession()..returnRoiSuggestion = true;
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container
+          .read(projectProvider.notifier)
+          .selectVideo('/path/sample.mp4');
+
+      expect(container.read(projectProvider).previewTimeMs, 4000);
     });
 
     test('opening an invalid project keeps the current UI state', () async {
@@ -598,6 +638,7 @@ class _FakeProjectSession extends ProjectSession {
     : super(EngineSession(_NeverTransport()));
 
   final Duration reviewDelay;
+  Duration previewDelay = Duration.zero;
 
   final List<JsonMap> _candidates = <JsonMap>[];
   List<JsonMap> reviewHistory = <JsonMap>[];
@@ -617,6 +658,7 @@ class _FakeProjectSession extends ProjectSession {
   bool throwOnSaveRoi = false;
   bool throwOnOpenProject = false;
   bool clearCandidatesOnRetry = false;
+  bool returnRoiSuggestion = false;
   int loadRecentProjectsCalls = 0;
   List<JsonMap> recentProjects = <JsonMap>[];
 
@@ -675,8 +717,10 @@ class _FakeProjectSession extends ProjectSession {
   };
 
   @override
-  Future<JsonMap> extractPreview({int timeMs = 1000}) async =>
-      <String, dynamic>{'path': '/tmp/preview.jpg'};
+  Future<JsonMap> extractPreview({int timeMs = 1000}) async {
+    if (previewDelay > Duration.zero) await Future<void>.delayed(previewDelay);
+    return <String, dynamic>{'path': '/tmp/preview.jpg'};
+  }
 
   @override
   Future<JsonMap> suggestRoi({
@@ -686,7 +730,15 @@ class _FakeProjectSession extends ProjectSession {
     int? maxSamples,
     double? confidence,
   }) async {
-    throw StateError('no roi available');
+    if (!returnRoiSuggestion) throw StateError('no roi available');
+    return <String, dynamic>{
+      'roi': <String, dynamic>{'x1': 400, 'y1': 200, 'x2': 900, 'y2': 900},
+      'calibration': <String, dynamic>{
+        'confidence': 0.8,
+        'hoop_bbox': <num>[600, 400, 640, 440],
+      },
+      'preview_time_ms': 4000,
+    };
   }
 
   @override

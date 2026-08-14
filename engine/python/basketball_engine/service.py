@@ -614,10 +614,19 @@ class EngineService:
             "samples": result.get("samples"),
             "hoop_bbox": result.get("hoop_bbox"),
         }
+        duration_ms = video.get("duration_ms")
+        duration_limit = int(duration_ms) if duration_ms is not None else 1000
         return {
             "roi": roi,
             "calibration": calibration,
             "suggestion": result,
+            "preview_time_ms": max(
+                0,
+                min(
+                    int(result.get("preview_time_ms", 1000)),
+                    duration_limit,
+                ),
+            ),
         }
 
     @staticmethod
@@ -677,7 +686,9 @@ class EngineService:
         # Calibration and review previews share the original source coordinate system.
         source = self._validated_source(video)
         try:
-            time_ms = max(0, min(int(payload.get("time_ms", 1000)), int(video.get("duration_ms") or 1000)))
+            duration_ms = video.get("duration_ms")
+            duration_limit = int(duration_ms) if duration_ms is not None else 1000
+            time_ms = max(0, min(int(payload.get("time_ms", 1000)), duration_limit))
         except (TypeError, ValueError) as exc:
             raise ProtocolError("INVALID_REQUEST", "预览时间格式无效") from exc
         output = payload.get("output_path")

@@ -91,6 +91,7 @@ def select_stable_hoop(
                 "confidence": confidence,
                 "center": ((x1 + x2) / 2.0, (y1 + y2) / 2.0),
                 "area": (x2 - x1) * (y2 - y1),
+                "time": float(detection.get("time", 0.0)),
             }
         )
 
@@ -136,11 +137,13 @@ def select_stable_hoop(
         for index in range(4)
     ]
     confidence = median(item["confidence"] for item in selected)
+    best_detection = max(selected, key=lambda item: item["confidence"])
     roi = expand_hoop_bbox_to_roi(bbox, frame_width, frame_height)
     return {
         "hoop_bbox": [round(value, 2) for value in bbox],
         "roi": roi,
         "confidence": round(confidence, 3),
+        "preview_time_ms": round(best_detection["time"] * 1000),
         "samples": len(selected),
         "stability": round(min(1.0, len(selected) / max(1, len(candidates))), 3),
     }
