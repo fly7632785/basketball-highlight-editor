@@ -642,7 +642,10 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
               : 16 / 9,
           startMs: _analysisStartMs,
           endMs: _analysisEndMs,
-          enabled: !busy,
+          enabled:
+              (!busy || state.roiDetecting) &&
+              !state.analysisRunning &&
+              !state.exportRunning,
           onChanged: (start, end) {
             setState(() {
               _analysisStartMs = start;
@@ -1480,6 +1483,7 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
   late int _endMs = widget.endMs;
   int _positionMs = 0;
   bool _playing = false;
+  bool _playbackRequested = false;
   bool _ready = false;
   String? _error;
   bool _saving = false;
@@ -1514,6 +1518,7 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
       setState(() {
         _ready = false;
         _playing = false;
+        _playbackRequested = false;
         _error = null;
       });
     }
@@ -1529,12 +1534,18 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
       }
     });
     _playingSubscription = player.stream.playing.listen((playing) {
+      if (playing && !_playbackRequested) {
+        unawaited(player.pause());
+        return;
+      }
       if (mounted && generation == _mediaGeneration) {
         setState(() => _playing = playing);
       }
     });
     try {
       await player.open(Media(Uri.file(path).toString()), play: false);
+      _playbackRequested = false;
+      await player.pause();
       if (mounted &&
           generation == _mediaGeneration &&
           identical(player, _player)) {
@@ -1561,7 +1572,17 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
     _mediaGeneration++;
     unawaited(_positionSubscription?.cancel());
     unawaited(_playingSubscription?.cancel());
-    unawaited(_player?.dispose());
+    final player = _player;
+    _player = null;
+    unawaited(() async {
+      if (player == null) return;
+      try {
+        await player.stop();
+      } catch (_) {}
+      try {
+        await player.dispose();
+      } catch (_) {}
+    }());
     super.dispose();
   }
 
@@ -1575,8 +1596,10 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
     final player = _player;
     if (player == null) return;
     if (player.state.playing) {
+      _playbackRequested = false;
       await player.pause();
     } else {
+      _playbackRequested = true;
       await player.play();
     }
   }

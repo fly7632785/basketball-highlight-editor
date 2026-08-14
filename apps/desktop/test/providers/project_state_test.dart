@@ -269,6 +269,40 @@ void main() {
     },
   );
 
+  test('transport timeout restores an attached analysis worker', () async {
+    final fakeSession = _FakeProjectSession();
+    final container = ProviderContainer(
+      overrides: <Override>[
+        projectSessionProvider.overrideWithValue(fakeSession),
+        engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+      ],
+    );
+    addTearDown(container.dispose);
+    final notifier = container.read(projectProvider.notifier);
+    await notifier.startAnalysis();
+    await Future<void>.delayed(Duration.zero);
+
+    final scope = ProjectSessionScope(
+      engine: EngineSession(_RecoveringTransport()),
+      projectRoot: '/tmp/project',
+      videoId: 'video-1',
+    );
+    await notifier.pollJob('start-job', scope: scope);
+    await Future<void>.delayed(Duration.zero);
+
+    final state = container.read(projectProvider);
+    expect(state.job?['state'], 'completed');
+    expect(state.job?['recoverable'], isNot(true));
+    expect(state.job?['recovery_state'], isNull);
+    expect(
+      container
+          .read(noticeProvider)
+          .where((notice) => notice.title.contains('ENGINE_TIMEOUT'))
+          .isEmpty,
+      isTrue,
+    );
+  });
+
   test(
     'cancel analysis reports cancelling until the engine reaches terminal state',
     () async {
@@ -901,5 +935,40 @@ class _ThrowingTransport implements EngineTransport {
   @override
   Future<JsonMap> request(String command, JsonMap payload) {
     throw const EngineException('ENGINE_EXITED', 'Engine 已退出');
+  }
+}
+
+class _RecoveringTransport implements EngineTransport {
+  var _jobPolls = 0;
+
+  @override
+  Future<JsonMap> request(String command, JsonMap payload) async {
+    if (command == 'get_active_jobs') {
+      return <String, dynamic>{
+        'jobs': <JsonMap>[
+          <String, dynamic>{
+            'id': 'start-job',
+            'state': 'running',
+            'stage': 'prepare_proxy',
+            'recovery_state': 'worker_attached',
+            'recoverable': false,
+          },
+        ],
+      };
+    }
+    if (command == 'get_job') {
+      if (_jobPolls++ == 0) {
+        throw const EngineException('ENGINE_TIMEOUT', '请求处理超时：get_job');
+      }
+      return <String, dynamic>{
+        'job': <String, dynamic>{
+          'id': 'start-job',
+          'state': 'completed',
+          'stage': 'persist_candidates',
+          'progress': 1.0,
+        },
+      };
+    }
+    throw StateError('unexpected engine call: $command');
   }
 }

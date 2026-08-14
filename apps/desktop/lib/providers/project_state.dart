@@ -1165,6 +1165,26 @@ class ProjectNotifier extends Notifier<ProjectState> {
     return started;
   }
 
+  Future<bool> _restoreAttachedAnalysis(
+    ProjectSessionScope scope, {
+    String? preferredJobId,
+  }) async {
+    final activeJobs = await scope.getActiveJobs();
+    JsonMap? attached;
+    for (final candidate in activeJobs) {
+      if (candidate['recovery_state'] == 'worker_attached' &&
+          (preferredJobId == null ||
+              candidate['id']?.toString() == preferredJobId)) {
+        attached = candidate;
+        break;
+      }
+    }
+    if (attached == null) return false;
+    state = state.copyWith(job: attached);
+    _pushNotice('分析任务仍在运行，已恢复状态监听', NoticeSeverity.info);
+    return true;
+  }
+
   /// 等价 app.dart:_pollJob(476)。Stream 监听逻辑原样迁移。
   Future<void> pollJob(String jobId, {ProjectSessionScope? scope}) async {
     if (_disposed || !_pollingJobIds.add(jobId)) return;
@@ -1174,6 +1194,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
       _pollingJobIds.remove(jobId);
       return;
     }
+    var resumedAfterTransportError = false;
     try {
       var refreshed = false;
       await for (final payload in requestScope.pollJob(jobId: jobId)) {
@@ -1230,10 +1251,33 @@ class ProjectNotifier extends Notifier<ProjectState> {
       );
     } catch (error) {
       if (_disposed || projectGeneration != _projectLoadGeneration) return;
-      _markEngineJobRecoverable(error, export: false);
-      _pushNotice(error.toString(), NoticeSeverity.error);
+      if (error is EngineException &&
+          const <String>{
+            'ENGINE_TIMEOUT',
+            'ENGINE_EXITED',
+            'ENGINE_NOT_RUNNING',
+            'ENGINE_WRITE_FAILED',
+            'ENGINE_DISPOSED',
+          }.contains(error.code)) {
+        try {
+          resumedAfterTransportError = await _restoreAttachedAnalysis(
+            requestScope,
+            preferredJobId: jobId,
+          );
+        } catch (_) {}
+      }
+      if (!resumedAfterTransportError) {
+        _markEngineJobRecoverable(error, export: false);
+        _pushNotice(error.toString(), NoticeSeverity.error);
+      }
     } finally {
       _pollingJobIds.remove(jobId);
+      if (resumedAfterTransportError && !_disposed) {
+        final currentJobId = state.job?['id'];
+        if (currentJobId is String) {
+          unawaited(pollJob(currentJobId, scope: requestScope));
+        }
+      }
     }
   }
 
@@ -1260,22 +1304,35 @@ class ProjectNotifier extends Notifier<ProjectState> {
         : _jobAnalysisMode(state.job) ?? state.analysisMode;
     await _runBusy(() async {
       await ref.read(engineBootstrapProvider.notifier).ensure();
-      final result = await ref
-          .read(projectSessionProvider)
-          .retryAnalysis(
-            jobId: jobId,
-            mode: requestedMode,
-            sampleFps: 10,
-            beforeSeconds: 6,
-            afterSeconds: 3,
-          );
-      state = state.copyWith(
-        job: (result['job'] as Map?)?.cast<String, dynamic>(),
-        analysisMode: requestedMode,
-      );
-      _pushNotice('已重新开始分析', NoticeSeverity.success);
-      final newJobId = state.job?['id'];
-      if (newJobId is String) unawaited(pollJob(newJobId));
+      try {
+        final result = await ref
+            .read(projectSessionProvider)
+            .retryAnalysis(
+              jobId: jobId,
+              mode: requestedMode,
+              sampleFps: 10,
+              beforeSeconds: 6,
+              afterSeconds: 3,
+            );
+        state = state.copyWith(
+          job: (result['job'] as Map?)?.cast<String, dynamic>(),
+          analysisMode: requestedMode,
+        );
+        _pushNotice('已重新开始分析', NoticeSeverity.success);
+        final newJobId = state.job?['id'];
+        if (newJobId is String) unawaited(pollJob(newJobId));
+      } on EngineException catch (error) {
+        if (error.code != 'JOB_ALREADY_RUNNING') rethrow;
+        final scope = _captureScope();
+        if (scope == null ||
+            !await _restoreAttachedAnalysis(scope, preferredJobId: jobId)) {
+          rethrow;
+        }
+        final activeJobId = state.job?['id'];
+        if (activeJobId is String) {
+          unawaited(pollJob(activeJobId, scope: scope));
+        }
+      }
     });
   }
 
