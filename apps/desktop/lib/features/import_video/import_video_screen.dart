@@ -16,6 +16,7 @@ import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../components/cs_step_indicator.dart';
 import '../../core/engine_session.dart';
+import '../../providers/notice_provider.dart';
 import '../../providers/project_state.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
@@ -59,15 +60,32 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   Future<void> _restoreDraft() async {
     if (!mounted || _draftLoaded) return;
     final state = ref.read(projectProvider);
-    final draft =
-        state.workflowDraft ??
-        await ref.read(projectProvider.notifier).loadWorkflowDraft();
+    JsonMap? draft;
+    try {
+      draft =
+          state.workflowDraft ??
+          await ref.read(projectProvider.notifier).loadWorkflowDraft();
+    } catch (error) {
+      if (mounted) {
+        ref
+            .read(noticeProvider.notifier)
+            .push(
+              NoticeMessage(
+                id: 'import-draft-${DateTime.now().microsecondsSinceEpoch}',
+                severity: NoticeSeverity.error,
+                title: '配置草稿加载失败',
+                description: error.toString(),
+              ),
+            );
+      }
+    }
     if (!mounted) return;
     _draftLoaded = true;
-    if (state.video != null) {
-      _syncFromState(state);
+    final currentState = ref.read(projectProvider);
+    if (currentState.video != null) {
+      _syncFromState(currentState);
     }
-    if (draft != null && draft.isNotEmpty && state.video != null) {
+    if (draft != null && draft.isNotEmpty && currentState.video != null) {
       _applyDraftLocally(draft);
       setState(() => _showExistingDraft = true);
       return;
@@ -79,7 +97,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     if (video == null) return;
     _roi = state.suggestedRoi;
     _netRoi = state.netRoi ?? _recommendedNetRoi(_roi, state.hoopBbox);
+    _netUserEdited = state.netRoi != null;
     _hoopBbox = state.hoopBbox;
+    _editingNet = false;
     _analysisStartMs = _analysisStart(state);
     _analysisEndMs = _analysisEnd(state);
     _analysisMode = state.analysisMode;
@@ -133,12 +153,48 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
 
   Future<void> _persistDraft({int? step}) async {
     if (ref.read(projectProvider).video == null) return;
-    await ref
-        .read(projectProvider.notifier)
-        .saveWorkflowDraft(_draft(step: step));
+    try {
+      await ref
+          .read(projectProvider.notifier)
+          .saveWorkflowDraft(_draft(step: step));
+    } catch (error) {
+      if (!mounted) return;
+      ref
+          .read(noticeProvider.notifier)
+          .push(
+            NoticeMessage(
+              id: 'import-draft-save-${DateTime.now().microsecondsSinceEpoch}',
+              severity: NoticeSeverity.error,
+              title: '配置草稿保存失败',
+              description: error.toString(),
+            ),
+          );
+    }
   }
 
   Future<void> _selectVideo() async {
+    final existingState = ref.read(projectProvider);
+    final existingVideo = existingState.video;
+    if (existingVideo != null) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('更换当前视频？'),
+          content: const Text('更换视频会创建一个新的分析项目，当前项目和审核记录会保留。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('继续选择'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
     const group = XTypeGroup(
       label: '视频',
       extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
@@ -202,14 +258,43 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     } catch (_) {
       // 元数据预检失败时仍交给正式导入流程处理。
     }
+    final previousVideoId = existingState.video?['id']?.toString();
     await ref.read(projectProvider.notifier).selectVideo(file.path);
     if (!mounted) return;
+    final importedState = ref.read(projectProvider);
+    final importedVideoId = importedState.video?['id']?.toString();
+    if (importedVideoId == null || importedVideoId == previousVideoId) {
+      setState(() {
+        _step = 0;
+        _showExistingDraft = false;
+      });
+      return;
+    }
     _draftLoaded = true;
-    _syncFromState(ref.read(projectProvider));
+    _syncFromState(importedState);
     setState(() {
       _step = 1;
       _showExistingDraft = false;
     });
+    await _persistDraft(step: 1);
+  }
+
+  Future<void> _relinkMissingVideo() async {
+    const group = XTypeGroup(
+      label: '视频',
+      extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
+      mimeTypes: ['video/*'],
+      uniformTypeIdentifiers: ['public.movie'],
+    );
+    final file = await openFile(acceptedTypeGroups: const [group]);
+    if (file == null || !mounted) return;
+    final relinked = await ref
+        .read(projectProvider.notifier)
+        .relinkCurrentVideo(file.path);
+    if (!mounted || !relinked) return;
+    _draftLoaded = true;
+    _syncFromState(ref.read(projectProvider));
+    setState(() => _step = 1);
     await _persistDraft(step: 1);
   }
 
@@ -265,8 +350,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           .read(projectProvider.notifier)
           .applyWorkflowDraft(_backendDraft(step: _step));
       if (!mounted || !applied) return;
-      await ref.read(projectProvider.notifier).startAnalysis();
-      if (mounted) context.go('/review');
+      final started = await ref.read(projectProvider.notifier).startAnalysis();
+      if (mounted && started) context.go('/review');
     } finally {
       if (mounted) setState(() => _applying = false);
     }
@@ -290,6 +375,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           _roi = null;
           _netRoi = null;
           _hoopBbox = null;
+          _netUserEdited = false;
+          _editingNet = false;
           _analysisStartMs = 0;
           _analysisEndMs = 0;
         });
@@ -297,6 +384,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       }
       _draftLoaded = true;
       _showExistingDraft = false;
+      _netUserEdited = false;
+      _editingNet = false;
       _syncFromState(next);
       setState(() => _step = 1);
     });
@@ -367,9 +456,22 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                   ),
                   if (hasVideo)
                     TextButton.icon(
-                      onPressed: busy ? null : _selectVideo,
-                      icon: const Icon(Icons.swap_horiz_rounded, size: 17),
-                      label: const Text('更换视频'),
+                      onPressed: busy
+                          ? null
+                          : state.videoPath == null || state.videoPath!.isEmpty
+                          ? _relinkMissingVideo
+                          : _selectVideo,
+                      icon: Icon(
+                        state.videoPath == null || state.videoPath!.isEmpty
+                            ? Icons.link_rounded
+                            : Icons.swap_horiz_rounded,
+                        size: 17,
+                      ),
+                      label: Text(
+                        state.videoPath == null || state.videoPath!.isEmpty
+                            ? '重新定位视频'
+                            : '更换视频',
+                      ),
                     ),
                 ],
               ),
@@ -532,7 +634,6 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           fastModeEnabled: _fastAnalysisEnabled,
           onAnalysisModeChanged: (mode) {
             setState(() => _analysisMode = mode);
-            unawaited(ref.read(projectProvider.notifier).setAnalysisMode(mode));
             unawaited(_persistDraft());
           },
         );
@@ -1241,7 +1342,9 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
   int _positionMs = 0;
   bool _playing = false;
   bool _ready = false;
+  String? _error;
   bool _saving = false;
+  int _mediaGeneration = 0;
 
   @override
   void initState() {
@@ -1261,40 +1364,62 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
   }
 
   Future<void> _openVideo() async {
+    final generation = ++_mediaGeneration;
     final path = widget.videoPath;
     await _positionSubscription?.cancel();
     await _playingSubscription?.cancel();
     await _player?.dispose();
     _player = null;
     _controller = null;
-    if (path == null || path.isEmpty || !File(path).existsSync()) {
-      if (mounted) setState(() => _ready = false);
-      return;
+    if (mounted) {
+      setState(() {
+        _ready = false;
+        _playing = false;
+        _error = null;
+      });
     }
+    if (path == null || path.isEmpty || !File(path).existsSync()) return;
     final player = Player();
     _player = player;
     _controller = VideoController(player);
     _positionSubscription = player.stream.position.listen((position) {
-      if (!mounted) return;
+      if (!mounted || generation != _mediaGeneration) return;
       final value = position.inMilliseconds;
       if ((value - _positionMs).abs() >= 100) {
         setState(() => _positionMs = value.clamp(0, widget.durationMs));
       }
     });
     _playingSubscription = player.stream.playing.listen((playing) {
-      if (mounted) setState(() => _playing = playing);
+      if (mounted && generation == _mediaGeneration) {
+        setState(() => _playing = playing);
+      }
     });
-    await player.open(Media(Uri.file(path).toString()), play: false);
-    if (mounted && identical(player, _player)) {
-      setState(() {
-        _ready = true;
-        _playing = player.state.playing;
-      });
+    try {
+      await player.open(Media(Uri.file(path).toString()), play: false);
+      if (mounted &&
+          generation == _mediaGeneration &&
+          identical(player, _player)) {
+        setState(() {
+          _ready = true;
+          _error = null;
+          _playing = player.state.playing;
+        });
+      }
+    } catch (error) {
+      if (mounted &&
+          generation == _mediaGeneration &&
+          identical(player, _player)) {
+        setState(() {
+          _ready = false;
+          _error = error.toString();
+        });
+      }
     }
   }
 
   @override
   void dispose() {
+    _mediaGeneration++;
     unawaited(_positionSubscription?.cancel());
     unawaited(_playingSubscription?.cancel());
     unawaited(_player?.dispose());
@@ -1360,7 +1485,15 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
             aspectRatio: 16 / 9,
             child: DecoratedBox(
               decoration: const BoxDecoration(color: Colors.black),
-              child: controller == null || !_ready
+              child: _error != null
+                  ? Center(
+                      child: Text(
+                        '视频加载失败，请重新进入此步骤。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: c.error, fontSize: 12),
+                      ),
+                    )
+                  : controller == null || !_ready
                   ? const Center(
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )

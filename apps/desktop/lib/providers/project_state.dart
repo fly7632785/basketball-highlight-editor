@@ -263,7 +263,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     await flushReviewQueue();
     await _runBusy(
       () async {
-        _projectLoadGeneration++;
+        final generation = ++_projectLoadGeneration;
         await ref.read(engineBootstrapProvider.notifier).ensure();
         final session = ref.read(projectSessionProvider);
         final checkpoint = session.checkpoint();
@@ -318,14 +318,15 @@ class ProjectNotifier extends Notifier<ProjectState> {
           final preview = await session.extractPreview(
             timeMs: duration > 1000 ? 1000 : duration,
           );
-          if (!_disposed && state.videoPath == path) {
+          if (!_disposed && generation == _projectLoadGeneration) {
             state = state.copyWith(previewPath: preview['path']?.toString());
           }
         } catch (error) {
-          if (!_disposed && state.videoPath == path) {
+          if (!_disposed && generation == _projectLoadGeneration) {
             _pushNotice('视频预览加载失败：$error', NoticeSeverity.error);
           }
         }
+        if (_disposed || generation != _projectLoadGeneration) return;
         state = state.copyWith(busyMessage: '正在识别篮筐区域…');
         Rect? suggestedRoi;
         Rect? hoopBbox;
@@ -356,6 +357,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
           // 自动 ROI 是便利功能,失败不应阻塞导入,用户可手动框选。
           roiSuggestionError = error.toString();
         }
+        if (_disposed || generation != _projectLoadGeneration) return;
         state = state.copyWith(
           suggestedRoi: suggestedRoi,
           hoopBbox: hoopBbox,
@@ -493,6 +495,55 @@ class ProjectNotifier extends Notifier<ProjectState> {
     final root = await getDirectoryPath(confirmButtonText: '打开项目');
     if (root == null) return false;
     return openProject(root);
+  }
+
+  Future<bool> relinkCurrentVideo(String path) async {
+    final video = state.video;
+    if (video == null) return false;
+    final generation = ++_projectLoadGeneration;
+    var relinked = false;
+    await _runBusy(() async {
+      await ref.read(engineBootstrapProvider.notifier).ensure();
+      final session = ref.read(projectSessionProvider);
+      final result = await session.relinkVideo(path);
+      final nextVideo = (result['video'] as Map?)?.cast<String, dynamic>();
+      if (nextVideo == null) {
+        throw const SessionStateException('重新定位视频未返回视频信息');
+      }
+      if (_disposed || generation != _projectLoadGeneration) return;
+      final invalidated = nextVideo['analysis_invalidated'] == true;
+      state = state.copyWith(
+        video: nextVideo,
+        videoPath: _playbackVideoPath(nextVideo) ?? path,
+        reviewVideoPath: null,
+        previewPath: null,
+        suggestedRoi: invalidated ? null : state.suggestedRoi,
+        netRoi: invalidated ? null : state.netRoi,
+        hoopBbox: invalidated ? null : state.hoopBbox,
+        roiSource: invalidated ? null : state.roiSource,
+        roiConfidence: invalidated ? null : state.roiConfidence,
+        roiSuggestionError: null,
+        job: invalidated ? null : state.job,
+        exportJob: invalidated ? null : state.exportJob,
+        statistics: invalidated ? null : state.statistics,
+        candidates: invalidated ? const <JsonMap>[] : state.candidates,
+        exportHistory: invalidated ? const <JsonMap>[] : state.exportHistory,
+        workflowDraft: invalidated ? null : state.workflowDraft,
+        hydrateError: null,
+      );
+      try {
+        final preview = await session.extractPreview(timeMs: 1000);
+        if (!_disposed && generation == _projectLoadGeneration) {
+          state = state.copyWith(previewPath: preview['path']?.toString());
+        }
+      } catch (error) {
+        if (!_disposed && generation == _projectLoadGeneration) {
+          _pushNotice('视频预览加载失败：$error', NoticeSeverity.error);
+        }
+      }
+      relinked = true;
+    }, successMessage: '视频已重新定位');
+    return relinked;
   }
 
   Future<void> deleteProject(String root) async {

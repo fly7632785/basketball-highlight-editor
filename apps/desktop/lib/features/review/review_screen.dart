@@ -368,11 +368,13 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       final nextIndex = after.isEmpty
           ? -1
           : previousIndex.clamp(0, after.length - 1).toInt();
-      setState(() {
-        _selectedCandidateId = nextIndex < 0
-            ? null
-            : after[nextIndex]['id']?.toString();
-      });
+      final nextId = nextIndex < 0 ? null : after[nextIndex]['id']?.toString();
+      setState(() => _selectedCandidateId = nextId);
+      if (nextId != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _ensureCandidateVisible(nextId);
+        });
+      }
     }
     await future;
   }
@@ -722,6 +724,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     _previewGeneration++;
     _coverCache.clear();
     _reviewStartedCandidateIds.clear();
+    _selectedCandidateId = null;
+    _selectedForBatch.clear();
+    _batchMode = false;
+    _candidateFilter = 'all';
+    _showOriginalVideo = false;
+    _videoSourceSwitchToken++;
   }
 
   Future<String?> _enqueuePreview(Future<String?> Function() loader) {
