@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import json
+import math
 import time
 from pathlib import Path
 
@@ -54,6 +55,28 @@ def scan_video(args):
     model_path = Path(args.model)
     output = Path(args.output)
     x1, y1, x2, y2 = args.roi
+    if not video.is_file():
+        raise ValueError(f"VIDEO_NOT_FOUND: {video}")
+    if not model_path.is_file():
+        raise ValueError(f"MODEL_NOT_FOUND: {model_path}")
+    if (
+        len(args.roi) != 4
+        or x1 < 0
+        or y1 < 0
+        or x2 <= x1
+        or y2 <= y1
+        or not math.isfinite(args.sample_fps)
+        or args.sample_fps <= 0
+        or args.duration is not None and (
+            not math.isfinite(args.duration) or args.duration <= 0
+        )
+        or not math.isfinite(args.time_offset)
+        or args.scale <= 0
+        or args.batch <= 0
+        or not math.isfinite(args.conf)
+        or not 0 < args.conf < 1
+    ):
+        raise ValueError("SCAN_PARAMETERS_INVALID")
     device = args.device
 
     cache_path = None

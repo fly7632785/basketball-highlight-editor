@@ -387,13 +387,39 @@ class EngineService:
             json.JSONDecodeError,
         ) as exc:
             raise ProtocolError("VIDEO_OPEN_FAILED", f"无法读取视频元数据: {exc}") from exc
-        streams = probe.get("streams", [])
-        video_stream = next((item for item in streams if item.get("codec_type") == "video"), None)
-        audio_stream = next((item for item in streams if item.get("codec_type") == "audio"), None)
+        if not isinstance(probe, dict):
+            raise ProtocolError("VIDEO_OPEN_FAILED", "视频元数据格式无效")
+        streams = probe.get("streams")
+        if not isinstance(streams, list):
+            raise ProtocolError("VIDEO_OPEN_FAILED", "视频流信息无效")
+        video_stream = next(
+            (item for item in streams if isinstance(item, dict) and item.get("codec_type") == "video"),
+            None,
+        )
+        audio_stream = next(
+            (item for item in streams if isinstance(item, dict) and item.get("codec_type") == "audio"),
+            None,
+        )
         if not video_stream:
             raise ProtocolError("VIDEO_FORMAT_UNSUPPORTED", "文件中没有视频流")
+        try:
+            width = int(video_stream.get("width"))
+            height = int(video_stream.get("height"))
+        except (TypeError, ValueError):
+            raise ProtocolError("VIDEO_DIMENSION_INVALID", "视频分辨率无效")
+        if width <= 0 or height <= 0:
+            raise ProtocolError("VIDEO_DIMENSION_INVALID", "视频分辨率无效")
         fps = self._parse_ratio(video_stream.get("r_frame_rate"))
-        duration_ms = round(float(probe.get("format", {}).get("duration", 0)) * 1000)
+        format_data = probe.get("format")
+        if not isinstance(format_data, dict):
+            raise ProtocolError("VIDEO_OPEN_FAILED", "视频格式信息无效")
+        try:
+            duration = float(format_data.get("duration"))
+        except (TypeError, ValueError):
+            raise ProtocolError("VIDEO_OPEN_FAILED", "视频时长无效")
+        if not math.isfinite(duration) or duration <= 0:
+            raise ProtocolError("VIDEO_OPEN_FAILED", "视频时长无效")
+        duration_ms = round(duration * 1000)
         disk = shutil.disk_usage(path.parent)
         estimated_processing_space = max(
             self._MIN_PROCESSING_SPACE_BYTES,
@@ -407,8 +433,8 @@ class EngineService:
             "source_size_bytes": path.stat().st_size,
             "source_mtime_ns": path.stat().st_mtime_ns,
             "duration_ms": duration_ms,
-            "width": video_stream.get("width"),
-            "height": video_stream.get("height"),
+            "width": width,
+            "height": height,
             "fps": fps,
             "video_codec": video_stream.get("codec_name"),
             "audio_codec": audio_stream.get("codec_name") if audio_stream else None,
@@ -462,21 +488,37 @@ class EngineService:
         return None
 
     @staticmethod
-    def _validated_original_source(video: Dict[str, Any]) -> Path:
+    def _source_fingerprint(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return f"{path.stat().st_size}:{digest.hexdigest()}"
+
+    @classmethod
+    def _validated_original_source(cls, video: Dict[str, Any]) -> Path:
         source = Path(video["source_path"])
         if not source.is_file():
             raise ProtocolError("VIDEO_NOT_FOUND", f"原始视频不存在: {source}")
         stat = source.stat()
         stored_size = video.get("source_size_bytes")
         stored_mtime = video.get("source_mtime_ns")
-        if (
+        stored_fingerprint = video.get("source_fingerprint")
+        metadata_changed = (
             stored_size is not None
             and stored_mtime is not None
             and (
                 int(stored_size) != stat.st_size
                 or int(stored_mtime) != stat.st_mtime_ns
             )
-        ):
+        )
+        content_changed = False
+        if isinstance(stored_fingerprint, str) and stored_fingerprint:
+            try:
+                content_changed = stored_fingerprint != cls._source_fingerprint(source)
+            except OSError:
+                content_changed = True
+        if metadata_changed or content_changed:
             raise ProtocolError(
                 "VIDEO_SOURCE_CHANGED",
                 "原视频内容已变化，请重新导入视频并校准篮筐区域",
@@ -584,9 +626,10 @@ class EngineService:
             return None
         numerator, denominator = value.split("/", 1)
         try:
-            return float(numerator) / float(denominator)
+            ratio = float(numerator) / float(denominator)
         except (ValueError, ZeroDivisionError):
             return None
+        return ratio if math.isfinite(ratio) and ratio > 0 else None
 
     def link_video(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         metadata = self.inspect_video(payload)
@@ -943,6 +986,7 @@ class EngineService:
                 stage="replaced_for_retry",
                 error_code="JOB_RETRIED",
                 error_message="用户发起重试，旧任务已结束",
+                allow_terminal_transition=True,
             )
         retry_payload = dict(payload)
         retry_payload.pop("job_id", None)
@@ -983,6 +1027,7 @@ class EngineService:
                 stage="replaced_for_retry",
                 error_code="JOB_RETRIED",
                 error_message="用户发起重试，旧任务已结束",
+                allow_terminal_transition=True,
             )
         checkpoint = self._decode_checkpoint(job)
         retry_payload = {

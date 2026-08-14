@@ -63,6 +63,15 @@ class EventsTest(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["x_cross"], 491)
 
+    def test_coarse_crossing_sorts_detection_records_by_timestamp(self):
+        records = [
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [492, 350]}]},
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},
+        ]
+        candidates = find_candidate_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["x_cross"], 491)
+
     def test_crossing_outside_rim_is_rejected(self):
         records = [
             {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [530, 300]}]},

@@ -94,7 +94,7 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
       final action = await showDialog<String>(
         context: dialogContext,
         builder: (context) => AlertDialog(
-          title: Text(busy ? '任务仍在进行' : '退出 Courtside？'),
+          title: Text(busy ? '任务仍在进行' : '退出 BHE？'),
           content: Text(busy ? '当前任务还在进行，退出前需要先取消任务。' : '确认关闭软件吗？本地项目数据不会被删除。'),
           actions: [
             TextButton(
@@ -123,7 +123,7 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
   Widget build(BuildContext context) {
     return MaterialApp.router(
       routerConfig: ref.watch(appRouterProvider),
-      title: 'Courtside',
+      title: 'BHE',
       theme: appTheme(Brightness.light),
       darkTheme: appTheme(Brightness.dark),
       themeMode: ref.watch(themeModeProvider),

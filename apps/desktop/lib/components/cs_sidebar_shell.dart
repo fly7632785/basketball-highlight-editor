@@ -244,7 +244,7 @@ class _SidebarBrand extends StatelessWidget {
             const SizedBox(width: Spacing.sm),
             Expanded(
               child: Text(
-                'Courtside',
+                'BHE',
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.labelLarge?.copyWith(
                   color: c.textPrimary,

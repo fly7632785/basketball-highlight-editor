@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS videos (
     source_path TEXT NOT NULL,
     source_size_bytes INTEGER NOT NULL,
     source_mtime_ns INTEGER NOT NULL,
+    source_fingerprint TEXT,
     duration_ms INTEGER,
     width INTEGER,
     height INTEGER,

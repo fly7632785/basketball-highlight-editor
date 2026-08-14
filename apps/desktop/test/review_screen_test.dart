@@ -421,6 +421,8 @@ void main() {
 
       expect(find.text('中'), findsOneWidget);
       expect(find.text('62%'), findsWidgets);
+      expect(find.text('快速分析未计算'), findsOneWidget);
+      expect(find.byTooltip('快速分析不会拟合完整轨迹；切换到标准分析后才会计算。'), findsOneWidget);
     },
   );
 
@@ -477,6 +479,8 @@ void main() {
       );
 
       expect(find.text('轨迹穿框'), findsOneWidget);
+      expect(find.text('预测评分'), findsOneWidget);
+      expect(find.text('轨迹不足'), findsOneWidget);
       expect(find.text('篮网运动'), findsOneWidget);
       expect(find.text('音频支持'), findsNothing);
       expect(find.text('反弹判断'), findsOneWidget);

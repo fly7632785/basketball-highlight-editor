@@ -58,6 +58,31 @@ void main() {
       },
     );
 
+    test('创建视频项目后刷新最近项目列表', () async {
+      final fakeSession = _FakeProjectSession()
+        ..recentProjects = <JsonMap>[
+          <String, dynamic>{
+            'project_root': '/tmp/projects/sample-1',
+            'project': <String, dynamic>{'name': 'sample'},
+          },
+        ];
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container.read(projectProvider.notifier).selectVideo('/path/sample.mp4');
+
+      expect(fakeSession.loadRecentProjectsCalls, greaterThan(0));
+      expect(
+        container.read(projectProvider).recentProjects.single['project_root'],
+        '/tmp/projects/sample-1',
+      );
+    });
+
     test('opening an invalid project keeps the current UI state', () async {
       final fakeSession = _FakeProjectSession();
       final container = ProviderContainer(
@@ -592,6 +617,8 @@ class _FakeProjectSession extends ProjectSession {
   bool throwOnSaveRoi = false;
   bool throwOnOpenProject = false;
   bool clearCandidatesOnRetry = false;
+  int loadRecentProjectsCalls = 0;
+  List<JsonMap> recentProjects = <JsonMap>[];
 
   void seedCandidates(List<JsonMap> seed) {
     _candidates
@@ -631,7 +658,10 @@ class _FakeProjectSession extends ProjectSession {
   Future<List<JsonMap>> loadRecentProjects({
     required String knownRoot,
     int limit = 20,
-  }) async => <JsonMap>[];
+  }) async {
+    loadRecentProjectsCalls++;
+    return recentProjects;
+  }
 
   @override
   Future<JsonMap> linkVideo(String videoPath) async => <String, dynamic>{

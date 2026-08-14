@@ -574,9 +574,14 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
         );
       case 1:
         final duration = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
+        final videoWidth = (state.video?['width'] as num?)?.toDouble() ?? 16;
+        final videoHeight = (state.video?['height'] as num?)?.toDouble() ?? 9;
         return _AnalysisStep(
           videoPath: state.video?['source_path']?.toString(),
           durationMs: duration,
+          aspectRatio: videoWidth > 0 && videoHeight > 0
+              ? videoWidth / videoHeight
+              : 16 / 9,
           startMs: _analysisStartMs,
           endMs: _analysisEndMs,
           enabled: !busy,
@@ -871,6 +876,7 @@ class _AnalysisStep extends StatelessWidget {
   const _AnalysisStep({
     required this.videoPath,
     required this.durationMs,
+    required this.aspectRatio,
     required this.startMs,
     required this.endMs,
     required this.enabled,
@@ -878,6 +884,7 @@ class _AnalysisStep extends StatelessWidget {
   });
   final String? videoPath;
   final int durationMs;
+  final double aspectRatio;
   final int startMs;
   final int endMs;
   final bool enabled;
@@ -892,6 +899,7 @@ class _AnalysisStep extends StatelessWidget {
       child: _AnalysisRangeEditor(
         videoPath: videoPath,
         durationMs: durationMs,
+        aspectRatio: aspectRatio,
         startMs: startMs,
         endMs: endMs,
         enabled: enabled,
@@ -1313,6 +1321,7 @@ class _AnalysisRangeEditor extends StatefulWidget {
   const _AnalysisRangeEditor({
     required this.videoPath,
     required this.durationMs,
+    required this.aspectRatio,
     required this.startMs,
     required this.endMs,
     required this.enabled,
@@ -1322,6 +1331,7 @@ class _AnalysisRangeEditor extends StatefulWidget {
 
   final String? videoPath;
   final int durationMs;
+  final double aspectRatio;
   final int startMs;
   final int endMs;
   final bool enabled;
@@ -1482,7 +1492,7 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
           ),
           const SizedBox(height: Spacing.sm),
           AspectRatio(
-            aspectRatio: 16 / 9,
+            aspectRatio: widget.aspectRatio,
             child: DecoratedBox(
               decoration: const BoxDecoration(color: Colors.black),
               child: _error != null

@@ -261,6 +261,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   Future<void> selectVideo(String path) async {
     await flushReviewQueue();
+    var projectCreatedForRecent = false;
     await _runBusy(
       () async {
         final generation = ++_projectLoadGeneration;
@@ -281,6 +282,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
           await session.createProject(name: stem, rootPath: projectRoot);
           projectCreated = true;
           linked = await session.linkVideo(path);
+          projectCreatedForRecent = true;
         } catch (_) {
           if (projectCreated) {
             await session.deleteProject(projectRoot);
@@ -371,6 +373,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
       busyMessage: '正在准备视频…',
       successMessage: '视频已加载，已优先尝试自动识别篮筐区域',
     );
+    if (projectCreatedForRecent && !_disposed) {
+      await loadRecentProjects();
+    }
   }
 
   Future<void> refreshPreview() async {

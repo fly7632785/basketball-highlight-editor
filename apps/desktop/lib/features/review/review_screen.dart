@@ -2636,6 +2636,9 @@ class _CandidateEvidencePanel extends StatelessWidget {
     final isCoarse =
         evidence['analysis_source']?.toString() == 'coarse' ||
         candidate['detector_version']?.toString().endsWith(':fast') == true;
+    final isManual =
+        candidate['detector_version']?.toString() == 'manual-v1' ||
+        evidence['source']?.toString() == 'manual';
     final reason = _candidateEvidenceValue(candidate, evidence, const [
       ['review_reason_suggestion', 'primary'],
       ['review_reason'],
@@ -2692,9 +2695,18 @@ class _CandidateEvidencePanel extends StatelessWidget {
                   ),
                   _EvidenceCell(
                     label: '预测评分',
-                    value: _formatScore(prediction),
-                    width: 72,
-                    color: c.textSecondary,
+                    value: _formatPredictionScore(
+                      prediction,
+                      isCoarse: isCoarse,
+                      isManual: isManual,
+                    ),
+                    width: 112,
+                    color: prediction is num ? c.textSecondary : c.textTertiary,
+                    tooltip: _predictionScoreTooltip(
+                      prediction,
+                      isCoarse: isCoarse,
+                      isManual: isManual,
+                    ),
                   ),
                   _EvidenceCell(
                     label: '轨迹穿框',
@@ -4473,6 +4485,30 @@ String _formatCrossing(_CrossingDisplay state) => switch (state) {
 String _formatScore(dynamic value) {
   if (value is num) return '${(value.clamp(0, 1) * 100).round()}%';
   return '—';
+}
+
+String _formatPredictionScore(
+  dynamic value, {
+  required bool isCoarse,
+  required bool isManual,
+}) {
+  if (value is num) return _formatScore(value);
+  if (isManual) return '手动片段';
+  if (isCoarse) return '快速分析未计算';
+  return '轨迹不足';
+}
+
+String _predictionScoreTooltip(
+  dynamic value, {
+  required bool isCoarse,
+  required bool isManual,
+}) {
+  if (value is num) {
+    return '预测篮球继续下落后的落点是否接近篮筐中心，不是进球概率。';
+  }
+  if (isManual) return '补漏片段没有模型预测评分。';
+  if (isCoarse) return '快速分析不会拟合完整轨迹；切换到标准分析后才会计算。';
+  return '标准分析未获得足够的有效轨迹点，无法可靠预测落点。';
 }
 
 String _formatSignal(dynamic value) {

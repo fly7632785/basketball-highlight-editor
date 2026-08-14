@@ -142,7 +142,7 @@ class CsTopBar extends ConsumerWidget {
             onSelected: (value) => _handleUtilityAction(context, value),
             itemBuilder: (context) => const [
               PopupMenuItem(value: 'feedback', child: Text('反馈')),
-              PopupMenuItem(value: 'about', child: Text('关于 Courtside')),
+              PopupMenuItem(value: 'about', child: Text('关于 BHE')),
             ],
           ),
           IconButton(

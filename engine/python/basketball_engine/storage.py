@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import shutil
@@ -97,6 +98,7 @@ class ProjectStore:
             row[1] for row in connection.execute("PRAGMA table_info(videos)").fetchall()
         }
         for name, definition in (
+            ("source_fingerprint", "TEXT"),
             ("analysis_start_ms", "INTEGER NOT NULL DEFAULT 0"),
             ("analysis_end_ms", "INTEGER"),
         ):
@@ -280,6 +282,18 @@ class ProjectStore:
             "statistics": self.statistics(),
         }
 
+    @staticmethod
+    def _source_fingerprint(path: str | Path) -> str | None:
+        source = Path(path)
+        try:
+            digest = hashlib.sha256()
+            with source.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return f"{source.stat().st_size}:{digest.hexdigest()}"
+        except OSError:
+            return None
+
     def link_video(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         project = self.project()
         if not project:
@@ -292,6 +306,7 @@ class ProjectStore:
             metadata["source_path"],
             metadata["source_size_bytes"],
             metadata["source_mtime_ns"],
+            metadata.get("source_fingerprint") or self._source_fingerprint(metadata["source_path"]),
             metadata.get("duration_ms"),
             metadata.get("width"),
             metadata.get("height"),
@@ -308,10 +323,10 @@ class ProjectStore:
                 """
                 INSERT INTO videos (
                     id, project_id, source_path, source_size_bytes, source_mtime_ns,
-                    duration_ms, width, height, fps, video_codec, audio_codec,
+                    source_fingerprint, duration_ms, width, height, fps, video_codec, audio_codec,
                     analysis_start_ms, analysis_end_ms,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 values,
             )
@@ -352,13 +367,17 @@ class ProjectStore:
         previous = self.video(video_id)
         if not previous:
             raise LookupError("VIDEO_NOT_FOUND")
+        previous_fingerprint = previous.get("source_fingerprint")
+        next_fingerprint = metadata.get("source_fingerprint") or self._source_fingerprint(source_path)
         fingerprint_fields = (
             "source_size_bytes", "duration_ms", "width",
             "height", "fps", "video_codec", "audio_codec",
         )
-        analysis_invalidated = any(
-            previous.get(field) != metadata.get(field)
-            for field in fingerprint_fields
+        analysis_invalidated = (
+            previous_fingerprint is None
+            or next_fingerprint is None
+            or previous_fingerprint != next_fingerprint
+            or any(previous.get(field) != metadata.get(field) for field in fingerprint_fields)
         )
         timestamp = now_iso()
         with self.connect() as connection:
@@ -366,7 +385,7 @@ class ProjectStore:
                 """
                 UPDATE videos SET
                     source_path = ?, source_size_bytes = ?, source_mtime_ns = ?,
-                    duration_ms = ?, width = ?, height = ?, fps = ?,
+                    source_fingerprint = ?, duration_ms = ?, width = ?, height = ?, fps = ?,
                     video_codec = ?, audio_codec = ?,
                     status = 'linked', updated_at = ?
                 WHERE id = ?
@@ -375,6 +394,7 @@ class ProjectStore:
                     source_path,
                     metadata["source_size_bytes"],
                     metadata["source_mtime_ns"],
+                    next_fingerprint,
                     metadata.get("duration_ms"),
                     metadata.get("width"),
                     metadata.get("height"),
@@ -1031,6 +1051,7 @@ class ProjectStore:
         checkpoint: Dict[str, Any] | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
+        allow_terminal_transition: bool = False,
     ) -> Dict[str, Any]:
         fields = ["updated_at = ?"]
         values: list[Any] = [now_iso()]
@@ -1060,11 +1081,20 @@ class ProjectStore:
             values.append(error_message)
         values.append(job_id)
         with self.connect() as connection:
-            cursor = connection.execute(
-                f"UPDATE jobs SET {', '.join(fields)} WHERE id = ?",
-                values,
-            )
+            query = f"UPDATE jobs SET {', '.join(fields)} WHERE id = ?"
+            if not allow_terminal_transition:
+                query += " AND state NOT IN ('completed', 'failed', 'cancelled')"
+            cursor = connection.execute(query, values)
             if cursor.rowcount != 1:
+                current = connection.execute(
+                    "SELECT state FROM jobs WHERE id = ?", (job_id,)
+                ).fetchone()
+                if current is None:
+                    raise LookupError("JOB_NOT_FOUND")
+                if current["state"] in {"completed", "failed", "cancelled"}:
+                    job = self.get_job(job_id)
+                    if job:
+                        return job
                 raise LookupError("JOB_NOT_FOUND")
         job = self.get_job(job_id)
         if not job:
