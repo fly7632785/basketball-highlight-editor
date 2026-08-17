@@ -376,6 +376,7 @@ class EngineService:
                 command,
                 check=True,
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 text=True,
                 timeout=30,
             )
@@ -588,6 +589,7 @@ class EngineService:
                 command,
                 check=True,
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 text=True,
                 timeout=120,
             )
@@ -721,6 +723,7 @@ class EngineService:
                 command,
                 check=True,
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 text=True,
                 timeout=20,
             )
@@ -786,6 +789,8 @@ class EngineService:
                 str(temporary_path),
             ]
             popen_kwargs: Dict[str, Any] = {
+                # 不继承 stdin,保护宿主 JSONL 管道(见 analysis.run_pipeline)。
+                "stdin": subprocess.DEVNULL,
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.PIPE,
                 "text": True,

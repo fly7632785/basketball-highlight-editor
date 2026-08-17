@@ -15,9 +15,16 @@ class EngineException implements Exception {
 }
 
 class EngineClient implements EngineTransport {
-  EngineClient({this.requestTimeout = const Duration(minutes: 2)});
+  EngineClient({
+    this.requestTimeout = const Duration(minutes: 2),
+    this.onUnexpectedExit,
+  });
 
   final Duration requestTimeout;
+
+  /// 引擎进程意外退出(非 dispose 触发)时回调,携带退出码与 stderr 尾部。
+  void Function(int exitCode, String stderrTail)? onUnexpectedExit;
+  bool _disposedIntentionally = false;
   Process? _process;
   StreamSubscription<String>? _stdoutSubscription;
   StreamSubscription<String>? _stderrSubscription;
@@ -76,6 +83,10 @@ class EngineClient implements EngineTransport {
               : 'Engine 进程已退出（exitCode=$exitCode）：$detail',
         ),
       );
+      if (!_disposedIntentionally) {
+        _logUnexpectedExit(exitCode, detail);
+        onUnexpectedExit?.call(exitCode, detail);
+      }
     });
   }
 
@@ -129,6 +140,7 @@ class EngineClient implements EngineTransport {
   }
 
   Future<void> dispose() async {
+    _disposedIntentionally = true;
     final process = _process;
     _process = null;
     await _stdoutSubscription?.cancel();
@@ -179,6 +191,22 @@ class EngineClient implements EngineTransport {
     _stderrTail = next.length <= 4000
         ? next
         : next.substring(next.length - 4000);
+  }
+
+  /// 尽力把引擎意外退出时的证据写入临时目录日志,便于离线诊断。
+  void _logUnexpectedExit(int exitCode, String stderrTail) {
+    try {
+      final file = File(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}bhe_engine_exit.log',
+      );
+      final timestamp = DateTime.now().toIso8601String();
+      file.writeAsStringSync(
+        '[$timestamp] exitCode=$exitCode\n$stderrTail\n\n',
+        mode: FileMode.append,
+      );
+    } on Object {
+      // 日志失败不影响主流程。
+    }
   }
 
   void _closePending(EngineException error) {

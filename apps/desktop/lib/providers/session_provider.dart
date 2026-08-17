@@ -95,6 +95,7 @@ String findPython(String runtimeRoot, {required Map<String, String> env}) {
 /// client.start→engine.hello),失败时 state 转为 AsyncError。
 class EngineBootstrapNotifier extends Notifier<AsyncValue<bool>> {
   Future<void>? _ensureInFlight;
+  int _restartAttempts = 0;
 
   @override
   AsyncValue<bool> build() => const AsyncValue<bool>.loading();
@@ -116,6 +117,7 @@ class EngineBootstrapNotifier extends Notifier<AsyncValue<bool>> {
 
   Future<void> _ensure() async {
     final client = ref.read(engineClientProvider);
+    client.onUnexpectedExit = _handleUnexpectedExit;
     state = const AsyncValue<bool>.loading();
     state = await AsyncValue.guard(() async {
       final env = Platform.environment;
@@ -140,8 +142,19 @@ class EngineBootstrapNotifier extends Notifier<AsyncValue<bool>> {
         extraPath: runtimeBin,
       );
       await EngineSession(client).hello();
+      _restartAttempts = 0;
       return true;
     });
+  }
+
+  /// 引擎意外退出时自动重启,带次数上限避免崩溃循环。
+  ///
+  /// 死因证据(exitCode + stderr 尾部)已由 EngineClient 写入
+  /// 系统临时目录的 bhe_engine_exit.log。
+  void _handleUnexpectedExit(int exitCode, String stderrTail) {
+    _restartAttempts++;
+    if (_restartAttempts > 5) return;
+    Future<void>.delayed(const Duration(seconds: 1), ensure);
   }
 
   void markUnavailable(Object error, [StackTrace? stackTrace]) {

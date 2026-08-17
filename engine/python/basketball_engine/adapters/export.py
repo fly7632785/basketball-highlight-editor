@@ -67,6 +67,7 @@ def validate_media_file(path: Path) -> None:
         ],
         check=True,
         capture_output=True,
+        stdin=subprocess.DEVNULL,
         text=True,
         timeout=15,
     )
@@ -90,7 +91,7 @@ def run_atomic_ffmpeg(
     )
     atomic_command = [*command[:-1], str(temporary)]
     try:
-        popen_kwargs = {}
+        popen_kwargs = {"stdin": subprocess.DEVNULL}
         if platform.system() == "Windows":
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:

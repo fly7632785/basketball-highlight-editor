@@ -347,6 +347,9 @@ def run_pipeline(
         }
         save_manifest()
         popen_kwargs = {
+            # 子进程绝不能继承引擎的 stdin:那是 Flutter 宿主的 JSONL
+            # 请求管道,ffmpeg/脚本抢读会吞掉请求字节甚至导致引擎退出。
+            "stdin": subprocess.DEVNULL,
             "stdout": subprocess.PIPE,
             "stderr": subprocess.PIPE,
             "text": True,
