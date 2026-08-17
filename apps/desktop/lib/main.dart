@@ -32,8 +32,12 @@ Future<void> main() async {
   );
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.setBrightness(brightness);
-    await windowManager.show();
-    await windowManager.focus();
+    // 等首帧渲染完成后再显示窗口,避免深色主题下露出原生白底
+    // (Windows 上 debug 首帧较慢,白屏会被放大)。
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
   });
   final container = ProviderContainer();
   // 后台预热 Engine（Python 子进程），打开项目时若已就绪则跳过冷启动。

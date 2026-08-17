@@ -107,23 +107,29 @@ void main() {
   test(
     'ProjectSession checkpoint restores the previous project context',
     () async {
+      final rootA = Directory.systemTemp.createTempSync('bhe-session-a-');
+      final rootB = Directory.systemTemp.createTempSync('bhe-session-b-');
+      addTearDown(() {
+        rootA.deleteSync(recursive: true);
+        rootB.deleteSync(recursive: true);
+      });
       final transport = _FakeEngineTransport()
         ..responses['open_project'] = {
-          'project_root': '/tmp/project-a',
+          'project_root': rootA.path,
           'project': {'id': 'project-a'},
           'video': {'id': 'video-a'},
         }
         ..responses['create_project'] = {
-          'project': {'id': 'project-b', 'root_path': '/tmp/project-b'},
+          'project': {'id': 'project-b', 'root_path': rootB.path},
         };
       final session = ProjectSession(EngineSession(transport));
-      await session.openProject('/tmp/project-a');
+      await session.openProject(rootA.path);
       final checkpoint = session.checkpoint();
 
-      await session.createProject(name: 'B', rootPath: '/tmp/project-b');
+      await session.createProject(name: 'B', rootPath: rootB.path);
       session.restore(checkpoint);
 
-      expect(session.projectRoot, '/tmp/project-a');
+      expect(session.projectRoot, rootA.path);
       expect(session.projectId, 'project-a');
       expect(session.videoId, 'video-a');
     },
@@ -376,6 +382,8 @@ void main() {
   test(
     'ProjectSession keeps project and video context for workflow calls',
     () async {
+      final root = Directory.systemTemp.createTempSync('bhe-session-');
+      addTearDown(() => root.deleteSync(recursive: true));
       final transport = _FakeEngineTransport()
         ..responses['create_project'] = {
           'project': {'id': 'project-1'},
@@ -390,7 +398,7 @@ void main() {
         };
       final session = ProjectSession(EngineSession(transport));
 
-      await session.createProject(name: '训练赛', rootPath: '/tmp/project');
+      await session.createProject(name: '训练赛', rootPath: root.path);
       await session.linkVideo('/tmp/game.mp4');
       await session.saveRoi(x1: 10, y1: 20, x2: 100, y2: 120);
       await session.startAnalysis(sampleFps: 10);
@@ -401,7 +409,7 @@ void main() {
       expect(session.projectId, 'project-1');
       expect(session.videoId, 'video-1');
       expect(transport.payloads[2], {
-        'project_root': '/tmp/project',
+        'project_root': root.path,
         'video_id': 'video-1',
         'x1': 10,
         'y1': 20,
@@ -409,21 +417,21 @@ void main() {
         'y2': 120,
       });
       expect(transport.payloads[3], {
-        'project_root': '/tmp/project',
+        'project_root': root.path,
         'video_id': 'video-1',
         'sample_fps': 10.0,
       });
       expect(transport.payloads[4], {
-        'project_root': '/tmp/project',
+        'project_root': root.path,
         'video_id': 'video-1',
       });
       expect(transport.payloads[5], {
-        'project_root': '/tmp/project',
+        'project_root': root.path,
         'candidate_id': 'candidate-1',
         'status': 'goal',
       });
       expect(transport.payloads[6], {
-        'project_root': '/tmp/project',
+        'project_root': root.path,
         'video_id': 'video-1',
         'mode': 'merge',
         'output_path': '/tmp/merged.mp4',
@@ -444,18 +452,20 @@ void main() {
   );
 
   test('ProjectSession restores an existing project context', () async {
+    final root = Directory.systemTemp.createTempSync('bhe-session-');
+    addTearDown(() => root.deleteSync(recursive: true));
     final transport = _FakeEngineTransport()
       ..responses['open_project'] = {
-        'project_root': '/tmp/project',
+        'project_root': root.path,
         'project': {'id': 'project-1'},
         'video': {'id': 'video-1', 'source_path': '/tmp/game.mp4'},
       };
     final session = ProjectSession(EngineSession(transport));
 
-    final payload = await session.openProject('/tmp/project');
+    final payload = await session.openProject(root.path);
 
-    expect(payload['project_root'], '/tmp/project');
-    expect(session.projectRoot, '/tmp/project');
+    expect(payload['project_root'], root.path);
+    expect(session.projectRoot, root.path);
     expect(session.projectId, 'project-1');
     expect(session.videoId, 'video-1');
     expect(transport.commands, ['open_project']);
@@ -464,6 +474,8 @@ void main() {
   test(
     'ProjectSession snapshot keeps the original project after session reset',
     () async {
+      final root = Directory.systemTemp.createTempSync('bhe-session-');
+      addTearDown(() => root.deleteSync(recursive: true));
       final transport = _FakeEngineTransport()
         ..responses['create_project'] = {
           'project': {'id': 'project-1'},
@@ -476,7 +488,7 @@ void main() {
         };
       final session = ProjectSession(EngineSession(transport));
 
-      await session.createProject(name: '训练赛', rootPath: '/tmp/project-a');
+      await session.createProject(name: '训练赛', rootPath: root.path);
       await session.linkVideo('/tmp/game-a.mp4');
       final scope = session.snapshot(requireVideo: true);
       session.reset();
@@ -484,7 +496,7 @@ void main() {
       await scope.pollJob(jobId: 'job-1', interval: Duration.zero).toList();
 
       expect(transport.payloads.last, {
-        'project_root': '/tmp/project-a',
+        'project_root': root.path,
         'job_id': 'job-1',
       });
     },
@@ -530,9 +542,11 @@ void main() {
   test(
     'ProjectSession forwards start review with the active project context',
     () async {
+      final root = Directory.systemTemp.createTempSync('bhe-session-');
+      addTearDown(() => root.deleteSync(recursive: true));
       final transport = _FakeEngineTransport()
         ..responses['open_project'] = {
-          'project_root': '/tmp/project',
+          'project_root': root.path,
           'project': {'id': 'project-1'},
         }
         ..responses['start_review'] = {
@@ -540,11 +554,11 @@ void main() {
         };
       final session = ProjectSession(EngineSession(transport));
 
-      await session.openProject('/tmp/project');
+      await session.openProject(root.path);
       await session.startReview('candidate-1');
 
       expect(transport.payloads.last, {
-        'project_root': '/tmp/project',
+        'project_root': root.path,
         'candidate_id': 'candidate-1',
       });
     },

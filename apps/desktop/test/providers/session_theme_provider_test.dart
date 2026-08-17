@@ -139,11 +139,16 @@ void main() {
       expect(result, pythonFile.path);
     });
 
-    test('runtimeRoot/python/bin/python3 存在时返回该路径', () {
-      final python3 = File('$runtimeRoot/python/bin/python3')
+    test('runtimeRoot 内置 Python 布局存在时返回该路径', () {
+      // macOS 打包布局为 python/bin/python3;Windows venv 布局为
+      // .venv/Scripts/python.exe。按当前平台构造对应候选。
+      final relative = Platform.isWindows
+          ? '/.venv/Scripts/python.exe'
+          : '/python/bin/python3';
+      final pythonFile = File('$runtimeRoot$relative')
         ..createSync(recursive: true);
       final result = findPython(runtimeRoot, env: const <String, String>{});
-      expect(result, python3.path);
+      expect(result, pythonFile.path);
     });
 
     test('候选均不存在且无 BHE_ALLOW_SYSTEM_PYTHON 时抛 SessionStateException', () {
@@ -153,12 +158,12 @@ void main() {
       );
     });
 
-    test('BHE_ALLOW_SYSTEM_PYTHON=1 时回退 python3', () {
+    test('BHE_ALLOW_SYSTEM_PYTHON=1 时回退系统 Python 命令', () {
       final result = findPython(
         runtimeRoot,
         env: const <String, String>{'BHE_ALLOW_SYSTEM_PYTHON': '1'},
       );
-      expect(result, 'python3');
+      expect(result, Platform.isWindows ? 'python' : 'python3');
     });
   });
 

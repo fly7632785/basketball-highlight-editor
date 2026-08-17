@@ -53,7 +53,12 @@ String? findRuntimeRoot({
   }
 
   for (final path in candidates) {
-    if (Directory('$path/engine/python').existsSync()) return path;
+    try {
+      if (Directory('$path/engine/python').existsSync()) return path;
+    } on FileSystemException {
+      // Windows 上畸形候选路径(如 UNC 形态的 //Resources/runtime)会让
+      // existsSync 抛错而非返回 false,按"不存在"处理。
+    }
   }
   return null;
 }
@@ -65,9 +70,14 @@ String findPython(String runtimeRoot, {required Map<String, String> env}) {
   final configured = env['BHE_PYTHON'];
   final candidates = <String>[
     if (configured != null && configured.isNotEmpty) configured,
-    '$runtimeRoot/python/bin/python3',
-    '$runtimeRoot/.venv/bin/python',
-    '$runtimeRoot/.venv/bin/python3',
+    if (Platform.isWindows) ...<String>[
+      '$runtimeRoot/python/python.exe',
+      '$runtimeRoot/.venv/Scripts/python.exe',
+    ] else ...<String>[
+      '$runtimeRoot/python/bin/python3',
+      '$runtimeRoot/.venv/bin/python',
+      '$runtimeRoot/.venv/bin/python3',
+    ],
   ];
   for (final path in candidates) {
     if (File(path).existsSync() || !path.contains(Platform.pathSeparator)) {
@@ -75,7 +85,7 @@ String findPython(String runtimeRoot, {required Map<String, String> env}) {
     }
   }
   if (env['BHE_ALLOW_SYSTEM_PYTHON'] == '1') {
-    return 'python3';
+    return Platform.isWindows ? 'python' : 'python3';
   }
   throw const SessionStateException(
     '未找到 Python 运行时。请设置 BHE_PYTHON，或把 Python 放入应用运行时目录。',

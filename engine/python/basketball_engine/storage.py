@@ -61,6 +61,20 @@ def has_evidence_conflict(evidence_json: str | None) -> bool:
     return False
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """with 块退出时同时关闭连接,而不是仅提交事务。
+
+    默认 sqlite3 连接离开 with 后保持打开;Windows 上残留句柄会一直
+    锁住 project.db,导致 delete_project 的 rmtree 报 WinError 32。
+    """
+
+    def __exit__(self, exc_type, exc_value, tb):
+        try:
+            super().__exit__(exc_type, exc_value, tb)
+        finally:
+            self.close()
+
+
 class ProjectStore:
     def __init__(self, root_path: str | Path):
         self.root = Path(root_path).expanduser().resolve()
@@ -71,7 +85,9 @@ class ProjectStore:
         for name in ("artifacts/proxies", "artifacts/detections", "artifacts/review_clips", "artifacts/exports", "artifacts/previews", "logs", "telemetry_outbox"):
             (self.root / name).mkdir(parents=True, exist_ok=True)
         schema_path = Path(__file__).resolve().parents[3] / "docs/architecture/SQLITE_SCHEMA_V1.sql"
-        with sqlite3.connect(self.db_path, timeout=30.0) as connection:
+        with sqlite3.connect(
+            self.db_path, timeout=30.0, factory=_ClosingConnection
+        ) as connection:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA busy_timeout = 30000")
             connection.executescript(schema_path.read_text(encoding="utf-8"))
@@ -123,7 +139,9 @@ class ProjectStore:
     def connect(self) -> sqlite3.Connection:
         if not self.db_path.exists():
             self.initialize()
-        connection = sqlite3.connect(self.db_path, timeout=30.0)
+        connection = sqlite3.connect(
+            self.db_path, timeout=30.0, factory=_ClosingConnection
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 30000")
