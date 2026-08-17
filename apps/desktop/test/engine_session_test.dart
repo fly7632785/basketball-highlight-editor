@@ -5,6 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:desktop/core/engine_session.dart';
 import 'package:desktop/core/project_session.dart';
 
+// ProjectSession 对 project_root 做符号链接规范化（macOS 临时目录
+// /var → /private/var），测试期望值需同样解析后再比较。
+String resolvedPath(Directory dir) => dir.resolveSymbolicLinksSync();
+
 class _FakeEngineTransport implements EngineTransport {
   final List<String> commands = [];
   final List<Map<String, dynamic>> payloads = [];
@@ -129,7 +133,7 @@ void main() {
       await session.createProject(name: 'B', rootPath: rootB.path);
       session.restore(checkpoint);
 
-      expect(session.projectRoot, rootA.path);
+      expect(session.projectRoot, resolvedPath(rootA));
       expect(session.projectId, 'project-a');
       expect(session.videoId, 'video-a');
     },
@@ -409,7 +413,7 @@ void main() {
       expect(session.projectId, 'project-1');
       expect(session.videoId, 'video-1');
       expect(transport.payloads[2], {
-        'project_root': root.path,
+        'project_root': resolvedPath(root),
         'video_id': 'video-1',
         'x1': 10,
         'y1': 20,
@@ -417,21 +421,21 @@ void main() {
         'y2': 120,
       });
       expect(transport.payloads[3], {
-        'project_root': root.path,
+        'project_root': resolvedPath(root),
         'video_id': 'video-1',
         'sample_fps': 10.0,
       });
       expect(transport.payloads[4], {
-        'project_root': root.path,
+        'project_root': resolvedPath(root),
         'video_id': 'video-1',
       });
       expect(transport.payloads[5], {
-        'project_root': root.path,
+        'project_root': resolvedPath(root),
         'candidate_id': 'candidate-1',
         'status': 'goal',
       });
       expect(transport.payloads[6], {
-        'project_root': root.path,
+        'project_root': resolvedPath(root),
         'video_id': 'video-1',
         'mode': 'merge',
         'output_path': '/tmp/merged.mp4',
@@ -465,7 +469,7 @@ void main() {
     final payload = await session.openProject(root.path);
 
     expect(payload['project_root'], root.path);
-    expect(session.projectRoot, root.path);
+    expect(session.projectRoot, resolvedPath(root));
     expect(session.projectId, 'project-1');
     expect(session.videoId, 'video-1');
     expect(transport.commands, ['open_project']);
@@ -496,7 +500,7 @@ void main() {
       await scope.pollJob(jobId: 'job-1', interval: Duration.zero).toList();
 
       expect(transport.payloads.last, {
-        'project_root': root.path,
+        'project_root': resolvedPath(root),
         'job_id': 'job-1',
       });
     },
@@ -558,7 +562,7 @@ void main() {
       await session.startReview('candidate-1');
 
       expect(transport.payloads.last, {
-        'project_root': root.path,
+        'project_root': resolvedPath(root),
         'candidate_id': 'candidate-1',
       });
     },
