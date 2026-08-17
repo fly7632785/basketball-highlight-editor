@@ -12,6 +12,41 @@ from engine.python.basketball_engine.storage import ProjectStore
 from engine.python.basketball_engine.protocol import ProtocolError, parse_request
 
 
+def test_inspect_video_rejects_non_object_ffprobe_output(tmp_path: Path, monkeypatch):
+    source = tmp_path / "invalid-metadata.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(
+        "engine.python.basketball_engine.service.subprocess.run",
+        lambda *args, **kwargs: type("Completed", (), {"stdout": "[]"})(),
+    )
+
+    with pytest.raises(ProtocolError) as error:
+        EngineService().inspect_video({"video_path": str(source)})
+
+    assert error.value.code == "VIDEO_OPEN_FAILED"
+
+
+def test_inspect_video_rejects_invalid_ffprobe_duration(tmp_path: Path, monkeypatch):
+    source = tmp_path / "invalid-duration.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(
+        "engine.python.basketball_engine.service.subprocess.run",
+        lambda *args, **kwargs: type(
+            "Completed", (), {
+                "stdout": json.dumps({
+                    "format": {"duration": "not-a-number"},
+                    "streams": [{"codec_type": "video", "width": 960, "height": 720}],
+                }),
+            },
+        )(),
+    )
+
+    with pytest.raises(ProtocolError) as error:
+        EngineService().inspect_video({"video_path": str(source)})
+
+    assert error.value.code == "VIDEO_OPEN_FAILED"
+
+
 def test_create_project_and_statistics(tmp_path: Path):
     service = EngineService()
     result = service.handle("create_project", {"name": "测试项目", "root_path": str(tmp_path / "project")})
@@ -786,6 +821,64 @@ def test_relink_video_updates_media_reference_and_keeps_video_id(tmp_path: Path)
     assert result["video"]["source_exists"] is True
 
 
+def test_relink_video_invalidates_analysis_when_content_changes_with_same_media_metadata(tmp_path: Path):
+    project_root = tmp_path / "project"
+    old_source = tmp_path / "old.mp4"
+    new_source = tmp_path / "new.mp4"
+    old_source.write_bytes(b"old-content")
+    new_source.write_bytes(b"new-content")
+    service = EngineService()
+    service.handle("create_project", {"name": "同规格换内容", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    video = store.link_video({
+        "source_path": str(old_source),
+        "source_size_bytes": old_source.stat().st_size,
+        "source_mtime_ns": old_source.stat().st_mtime_ns,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    })
+    roi = store.save_roi(video["id"], {"x1": 100, "y1": 100, "x2": 300, "y2": 300})
+    store.replace_candidates(video["id"], [{
+        "id": "candidate-same-shape",
+        "video_id": video["id"],
+        "roi_id": roi["id"],
+        "event_time_ms": 10_000,
+        "default_start_ms": 4_000,
+        "default_end_ms": 13_000,
+        "review_start_ms": 4_000,
+        "review_end_ms": 13_000,
+        "detector_version": "test",
+        "score": 0.8,
+        "confidence": "review",
+        "evidence_json": "{}",
+    }])
+    service.inspect_video = lambda payload: {
+        "source_path": str(new_source.resolve()),
+        "source_size_bytes": old_source.stat().st_size,
+        "source_mtime_ns": new_source.stat().st_mtime_ns,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+    }
+
+    result = service.handle("relink_video", {
+        "project_root": str(project_root),
+        "video_id": video["id"],
+        "video_path": str(new_source),
+    })
+
+    assert result["video"]["analysis_invalidated"] is True
+    assert store.list_candidates(video["id"]) == []
+    assert store.active_roi(video["id"]) is None
+
+
 def test_relink_video_invalidates_analysis_when_media_fingerprint_changes(tmp_path: Path):
     project_root = tmp_path / "project"
     old_source = tmp_path / "old.mp4"
@@ -1467,6 +1560,23 @@ def test_cancel_job_persists_cancelled_state(tmp_path: Path):
     })["job"]
     assert cancelled["state"] == "cancelled"
     assert cancelled["error_code"] == "JOB_CANCELLED"
+
+
+def test_terminal_job_state_cannot_be_overwritten_by_late_progress(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "终态保护", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    project = store.project()
+    assert project is not None
+    job = store.create_job(project["id"], None, "analysis")
+    store.update_job(job["id"], state="completed", stage="persist_candidates", progress=1.0)
+
+    late = store.update_job(job["id"], state="running", stage="coarse_scan", progress=0.4)
+
+    assert late["state"] == "completed"
+    assert late["stage"] == "persist_candidates"
+    assert late["progress"] == 1.0
 
 
 def test_cancel_live_job_reports_cancelling_until_worker_stops(tmp_path: Path):

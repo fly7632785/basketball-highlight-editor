@@ -28,7 +28,7 @@ def _ball_detections(record, min_conf=0.0):
 
 def _flatten_balls(records, min_conf=0.0):
     balls = []
-    for record in records:
+    for record in sorted(records, key=lambda item: float(item["time"])):
         detections = _ball_detections(record, min_conf)
         if detections:
             balls.append(max(detections, key=lambda item: item["confidence"]))

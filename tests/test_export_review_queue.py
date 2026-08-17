@@ -1,14 +1,21 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 
-from export_review_queue import is_automatic_goal, unique_matches
+from export_review_queue import is_automatic_goal, unique_matches, video_duration
 
 
 class ExportReviewQueueTest(unittest.TestCase):
+    def test_video_duration_rejects_non_finite_probe_output(self):
+        completed = type("Completed", (), {"stdout": "nan\n"})()
+        with patch("export_review_queue.subprocess.run", return_value=completed):
+            with self.assertRaisesRegex(ValueError, "VIDEO_DURATION_INVALID"):
+                video_duration(Path("source.mp4"))
+
     def test_auto_only_keeps_safe_candidate(self):
         match = {
             "time": 12.0,

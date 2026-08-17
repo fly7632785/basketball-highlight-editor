@@ -6,6 +6,10 @@ from basketball_highlight.audio import audio_features, event_window_features, me
 
 
 class AudioTest(unittest.TestCase):
+    def test_invalid_sample_rate_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "SAMPLE_RATE_INVALID"):
+            audio_features(np.zeros(8, dtype=np.float32), 0)
+
     def test_silence_has_zero_energy(self):
         result = audio_features(np.zeros(16000, dtype=np.float32), 16000)
         self.assertEqual(result["rms"], 0.0)

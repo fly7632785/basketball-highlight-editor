@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import sys
 import time
 from collections import deque
@@ -29,6 +30,32 @@ def parse_args():
     parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda"))
     parser.add_argument("--output", required=True)
     return parser.parse_args()
+
+
+def validate_args(args):
+    x1, y1, x2, y2 = args.roi
+    if (
+        not Path(args.video).is_file()
+        or not Path(args.model).is_file()
+        or not Path(args.coarse).is_file()
+        or x1 < 0
+        or y1 < 0
+        or x2 <= x1
+        or y2 <= y1
+        or not math.isfinite(args.window)
+        or args.window <= 0
+        or not math.isfinite(args.sample_fps)
+        or args.sample_fps <= 0
+        or args.scale <= 0
+        or args.batch <= 0
+        or not math.isfinite(args.conf)
+        or not 0 < args.conf < 1
+    ):
+        raise ValueError("REFINE_PARAMETERS_INVALID")
+    if args.net_roi is not None:
+        nx1, ny1, nx2, ny2 = args.net_roi
+        if nx1 < 0 or ny1 < 0 or nx2 <= nx1 or ny2 <= ny1:
+            raise ValueError("REFINE_NET_ROI_INVALID")
 
 
 def select_device(requested):
@@ -298,6 +325,7 @@ def scan_window(
 
 
 def main(args):
+    validate_args(args)
     video = Path(args.video)
     coarse_data = json.loads(Path(args.coarse).read_text(encoding="utf-8"))
     roi = args.roi

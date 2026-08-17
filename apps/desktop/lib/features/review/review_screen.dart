@@ -368,11 +368,13 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       final nextIndex = after.isEmpty
           ? -1
           : previousIndex.clamp(0, after.length - 1).toInt();
-      setState(() {
-        _selectedCandidateId = nextIndex < 0
-            ? null
-            : after[nextIndex]['id']?.toString();
-      });
+      final nextId = nextIndex < 0 ? null : after[nextIndex]['id']?.toString();
+      setState(() => _selectedCandidateId = nextId);
+      if (nextId != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _ensureCandidateVisible(nextId);
+        });
+      }
     }
     await future;
   }
@@ -722,6 +724,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     _previewGeneration++;
     _coverCache.clear();
     _reviewStartedCandidateIds.clear();
+    _selectedCandidateId = null;
+    _selectedForBatch.clear();
+    _batchMode = false;
+    _candidateFilter = 'all';
+    _showOriginalVideo = false;
+    _videoSourceSwitchToken++;
   }
 
   Future<String?> _enqueuePreview(Future<String?> Function() loader) {
@@ -807,9 +815,10 @@ class _AnalysisBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    final failed = state == 'failed';
+    final attached = state == 'running' && !recoverable;
+    final failed = state == 'failed' && !recoverable;
     final interrupted = recoverable || state == 'cancelled';
-    final active = !failed && !interrupted;
+    final active = attached || (!failed && !interrupted);
     final value = progress.clamp(0.0, 1.0).toDouble();
     final color = failed
         ? c.error
@@ -908,7 +917,7 @@ class _AnalysisBar extends StatelessWidget {
               icon: Icons.stop_circle_outlined,
               onPressed: onCancel!,
             ),
-          if (onRetry != null)
+          if (onRetry != null && !attached)
             _SmallAction(
               label: '重试分析',
               icon: Icons.refresh,
@@ -1201,7 +1210,7 @@ class _VideoPaneState extends State<_VideoPane> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.videoPath != widget.videoPath ||
         oldWidget.isOriginalVideo != widget.isOriginalVideo) {
-      _ensurePlayer();
+      _controller = null;
       _ready = false;
       _loading = false;
       _error = null;
@@ -1217,6 +1226,7 @@ class _VideoPaneState extends State<_VideoPane> {
           playAfterOpen:
               reviewVideoAutoPlayAfterSourceSwitch &&
               oldWidget.sourceSwitchToken != widget.sourceSwitchToken,
+          recreatePlayer: true,
         ),
       );
     } else if (oldWidget.replayToken != widget.replayToken) {
@@ -1266,27 +1276,43 @@ class _VideoPaneState extends State<_VideoPane> {
     unawaited(subscription?.cancel());
     if (player != null) {
       final pending = _mediaQueue;
-      unawaited(pending.whenComplete(player.dispose));
+      unawaited(
+        pending.whenComplete(() async {
+          try {
+            await player.stop();
+          } catch (_) {}
+          try {
+            await player.dispose();
+          } catch (_) {}
+        }),
+      );
     }
     super.dispose();
   }
 
-  Future<void> _queueOpen(String? path, {bool playAfterOpen = false}) {
+  Future<void> _queueOpen(
+    String? path, {
+    bool playAfterOpen = false,
+    bool recreatePlayer = false,
+  }) {
     final generation = ++_mediaGeneration;
     _playbackToken++;
     return _enqueueMediaAction(() async {
       if (!_isCurrent(generation)) return;
+      if (recreatePlayer) await _disposePlayer();
+      if (!_isCurrent(generation)) return;
+      _ensurePlayer();
       await _open(path, generation, playAfterOpen: playAfterOpen);
     });
   }
 
   void _reloadVideo() {
     setState(() {
+      _controller = null;
       _error = null;
       _ready = false;
     });
-    _ensurePlayer();
-    unawaited(_queueOpen(widget.videoPath));
+    unawaited(_queueOpen(widget.videoPath, recreatePlayer: true));
   }
 
   bool _isCurrent(int generation, {int? playbackToken}) =>
@@ -1330,6 +1356,23 @@ class _VideoPaneState extends State<_VideoPane> {
       if (player == null || !_ready) return;
       await action(player);
     });
+  }
+
+  Future<void> _disposePlayer() async {
+    final subscription = _positionSubscription;
+    _positionSubscription = null;
+    final player = _player;
+    _player = null;
+    _controller = null;
+    await subscription?.cancel();
+    if (player != null) {
+      try {
+        await player.stop();
+      } catch (_) {}
+      try {
+        await player.dispose();
+      } catch (_) {}
+    }
   }
 
   Future<void> _enqueueMediaAction(Future<void> Function() action) {
@@ -2628,6 +2671,9 @@ class _CandidateEvidencePanel extends StatelessWidget {
     final isCoarse =
         evidence['analysis_source']?.toString() == 'coarse' ||
         candidate['detector_version']?.toString().endsWith(':fast') == true;
+    final isManual =
+        candidate['detector_version']?.toString() == 'manual-v1' ||
+        evidence['source']?.toString() == 'manual';
     final reason = _candidateEvidenceValue(candidate, evidence, const [
       ['review_reason_suggestion', 'primary'],
       ['review_reason'],
@@ -2684,9 +2730,18 @@ class _CandidateEvidencePanel extends StatelessWidget {
                   ),
                   _EvidenceCell(
                     label: '预测评分',
-                    value: _formatScore(prediction),
-                    width: 72,
-                    color: c.textSecondary,
+                    value: _formatPredictionScore(
+                      prediction,
+                      isCoarse: isCoarse,
+                      isManual: isManual,
+                    ),
+                    width: 112,
+                    color: prediction is num ? c.textSecondary : c.textTertiary,
+                    tooltip: _predictionScoreTooltip(
+                      prediction,
+                      isCoarse: isCoarse,
+                      isManual: isManual,
+                    ),
                   ),
                   _EvidenceCell(
                     label: '轨迹穿框',
@@ -2857,7 +2912,17 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
   @override
   void dispose() {
     unawaited(_positionSubscription?.cancel());
-    unawaited(_player?.dispose());
+    final player = _player;
+    _player = null;
+    unawaited(() async {
+      if (player == null) return;
+      try {
+        await player.stop();
+      } catch (_) {}
+      try {
+        await player.dispose();
+      } catch (_) {}
+    }());
     _startController.dispose();
     _endController.dispose();
     super.dispose();
@@ -4465,6 +4530,30 @@ String _formatCrossing(_CrossingDisplay state) => switch (state) {
 String _formatScore(dynamic value) {
   if (value is num) return '${(value.clamp(0, 1) * 100).round()}%';
   return '—';
+}
+
+String _formatPredictionScore(
+  dynamic value, {
+  required bool isCoarse,
+  required bool isManual,
+}) {
+  if (value is num) return _formatScore(value);
+  if (isManual) return '手动片段';
+  if (isCoarse) return '快速分析未计算';
+  return '轨迹不足';
+}
+
+String _predictionScoreTooltip(
+  dynamic value, {
+  required bool isCoarse,
+  required bool isManual,
+}) {
+  if (value is num) {
+    return '预测篮球继续下落后的落点是否接近篮筐中心，不是进球概率。';
+  }
+  if (isManual) return '补漏片段没有模型预测评分。';
+  if (isCoarse) return '快速分析不会拟合完整轨迹；切换到标准分析后才会计算。';
+  return '标准分析未获得足够的有效轨迹点，无法可靠预测落点。';
 }
 
 String _formatSignal(dynamic value) {

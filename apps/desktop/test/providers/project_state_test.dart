@@ -58,6 +58,71 @@ void main() {
       },
     );
 
+    test('创建视频项目后刷新最近项目列表', () async {
+      final fakeSession = _FakeProjectSession()
+        ..recentProjects = <JsonMap>[
+          <String, dynamic>{
+            'project_root': '/tmp/projects/sample-1',
+            'project': <String, dynamic>{'name': 'sample'},
+          },
+        ];
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container
+          .read(projectProvider.notifier)
+          .selectVideo('/path/sample.mp4');
+
+      expect(fakeSession.loadRecentProjectsCalls, greaterThan(0));
+      expect(
+        container.read(projectProvider).recentProjects.single['project_root'],
+        '/tmp/projects/sample-1',
+      );
+    });
+
+    test('切换标记画面时显示处理提示', () async {
+      final fakeSession = _FakeProjectSession()
+        ..previewDelay = const Duration(milliseconds: 20);
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+      final notifier = container.read(projectProvider.notifier);
+      await notifier.selectVideo('/tmp/sample.mp4');
+
+      final refresh = notifier.refreshPreviewAt(5000);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      expect(container.read(projectProvider).previewRefreshing, isTrue);
+      expect(container.read(projectProvider).busyMessage, isNull);
+      await refresh;
+      expect(container.read(projectProvider).previewRefreshing, isFalse);
+    });
+
+    test('自动 ROI 返回最佳帧时更新标记画面时间', () async {
+      final fakeSession = _FakeProjectSession()..returnRoiSuggestion = true;
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container
+          .read(projectProvider.notifier)
+          .selectVideo('/path/sample.mp4');
+
+      expect(container.read(projectProvider).previewTimeMs, 4000);
+    });
+
     test('opening an invalid project keeps the current UI state', () async {
       final fakeSession = _FakeProjectSession();
       final container = ProviderContainer(
@@ -203,6 +268,40 @@ void main() {
       expect(container.read(engineBootstrapProvider).hasError, isTrue);
     },
   );
+
+  test('transport timeout restores an attached analysis worker', () async {
+    final fakeSession = _FakeProjectSession();
+    final container = ProviderContainer(
+      overrides: <Override>[
+        projectSessionProvider.overrideWithValue(fakeSession),
+        engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+      ],
+    );
+    addTearDown(container.dispose);
+    final notifier = container.read(projectProvider.notifier);
+    await notifier.startAnalysis();
+    await Future<void>.delayed(Duration.zero);
+
+    final scope = ProjectSessionScope(
+      engine: EngineSession(_RecoveringTransport()),
+      projectRoot: '/tmp/project',
+      videoId: 'video-1',
+    );
+    await notifier.pollJob('start-job', scope: scope);
+    await Future<void>.delayed(Duration.zero);
+
+    final state = container.read(projectProvider);
+    expect(state.job?['state'], 'completed');
+    expect(state.job?['recoverable'], isNot(true));
+    expect(state.job?['recovery_state'], isNull);
+    expect(
+      container
+          .read(noticeProvider)
+          .where((notice) => notice.title.contains('ENGINE_TIMEOUT'))
+          .isEmpty,
+      isTrue,
+    );
+  });
 
   test(
     'cancel analysis reports cancelling until the engine reaches terminal state',
@@ -573,6 +672,7 @@ class _FakeProjectSession extends ProjectSession {
     : super(EngineSession(_NeverTransport()));
 
   final Duration reviewDelay;
+  Duration previewDelay = Duration.zero;
 
   final List<JsonMap> _candidates = <JsonMap>[];
   List<JsonMap> reviewHistory = <JsonMap>[];
@@ -592,6 +692,9 @@ class _FakeProjectSession extends ProjectSession {
   bool throwOnSaveRoi = false;
   bool throwOnOpenProject = false;
   bool clearCandidatesOnRetry = false;
+  bool returnRoiSuggestion = false;
+  int loadRecentProjectsCalls = 0;
+  List<JsonMap> recentProjects = <JsonMap>[];
 
   void seedCandidates(List<JsonMap> seed) {
     _candidates
@@ -631,7 +734,10 @@ class _FakeProjectSession extends ProjectSession {
   Future<List<JsonMap>> loadRecentProjects({
     required String knownRoot,
     int limit = 20,
-  }) async => <JsonMap>[];
+  }) async {
+    loadRecentProjectsCalls++;
+    return recentProjects;
+  }
 
   @override
   Future<JsonMap> linkVideo(String videoPath) async => <String, dynamic>{
@@ -645,8 +751,10 @@ class _FakeProjectSession extends ProjectSession {
   };
 
   @override
-  Future<JsonMap> extractPreview({int timeMs = 1000}) async =>
-      <String, dynamic>{'path': '/tmp/preview.jpg'};
+  Future<JsonMap> extractPreview({int timeMs = 1000}) async {
+    if (previewDelay > Duration.zero) await Future<void>.delayed(previewDelay);
+    return <String, dynamic>{'path': '/tmp/preview.jpg'};
+  }
 
   @override
   Future<JsonMap> suggestRoi({
@@ -656,7 +764,15 @@ class _FakeProjectSession extends ProjectSession {
     int? maxSamples,
     double? confidence,
   }) async {
-    throw StateError('no roi available');
+    if (!returnRoiSuggestion) throw StateError('no roi available');
+    return <String, dynamic>{
+      'roi': <String, dynamic>{'x1': 400, 'y1': 200, 'x2': 900, 'y2': 900},
+      'calibration': <String, dynamic>{
+        'confidence': 0.8,
+        'hoop_bbox': <num>[600, 400, 640, 440],
+      },
+      'preview_time_ms': 4000,
+    };
   }
 
   @override
@@ -819,5 +935,40 @@ class _ThrowingTransport implements EngineTransport {
   @override
   Future<JsonMap> request(String command, JsonMap payload) {
     throw const EngineException('ENGINE_EXITED', 'Engine 已退出');
+  }
+}
+
+class _RecoveringTransport implements EngineTransport {
+  var _jobPolls = 0;
+
+  @override
+  Future<JsonMap> request(String command, JsonMap payload) async {
+    if (command == 'get_active_jobs') {
+      return <String, dynamic>{
+        'jobs': <JsonMap>[
+          <String, dynamic>{
+            'id': 'start-job',
+            'state': 'running',
+            'stage': 'prepare_proxy',
+            'recovery_state': 'worker_attached',
+            'recoverable': false,
+          },
+        ],
+      };
+    }
+    if (command == 'get_job') {
+      if (_jobPolls++ == 0) {
+        throw const EngineException('ENGINE_TIMEOUT', '请求处理超时：get_job');
+      }
+      return <String, dynamic>{
+        'job': <String, dynamic>{
+          'id': 'start-job',
+          'state': 'completed',
+          'stage': 'persist_candidates',
+          'progress': 1.0,
+        },
+      };
+    }
+    throw StateError('unexpected engine call: $command');
   }
 }

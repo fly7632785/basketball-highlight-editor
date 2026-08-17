@@ -73,7 +73,13 @@ class _HomeRouteState extends ConsumerState<_HomeRoute> {
   @override
   Widget build(BuildContext context) => HomeScreen(
     onProjectOpened: () {
-      if (context.mounted) context.go('/review');
+      if (!context.mounted) return;
+      final state = ref.read(projectProvider);
+      context.go(
+        state.videoPath == null || state.videoPath!.isEmpty
+            ? '/import'
+            : '/review',
+      );
     },
   );
 }

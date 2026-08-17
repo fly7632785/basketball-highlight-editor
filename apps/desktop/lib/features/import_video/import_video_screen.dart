@@ -16,6 +16,7 @@ import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../components/cs_step_indicator.dart';
 import '../../core/engine_session.dart';
+import '../../providers/notice_provider.dart';
 import '../../providers/project_state.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
@@ -49,6 +50,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   int _analysisStartMs = 0;
   int _analysisEndMs = 0;
   String _analysisMode = 'standard';
+  Timer? _previewPlaybackTimer;
+  bool _previewPlaying = false;
 
   @override
   void initState() {
@@ -59,15 +62,32 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   Future<void> _restoreDraft() async {
     if (!mounted || _draftLoaded) return;
     final state = ref.read(projectProvider);
-    final draft =
-        state.workflowDraft ??
-        await ref.read(projectProvider.notifier).loadWorkflowDraft();
+    JsonMap? draft;
+    try {
+      draft =
+          state.workflowDraft ??
+          await ref.read(projectProvider.notifier).loadWorkflowDraft();
+    } catch (error) {
+      if (mounted) {
+        ref
+            .read(noticeProvider.notifier)
+            .push(
+              NoticeMessage(
+                id: 'import-draft-${DateTime.now().microsecondsSinceEpoch}',
+                severity: NoticeSeverity.error,
+                title: '配置草稿加载失败',
+                description: error.toString(),
+              ),
+            );
+      }
+    }
     if (!mounted) return;
     _draftLoaded = true;
-    if (state.video != null) {
-      _syncFromState(state);
+    final currentState = ref.read(projectProvider);
+    if (currentState.video != null) {
+      _syncFromState(currentState);
     }
-    if (draft != null && draft.isNotEmpty && state.video != null) {
+    if (draft != null && draft.isNotEmpty && currentState.video != null) {
       _applyDraftLocally(draft);
       setState(() => _showExistingDraft = true);
       return;
@@ -79,7 +99,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     if (video == null) return;
     _roi = state.suggestedRoi;
     _netRoi = state.netRoi ?? _recommendedNetRoi(_roi, state.hoopBbox);
+    _netUserEdited = state.netRoi != null;
     _hoopBbox = state.hoopBbox;
+    _editingNet = false;
     _analysisStartMs = _analysisStart(state);
     _analysisEndMs = _analysisEnd(state);
     _analysisMode = state.analysisMode;
@@ -133,12 +155,48 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
 
   Future<void> _persistDraft({int? step}) async {
     if (ref.read(projectProvider).video == null) return;
-    await ref
-        .read(projectProvider.notifier)
-        .saveWorkflowDraft(_draft(step: step));
+    try {
+      await ref
+          .read(projectProvider.notifier)
+          .saveWorkflowDraft(_draft(step: step));
+    } catch (error) {
+      if (!mounted) return;
+      ref
+          .read(noticeProvider.notifier)
+          .push(
+            NoticeMessage(
+              id: 'import-draft-save-${DateTime.now().microsecondsSinceEpoch}',
+              severity: NoticeSeverity.error,
+              title: '配置草稿保存失败',
+              description: error.toString(),
+            ),
+          );
+    }
   }
 
   Future<void> _selectVideo() async {
+    final existingState = ref.read(projectProvider);
+    final existingVideo = existingState.video;
+    if (existingVideo != null) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('更换当前视频？'),
+          content: const Text('更换视频会创建一个新的分析项目，当前项目和审核记录会保留。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('继续选择'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
     const group = XTypeGroup(
       label: '视频',
       extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
@@ -202,10 +260,20 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     } catch (_) {
       // 元数据预检失败时仍交给正式导入流程处理。
     }
+    final previousVideoId = existingState.video?['id']?.toString();
     await ref.read(projectProvider.notifier).selectVideo(file.path);
     if (!mounted) return;
+    final importedState = ref.read(projectProvider);
+    final importedVideoId = importedState.video?['id']?.toString();
+    if (importedVideoId == null || importedVideoId == previousVideoId) {
+      setState(() {
+        _step = 0;
+        _showExistingDraft = false;
+      });
+      return;
+    }
     _draftLoaded = true;
-    _syncFromState(ref.read(projectProvider));
+    _syncFromState(importedState);
     setState(() {
       _step = 1;
       _showExistingDraft = false;
@@ -213,9 +281,79 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     await _persistDraft(step: 1);
   }
 
+  Future<void> _relinkMissingVideo() async {
+    const group = XTypeGroup(
+      label: '视频',
+      extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
+      mimeTypes: ['video/*'],
+      uniformTypeIdentifiers: ['public.movie'],
+    );
+    final file = await openFile(acceptedTypeGroups: const [group]);
+    if (file == null || !mounted) return;
+    final relinked = await ref
+        .read(projectProvider.notifier)
+        .relinkCurrentVideo(file.path);
+    if (!mounted || !relinked) return;
+    _draftLoaded = true;
+    _syncFromState(ref.read(projectProvider));
+    setState(() => _step = 1);
+    await _persistDraft(step: 1);
+  }
+
+  @override
+  void dispose() {
+    _previewPlaybackTimer?.cancel();
+    super.dispose();
+  }
+
+  void _stopPreviewPlayback() {
+    _previewPlaybackTimer?.cancel();
+    _previewPlaybackTimer = null;
+    if (mounted) {
+      setState(() => _previewPlaying = false);
+    } else {
+      _previewPlaying = false;
+    }
+  }
+
+  Future<void> _refreshPreviewAt(int timeMs) async {
+    final refreshed = await ref
+        .read(projectProvider.notifier)
+        .refreshPreviewAt(timeMs);
+    if (!refreshed && mounted) _stopPreviewPlayback();
+  }
+
+  void _togglePreviewPlayback() {
+    final state = ref.read(projectProvider);
+    final duration = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
+    if (_previewPlaying) {
+      _stopPreviewPlayback();
+      return;
+    }
+    if (duration <= 0 ||
+        state.previewTimeMs >= duration ||
+        state.previewRefreshing) {
+      return;
+    }
+    setState(() => _previewPlaying = true);
+    _previewPlaybackTimer = Timer.periodic(const Duration(milliseconds: 500), (
+      _,
+    ) {
+      final current = ref.read(projectProvider);
+      if (current.previewRefreshing || current.busy) return;
+      final next = current.previewTimeMs + 500;
+      if (next >= duration) {
+        _stopPreviewPlayback();
+        return;
+      }
+      unawaited(_refreshPreviewAt(next));
+    });
+  }
+
   Future<void> _next() async {
     if (!_canLeaveStep(_step)) return;
     final next = math.min(_step + 1, _stepCount - 1);
+    if (_step == 2 && next != 2) _stopPreviewPlayback();
     setState(() => _step = next);
     await _persistDraft(step: next);
   }
@@ -223,6 +361,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   Future<void> _back() async {
     if (_step == 0) return;
     final next = _step - 1;
+    if (_step == 2 && next != 2) _stopPreviewPlayback();
     setState(() => _step = next);
     await _persistDraft(step: next);
   }
@@ -265,8 +404,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           .read(projectProvider.notifier)
           .applyWorkflowDraft(_backendDraft(step: _step));
       if (!mounted || !applied) return;
-      await ref.read(projectProvider.notifier).startAnalysis();
-      if (mounted) context.go('/review');
+      final started = await ref.read(projectProvider.notifier).startAnalysis();
+      if (mounted && started) context.go('/review');
     } finally {
       if (mounted) setState(() => _applying = false);
     }
@@ -282,6 +421,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           previousVideoId != nextVideoId ||
           previous?.videoPath != next.videoPath;
       if (!projectChanged) return;
+      _stopPreviewPlayback();
       if (next.video == null) {
         setState(() {
           _draftLoaded = false;
@@ -290,6 +430,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           _roi = null;
           _netRoi = null;
           _hoopBbox = null;
+          _netUserEdited = false;
+          _editingNet = false;
           _analysisStartMs = 0;
           _analysisEndMs = 0;
         });
@@ -297,6 +439,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       }
       _draftLoaded = true;
       _showExistingDraft = false;
+      _netUserEdited = false;
+      _editingNet = false;
       _syncFromState(next);
       setState(() => _step = 1);
     });
@@ -367,9 +511,22 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                   ),
                   if (hasVideo)
                     TextButton.icon(
-                      onPressed: busy ? null : _selectVideo,
-                      icon: const Icon(Icons.swap_horiz_rounded, size: 17),
-                      label: const Text('更换视频'),
+                      onPressed: busy
+                          ? null
+                          : state.videoPath == null || state.videoPath!.isEmpty
+                          ? _relinkMissingVideo
+                          : _selectVideo,
+                      icon: Icon(
+                        state.videoPath == null || state.videoPath!.isEmpty
+                            ? Icons.link_rounded
+                            : Icons.swap_horiz_rounded,
+                        size: 17,
+                      ),
+                      label: Text(
+                        state.videoPath == null || state.videoPath!.isEmpty
+                            ? '重新定位视频'
+                            : '更换视频',
+                      ),
                     ),
                 ],
               ),
@@ -381,6 +538,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                       ? null
                       : (index) {
                           if (index < _step) {
+                            if (_step == 2 && index != 2) {
+                              _stopPreviewPlayback();
+                            }
                             setState(() => _step = index);
                             unawaited(_persistDraft(step: index));
                           }
@@ -472,12 +632,20 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
         );
       case 1:
         final duration = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
+        final videoWidth = (state.video?['width'] as num?)?.toDouble() ?? 16;
+        final videoHeight = (state.video?['height'] as num?)?.toDouble() ?? 9;
         return _AnalysisStep(
           videoPath: state.video?['source_path']?.toString(),
           durationMs: duration,
+          aspectRatio: videoWidth > 0 && videoHeight > 0
+              ? videoWidth / videoHeight
+              : 16 / 9,
           startMs: _analysisStartMs,
           endMs: _analysisEndMs,
-          enabled: !busy,
+          enabled:
+              (!busy || state.roiDetecting) &&
+              !state.analysisRunning &&
+              !state.exportRunning,
           onChanged: (start, end) {
             setState(() {
               _analysisStartMs = start;
@@ -499,6 +667,12 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           enabled: state.video != null && !busy,
           aspectRatio: sourceWidth / sourceHeight,
           onEditNetChanged: (value) => setState(() => _editingNet = value),
+          onPreviewTimeChanged: (timeMs) =>
+              unawaited(_refreshPreviewAt(timeMs)),
+          onRefreshPreview: () =>
+              unawaited(_refreshPreviewAt(state.previewTimeMs)),
+          onPreviewPlaybackToggled: _togglePreviewPlayback,
+          previewPlaying: _previewPlaying,
           onChanged: (value) {
             setState(() {
               if (_editingNet) {
@@ -532,7 +706,6 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           fastModeEnabled: _fastAnalysisEnabled,
           onAnalysisModeChanged: (mode) {
             setState(() => _analysisMode = mode);
-            unawaited(ref.read(projectProvider.notifier).setAnalysisMode(mode));
             unawaited(_persistDraft());
           },
         );
@@ -770,6 +943,7 @@ class _AnalysisStep extends StatelessWidget {
   const _AnalysisStep({
     required this.videoPath,
     required this.durationMs,
+    required this.aspectRatio,
     required this.startMs,
     required this.endMs,
     required this.enabled,
@@ -777,6 +951,7 @@ class _AnalysisStep extends StatelessWidget {
   });
   final String? videoPath;
   final int durationMs;
+  final double aspectRatio;
   final int startMs;
   final int endMs;
   final bool enabled;
@@ -791,6 +966,7 @@ class _AnalysisStep extends StatelessWidget {
       child: _AnalysisRangeEditor(
         videoPath: videoPath,
         durationMs: durationMs,
+        aspectRatio: aspectRatio,
         startMs: startMs,
         endMs: endMs,
         enabled: enabled,
@@ -811,6 +987,10 @@ class _DetectionStep extends StatelessWidget {
     required this.enabled,
     required this.aspectRatio,
     required this.onEditNetChanged,
+    required this.onPreviewTimeChanged,
+    required this.onPreviewPlaybackToggled,
+    required this.onRefreshPreview,
+    required this.previewPlaying,
     required this.onChanged,
     required this.onResetNet,
   });
@@ -822,6 +1002,10 @@ class _DetectionStep extends StatelessWidget {
   final bool enabled;
   final double aspectRatio;
   final ValueChanged<bool> onEditNetChanged;
+  final ValueChanged<int> onPreviewTimeChanged;
+  final VoidCallback onPreviewPlaybackToggled;
+  final VoidCallback onRefreshPreview;
+  final bool previewPlaying;
   final ValueChanged<Rect> onChanged;
   final VoidCallback onResetNet;
 
@@ -835,8 +1019,24 @@ class _DetectionStep extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (state.roiSource == 'auto') ...[
+            Text(
+              '系统已自动选择 ${_formatPreviewTime(state.previewTimeMs)} 作为标记画面',
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: Spacing.xs),
+            Text(
+              '篮筐可见度较高，如被遮挡可调整画面时间。',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: c.textSecondary),
+            ),
+            const SizedBox(height: Spacing.sm),
+          ],
           _RoiCanvas(
-            enabled: enabled,
+            enabled: enabled && !state.previewRefreshing,
             previewPath: state.previewPath,
             aspectRatio: aspectRatio,
             roi: editingNet ? netRoi : roi,
@@ -845,10 +1045,41 @@ class _DetectionStep extends StatelessWidget {
             secondaryColor: editingNet ? c.orange : Colors.white,
             activeLabel: editingNet ? '篮网检测区' : '投篮分析区',
             secondaryLabel: editingNet ? '投篮分析区' : '篮网检测区',
-            onRefreshPreview: null,
+            onRefreshPreview: onRefreshPreview,
             onChanged: onChanged,
             onEditComplete: () {},
           ),
+          const SizedBox(height: Spacing.sm),
+          _PreviewTimeControls(
+            timeMs: state.previewTimeMs,
+            durationMs: (state.video?['duration_ms'] as num?)?.toInt() ?? 0,
+            enabled: enabled && !state.roiDetecting && !state.previewRefreshing,
+            playing: previewPlaying,
+            onStep: onPreviewTimeChanged,
+            onTogglePlayback: onPreviewPlaybackToggled,
+          ),
+          if (state.previewRefreshing) ...[
+            const SizedBox(height: Spacing.xs),
+            Row(
+              children: [
+                SizedBox(
+                  width: 13,
+                  height: 13,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.8,
+                    color: c.orange,
+                  ),
+                ),
+                const SizedBox(width: Spacing.xs),
+                Text(
+                  '正在切换标记画面…',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: Spacing.sm),
           Row(
             children: [
@@ -1195,6 +1426,16 @@ Rect? _recommendedNetRoi(Rect? analysisRoi, Rect? hoopBbox) {
   );
 }
 
+String _formatPreviewTime(int milliseconds) {
+  final safe = milliseconds.clamp(0, 24 * 60 * 60 * 1000).toInt();
+  final seconds = safe ~/ 1000;
+  final tenths = (safe % 1000) ~/ 100;
+  final minutes = seconds ~/ 60;
+  final remaining = seconds % 60;
+  return '${minutes.toString().padLeft(2, '0')}:'
+      '${remaining.toString().padLeft(2, '0')}.$tenths';
+}
+
 String _formatDuration(int milliseconds) {
   final seconds = milliseconds ~/ 1000;
   final hours = seconds ~/ 3600;
@@ -1212,6 +1453,7 @@ class _AnalysisRangeEditor extends StatefulWidget {
   const _AnalysisRangeEditor({
     required this.videoPath,
     required this.durationMs,
+    required this.aspectRatio,
     required this.startMs,
     required this.endMs,
     required this.enabled,
@@ -1221,6 +1463,7 @@ class _AnalysisRangeEditor extends StatefulWidget {
 
   final String? videoPath;
   final int durationMs;
+  final double aspectRatio;
   final int startMs;
   final int endMs;
   final bool enabled;
@@ -1240,8 +1483,11 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
   late int _endMs = widget.endMs;
   int _positionMs = 0;
   bool _playing = false;
+  bool _playbackRequested = false;
   bool _ready = false;
+  String? _error;
   bool _saving = false;
+  int _mediaGeneration = 0;
 
   @override
   void initState() {
@@ -1261,43 +1507,82 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
   }
 
   Future<void> _openVideo() async {
+    final generation = ++_mediaGeneration;
     final path = widget.videoPath;
     await _positionSubscription?.cancel();
     await _playingSubscription?.cancel();
     await _player?.dispose();
     _player = null;
     _controller = null;
-    if (path == null || path.isEmpty || !File(path).existsSync()) {
-      if (mounted) setState(() => _ready = false);
-      return;
+    if (mounted) {
+      setState(() {
+        _ready = false;
+        _playing = false;
+        _playbackRequested = false;
+        _error = null;
+      });
     }
+    if (path == null || path.isEmpty || !File(path).existsSync()) return;
     final player = Player();
     _player = player;
     _controller = VideoController(player);
     _positionSubscription = player.stream.position.listen((position) {
-      if (!mounted) return;
+      if (!mounted || generation != _mediaGeneration) return;
       final value = position.inMilliseconds;
       if ((value - _positionMs).abs() >= 100) {
         setState(() => _positionMs = value.clamp(0, widget.durationMs));
       }
     });
     _playingSubscription = player.stream.playing.listen((playing) {
-      if (mounted) setState(() => _playing = playing);
+      if (playing && !_playbackRequested) {
+        unawaited(player.pause());
+        return;
+      }
+      if (mounted && generation == _mediaGeneration) {
+        setState(() => _playing = playing);
+      }
     });
-    await player.open(Media(Uri.file(path).toString()), play: false);
-    if (mounted && identical(player, _player)) {
-      setState(() {
-        _ready = true;
-        _playing = player.state.playing;
-      });
+    try {
+      await player.open(Media(Uri.file(path).toString()), play: false);
+      _playbackRequested = false;
+      await player.pause();
+      if (mounted &&
+          generation == _mediaGeneration &&
+          identical(player, _player)) {
+        setState(() {
+          _ready = true;
+          _error = null;
+          _playing = player.state.playing;
+        });
+      }
+    } catch (error) {
+      if (mounted &&
+          generation == _mediaGeneration &&
+          identical(player, _player)) {
+        setState(() {
+          _ready = false;
+          _error = error.toString();
+        });
+      }
     }
   }
 
   @override
   void dispose() {
+    _mediaGeneration++;
     unawaited(_positionSubscription?.cancel());
     unawaited(_playingSubscription?.cancel());
-    unawaited(_player?.dispose());
+    final player = _player;
+    _player = null;
+    unawaited(() async {
+      if (player == null) return;
+      try {
+        await player.stop();
+      } catch (_) {}
+      try {
+        await player.dispose();
+      } catch (_) {}
+    }());
     super.dispose();
   }
 
@@ -1311,8 +1596,10 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
     final player = _player;
     if (player == null) return;
     if (player.state.playing) {
+      _playbackRequested = false;
       await player.pause();
     } else {
+      _playbackRequested = true;
       await player.play();
     }
   }
@@ -1357,10 +1644,18 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
           ),
           const SizedBox(height: Spacing.sm),
           AspectRatio(
-            aspectRatio: 16 / 9,
+            aspectRatio: widget.aspectRatio,
             child: DecoratedBox(
               decoration: const BoxDecoration(color: Colors.black),
-              child: controller == null || !_ready
+              child: _error != null
+                  ? Center(
+                      child: Text(
+                        '视频加载失败，请重新进入此步骤。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: c.error, fontSize: 12),
+                      ),
+                    )
+                  : controller == null || !_ready
                   ? const Center(
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
@@ -1778,6 +2073,65 @@ class _UnifiedTimelinePainter extends CustomPainter {
       oldDelegate.startX != startX ||
       oldDelegate.endX != endX ||
       oldDelegate.style.rangeColor != style.rangeColor;
+}
+
+class _PreviewTimeControls extends StatelessWidget {
+  const _PreviewTimeControls({
+    required this.timeMs,
+    required this.durationMs,
+    required this.enabled,
+    required this.playing,
+    required this.onStep,
+    required this.onTogglePlayback,
+  });
+
+  final int timeMs;
+  final int durationMs;
+  final bool enabled;
+  final bool playing;
+  final ValueChanged<int> onStep;
+  final VoidCallback onTogglePlayback;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final step = (timeMs + 5000).clamp(0, durationMs).toInt();
+    final back = (timeMs - 5000).clamp(0, durationMs).toInt();
+    return Row(
+      children: [
+        Text('标记画面', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(width: Spacing.sm),
+        Text(
+          _formatPreviewTime(timeMs),
+          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+            color: c.orange,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+        const Spacer(),
+        OutlinedButton(
+          onPressed: enabled && timeMs > 0 ? () => onStep(back) : null,
+          child: const Text('−5 秒'),
+        ),
+        const SizedBox(width: Spacing.xs),
+        OutlinedButton.icon(
+          onPressed: enabled && (playing || timeMs < durationMs)
+              ? onTogglePlayback
+              : null,
+          icon: Icon(
+            playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            size: 16,
+          ),
+          label: Text(playing ? '暂停' : '播放'),
+        ),
+        const SizedBox(width: Spacing.xs),
+        OutlinedButton(
+          onPressed: enabled && timeMs < durationMs ? () => onStep(step) : null,
+          child: const Text('+5 秒'),
+        ),
+      ],
+    );
+  }
 }
 
 class _CalibrationTargetButton extends StatelessWidget {

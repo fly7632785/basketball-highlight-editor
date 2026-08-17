@@ -3,7 +3,7 @@ import 'dart:io';
 const feedbackEmail = 'melody7632785@gmail.com';
 
 String feedbackMailto({String? appVersion}) {
-  final subject = Uri.encodeComponent('Courtside 反馈');
+  final subject = Uri.encodeComponent('BHE 反馈');
   final body = Uri.encodeComponent(
     '问题描述：\n\n复现步骤：\n\n环境信息：${appVersion ?? '未填写'}\n',
   );

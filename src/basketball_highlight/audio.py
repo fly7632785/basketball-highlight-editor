@@ -14,7 +14,13 @@ def merge_time_ranges(ranges):
     return [tuple(item) for item in merged]
 
 
+def _validate_sample_rate(sample_rate):
+    if not np.isfinite(sample_rate) or sample_rate <= 0:
+        raise ValueError("SAMPLE_RATE_INVALID")
+
+
 def _slice_window(samples, sample_rate, start, end):
+    _validate_sample_rate(sample_rate)
     values = np.asarray(samples, dtype=np.float32).reshape(-1)
     start_index = max(0, int(round(start * sample_rate)))
     end_index = min(values.size, int(round(end * sample_rate)))
@@ -23,6 +29,7 @@ def _slice_window(samples, sample_rate, start, end):
 
 def audio_features(samples, sample_rate):
     """Return inexpensive impact/noise features for a mono PCM window."""
+    _validate_sample_rate(sample_rate)
     values = np.asarray(samples, dtype=np.float32).reshape(-1)
     if values.size == 0:
         return {

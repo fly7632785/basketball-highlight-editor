@@ -21,4 +21,18 @@ def test_select_stable_hoop_uses_repeated_detections():
 
     assert result is not None
     assert result["samples"] == 3
+    assert result["preview_time_ms"] == 0
     assert result["roi"]["x2"] - result["roi"]["x1"] > 100
+
+
+def test_select_stable_hoop_uses_highest_confidence_frame_for_preview():
+    detections = [
+        {"bbox": [480, 310, 500, 330], "confidence": 0.12, "time": 1.0},
+        {"bbox": [481, 311, 501, 331], "confidence": 0.24, "time": 4.0},
+        {"bbox": [479, 309, 499, 329], "confidence": 0.11, "time": 2.0},
+    ]
+
+    result = select_stable_hoop(detections, 960, 720)
+
+    assert result is not None
+    assert result["preview_time_ms"] == 4000

@@ -50,7 +50,12 @@ class _CourtsideAboutDialog extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Courtside', style: theme.textTheme.titleLarge),
+                        Text('BHE', style: theme.textTheme.titleLarge),
+                        const SizedBox(height: 4),
+                        Text(
+                          'basketball-highlight-editor',
+                          style: theme.textTheme.bodySmall,
+                        ),
                         Text(
                           '篮球高光视频助手',
                           style: theme.textTheme.bodySmall?.copyWith(

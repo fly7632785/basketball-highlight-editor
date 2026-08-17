@@ -52,6 +52,8 @@ class ProjectState {
     this.videoPath,
     this.reviewVideoPath,
     this.previewPath,
+    this.previewTimeMs = 1000,
+    this.previewRefreshing = false,
     this.suggestedRoi,
     this.netRoi,
     this.hoopBbox,
@@ -81,6 +83,8 @@ class ProjectState {
   final String? videoPath;
   final String? reviewVideoPath;
   final String? previewPath;
+  final int previewTimeMs;
+  final bool previewRefreshing;
   final Rect? suggestedRoi;
   final Rect? netRoi;
   final Rect? hoopBbox;
@@ -126,6 +130,8 @@ class ProjectState {
     Object? videoPath = _unset,
     Object? reviewVideoPath = _unset,
     Object? previewPath = _unset,
+    int? previewTimeMs,
+    bool? previewRefreshing,
     Object? suggestedRoi = _unset,
     Object? netRoi = _unset,
     Object? hoopBbox = _unset,
@@ -161,6 +167,8 @@ class ProjectState {
       previewPath: identical(previewPath, _unset)
           ? this.previewPath
           : previewPath as String?,
+      previewTimeMs: previewTimeMs ?? this.previewTimeMs,
+      previewRefreshing: previewRefreshing ?? this.previewRefreshing,
       suggestedRoi: identical(suggestedRoi, _unset)
           ? this.suggestedRoi
           : suggestedRoi as Rect?,
@@ -261,9 +269,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   Future<void> selectVideo(String path) async {
     await flushReviewQueue();
+    var projectCreatedForRecent = false;
     await _runBusy(
       () async {
-        _projectLoadGeneration++;
+        final generation = ++_projectLoadGeneration;
         await ref.read(engineBootstrapProvider.notifier).ensure();
         final session = ref.read(projectSessionProvider);
         final checkpoint = session.checkpoint();
@@ -281,6 +290,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
           await session.createProject(name: stem, rootPath: projectRoot);
           projectCreated = true;
           linked = await session.linkVideo(path);
+          projectCreatedForRecent = true;
         } catch (_) {
           if (projectCreated) {
             await session.deleteProject(projectRoot);
@@ -294,6 +304,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
           videoPath: _playbackVideoPath(linkedVideo) ?? path,
           reviewVideoPath: null,
           previewPath: null,
+          previewTimeMs: 1000,
+          previewRefreshing: false,
           suggestedRoi: null,
           netRoi: null,
           hoopBbox: null,
@@ -318,20 +330,22 @@ class ProjectNotifier extends Notifier<ProjectState> {
           final preview = await session.extractPreview(
             timeMs: duration > 1000 ? 1000 : duration,
           );
-          if (!_disposed && state.videoPath == path) {
+          if (!_disposed && generation == _projectLoadGeneration) {
             state = state.copyWith(previewPath: preview['path']?.toString());
           }
         } catch (error) {
-          if (!_disposed && state.videoPath == path) {
+          if (!_disposed && generation == _projectLoadGeneration) {
             _pushNotice('视频预览加载失败：$error', NoticeSeverity.error);
           }
         }
+        if (_disposed || generation != _projectLoadGeneration) return;
         state = state.copyWith(busyMessage: '正在识别篮筐区域…');
         Rect? suggestedRoi;
         Rect? hoopBbox;
         String? roiSource;
-        double? roiConfidence;
+        var previewTimeMs = 1000;
         String? roiSuggestionError;
+        double? roiConfidence;
         try {
           final suggestion = await session.suggestRoi(
             duration: 12,
@@ -351,12 +365,34 @@ class ProjectNotifier extends Notifier<ProjectState> {
             // 自动建议只进入会话草稿，最终由 applyWorkflowDraft 写入生效配置。
             roiSource = 'auto';
             roiConfidence = (calibration?['confidence'] as num?)?.toDouble();
+            previewTimeMs =
+                ((suggestion['preview_time_ms'] as num?)?.toInt() ?? 1000)
+                    .clamp(0, duration)
+                    .toInt();
           }
         } catch (error) {
           // 自动 ROI 是便利功能,失败不应阻塞导入,用户可手动框选。
           roiSuggestionError = error.toString();
         }
+        if (_disposed || generation != _projectLoadGeneration) return;
+        if (previewTimeMs != 1000) {
+          try {
+            final preview = await session.extractPreview(timeMs: previewTimeMs);
+            if (!_disposed && generation == _projectLoadGeneration) {
+              state = state.copyWith(
+                previewPath: preview['path']?.toString(),
+                previewTimeMs: previewTimeMs,
+              );
+            }
+          } catch (error) {
+            if (!_disposed && generation == _projectLoadGeneration) {
+              _pushNotice('自动切换标记画面失败：$error', NoticeSeverity.error);
+            }
+          }
+        }
+        if (_disposed || generation != _projectLoadGeneration) return;
         state = state.copyWith(
+          previewTimeMs: previewTimeMs,
           suggestedRoi: suggestedRoi,
           hoopBbox: hoopBbox,
           roiSource: roiSource,
@@ -369,18 +405,45 @@ class ProjectNotifier extends Notifier<ProjectState> {
       busyMessage: '正在准备视频…',
       successMessage: '视频已加载，已优先尝试自动识别篮筐区域',
     );
+    if (projectCreatedForRecent && !_disposed) {
+      await loadRecentProjects();
+    }
   }
 
-  Future<void> refreshPreview() async {
+  int _previewTimeForVideo(JsonMap? video) {
+    final duration = (video?['duration_ms'] as num?)?.toInt();
+    if (duration == null) return 1000;
+    return duration.clamp(0, 1000).toInt();
+  }
+
+  Future<bool> refreshPreview() => refreshPreviewAt(state.previewTimeMs);
+
+  Future<bool> refreshPreviewAt(int timeMs) async {
     final video = state.video;
-    if (video == null) return;
-    await _runBusy(() async {
-      final duration = (video['duration_ms'] as num?)?.toInt() ?? 1000;
+    if (video == null || state.previewRefreshing) return false;
+    final duration = (video['duration_ms'] as num?)?.toInt() ?? 1000;
+    final target = timeMs.clamp(0, duration).toInt();
+    final videoId = video['id']?.toString();
+    state = state.copyWith(previewRefreshing: true);
+    try {
       final preview = await ref
           .read(projectSessionProvider)
-          .extractPreview(timeMs: duration > 1000 ? 1000 : duration);
-      state = state.copyWith(previewPath: preview['path']?.toString());
-    }, successMessage: '视频预览已刷新');
+          .extractPreview(timeMs: target);
+      if (!_disposed && state.video?['id']?.toString() == videoId) {
+        state = state.copyWith(
+          previewPath: preview['path']?.toString(),
+          previewTimeMs: target,
+        );
+      }
+      return true;
+    } catch (error) {
+      if (!_disposed && state.video?['id']?.toString() == videoId) {
+        _pushNotice('标记画面切换失败：$error', NoticeSeverity.error);
+      }
+      return false;
+    } finally {
+      if (!_disposed) state = state.copyWith(previewRefreshing: false);
+    }
   }
 
   Future<JsonMap?> loadWorkflowDraft() async {
@@ -473,6 +536,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         videoPath: state.videoPath,
         reviewVideoPath: null,
         previewPath: null,
+        previewTimeMs: state.previewTimeMs,
         suggestedRoi: mappedRoi,
         hoopBbox: mappedHoop,
         netRoi: mappedNet,
@@ -493,6 +557,60 @@ class ProjectNotifier extends Notifier<ProjectState> {
     final root = await getDirectoryPath(confirmButtonText: '打开项目');
     if (root == null) return false;
     return openProject(root);
+  }
+
+  Future<bool> relinkCurrentVideo(String path) async {
+    final video = state.video;
+    if (video == null) return false;
+    final generation = ++_projectLoadGeneration;
+    var relinked = false;
+    await _runBusy(() async {
+      await ref.read(engineBootstrapProvider.notifier).ensure();
+      final session = ref.read(projectSessionProvider);
+      final result = await session.relinkVideo(path);
+      final nextVideo = (result['video'] as Map?)?.cast<String, dynamic>();
+      if (nextVideo == null) {
+        throw const SessionStateException('重新定位视频未返回视频信息');
+      }
+      if (_disposed || generation != _projectLoadGeneration) return;
+      final invalidated = nextVideo['analysis_invalidated'] == true;
+      state = state.copyWith(
+        video: nextVideo,
+        videoPath: _playbackVideoPath(nextVideo) ?? path,
+        reviewVideoPath: null,
+        previewPath: null,
+        previewTimeMs: invalidated ? 1000 : state.previewTimeMs,
+        suggestedRoi: invalidated ? null : state.suggestedRoi,
+        netRoi: invalidated ? null : state.netRoi,
+        hoopBbox: invalidated ? null : state.hoopBbox,
+        roiSource: invalidated ? null : state.roiSource,
+        roiConfidence: invalidated ? null : state.roiConfidence,
+        roiSuggestionError: null,
+        job: invalidated ? null : state.job,
+        exportJob: invalidated ? null : state.exportJob,
+        statistics: invalidated ? null : state.statistics,
+        candidates: invalidated ? const <JsonMap>[] : state.candidates,
+        exportHistory: invalidated ? const <JsonMap>[] : state.exportHistory,
+        workflowDraft: invalidated ? null : state.workflowDraft,
+        hydrateError: null,
+      );
+      try {
+        final previewTimeMs = invalidated ? 1000 : state.previewTimeMs;
+        final preview = await session.extractPreview(timeMs: previewTimeMs);
+        if (!_disposed && generation == _projectLoadGeneration) {
+          state = state.copyWith(
+            previewPath: preview['path']?.toString(),
+            previewTimeMs: previewTimeMs,
+          );
+        }
+      } catch (error) {
+        if (!_disposed && generation == _projectLoadGeneration) {
+          _pushNotice('视频预览加载失败：$error', NoticeSeverity.error);
+        }
+      }
+      relinked = true;
+    }, successMessage: '视频已重新定位');
+    return relinked;
   }
 
   Future<void> deleteProject(String root) async {
@@ -711,6 +829,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
         videoPath: sourceMissing ? null : _playbackVideoPath(video),
         reviewVideoPath: null,
         previewPath: null,
+        previewTimeMs: _previewTimeForVideo(video),
+        previewRefreshing: false,
         suggestedRoi: restoredRoiRect,
         netRoi: restoredNetRoi,
         hoopBbox: restoredHoopBbox,
@@ -853,11 +973,14 @@ class ProjectNotifier extends Notifier<ProjectState> {
       }
     }
     try {
-      final preview = await scope.extractPreview(
-        timeMs: duration > 1000 ? 1000 : duration,
-      );
+      final previewTimeMs = duration > 1000 ? 1000 : duration;
+      final preview = await scope.extractPreview(timeMs: previewTimeMs);
       if (generation == _projectLoadGeneration) {
-        state = state.copyWith(previewPath: preview['path']?.toString());
+        state = state.copyWith(
+          previewPath: preview['path']?.toString(),
+          previewTimeMs: previewTimeMs,
+          previewRefreshing: false,
+        );
       }
     } catch (error) {
       if (!_disposed && generation == _projectLoadGeneration) {
@@ -1042,6 +1165,26 @@ class ProjectNotifier extends Notifier<ProjectState> {
     return started;
   }
 
+  Future<bool> _restoreAttachedAnalysis(
+    ProjectSessionScope scope, {
+    String? preferredJobId,
+  }) async {
+    final activeJobs = await scope.getActiveJobs();
+    JsonMap? attached;
+    for (final candidate in activeJobs) {
+      if (candidate['recovery_state'] == 'worker_attached' &&
+          (preferredJobId == null ||
+              candidate['id']?.toString() == preferredJobId)) {
+        attached = candidate;
+        break;
+      }
+    }
+    if (attached == null) return false;
+    state = state.copyWith(job: attached);
+    _pushNotice('分析任务仍在运行，已恢复状态监听', NoticeSeverity.info);
+    return true;
+  }
+
   /// 等价 app.dart:_pollJob(476)。Stream 监听逻辑原样迁移。
   Future<void> pollJob(String jobId, {ProjectSessionScope? scope}) async {
     if (_disposed || !_pollingJobIds.add(jobId)) return;
@@ -1051,6 +1194,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
       _pollingJobIds.remove(jobId);
       return;
     }
+    var resumedAfterTransportError = false;
     try {
       var refreshed = false;
       await for (final payload in requestScope.pollJob(jobId: jobId)) {
@@ -1107,10 +1251,33 @@ class ProjectNotifier extends Notifier<ProjectState> {
       );
     } catch (error) {
       if (_disposed || projectGeneration != _projectLoadGeneration) return;
-      _markEngineJobRecoverable(error, export: false);
-      _pushNotice(error.toString(), NoticeSeverity.error);
+      if (error is EngineException &&
+          const <String>{
+            'ENGINE_TIMEOUT',
+            'ENGINE_EXITED',
+            'ENGINE_NOT_RUNNING',
+            'ENGINE_WRITE_FAILED',
+            'ENGINE_DISPOSED',
+          }.contains(error.code)) {
+        try {
+          resumedAfterTransportError = await _restoreAttachedAnalysis(
+            requestScope,
+            preferredJobId: jobId,
+          );
+        } catch (_) {}
+      }
+      if (!resumedAfterTransportError) {
+        _markEngineJobRecoverable(error, export: false);
+        _pushNotice(error.toString(), NoticeSeverity.error);
+      }
     } finally {
       _pollingJobIds.remove(jobId);
+      if (resumedAfterTransportError && !_disposed) {
+        final currentJobId = state.job?['id'];
+        if (currentJobId is String) {
+          unawaited(pollJob(currentJobId, scope: requestScope));
+        }
+      }
     }
   }
 
@@ -1137,22 +1304,35 @@ class ProjectNotifier extends Notifier<ProjectState> {
         : _jobAnalysisMode(state.job) ?? state.analysisMode;
     await _runBusy(() async {
       await ref.read(engineBootstrapProvider.notifier).ensure();
-      final result = await ref
-          .read(projectSessionProvider)
-          .retryAnalysis(
-            jobId: jobId,
-            mode: requestedMode,
-            sampleFps: 10,
-            beforeSeconds: 6,
-            afterSeconds: 3,
-          );
-      state = state.copyWith(
-        job: (result['job'] as Map?)?.cast<String, dynamic>(),
-        analysisMode: requestedMode,
-      );
-      _pushNotice('已重新开始分析', NoticeSeverity.success);
-      final newJobId = state.job?['id'];
-      if (newJobId is String) unawaited(pollJob(newJobId));
+      try {
+        final result = await ref
+            .read(projectSessionProvider)
+            .retryAnalysis(
+              jobId: jobId,
+              mode: requestedMode,
+              sampleFps: 10,
+              beforeSeconds: 6,
+              afterSeconds: 3,
+            );
+        state = state.copyWith(
+          job: (result['job'] as Map?)?.cast<String, dynamic>(),
+          analysisMode: requestedMode,
+        );
+        _pushNotice('已重新开始分析', NoticeSeverity.success);
+        final newJobId = state.job?['id'];
+        if (newJobId is String) unawaited(pollJob(newJobId));
+      } on EngineException catch (error) {
+        if (error.code != 'JOB_ALREADY_RUNNING') rethrow;
+        final scope = _captureScope();
+        if (scope == null ||
+            !await _restoreAttachedAnalysis(scope, preferredJobId: jobId)) {
+          rethrow;
+        }
+        final activeJobId = state.job?['id'];
+        if (activeJobId is String) {
+          unawaited(pollJob(activeJobId, scope: scope));
+        }
+      }
     });
   }
 

@@ -11,6 +11,7 @@ import pytest
 import refine_dynamic_candidates
 from refine_dynamic_candidates import build_scan_windows, file_fingerprint, scale_rim
 import scan_video
+from export_review_queue import concat_manifest_entry
 
 
 class RefineDynamicTest(unittest.TestCase):
@@ -116,6 +117,36 @@ import refine_dynamic_candidates
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_scan_video_rejects_invalid_parameters_before_loading_dependencies(tmp_path, monkeypatch):
+    video = tmp_path / "source.mp4"
+    model_path = tmp_path / "model.pt"
+    video.write_bytes(b"video")
+    model_path.write_bytes(b"model")
+    args = Namespace(
+        video=str(video),
+        model=str(model_path),
+        output=str(tmp_path / "detections.json"),
+        roi=[0, 0, 200, 200],
+        sample_fps=5,
+        duration=None,
+        time_offset=0.0,
+        scale=0,
+        batch=8,
+        conf=0.15,
+        device="auto",
+        cache_dir=None,
+    )
+    monkeypatch.setattr(scan_video, "load_yolo_model", lambda _: pytest.fail("model should not load"))
+
+    with pytest.raises(ValueError, match="SCAN_PARAMETERS_INVALID"):
+        scan_video.scan_video(args)
+
+
+def test_concat_manifest_escapes_single_quotes(tmp_path):
+    path = tmp_path / "coach's clip.mp4"
+    assert concat_manifest_entry(path) == f"file '{path.as_posix().replace(chr(39), chr(39) + chr(92) + chr(39) + chr(39))}'\n"
 
 
 def test_scan_video_cache_hit_skips_video_and_model_loading(tmp_path, monkeypatch):

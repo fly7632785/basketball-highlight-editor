@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -100,6 +101,16 @@ def extract_candidate_features(video, matches, sample_rate, before, after):
 
 
 def main(args):
+    if (
+        args.dedupe_sec < 0
+        or not math.isfinite(args.dedupe_sec)
+        or args.sample_rate <= 0
+        or args.before < 0
+        or not math.isfinite(args.before)
+        or args.after <= 0
+        or not math.isfinite(args.after)
+    ):
+        raise ValueError("AUDIO_PARAMETERS_INVALID")
     video = Path(args.video).resolve()
     detections_path = Path(args.detections).resolve()
     detections = json.loads(detections_path.read_text(encoding="utf-8"))

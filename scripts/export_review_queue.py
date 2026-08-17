@@ -1,6 +1,7 @@
 import argparse
 import csv
 import json
+import math
 import subprocess
 from pathlib import Path
 
@@ -24,13 +25,24 @@ def parse_args():
     return parser.parse_args()
 
 
+def concat_manifest_entry(path):
+    normalized = path.resolve().as_posix().replace("'", "'\\''")
+    return f"file '{normalized}'\n"
+
+
 def video_duration(video):
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(video)],
         check=True, capture_output=True, text=True,
     )
-    return float(result.stdout.strip())
+    try:
+        duration = float(result.stdout.strip())
+    except ValueError as exc:
+        raise ValueError("VIDEO_DURATION_INVALID") from exc
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError("VIDEO_DURATION_INVALID")
+    return duration
 
 
 def is_automatic_goal(match):
@@ -55,6 +67,16 @@ def unique_matches(data, dedupe_sec, auto_only=False):
 
 
 def main(args):
+    if (
+        args.before < 0
+        or not math.isfinite(args.before)
+        or args.after < 0
+        or not math.isfinite(args.after)
+        or args.dedupe_sec < 0
+        or not math.isfinite(args.dedupe_sec)
+        or args.batch_size < 0
+    ):
+        raise ValueError("EXPORT_PARAMETERS_INVALID")
     video = Path(args.video).resolve()
     detections = json.loads(Path(args.detections).read_text(encoding="utf-8"))
     output_dir = Path(args.output_dir).resolve()
@@ -66,7 +88,12 @@ def main(args):
     concat_entries = []
 
     for index, match in enumerate(matches, 1):
-        event_time = float(match["time"])
+        try:
+            event_time = float(match["time"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("CANDIDATE_TIME_INVALID") from exc
+        if not math.isfinite(event_time) or event_time < 0 or event_time > duration:
+            raise ValueError("CANDIDATE_TIME_INVALID")
         start = max(0.0, event_time - args.before)
         end = min(duration, event_time + args.after)
         clip_name = f"candidate_{index:03d}_{event_time:010.2f}s.mp4"
@@ -118,7 +145,7 @@ def main(args):
             batch_name = f"BATCH_{batch_index:02d}_{start + 1:03d}-{end:03d}"
             concat_file = output_dir / f"{batch_name}.txt"
             concat_file.write_text(
-                "".join(f"file '{path}'\n" for path in concat_entries[start:end]),
+                "".join(concat_manifest_entry(path) for path in concat_entries[start:end]),
                 encoding="utf-8",
             )
             subprocess.run([
