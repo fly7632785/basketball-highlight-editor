@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'components/cs_notice_overlay.dart';
+import 'core/windows_title_bar.dart';
 import 'providers/project_state.dart';
 import 'providers/theme_provider.dart';
 import 'router/app_router.dart';
@@ -42,6 +43,7 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
       ThemeMode.system =>
         WidgetsBinding.instance.platformDispatcher.platformBrightness,
     };
+    applyWindowsTitleBarBrightness(brightness);
     try {
       await windowManager.setBrightness(brightness);
       await windowManager.setBackgroundColor(
