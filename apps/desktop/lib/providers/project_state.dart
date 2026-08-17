@@ -1904,12 +1904,16 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   /// 等价 app.dart:_projectsRoot(76)。env BHE_PROJECTS_ROOT > knownProjectsRoot >
-  /// $HOME/Movies/BasketballProjects。
+  /// $HOME/Movies/BasketballProjects（Windows 用 Videos）。
   String get _projectsRoot {
     final configured = Platform.environment['BHE_PROJECTS_ROOT'];
     if (configured != null && configured.trim().isNotEmpty) return configured;
     final current = state.knownProjectsRoot;
     if (current != null && current.isNotEmpty) return current;
+    if (Platform.isWindows) {
+      final profile = Platform.environment['USERPROFILE'];
+      return '${profile ?? Directory.current.path}/Videos/BasketballProjects';
+    }
     final home = Platform.environment['HOME'];
     return '${home ?? Directory.current.path}/Movies/BasketballProjects';
   }

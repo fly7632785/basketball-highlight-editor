@@ -37,6 +37,7 @@ class EngineClient implements EngineTransport {
     if (isRunning) return;
     final environment = Map<String, String>.from(Platform.environment);
     environment['PYTHONPATH'] = enginePythonPath;
+    environment['PYTHONIOENCODING'] = 'utf-8';
     if (extraPath != null && extraPath.isNotEmpty) {
       final existingPath = environment['PATH'];
       environment['PATH'] = [
