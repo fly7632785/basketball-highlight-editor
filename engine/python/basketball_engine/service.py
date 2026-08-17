@@ -539,7 +539,7 @@ class EngineService:
         repo_root = Path(__file__).resolve().parents[3]
         model_path = Path(
             payload.get("model_path")
-            or (repo_root / "third_party" / "basketball-shot-detection" / "bball_model.pt")
+            or self._default_model_path(repo_root)
         ).expanduser().resolve()
         if not model_path.is_file():
             raise ProtocolError("MODEL_LOAD_FAILED", f"模型不存在: {model_path}")
@@ -628,6 +628,13 @@ class EngineService:
                 ),
             ),
         }
+
+    @staticmethod
+    def _default_model_path(repo_root: Path) -> Path:
+        tracked = repo_root / "models" / "bball_model.pt"
+        if tracked.is_file():
+            return tracked
+        return repo_root / "third_party" / "basketball-shot-detection" / "bball_model.pt"
 
     @staticmethod
     def _parse_ratio(value: Any) -> float | None:
@@ -1077,7 +1084,7 @@ class EngineService:
             # added to the persisted video contract.
             source_video = self._validated_source(video)
             repo_root = Path(__file__).resolve().parents[3]
-            model_path = Path(payload.get("model_path") or (repo_root / "third_party" / "basketball-shot-detection" / "bball_model.pt")).expanduser().resolve()
+            model_path = Path(payload.get("model_path") or self._default_model_path(repo_root)).expanduser().resolve()
             if not model_path.is_file():
                 raise ProtocolError("MODEL_LOAD_FAILED", f"模型不存在: {model_path}")
             mode = payload.get("mode", "standard")
