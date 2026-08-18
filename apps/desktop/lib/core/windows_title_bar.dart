@@ -5,12 +5,17 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/widgets.dart' show Brightness;
 
 const int _dwmwaUseImmersiveDarkMode = 20;
+const int _dwmwaBorderColor = 34;
+const int _dwmwaColorDefault = 0xFFFFFFFF;
+// 应用深色主题背景 #0B0E14 的 COLORREF(0x00BBGGRR)。
+const int _darkBorderArgb = 0x00140E0B;
 
-/// 直接通过 DWM 设置 Windows 标题栏深浅。
+/// 直接通过 DWM 设置 Windows 标题栏与边框深浅。
 ///
 /// window_manager 的 setBrightness 在 Windows 上只有在系统主题本身
 /// 为深色时才应用暗色标题栏(读 AppsUseLightTheme 注册表做门控)，
 /// 系统浅色 + 应用深色时标题栏会保持白色；这里绕过该限制。
+/// 同时设置 DWM 边框颜色,避免深色主题下窗口四周残留浅色描边。
 void applyWindowsTitleBarBrightness(Brightness brightness) {
   if (!Platform.isWindows) return;
   try {
@@ -45,6 +50,16 @@ void applyWindowsTitleBarBrightness(Brightness brightness) {
         dwmSetWindowAttribute(
           hwnd,
           _dwmwaUseImmersiveDarkMode,
+          value,
+          ffi.sizeOf<ffi.Int32>(),
+        );
+        value.value =
+            brightness == Brightness.dark
+                ? _darkBorderArgb
+                : _dwmwaColorDefault;
+        dwmSetWindowAttribute(
+          hwnd,
+          _dwmwaBorderColor,
           value,
           ffi.sizeOf<ffi.Int32>(),
         );

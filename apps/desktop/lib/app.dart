@@ -43,7 +43,6 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
       ThemeMode.system =>
         WidgetsBinding.instance.platformDispatcher.platformBrightness,
     };
-    applyWindowsTitleBarBrightness(brightness);
     try {
       await windowManager.setBrightness(brightness);
       await windowManager.setBackgroundColor(
@@ -54,6 +53,9 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
     } catch (_) {
       // Widget tests and non-desktop hosts do not expose the native channel.
     }
+    // window_manager 在 Windows 上按系统主题门控标题栏,可能在上面把
+    // 标题栏刷回浅色;DWM 直调必须放在它之后兜底。
+    applyWindowsTitleBarBrightness(brightness);
   }
 
   Future<void> _enableWindowCloseGuard() async {
