@@ -16,10 +16,10 @@
 | [`REVIEW_DATASET_EXPORT.md`](REVIEW_DATASET_EXPORT.md) | 审核结果导出为训练数据的用法 |
 | [`research/ANALYSIS_MODES_V1.md`](research/ANALYSIS_MODES_V1.md) | 快速/标准分析模式的数据契约和产品规则 |
 | [`research/ANALYSIS_MODE_BENCHMARK_20260812.md`](research/ANALYSIS_MODE_BENCHMARK_20260812.md) | 快速/标准模式的实测耗时和结论边界 |
+| [`research/LICENSE_NOTES.md`](research/LICENSE_NOTES.md) | 第三方仓库与模型权重的许可证备注 |
+| [`research/THIRD_PARTY_MANIFEST.md`](research/THIRD_PARTY_MANIFEST.md) | third_party 浅克隆来源与固定提交 |
 | [`LOCAL_E2E_V1.md`](LOCAL_E2E_V1.md) | 本地闭环验证证据，不是功能契约 |
 
-## 研究和历史资料
+历史过程文档（早期可行性评估、验证报告、UI 重构审计等）已删除，需要回溯时使用 Git 历史。需要改变算法或性能策略时，先更新 `DECISIONS_V1.md`，再补充新的带日期基准记录。
 
-`research/` 中未列入上表的文件保留实验过程、第三方调研和历史验证结果，不作为当前实现规范。需要改变算法或性能策略时，先更新 `DECISIONS_V1.md`，再补充新的带日期基准记录。
-
-当前 UI 以 [`../design-system/courtside/MASTER.md`](../design-system/courtside/MASTER.md) 和其页面覆盖规则为准。历史设计计划已移除，如需回溯使用 Git 历史。
+当前 UI 以 [`../design-system/courtside/MASTER.md`](../design-system/courtside/MASTER.md) 和其页面覆盖规则为准。
