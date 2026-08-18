@@ -176,7 +176,7 @@ void main() {
 
     // ensure() 依赖 Platform.environment/Directory.current,无法在测试中注入;
     // 这里用 FakeEngineClient 短路子进程,宽松断言 ensure 完结后 state 已结算。
-    // 沙盒外运行时:命中硬编码 /Users/.../basketball-highlight-editor
+    // 沙盒外运行时：命中当前仓库根目录或测试注入的运行时路径。
     // 候选时为 AsyncData(true);无 runtime 时为 AsyncError。
     test('ensure() 完结后 state 不再 loading', () async {
       final container = ProviderContainer(

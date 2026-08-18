@@ -633,10 +633,7 @@ class EngineService:
 
     @staticmethod
     def _default_model_path(repo_root: Path) -> Path:
-        tracked = repo_root / "models" / "bball_model.pt"
-        if tracked.is_file():
-            return tracked
-        return repo_root / "third_party" / "basketball-shot-detection" / "bball_model.pt"
+        return repo_root / "models" / "bball_model.pt"
 
     @staticmethod
     def _parse_ratio(value: Any) -> float | None:

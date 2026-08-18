@@ -27,7 +27,7 @@ cp -R "$RUNTIME_OUT"/. "$APP_RUNTIME/"
   --python "$APP_RUNTIME/python/bin/python3" \
   --ffmpeg "$APP_RUNTIME/bin/ffmpeg" \
   --ffprobe "$APP_RUNTIME/bin/ffprobe" \
-  --model "$APP_RUNTIME/third_party/basketball-shot-detection/bball_model.pt"
+  --model "$APP_RUNTIME/models/bball_model.pt"
 
 if [[ -n "${BHE_CODESIGN_IDENTITY:-}" ]]; then
   codesign --deep --force --options runtime \

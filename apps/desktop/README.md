@@ -21,14 +21,17 @@ Flutter desktop application for V1. The UI talks to the local Python Engine thro
 
 ## Local development
 
-The project was generated with Flutter 3.44.8. From the repository root, use the checked-in development SDK path or place Flutter on `PATH`:
+The project was developed with Flutter 3.44.8. From the repository root, use a compatible Flutter SDK on `PATH` (the local `.tooling/` SDK is intentionally not committed):
 
 ```bash
-cd /Users/macmima1234/basketball-highlight-editor/apps/desktop
-../../.tooling/flutter/bin/flutter analyze
-../../.tooling/flutter/bin/flutter test
-../../.tooling/flutter/bin/flutter build macos --debug
+cd <repo-root>/apps/desktop
+flutter pub get
+flutter analyze
+flutter test
+flutter build macos --debug
 ```
+
+The repository currently uses the platform fallback font in source builds. A distributable build must provide a properly licensed font asset and retain its license notice.
 
 The application modules follow:
 

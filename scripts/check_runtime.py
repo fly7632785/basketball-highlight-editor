@@ -64,8 +64,6 @@ def main() -> int:
     args = _parse_args()
     root = args.root.expanduser().resolve()
     model_default = root / "models" / "bball_model.pt"
-    if not model_default.is_file():
-        model_default = root / "third_party" / "basketball-shot-detection" / "bball_model.pt"
     model = (args.model or model_default).resolve()
     checks: dict[str, dict[str, object]] = {}
 

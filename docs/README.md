@@ -18,6 +18,9 @@
 | [`research/ANALYSIS_MODE_BENCHMARK_20260812.md`](research/ANALYSIS_MODE_BENCHMARK_20260812.md) | 快速/标准模式的实测耗时和结论边界 |
 | [`research/LICENSE_NOTES.md`](research/LICENSE_NOTES.md) | 第三方仓库与模型权重的许可证备注 |
 | [`research/THIRD_PARTY_MANIFEST.md`](research/THIRD_PARTY_MANIFEST.md) | third_party 浅克隆来源与固定提交 |
+| [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) | 运行时依赖、参考仓库和发布 notices 边界 |
+| [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md) | 模型权重、训练数据和视频授权边界 |
+| [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md) | 开源公开前清理结果和剩余阻塞项 |
 | [`LOCAL_E2E_V1.md`](LOCAL_E2E_V1.md) | 本地闭环验证证据，不是功能契约 |
 
 历史过程文档（早期可行性评估、验证报告、UI 重构审计等）已删除，需要回溯时使用 Git 历史。需要改变算法或性能策略时，先更新 `DECISIONS_V1.md`，再补充新的带日期基准记录。

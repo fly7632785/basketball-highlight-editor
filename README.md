@@ -6,6 +6,8 @@
 
 项目已从算法调研进入 **V1 桌面产品工程化阶段**：Flutter macOS UI 与 Python Engine 已完成本地最小闭环，可执行“导入视频 → 提取预览帧 → 框选 ROI → 分析 → 审核 → 单独/合并导出”。
 
+当前公开版本定位为 **源码预览版**，不是开箱即用的最终用户安装包。Python 运行时、FFmpeg、模型权重和真实视频需要使用者自行准备，并分别确认授权。
+
 ## 已确定的产品边界
 
 - 固定机位
@@ -27,8 +29,13 @@
 - `docs/research/ANALYSIS_MODES_V1.md`：快速/标准分析模式决策
 - `docs/research/ANALYSIS_MODE_BENCHMARK_20260812.md`：快速/标准模式实测基准
 - `design-system/courtside/MASTER.md`：当前 UI 设计规范
+- `LICENSE` / `NOTICE`：项目许可证和发布声明
+- `docs/THIRD_PARTY_NOTICES.md`：第三方依赖和参考项目边界
+- `docs/MODEL_AND_DATA_LICENSES.md`：模型、数据和视频授权边界
+- `docs/OPEN_SOURCE_AUDIT.md`：公开前审计记录和剩余阻塞项
+- `CONTRIBUTING.md` / `SECURITY.md`：贡献和漏洞报告规范
 
-`docs/research/` 其余文件是历史研究和实验记录，不作为当前实现契约。`third_party/` 是只读参考仓库，`data/` 是本地研发数据。
+`docs/research/` 其余文件是历史研究和实验记录，不作为当前实现契约。第三方研究 checkout 不随公开源码分发，`data/` 和 `models/` 只保留本地使用说明。
 
 ## 当前可验证命令
 
@@ -42,10 +49,19 @@ PATH="$PWD/../../.tooling/flutter/bin:$PATH" flutter test
 PATH="$PWD/../../.tooling/flutter/bin:$PATH" flutter build macos --debug
 ```
 
-运行时检查：
+运行时检查（需要先提供本地模型，并按需指定 FFmpeg）：
 
 ```bash
-.venv/bin/python scripts/check_runtime.py --root . --python .venv/bin/python
+.venv/bin/python scripts/check_runtime.py \
+  --root . \
+  --python .venv/bin/python \
+  --model models/bball_model.pt
+```
+
+开源预检（不需要安装 Python 依赖）：
+
+```bash
+python3 scripts/check_open_source.py
 ```
 
 导出人工审核训练数据（默认只导出已审核候选）：

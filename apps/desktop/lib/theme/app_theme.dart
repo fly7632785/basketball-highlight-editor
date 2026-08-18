@@ -22,7 +22,6 @@ ThemeData appTheme(Brightness brightness) {
       onSurface: colors.textPrimary,
     ),
     scaffoldBackgroundColor: colors.background,
-    fontFamily: 'Inter',
     extensions: [colors],
   );
   return base.copyWith(
@@ -41,13 +40,11 @@ ThemeData appTheme(Brightness brightness) {
         side: BorderSide(color: colors.borderStrong),
       ),
       titleTextStyle: TextStyle(
-        fontFamily: 'Inter',
         fontSize: 17,
         fontWeight: FontWeight.w600,
         color: colors.textPrimary,
       ),
       contentTextStyle: TextStyle(
-        fontFamily: 'Inter',
         fontSize: 13,
         height: 1.5,
         color: colors.textSecondary,
@@ -146,7 +143,6 @@ ThemeData appTheme(Brightness brightness) {
 
 TextTheme _buildTextTheme(AppColors colors) => TextTheme(
   displayLarge: TextStyle(
-    fontFamily: 'Inter',
     fontSize: 28,
     fontWeight: FontWeight.w500,
     height: 1.15,
@@ -154,7 +150,6 @@ TextTheme _buildTextTheme(AppColors colors) => TextTheme(
     color: colors.textPrimary,
   ),
   displayMedium: TextStyle(
-    fontFamily: 'Inter',
     fontSize: 22,
     fontWeight: FontWeight.w500,
     height: 1.2,
@@ -162,46 +157,39 @@ TextTheme _buildTextTheme(AppColors colors) => TextTheme(
     color: colors.textPrimary,
   ),
   titleLarge: TextStyle(
-    fontFamily: 'Inter',
     fontSize: 18,
     fontWeight: FontWeight.w500,
     letterSpacing: -0.15,
     color: colors.textPrimary,
   ),
   titleMedium: TextStyle(
-    fontFamily: 'Inter',
     fontSize: 15,
     fontWeight: FontWeight.w500,
     color: colors.textPrimary,
   ),
   bodyLarge: TextStyle(
-    fontFamily: 'Inter',
     fontSize: 14,
     fontWeight: FontWeight.w400,
     height: 1.5,
     color: colors.textPrimary,
   ),
   bodyMedium: TextStyle(
-    fontFamily: 'Inter',
     fontSize: 13,
     fontWeight: FontWeight.w400,
     height: 1.5,
     color: colors.textPrimary,
   ),
   labelLarge: TextStyle(
-    fontFamily: 'Inter',
     fontSize: 13,
     fontWeight: FontWeight.w500,
     color: colors.textPrimary,
   ),
   labelMedium: TextStyle(
-    fontFamily: 'Inter',
     fontSize: 12,
     fontWeight: FontWeight.w500,
     color: colors.textPrimary,
   ),
   labelSmall: TextStyle(
-    fontFamily: 'Inter',
     fontSize: 11,
     fontWeight: FontWeight.w500,
     color: colors.textPrimary,

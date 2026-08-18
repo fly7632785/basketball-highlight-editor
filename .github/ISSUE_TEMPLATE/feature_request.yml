@@ -1,0 +1,25 @@
+name: Feature request
+description: 提议一个可验证的改进
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: 目前的用户问题是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: 你建议如何解决？请说明是否影响现有协议、数据或平台。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: 考虑过哪些替代方案？

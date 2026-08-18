@@ -1,0 +1,32 @@
+name: Flutter checks
+
+on:
+  push:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - ".github/workflows/flutter-check.yml"
+  pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - ".github/workflows/flutter-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.8"
+          channel: stable
+      - run: flutter pub get
+        working-directory: apps/desktop
+      - run: flutter analyze
+        working-directory: apps/desktop
+      - run: flutter test
+        working-directory: apps/desktop

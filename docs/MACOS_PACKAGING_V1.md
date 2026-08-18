@@ -7,7 +7,7 @@ Flutter `Release` 构建已经可以生成 `.app`，但仅包含 UI。Engine 还
 - 可携带的 Python 运行时和依赖：`cv2`、`numpy`、`ultralytics`、`torch`；
 - Engine、算法脚本、`src/`；
 - SQLite Schema：`docs/architecture/SQLITE_SCHEMA_V1.sql`；
-- 篮球检测模型；
+- 用户自行准备并确认授权的篮球检测模型（默认路径为 `models/bball_model.pt`）；
 - 可携带的 `ffmpeg` / `ffprobe`。
 
 当前开发机的 `.venv/bin/python` 指向用户目录下的 Python，不可直接复制到其他 Mac。当前 Homebrew FFmpeg 还依赖多个 `/usr/local` 动态库，也不能直接当作发布包中的 FFmpeg。

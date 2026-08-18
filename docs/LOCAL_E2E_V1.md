@@ -5,7 +5,7 @@
 - 系统：macOS
 - 输入：`data/videos/飞书20260804-170744.mp4`
 - 视频：`960×720`、`30 FPS`、约 `277.67s`
-- 模型：`third_party/basketball-shot-detection/bball_model.pt`
+- 模型：本地自备的 `models/bball_model.pt`；模型权重不随源码分发
 - ROI：`x1=390, y1=180, x2=560, y2=390`
 - 代理：`960×720`、`5 FPS`
 - 精筛：`10 FPS` 参数传入 Engine

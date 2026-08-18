@@ -43,6 +43,9 @@ Copy-Item -Recurse -Force "$PythonRuntime\*" "$Out\python\"
 Copy-Item -Recurse -Force "$Root\engine\python" "$Out\engine\"
 Copy-Item -Recurse -Force "$Root\scripts\*" "$Out\scripts\"
 Copy-Item -Recurse -Force "$Root\src\*" "$Out\src\"
+if (-not (Test-Path "$Root\models\bball_model.pt")) {
+    Write-Error "models\bball_model.pt is required for a local runtime; obtain it separately and verify its license."
+}
 Copy-Item -Force "$Root\models\bball_model.pt" "$Out\models\"
 Copy-Item -Force "$Root\docs\architecture\SQLITE_SCHEMA_V1.sql" "$Out\docs\architecture\"
 Copy-Item -Force $Ffmpeg "$Out\bin\ffmpeg.exe"
