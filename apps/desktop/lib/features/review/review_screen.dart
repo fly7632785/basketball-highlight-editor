@@ -1163,22 +1163,25 @@ class _VideoPaneState extends State<_VideoPane> {
   }
 
   void _ensurePlayer() {
-    if (_player != null ||
-        widget.videoPath == null ||
-        widget.videoPath!.isEmpty) {
+    if (widget.videoPath == null || widget.videoPath!.isEmpty) {
       return;
     }
-    try {
-      MediaKit.ensureInitialized();
-      _player = Player();
-      _controller = VideoController(
-        _player!,
-        configuration: VideoControllerConfiguration(
-          enableHardwareAcceleration: !Platform.isWindows,
-        ),
-      );
-    } catch (error) {
-      _error = error.toString();
+    if (_player == null || _controller == null) {
+      try {
+        MediaKit.ensureInitialized();
+        _player ??= Player();
+        _controller = VideoController(
+          _player!,
+          configuration: VideoControllerConfiguration(
+            enableHardwareAcceleration: !Platform.isWindows,
+          ),
+        );
+      } catch (error) {
+        _error = error.toString();
+        return;
+      }
+    }
+    if (_positionSubscription != null) {
       return;
     }
     _positionSubscription = _player!.stream.position.listen((position) {
@@ -1215,7 +1218,8 @@ class _VideoPaneState extends State<_VideoPane> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.videoPath != widget.videoPath ||
         oldWidget.isOriginalVideo != widget.isOriginalVideo) {
-      _controller = null;
+      // 复用 Player 时保留 VideoController(与 Player 绑定),
+      // 切换片源由 _queueOpen 的 stop+open 完成。
       _ready = false;
       _loading = false;
       _error = null;
@@ -1324,7 +1328,6 @@ class _VideoPaneState extends State<_VideoPane> {
 
   void _reloadVideo() {
     setState(() {
-      _controller = null;
       _error = null;
       _ready = false;
     });
