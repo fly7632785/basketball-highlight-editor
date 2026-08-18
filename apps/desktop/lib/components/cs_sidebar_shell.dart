@@ -154,22 +154,28 @@ class _UtilityItem extends StatelessWidget {
           onTap: onTap,
           child: SizedBox(
             height: 34,
-            child: Row(
-              mainAxisAlignment: extended
-                  ? MainAxisAlignment.start
-                  : MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 17, color: c.textTertiary),
-                if (extended) ...[
-                  const SizedBox(width: Spacing.sm + 2),
-                  Text(
-                    label,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: c.textSecondary),
-                  ),
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: extended ? 12 : 0,
+                right: extended ? 8 : 0,
+              ),
+              child: Row(
+                mainAxisAlignment: extended
+                    ? MainAxisAlignment.start
+                    : MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 17, color: c.textTertiary),
+                  if (extended) ...[
+                    const SizedBox(width: Spacing.sm + 2),
+                    Text(
+                      label,
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodySmall?.copyWith(color: c.textSecondary),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -334,7 +340,7 @@ class CsSidebarItem extends StatelessWidget {
 
     final inner = Padding(
       padding: EdgeInsets.symmetric(
-        horizontal: extended ? 14 : 12,
+        horizontal: extended ? 10 : 10,
         vertical: extended ? 2 : 1,
       ),
       child: Material(
@@ -348,23 +354,29 @@ class CsSidebarItem extends StatelessWidget {
           onTap: onTap,
           child: SizedBox(
             height: extended ? 38 : 36,
-            child: Row(
-              mainAxisAlignment: extended
-                  ? MainAxisAlignment.start
-                  : MainAxisAlignment.center,
-              children: <Widget>[
-                Icon(iconData, size: 18, color: fg),
-                if (extended) ...<Widget>[
-                  const SizedBox(width: Spacing.sm + 2),
-                  Text(
-                    label,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: selected ? c.textPrimary : c.textSecondary,
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: extended ? 12 : 0,
+                right: extended ? 8 : 0,
+              ),
+              child: Row(
+                mainAxisAlignment: extended
+                    ? MainAxisAlignment.start
+                    : MainAxisAlignment.center,
+                children: <Widget>[
+                  Icon(iconData, size: 18, color: fg),
+                  if (extended) ...<Widget>[
+                    const SizedBox(width: Spacing.sm + 2),
+                    Text(
+                      label,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: selected ? c.textPrimary : c.textSecondary,
+                        fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
