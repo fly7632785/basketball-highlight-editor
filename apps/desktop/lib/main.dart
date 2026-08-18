@@ -30,7 +30,11 @@ Future<void> main() async {
     minimumSize: const Size(1180, 720),
     center: true,
     backgroundColor: colors.background,
-    titleBarStyle: TitleBarStyle.hidden,
+    // Windows 隐藏原生标题栏由应用自绘(消除 Win10 灰色边框);
+    // macOS 保持原生标题栏,避免红绿灯按钮叠在内容上。
+    titleBarStyle: Platform.isWindows
+        ? TitleBarStyle.hidden
+        : TitleBarStyle.normal,
   );
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     if (Platform.isWindows) {
