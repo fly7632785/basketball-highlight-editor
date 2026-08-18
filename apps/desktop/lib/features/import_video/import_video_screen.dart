@@ -1675,9 +1675,18 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
     final path = widget.videoPath;
     await _positionSubscription?.cancel();
     await _playingSubscription?.cancel();
-    await _player?.dispose();
-    _player = null;
-    _controller = null;
+    // 复用已存在的 Player/VideoController:在 Video 纹理仍在渲染时调用
+    // player.dispose() 会触发原生 ~VideoOutput 析构,在 Windows 上与
+    // 光栅线程死锁导致整个应用无响应。仅组件卸载时才销毁。
+    if (_player == null && path != null && path.isNotEmpty) {
+      _player = Player();
+      _controller = VideoController(
+        _player!,
+        configuration: VideoControllerConfiguration(
+          enableHardwareAcceleration: !Platform.isWindows,
+        ),
+      );
+    }
     if (mounted) {
       setState(() {
         _ready = false;
@@ -1687,14 +1696,7 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
       });
     }
     if (path == null || path.isEmpty || !File(path).existsSync()) return;
-    final player = Player();
-    _player = player;
-    _controller = VideoController(
-      player,
-      configuration: VideoControllerConfiguration(
-        enableHardwareAcceleration: !Platform.isWindows,
-      ),
-    );
+    final player = _player!;
     _positionSubscription = player.stream.position.listen((position) {
       if (!mounted || generation != _mediaGeneration) return;
       final value = position.inMilliseconds;
@@ -1743,6 +1745,7 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
     unawaited(_playingSubscription?.cancel());
     final player = _player;
     _player = null;
+    _controller = null;
     unawaited(() async {
       if (player == null) return;
       try {

@@ -1283,6 +1283,7 @@ class _VideoPaneState extends State<_VideoPane> {
       final pending = _mediaQueue;
       unawaited(
         pending.whenComplete(() async {
+          // 此时 Video 组件已卸载、纹理不再渲染,销毁是安全的。
           try {
             await player.stop();
           } catch (_) {}
@@ -1304,9 +1305,19 @@ class _VideoPaneState extends State<_VideoPane> {
     _playbackToken++;
     return _enqueueMediaAction(() async {
       if (!_isCurrent(generation)) return;
-      if (recreatePlayer) await _disposePlayer();
-      if (!_isCurrent(generation)) return;
+      // 复用 Player/VideoController:视频纹理渲染期间调用 player.dispose
+      // 会触发原生 ~VideoOutput 析构,在 Windows 上与光栅线程死锁,
+      // 整个应用无响应。切换片源只 stop + open,不销毁。
       _ensurePlayer();
+      if (recreatePlayer) {
+        final player = _player;
+        if (player != null) {
+          try {
+            await player.stop();
+          } catch (_) {}
+        }
+      }
+      if (!_isCurrent(generation)) return;
       await _open(path, generation, playAfterOpen: playAfterOpen);
     });
   }
@@ -1361,23 +1372,6 @@ class _VideoPaneState extends State<_VideoPane> {
       if (player == null || !_ready) return;
       await action(player);
     });
-  }
-
-  Future<void> _disposePlayer() async {
-    final subscription = _positionSubscription;
-    _positionSubscription = null;
-    final player = _player;
-    _player = null;
-    _controller = null;
-    await subscription?.cancel();
-    if (player != null) {
-      try {
-        await player.stop();
-      } catch (_) {}
-      try {
-        await player.dispose();
-      } catch (_) {}
-    }
   }
 
   Future<void> _enqueueMediaAction(Future<void> Function() action) {
