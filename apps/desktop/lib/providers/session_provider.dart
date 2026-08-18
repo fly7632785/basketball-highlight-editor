@@ -103,6 +103,7 @@ String findPython(String runtimeRoot, {required Map<String, String> env}) {
 class EngineBootstrapNotifier extends Notifier<AsyncValue<bool>> {
   Future<void>? _ensureInFlight;
   int _restartAttempts = 0;
+  DateTime? _lastEngineExitAt;
 
   @override
   AsyncValue<bool> build() => const AsyncValue<bool>.loading();
@@ -158,7 +159,17 @@ class EngineBootstrapNotifier extends Notifier<AsyncValue<bool>> {
   ///
   /// 死因证据(exitCode + stderr 尾部)已由 EngineClient 写入
   /// 系统临时目录的 bhe_engine_exit.log。
+  ///
+  /// 上限按时间窗口计:距上次意外退出超过 10 分钟视为新一轮,计数
+  /// 重置,避免长会话中偶发崩溃累计到上限后不再自愈。
   void _handleUnexpectedExit(int exitCode, String stderrTail) {
+    final now = DateTime.now();
+    final lastExit = _lastEngineExitAt;
+    if (lastExit != null &&
+        now.difference(lastExit) > const Duration(minutes: 10)) {
+      _restartAttempts = 0;
+    }
+    _lastEngineExitAt = now;
     _restartAttempts++;
     if (_restartAttempts > 5) return;
     Future<void>.delayed(const Duration(seconds: 1), ensure);
