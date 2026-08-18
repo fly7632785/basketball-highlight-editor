@@ -208,8 +208,28 @@ void main() {
       final state = container.read(projectProvider);
       expect(state.job?['id'], 'retry-job');
       expect(state.candidates, isNotEmpty);
+      expect(fakeSession.lastRetryBeforeSeconds, isNull);
+      expect(fakeSession.lastRetryAfterSeconds, isNull);
     },
   );
+
+  test('startAnalysis forwards the selected clip window', () async {
+    final fakeSession = _FakeProjectSession();
+    final container = ProviderContainer(
+      overrides: <Override>[
+        projectSessionProvider.overrideWithValue(fakeSession),
+        engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container
+        .read(projectProvider.notifier)
+        .startAnalysis(beforeSeconds: 5, afterSeconds: 4);
+
+    expect(fakeSession.lastStartBeforeSeconds, 5);
+    expect(fakeSession.lastStartAfterSeconds, 4);
+  });
 
   test('retryAnalysis uses the mode persisted on the previous job', () async {
     final fakeSession = _FakeProjectSession()
@@ -682,6 +702,10 @@ class _FakeProjectSession extends ProjectSession {
   final List<String> deletedRoots = <String>[];
   final List<String> reviewCalls = <String>[];
   int startAnalysisCalls = 0;
+  double? lastStartBeforeSeconds;
+  double? lastStartAfterSeconds;
+  double? lastRetryBeforeSeconds;
+  double? lastRetryAfterSeconds;
   List<JsonMap> activeAnalysisJobs = <JsonMap>[];
   String? lastRetryMode;
   JsonMap retryAnalysisResult = <String, dynamic>{
@@ -801,6 +825,8 @@ class _FakeProjectSession extends ProjectSession {
     String? modelPath,
   }) async {
     startAnalysisCalls++;
+    lastStartBeforeSeconds = beforeSeconds;
+    lastStartAfterSeconds = afterSeconds;
     return <String, dynamic>{
       'job': <String, dynamic>{'id': 'start-job', 'state': 'queued'},
     };
@@ -821,6 +847,8 @@ class _FakeProjectSession extends ProjectSession {
   }) async {
     retryAnalysisCalls.add(jobId);
     lastRetryMode = mode;
+    lastRetryBeforeSeconds = beforeSeconds;
+    lastRetryAfterSeconds = afterSeconds;
     if (clearCandidatesOnRetry) _candidates.clear();
     return retryAnalysisResult;
   }

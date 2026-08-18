@@ -21,6 +21,9 @@ import '../../providers/project_state.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
 
+const _beforeSecondOptions = <int>[0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15];
+const _afterSecondOptions = <int>[1, 2, 3, 4, 5, 6, 8, 10, 12, 15];
+
 /// 全页面配置向导：视频 → 分析范围 → 检测区域 → 确认并开始分析。
 ///
 /// 所有编辑先写入 workflowDraft，只有最后一步才写入项目生效配置并启动分析。
@@ -49,6 +52,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   bool _editingNet = false;
   int _analysisStartMs = 0;
   int _analysisEndMs = 0;
+  int _beforeSeconds = 6;
+  int _afterSeconds = 3;
   String _analysisMode = 'standard';
   Timer? _previewPlaybackTimer;
   bool _previewPlaying = false;
@@ -104,6 +109,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     _editingNet = false;
     _analysisStartMs = _analysisStart(state);
     _analysisEndMs = _analysisEnd(state);
+    _beforeSeconds = 6;
+    _afterSeconds = 3;
     _analysisMode = state.analysisMode;
     if (_step == 0) _step = 1;
   }
@@ -122,6 +129,16 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       _analysisStartMs =
           (range?['start_ms'] as num?)?.toInt() ?? _analysisStartMs;
       _analysisEndMs = (range?['end_ms'] as num?)?.toInt() ?? _analysisEndMs;
+      _beforeSeconds = _selectedSeconds(
+        draft['before_seconds'],
+        fallback: 6,
+        options: _beforeSecondOptions,
+      );
+      _afterSeconds = _selectedSeconds(
+        draft['after_seconds'],
+        fallback: 3,
+        options: _afterSecondOptions,
+      );
       final mode = draft['analysis_mode']?.toString();
       _analysisMode = mode == 'fast' ? 'fast' : 'standard';
       _netUserEdited = net != null;
@@ -129,10 +146,12 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   }
 
   JsonMap _draft({int? step}) => {
-    'version': 3,
+    'version': 4,
     'step': step ?? _step,
     'analysis_range': {'start_ms': _analysisStartMs, 'end_ms': _analysisEndMs},
     'analysis_mode': _analysisMode,
+    'before_seconds': _beforeSeconds,
+    'after_seconds': _afterSeconds,
     ...?_rectMap('roi', _roi),
     ...?_rectMap('net_roi', _netRoi),
     ...?_rectMap('hoop_bbox', _hoopBbox),
@@ -140,13 +159,15 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
 
   JsonMap _backendDraft({int? step}) {
     return {
-      'version': 3,
+      'version': 4,
       'step': step ?? _step,
       'analysis_range': {
         'start_ms': _analysisStartMs,
         'end_ms': _analysisEndMs,
       },
       'analysis_mode': _analysisMode,
+      'before_seconds': _beforeSeconds,
+      'after_seconds': _afterSeconds,
       ...?_rectMap('roi', _roi),
       ...?_rectMap('net_roi', _netRoi),
       ...?_rectMap('hoop_bbox', _hoopBbox),
@@ -404,7 +425,12 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           .read(projectProvider.notifier)
           .applyWorkflowDraft(_backendDraft(step: _step));
       if (!mounted || !applied) return;
-      final started = await ref.read(projectProvider.notifier).startAnalysis();
+      final started = await ref
+          .read(projectProvider.notifier)
+          .startAnalysis(
+            beforeSeconds: _beforeSeconds.toDouble(),
+            afterSeconds: _afterSeconds.toDouble(),
+          );
       if (mounted && started) context.go('/review');
     } finally {
       if (mounted) setState(() => _applying = false);
@@ -703,9 +729,19 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           roi: _roi,
           netRoi: _netRoi,
           analysisMode: _analysisMode,
+          beforeSeconds: _beforeSeconds,
+          afterSeconds: _afterSeconds,
           fastModeEnabled: _fastAnalysisEnabled,
           onAnalysisModeChanged: (mode) {
             setState(() => _analysisMode = mode);
+            unawaited(_persistDraft());
+          },
+          onBeforeSecondsChanged: (seconds) {
+            setState(() => _beforeSeconds = seconds);
+            unawaited(_persistDraft());
+          },
+          onAfterSecondsChanged: (seconds) {
+            setState(() => _afterSeconds = seconds);
             unawaited(_persistDraft());
           },
         );
@@ -1133,6 +1169,119 @@ class _DetectionStep extends StatelessWidget {
   }
 }
 
+class _ClipWindowSelector extends StatelessWidget {
+  const _ClipWindowSelector({
+    required this.beforeSeconds,
+    required this.afterSeconds,
+    required this.onBeforeChanged,
+    required this.onAfterChanged,
+  });
+
+  final int beforeSeconds;
+  final int afterSeconds;
+  final ValueChanged<int> onBeforeChanged;
+  final ValueChanged<int> onAfterChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final totalSeconds = beforeSeconds + afterSeconds;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(Spacing.md),
+      decoration: BoxDecoration(
+        color: c.surface2,
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('候选片段长度', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: Spacing.xs),
+          Text(
+            '以下是自动生成候选的默认范围，审核时仍可单独调整片段。',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: c.textSecondary),
+          ),
+          const SizedBox(height: Spacing.sm),
+          Row(
+            children: [
+              Expanded(
+                child: _SecondSelector(
+                  label: '进球前',
+                  value: beforeSeconds,
+                  options: _beforeSecondOptions,
+                  onChanged: onBeforeChanged,
+                ),
+              ),
+              const SizedBox(width: Spacing.sm),
+              Expanded(
+                child: _SecondSelector(
+                  label: '进球后',
+                  value: afterSeconds,
+                  options: _afterSecondOptions,
+                  onChanged: onAfterChanged,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: Spacing.sm),
+          Text(
+            '默认片段总长：$totalSeconds 秒',
+            style: Theme.of(
+              context,
+            ).textTheme.labelLarge?.copyWith(color: c.orange),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SecondSelector extends StatelessWidget {
+  const _SecondSelector({
+    required this.label,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+  });
+
+  final String label;
+  final int value;
+  final List<int> options;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return InputDecorator(
+      decoration: InputDecoration(labelText: label),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          value: value,
+          isExpanded: true,
+          items: [
+            for (final seconds in options)
+              DropdownMenuItem<int>(value: seconds, child: Text('$seconds 秒')),
+          ],
+          onChanged: (next) {
+            if (next != null) onChanged(next);
+          },
+        ),
+      ),
+    );
+  }
+}
+
+int _selectedSeconds(
+  Object? raw, {
+  required int fallback,
+  required List<int> options,
+}) {
+  final value = (raw as num?)?.round();
+  return value != null && options.contains(value) ? value : fallback;
+}
+
 class _SummaryStep extends StatelessWidget {
   const _SummaryStep({
     required this.state,
@@ -1141,8 +1290,12 @@ class _SummaryStep extends StatelessWidget {
     required this.roi,
     required this.netRoi,
     required this.analysisMode,
+    required this.beforeSeconds,
+    required this.afterSeconds,
     required this.fastModeEnabled,
     required this.onAnalysisModeChanged,
+    required this.onBeforeSecondsChanged,
+    required this.onAfterSecondsChanged,
   });
   final ProjectState state;
   final int startMs;
@@ -1150,8 +1303,12 @@ class _SummaryStep extends StatelessWidget {
   final Rect? roi;
   final Rect? netRoi;
   final String analysisMode;
+  final int beforeSeconds;
+  final int afterSeconds;
   final bool fastModeEnabled;
   final ValueChanged<String> onAnalysisModeChanged;
+  final ValueChanged<int> onBeforeSecondsChanged;
+  final ValueChanged<int> onAfterSecondsChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1207,6 +1364,13 @@ class _SummaryStep extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: Text('快速分析使用低规格代理，可能漏检少量片段。'),
             ),
+          const SizedBox(height: Spacing.sm),
+          _ClipWindowSelector(
+            beforeSeconds: beforeSeconds,
+            afterSeconds: afterSeconds,
+            onBeforeChanged: onBeforeSecondsChanged,
+            onAfterChanged: onAfterSecondsChanged,
+          ),
           const SizedBox(height: Spacing.sm),
           Container(
             width: double.infinity,

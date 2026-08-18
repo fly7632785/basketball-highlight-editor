@@ -34,6 +34,8 @@ String? findRuntimeRoot({
       configuredRuntime,
     if (configured != null && configured.isNotEmpty) configured,
     '${appContents.path}/Resources/runtime',
+    // Windows 发布包:exe 同级的 runtime 目录(build_windows_release.ps1)。
+    '${executable.parent.path}/runtime',
   ];
 
   var executableDirectory = executable.parent;
