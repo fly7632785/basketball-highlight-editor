@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../theme/app_colors.dart';
 import 'windows_title_bar.dart' show appTitle;
 
 /// Windows 应用内标题栏。
@@ -15,11 +16,8 @@ class WindowsCaptionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final foreground = isDark
-        ? Colors.white.withValues(alpha: 0.72)
-        : Colors.black.withValues(alpha: 0.72);
+    final c = AppColors.of(context);
+    final foreground = c.textSecondary;
     return GestureDetector(
       onDoubleTap: WindowsCaptionBar.toggleMaximize,
       child: DragToMoveArea(
@@ -27,7 +25,8 @@ class WindowsCaptionBar extends StatelessWidget {
           width: double.infinity,
           height: 36,
           child: Container(
-            color: isDark ? const Color(0xFF0B0E14) : const Color(0xFFFAFAFA),
+            // 与侧栏同用 surface,标题栏和下方内容颜色无缝衔接。
+            color: c.surface,
             child: Row(
               children: [
                 const SizedBox(width: 14),
