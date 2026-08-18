@@ -2910,6 +2910,12 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
         }
       });
       await player.open(Media(Uri.file(path).toString()), play: false);
+      // 等媒体元数据就绪后再 seek:open 后立即 seek 在加载较慢时
+      // (Windows 软件解码)会被丢弃,导致播放从 0 开始而非片段起点。
+      await waitForPlayableDuration(
+        current: player.state.duration,
+        updates: player.stream.duration,
+      );
       await player.seek(Duration(milliseconds: _startMs));
       if (mounted && identical(player, _player)) {
         setState(() => _ready = true);
@@ -3101,9 +3107,19 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
                       ? const Center(
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : Video(
-                          controller: controller,
-                          controls: NoVideoControls,
+                      : GestureDetector(
+                          // 与主审核面板一致:点击视频切换播放/暂停。
+                          behavior: HitTestBehavior.translucent,
+                          onTap: _ready
+                              ? () => unawaited(_togglePlayback())
+                              : null,
+                          child: MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            child: Video(
+                              controller: controller,
+                              controls: NoVideoControls,
+                            ),
+                          ),
                         ),
                 ),
               ),
