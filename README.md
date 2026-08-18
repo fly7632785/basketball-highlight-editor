@@ -32,6 +32,8 @@
 
 ## 当前可验证命令
 
+### macOS
+
 ```bash
 .venv/bin/python -m pytest -q
 PYTHONPATH=engine/python .venv/bin/python -m basketball_engine
@@ -41,6 +43,30 @@ PATH="$PWD/../../.tooling/flutter/bin:$PATH" flutter analyze
 PATH="$PWD/../../.tooling/flutter/bin:$PATH" flutter test
 PATH="$PWD/../../.tooling/flutter/bin:$PATH" flutter build macos --debug
 ```
+
+### Windows
+
+前置：Visual Studio 2022（含 C++ 桌面开发）、Python 3.12、Flutter stable（含 Windows 桌面支持）、FFmpeg；需开启 Windows 开发者模式（Flutter 插件构建的符号链接要求）。
+
+```powershell
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt
+
+.venv\Scripts\python -m pytest -q
+$env:PYTHONPATH="engine/python"; .venv\Scripts\python -m basketball_engine
+
+cd apps\desktop
+flutter analyze
+flutter test
+flutter build windows --debug    # 产物 build\windows\x64\runner\Debug\BHE.exe
+```
+
+Windows 平台说明：
+
+- 引擎通过仓库根 `.venv`（`findPython` Windows 分支）或 `BHE_PYTHON` 环境变量定位；FFmpeg 放入仓库根 `bin/` 即可被子进程 PATH 感知。
+- 窗口采用自绘标题栏（`TitleBarStyle.hidden`，仅 Windows），外观跟随应用主题。
+- 全流程（导入 → 自动 ROI → 分析 → 审核 → 导出）已在 Windows 10 实测跑通；引擎级端到端冒烟脚本可参考本地 `%TEMP%` 下的验证记录。
+- 发布运行时打包脚本：`scripts/prepare_windows_runtime.ps1`（Python + 引擎 + 模型 + FFmpeg 便携目录）。
 
 运行时检查：
 
