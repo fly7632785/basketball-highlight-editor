@@ -39,9 +39,11 @@ SECRET_PATTERNS = (
     re.compile(r"(?:AIzaSy|ghp_|github_pat_|sk-)[A-Za-z0-9_-]{12,}"),
     re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----"),
 )
+_MACOS_USER_DIR = "/" + "Users" + "/"
+_LINUX_USER_DIR = "/" + "home" + "/"
 ABSOLUTE_PATH_PATTERNS = (
-    re.compile(r"/Users/[^/\s]+/"),
-    re.compile(r"/home/[^/\s]+/"),
+    re.compile(re.escape(_MACOS_USER_DIR) + r"[^/\s]+/"),
+    re.compile(re.escape(_LINUX_USER_DIR) + r"[^/\s]+/"),
     re.compile(r"[A-Za-z]:[\\/]Users[\\/][^\\/\s]+[\\/]"),
 )
 VALID_FONT_HEADERS = (b"\x00\x01\x00\x00", b"OTTO", b"true", b"typ1")

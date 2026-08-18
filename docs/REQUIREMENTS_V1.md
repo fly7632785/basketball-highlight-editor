@@ -88,9 +88,9 @@
 
 | 验证项 | 当前结果 |
 |---|---:|
-| Python 测试 | 181 passed |
-| Flutter 测试 | 136 passed |
-| Flutter analyze | 当前未完成：Flutter 工具链清理 macOS ephemeral 文件时失败 |
+| Python 测试 | 193 passed |
+| Flutter 测试 | 144 passed |
+| Flutter analyze | No issues found |
 | Runtime 检查 | 通过 |
 | 本地 Engine 闭环 | 已完成 5 分钟样本闭环验证 |
 
@@ -103,4 +103,3 @@
 5. 冻结 V1 后再进入 Windows 适配和移动端审核端设计。
 
 当前不再把历史研究中的实验计划视为 V1 任务；新的算法或性能工作必须新增带日期的验证记录，并把稳定结论同步到 `docs/DECISIONS_V1.md`。
-
