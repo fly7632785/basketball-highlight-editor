@@ -1105,6 +1105,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
   Future<bool> startAnalysis({
     bool replaceRecoverable = false,
     String? mode,
+    double? beforeSeconds,
+    double? afterSeconds,
   }) async {
     var started = false;
     final requestedMode = mode == 'fast' || mode == 'standard'
@@ -1125,8 +1127,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
             jobId: activeId,
             mode: requestedMode,
             sampleFps: 10,
-            beforeSeconds: 6,
-            afterSeconds: 3,
+            beforeSeconds: beforeSeconds,
+            afterSeconds: afterSeconds,
           );
           state = state.copyWith(
             job: (result['job'] as Map?)?.cast<String, dynamic>(),
@@ -1149,8 +1151,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
       final result = await session.startAnalysis(
         mode: requestedMode,
         sampleFps: 10,
-        beforeSeconds: 6,
-        afterSeconds: 3,
+        beforeSeconds: beforeSeconds ?? 6,
+        afterSeconds: afterSeconds ?? 3,
       );
       state = state.copyWith(
         job: (result['job'] as Map?)?.cast<String, dynamic>(),
@@ -1307,13 +1309,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
       try {
         final result = await ref
             .read(projectSessionProvider)
-            .retryAnalysis(
-              jobId: jobId,
-              mode: requestedMode,
-              sampleFps: 10,
-              beforeSeconds: 6,
-              afterSeconds: 3,
-            );
+            .retryAnalysis(jobId: jobId, mode: requestedMode, sampleFps: 10);
         state = state.copyWith(
           job: (result['job'] as Map?)?.cast<String, dynamic>(),
           analysisMode: requestedMode,

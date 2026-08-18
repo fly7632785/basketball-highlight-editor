@@ -1168,6 +1168,40 @@ def test_roi_is_required_before_analysis(tmp_path: Path):
     assert job["state"] == "queued"
 
 
+def test_create_analysis_job_persists_custom_clip_window(tmp_path: Path):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "片段时长", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    video = store.link_video(
+        {
+            "source_path": str(tmp_path / "source.mp4"),
+            "source_size_bytes": 1,
+            "source_mtime_ns": 1,
+            "duration_ms": 20_000,
+            "width": 960,
+            "height": 720,
+            "fps": 30.0,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+        }
+    )
+    store.save_roi(video["id"], {"x1": 10, "y1": 20, "x2": 100, "y2": 120})
+
+    job = service._create_analysis_job(
+        {
+            "project_root": str(project_root),
+            "video_id": video["id"],
+            "before_seconds": 5,
+            "after_seconds": 4,
+        }
+    )["job"]
+
+    checkpoint = json.loads(store.get_job(job["id"])["checkpoint_json"])
+    assert checkpoint["before_seconds"] == 5
+    assert checkpoint["after_seconds"] == 4
+
+
 def test_extract_preview_generates_frame_and_reuses_cached_frame(tmp_path: Path, monkeypatch):
     source = tmp_path / "source.mp4"
     subprocess.run(
