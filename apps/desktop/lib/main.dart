@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
@@ -28,9 +30,13 @@ Future<void> main() async {
     minimumSize: const Size(1180, 720),
     center: true,
     backgroundColor: colors.background,
-    titleBarStyle: TitleBarStyle.normal,
+    titleBarStyle: TitleBarStyle.hidden,
   );
   windowManager.waitUntilReadyToShow(windowOptions, () async {
+    if (Platform.isWindows) {
+      await windowManager.setAsFrameless();
+      await windowManager.setHasShadow(false);
+    }
     await windowManager.setBrightness(brightness);
     // 等首帧渲染完成后再显示窗口,避免深色主题下露出原生白底
     // (Windows 上 debug 首帧较慢,白屏会被放大)。

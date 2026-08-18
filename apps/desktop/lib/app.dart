@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'components/cs_notice_overlay.dart';
+import 'core/windows_caption_bar.dart';
 import 'core/windows_title_bar.dart';
 import 'providers/project_state.dart';
 import 'providers/theme_provider.dart';
@@ -131,7 +133,23 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
       theme: appTheme(Brightness.light),
       darkTheme: appTheme(Brightness.dark),
       themeMode: ref.watch(themeModeProvider),
-      builder: (context, child) => CsNoticeOverlay(child: child!),
+      builder: (context, child) {
+        final wrapped = CsNoticeOverlay(child: child!);
+        // Windows 隐藏原生标题栏后由应用自绘,消除 Win10 左/下/右的
+        // 灰色 DWM 缩放边框;macOS 保持原生标题栏。
+        if (!Platform.isWindows) return wrapped;
+        return ExcludeSemantics(
+          child: DragToResizeArea(
+            resizeEdgeMargin: const EdgeInsets.only(top: 36),
+            child: Column(
+              children: [
+                const WindowsCaptionBar(),
+                Expanded(child: wrapped),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

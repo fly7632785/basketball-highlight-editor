@@ -296,7 +296,9 @@ class _SidebarBrand extends StatelessWidget {
       ),
     );
     return Padding(
-      padding: EdgeInsets.fromLTRB(extended ? 10 : 0, 8, extended ? 10 : 0, 4),
+      // 顶部留出与自绘标题栏的呼吸空间;折叠态同样保留左右内边距,
+      // 避免品牌块贴住窗口边缘。
+      padding: const EdgeInsets.fromLTRB(10, 16, 10, 4),
       child: extended ? brand : Center(child: brand),
     );
   }

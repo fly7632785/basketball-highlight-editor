@@ -10,6 +10,9 @@ const int _dwmwaColorDefault = 0xFFFFFFFF;
 // 应用深色主题背景 #0B0E14 的 COLORREF(0x00BBGGRR)。
 const int _darkBorderArgb = 0x00140E0B;
 
+/// 窗口标题,与 runner 中 Create 的标题保持一致。
+const String appTitle = 'BHE';
+
 /// 直接通过 DWM 设置 Windows 标题栏与边框深浅。
 ///
 /// window_manager 的 setBrightness 在 Windows 上只有在系统主题本身
@@ -40,7 +43,7 @@ void applyWindowsTitleBarBrightness(Brightness brightness) {
           int Function(int, int, ffi.Pointer<ffi.Int32>, int)
         >('DwmSetWindowAttribute');
 
-    final title = 'BHE'.toNativeUtf16();
+    final title = appTitle.toNativeUtf16();
     try {
       final hwnd = findWindowW(ffi.nullptr, title.cast<ffi.Uint16>());
       if (hwnd == 0) return;

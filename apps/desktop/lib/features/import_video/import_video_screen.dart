@@ -1689,7 +1689,12 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
     if (path == null || path.isEmpty || !File(path).existsSync()) return;
     final player = Player();
     _player = player;
-    _controller = VideoController(player);
+    _controller = VideoController(
+      player,
+      configuration: VideoControllerConfiguration(
+        enableHardwareAcceleration: !Platform.isWindows,
+      ),
+    );
     _positionSubscription = player.stream.position.listen((position) {
       if (!mounted || generation != _mediaGeneration) return;
       final value = position.inMilliseconds;

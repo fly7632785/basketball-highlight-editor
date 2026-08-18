@@ -469,7 +469,7 @@ class _ExportHistoryCard extends StatelessWidget {
             size: CsButtonSize.sm,
             onPressed: directory == null
                 ? null
-                : () => _openDirectory(context, directory),
+                : () => _openDirectory(context, directory, targetPath: path),
           ),
         ],
       ),
@@ -511,21 +511,31 @@ String _formatBytes(int bytes) {
   return '${value.toStringAsFixed(digits)} ${units[unit]}';
 }
 
-Future<void> _openDirectory(BuildContext context, String directory) async {
+Future<void> _openDirectory(
+  BuildContext context,
+  String directory, {
+  String? targetPath,
+}) async {
   try {
-    final ProcessResult result;
+    final String? target = targetPath == null || !File(targetPath).existsSync()
+        ? null
+        : targetPath;
     if (Platform.isMacOS) {
-      result = await Process.run('open', <String>[directory]);
+      await Process.start('open', <String>[
+        directory,
+      ], mode: ProcessStartMode.detached);
     } else if (Platform.isWindows) {
-      result = await Process.run('explorer.exe', <String>[directory]);
+      await Process.start(
+        'explorer.exe',
+        target == null ? <String>[directory] : <String>['/select,$target'],
+        mode: ProcessStartMode.detached,
+      );
     } else if (Platform.isLinux) {
-      result = await Process.run('xdg-open', <String>[directory]);
+      await Process.start('xdg-open', <String>[
+        directory,
+      ], mode: ProcessStartMode.detached);
     } else {
       throw UnsupportedError('当前平台不支持打开文件目录');
-    }
-
-    if (result.exitCode != 0) {
-      throw StateError(result.stderr.toString().trim());
     }
   } catch (error) {
     if (!context.mounted) return;

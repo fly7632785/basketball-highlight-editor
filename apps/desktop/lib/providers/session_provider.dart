@@ -33,7 +33,7 @@ String? findRuntimeRoot({
     if (configuredRuntime != null && configuredRuntime.isNotEmpty)
       configuredRuntime,
     if (configured != null && configured.isNotEmpty) configured,
-    '${appContents.path}/Resources/runtime',
+    _joinPath(appContents.path, 'Resources/runtime'),
     // Windows 发布包:exe 同级的 runtime 目录(build_windows_release.ps1)。
     '${executable.parent.path}/runtime',
   ];
@@ -55,9 +55,14 @@ String? findRuntimeRoot({
   }
 
   for (final path in candidates) {
-    if (Directory('$path/engine/python').existsSync()) return path;
+    if (Directory(_joinPath(path, 'engine/python')).existsSync()) return path;
   }
   return null;
+}
+
+String _joinPath(String base, String child) {
+  if (base.endsWith('/') || base.endsWith('\\')) return '$base$child';
+  return '$base/$child';
 }
 
 /// 纯函数:解析 Python 可执行文件路径。

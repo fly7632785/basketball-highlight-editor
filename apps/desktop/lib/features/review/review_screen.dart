@@ -1171,7 +1171,12 @@ class _VideoPaneState extends State<_VideoPane> {
     try {
       MediaKit.ensureInitialized();
       _player = Player();
-      _controller = VideoController(_player!);
+      _controller = VideoController(
+        _player!,
+        configuration: VideoControllerConfiguration(
+          enableHardwareAcceleration: !Platform.isWindows,
+        ),
+      );
     } catch (error) {
       _error = error.toString();
       return;
@@ -2401,6 +2406,20 @@ class _VideoControlsState extends State<_VideoControls> {
                   .clamp(rangeStart, rangeEnd)
                   .toInt();
           final value = positionMs.clamp(rangeStart, rangeEnd).toDouble();
+          final slider = Slider(
+            min: rangeStart.toDouble(),
+            max: rangeEnd.toDouble(),
+            value: value,
+            onChanged: !widget.enabled || mediaEnd <= 0
+                ? null
+                : (next) => setState(() => _dragValue = next),
+            onChangeEnd: !widget.enabled || mediaEnd <= 0
+                ? null
+                : (next) async {
+                    setState(() => _dragValue = null);
+                    await widget.onSeek(Duration(milliseconds: next.round()));
+                  },
+          );
           return Padding(
             key: const Key('review-video-controls-inset'),
             padding: const EdgeInsets.fromLTRB(
@@ -2421,22 +2440,9 @@ class _VideoControlsState extends State<_VideoControls> {
                       ),
                       overlayShape: SliderComponentShape.noOverlay,
                     ),
-                    child: Slider(
-                      min: rangeStart.toDouble(),
-                      max: rangeEnd.toDouble(),
-                      value: value,
-                      onChanged: !widget.enabled || mediaEnd <= 0
-                          ? null
-                          : (next) => setState(() => _dragValue = next),
-                      onChangeEnd: !widget.enabled || mediaEnd <= 0
-                          ? null
-                          : (next) async {
-                              setState(() => _dragValue = null);
-                              await widget.onSeek(
-                                Duration(milliseconds: next.round()),
-                              );
-                            },
-                    ),
+                    child: Platform.isWindows
+                        ? ExcludeSemantics(child: slider)
+                        : slider,
                   ),
                 ),
                 Row(
@@ -2869,6 +2875,8 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
   int _positionMs = 0;
   bool _ready = false;
   String? _error;
+  int? _rangeDragStartMs;
+  int? _rangeDragEndMs;
 
   @override
   void initState() {
@@ -2891,7 +2899,12 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
       MediaKit.ensureInitialized();
       final player = Player();
       _player = player;
-      _controller = VideoController(player);
+      _controller = VideoController(
+        player,
+        configuration: VideoControllerConfiguration(
+          enableHardwareAcceleration: !Platform.isWindows,
+        ),
+      );
       _positionSubscription = player.stream.position.listen((position) {
         if (!mounted) return;
         final next = position.inMilliseconds;
@@ -2930,8 +2943,33 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
 
   Future<void> _seek(int position) async {
     final target = position.clamp(0, widget.durationMs).toInt();
+    final player = _player;
+    if (player == null || !mounted) return;
     setState(() => _positionMs = target);
-    await _player?.seek(Duration(milliseconds: target));
+    try {
+      await player.seek(Duration(milliseconds: target));
+    } catch (error) {
+      if (mounted && identical(player, _player)) {
+        setState(() => _error = error.toString());
+      }
+    }
+  }
+
+  void _startRangeDrag(RangeValues value) {
+    _rangeDragStartMs = _startMs;
+    _rangeDragEndMs = _endMs;
+  }
+
+  void _endRangeDrag(RangeValues value) {
+    final nextStart = value.start.round();
+    final nextEnd = value.end.round();
+    final previousStart = _rangeDragStartMs ?? _startMs;
+    final previousEnd = _rangeDragEndMs ?? _endMs;
+    _rangeDragStartMs = null;
+    _rangeDragEndMs = null;
+    final startMoved = (nextStart - previousStart).abs();
+    final endMoved = (nextEnd - previousEnd).abs();
+    unawaited(_seek(startMoved >= endMoved ? nextStart : nextEnd));
   }
 
   Future<void> _togglePlayback() async {
@@ -3117,14 +3155,11 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
                     ? (value) {
                         final nextStart = value.start.round();
                         final nextEnd = value.end.round();
-                        final startMoved = (nextStart - start).abs();
-                        final endMoved = (nextEnd - end).abs();
                         _setRange(nextStart, nextEnd);
-                        unawaited(
-                          _seek(startMoved >= endMoved ? nextStart : nextEnd),
-                        );
                       }
                     : null,
+                onChangeStart: _ready ? _startRangeDrag : null,
+                onChangeEnd: _ready ? _endRangeDrag : null,
               ),
               Row(
                 children: [
