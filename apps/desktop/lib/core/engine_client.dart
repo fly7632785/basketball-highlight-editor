@@ -194,11 +194,20 @@ class EngineClient implements EngineTransport {
   }
 
   /// 尽力把引擎意外退出时的证据写入临时目录日志,便于离线诊断。
+  /// 超过 512KB 时截断保留尾部,避免无限增长。
   void _logUnexpectedExit(int exitCode, String stderrTail) {
     try {
       final file = File(
         '${Directory.systemTemp.path}${Platform.pathSeparator}bhe_engine_exit.log',
       );
+      const maxSize = 512 * 1024;
+      if (file.existsSync() && file.lengthSync() > maxSize) {
+        final tail = file.readAsStringSync();
+        file.writeAsStringSync(
+          tail.substring(tail.length - maxSize ~/ 2),
+          flush: true,
+        );
+      }
       final timestamp = DateTime.now().toIso8601String();
       file.writeAsStringSync(
         '[$timestamp] exitCode=$exitCode\n$stderrTail\n\n',

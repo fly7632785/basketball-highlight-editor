@@ -3319,16 +3319,23 @@ class _EvidenceCell extends StatelessWidget {
                     ),
                   ),
             const SizedBox(height: 2),
-            Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: color,
-                fontSize: 10,
-                fontWeight: FontWeight.w500,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
+            Builder(
+              builder: (context) {
+                // 空态(未计算/无数据)用空心圆点+更轻字重标记,
+                // 与"有数值但信号弱"的中性灰一眼区分。
+                final empty = value == '—' || value == '未计算';
+                return Text(
+                  empty ? '○ $value' : value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10,
+                    fontWeight: empty ? FontWeight.w400 : FontWeight.w500,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                );
+              },
             ),
           ],
         ),
