@@ -1,16 +1,15 @@
 package com.bhe.bhe_mobile
 
 object NativeRuntime {
-    val available: Boolean
-
-    init {
-        available = try {
+    private val loadResult: Pair<Boolean, String?> = try {
             System.loadLibrary("bhe_runtime_jni")
-            true
-        } catch (_: UnsatisfiedLinkError) {
-            false
+            true to null
+        } catch (error: UnsatisfiedLinkError) {
+            false to (error.message ?: error.toString())
         }
-    }
+
+    val available: Boolean = loadResult.first
+    val loadError: String? = loadResult.second
 
     @JvmStatic
     external fun createSession(config: String): Long

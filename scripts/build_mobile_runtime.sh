@@ -19,15 +19,22 @@ if [[ -z "$NDK" && -d "$HOME/Library/Android/sdk/ndk" ]]; then
 fi
 
 command -v cargo >/dev/null 2>&1 || die "未找到 cargo，请安装 Rust toolchain。"
+if command -v rustup >/dev/null 2>&1; then
+  CARGO_BIN="$(rustup which cargo)"
+  RUSTC_BIN="$(rustup which rustc)"
+else
+  CARGO_BIN="$(command -v cargo)"
+  RUSTC_BIN="$(command -v rustc)"
+fi
 [[ -n "$NDK" && -d "$NDK" ]] || die "未找到 Android NDK。设置 BHE_ANDROID_NDK，或设置 ANDROID_NDK_HOME/ANDROID_NDK_ROOT。"
 [[ -n "$ORT_DIR" && -f "$ORT_DIR/$ABI/libonnxruntime.so" ]] || die "未找到 ONNX Runtime Android 库。设置 BHE_ORT_ANDROID_DIR，并放置 $ABI/libonnxruntime.so。"
 
 if command -v rustup >/dev/null 2>&1; then
-  rustup target list --installed 2>/dev/null | grep -qx "$TARGET" || die "未安装 Rust target $TARGET。请执行：rustup target add $TARGET"
+  rustup target list --installed 2>/dev/null | grep -qx "$TARGET" || die "Rust target ${TARGET} is not installed; run: rustup target add ${TARGET}"
 else
-  rustc --print target-libdir --target "$TARGET" >/dev/null 2>&1 || die "当前 Rust toolchain 不支持 $TARGET，请安装 rustup 或对应 target。"
-  TARGET_LIBDIR="$(rustc --print target-libdir --target "$TARGET")"
-  [[ -d "$TARGET_LIBDIR" ]] || die "当前 Rust toolchain 未安装 $TARGET，请安装 rustup 后执行：rustup target add $TARGET"
+  "$RUSTC_BIN" --print target-libdir --target "$TARGET" >/dev/null 2>&1 || die "Rust toolchain does not support ${TARGET}"
+  TARGET_LIBDIR="$("$RUSTC_BIN" --print target-libdir --target "$TARGET")"
+  [[ -d "$TARGET_LIBDIR" ]] || die "Rust target ${TARGET} is not installed; run: rustup target add ${TARGET}"
 fi
 
 CLANG="$NDK/toolchains/llvm/prebuilt/darwin-arm64/bin/aarch64-linux-android21-clang"
@@ -35,8 +42,10 @@ CLANG="$NDK/toolchains/llvm/prebuilt/darwin-arm64/bin/aarch64-linux-android21-cl
 [[ -x "$CLANG" ]] || die "NDK 中未找到 aarch64-linux-android21-clang。"
 
 echo "构建 Rust Android Runtime: $TARGET"
+RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-soname,libbhe_runtime.so" \
 CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CLANG" \
-  cargo build --manifest-path "$PACKAGE/Cargo.toml" --release --target "$TARGET" --features dynamic-onnx
+RUSTC="$RUSTC_BIN" \
+  "$CARGO_BIN" build --manifest-path "$PACKAGE/Cargo.toml" --release --target "$TARGET" --features dynamic-onnx
 
 DEST="$OUT/$ABI"
 mkdir -p "$DEST"

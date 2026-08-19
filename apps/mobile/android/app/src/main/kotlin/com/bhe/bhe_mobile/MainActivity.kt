@@ -73,7 +73,11 @@ class MainActivity : FlutterActivity() {
             return
         }
         if (!NativeRuntime.available) {
-            result.error("NATIVE_RUNTIME_UNAVAILABLE", "当前 Android 包未包含 Rust/ONNX Runtime 原生库", null)
+            result.error(
+                "NATIVE_RUNTIME_UNAVAILABLE",
+                "当前 Android 原生 Runtime 加载失败：${NativeRuntime.loadError ?: "未知错误"}",
+                null
+            )
             return
         }
         val videoPath = call.argument<String>("videoPath")

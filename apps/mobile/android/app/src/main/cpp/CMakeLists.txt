@@ -4,6 +4,7 @@ project(bhe_runtime_jni)
 add_library(bhe_runtime SHARED IMPORTED)
 set_target_properties(bhe_runtime PROPERTIES
     IMPORTED_LOCATION "${CMAKE_CURRENT_LIST_DIR}/../jniLibs/${ANDROID_ABI}/libbhe_runtime.so"
+    IMPORTED_SONAME "libbhe_runtime.so"
 )
 
 add_library(bhe_runtime_jni SHARED bhe_runtime_jni.cpp)
