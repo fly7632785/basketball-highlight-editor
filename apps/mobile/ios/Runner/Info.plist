@@ -12,10 +12,6 @@
 	<string>BHE 需要访问视频，用于分析篮球比赛并生成精彩片段。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>BHE 需要保存导出的视频到相册。</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>BHE 需要访问视频，用于分析篮球比赛并生成精彩片段。</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>BHE 需要保存导出的视频到相册。</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
