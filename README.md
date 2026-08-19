@@ -46,7 +46,17 @@ PATH="$PWD/../../.tooling/flutter/bin:$PATH" flutter build macos --debug
 
 ### Windows
 
-前置：Visual Studio 2022（含 C++ 桌面开发）、Python 3.12、Flutter stable（含 Windows 桌面支持）、FFmpeg；需开启 Windows 开发者模式（Flutter 插件构建的符号链接要求）。
+**一键搭建**（自动检测/安装工具链、建 venv、装依赖、下载 FFmpeg 到 `bin/`、自检）：
+
+```powershell
+git clone https://gitee.com/jafir-h/basketball-highlight-editor.git
+cd basketball-highlight-editor
+powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1
+```
+
+脚本幂等可重跑；已具备部分环境时可加 `-SkipToolchain` 只做项目内设置，`-Yes` 跳过 VS 安装确认。需先开启 Windows 开发者模式（Flutter 插件构建的符号链接要求）。
+
+**手动方式**（前置：Visual Studio 2022 含 C++ 桌面开发、Python 3.12、Flutter stable、FFmpeg）：
 
 ```powershell
 python -m venv .venv
