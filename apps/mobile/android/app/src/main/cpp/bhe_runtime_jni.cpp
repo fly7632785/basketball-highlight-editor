@@ -9,7 +9,7 @@ void bhe_runtime_free_string(char* value);
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_bhe_bhe_mobile_NativeRuntime_createSession(JNIEnv* env, jclass, jstring config) {
+Java_com_bhe_bhe_1mobile_NativeRuntime_createSession(JNIEnv* env, jclass, jstring config) {
     if (config == nullptr) return 0;
     const char* value = env->GetStringUTFChars(config, nullptr);
     void* session = bhe_runtime_create_session(value);
@@ -18,7 +18,7 @@ Java_com_bhe_bhe_mobile_NativeRuntime_createSession(JNIEnv* env, jclass, jstring
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_bhe_bhe_mobile_NativeRuntime_pushFrame(JNIEnv* env, jclass, jlong session, jstring frame) {
+Java_com_bhe_bhe_1mobile_NativeRuntime_pushFrame(JNIEnv* env, jclass, jlong session, jstring frame) {
     if (session == 0 || frame == nullptr) return env->NewStringUTF("{\"error\":\"invalid runtime session\"}");
     const char* value = env->GetStringUTFChars(frame, nullptr);
     char* output = bhe_runtime_push_frame(reinterpret_cast<void*>(session), value);
@@ -30,6 +30,6 @@ Java_com_bhe_bhe_mobile_NativeRuntime_pushFrame(JNIEnv* env, jclass, jlong sessi
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_bhe_bhe_mobile_NativeRuntime_freeSession(JNIEnv*, jclass, jlong session) {
+Java_com_bhe_bhe_1mobile_NativeRuntime_freeSession(JNIEnv*, jclass, jlong session) {
     if (session != 0) bhe_runtime_free_session(reinterpret_cast<void*>(session));
 }
