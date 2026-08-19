@@ -23,9 +23,12 @@ class NativeAnalysisEngine implements MobileAnalysisEngine {
     final modelPath = await _materializeModel();
     yield const AnalysisProgress(stage: AnalysisStage.validateInput, progress: 0.02, message: '正在检查视频');
     final progressController = StreamController<AnalysisProgress>();
-    final progressSubscription = _progressChannel.receiveBroadcastStream().listen((event) {
-      if (event is Map) progressController.add(_progressFromNative(event));
-    });
+    final progressSubscription = _progressChannel.receiveBroadcastStream().listen(
+      (event) {
+        if (event is Map) progressController.add(_progressFromNative(event));
+      },
+      onError: (_) {},
+    );
     final iterator = StreamIterator(progressController.stream);
     final resultFuture = _channel.invokeMethod<Map<Object?, Object?>>('analyzeVideo', {
       'videoPath': video.path,

@@ -9,7 +9,8 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
-    val hasNativeRuntime = file("src/main/jniLibs/arm64-v8a/libbhe_runtime.so").isFile
+    val hasNativeRuntime = file("src/main/jniLibs/arm64-v8a/libbhe_runtime.so").isFile &&
+        file("src/main/jniLibs/arm64-v8a/libonnxruntime.so").isFile
     if (hasNativeRuntime) {
         externalNativeBuild {
             cmake {
@@ -32,6 +33,11 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        if (hasNativeRuntime) {
+            ndk {
+                abiFilters += "arm64-v8a"
+            }
+        }
     }
 
     buildTypes {

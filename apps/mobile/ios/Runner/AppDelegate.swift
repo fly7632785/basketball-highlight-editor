@@ -15,6 +15,25 @@ import Foundation
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    let analysisChannel = FlutterMethodChannel(
+      name: "com.bhe.bhe/mobile_analysis",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    let progressChannel = FlutterEventChannel(
+      name: "com.bhe.bhe/mobile_analysis_progress",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    progressChannel.setStreamHandler(AnalysisProgressStreamHandler())
+    analysisChannel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "analyzeVideo":
+        result(FlutterError(code: "NATIVE_RUNTIME_UNAVAILABLE", message: "当前 iOS 包尚未包含 Rust/ONNX Runtime 原生库", details: nil))
+      case "cancelAnalysis":
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
     let channel = FlutterMethodChannel(
       name: "com.bhe.bhe/mobile_media",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
@@ -105,5 +124,15 @@ import Foundation
         }
       }
     }
+  }
+}
+
+private final class AnalysisProgressStreamHandler: NSObject, FlutterStreamHandler {
+  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    nil
   }
 }

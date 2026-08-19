@@ -1,6 +1,5 @@
 use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
-use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use base64::Engine;
@@ -12,7 +11,6 @@ use thiserror::Error;
 
 const MODEL_SIZE: u32 = 640;
 static ORT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
-static ORT_LIBRARY_PATH: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -52,6 +50,8 @@ pub struct RuntimeConfig {
     pub model_path: String,
     pub hoop_roi: Roi,
     pub net_roi: Roi,
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
     #[serde(default = "default_confidence")]
     pub confidence_threshold: f32,
     #[serde(default = "default_before_ms")]
@@ -66,6 +66,8 @@ pub struct AnalysisRequest {
     pub frames: Vec<FrameInput>,
     pub hoop_roi: Roi,
     pub net_roi: Roi,
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
     #[serde(default = "default_confidence")]
     pub confidence_threshold: f32,
     #[serde(default = "default_before_ms")]
@@ -115,15 +117,15 @@ pub struct RuntimeSession {
     config: RuntimeConfig,
     ball_points: Vec<(i64, f32, f32, f32)>,
     candidates: Vec<Candidate>,
+    processed_frames: usize,
+    previous_net_signature: Option<(i64, Vec<f32>)>,
 }
 
 impl RuntimeSession {
     pub fn new(config: RuntimeConfig) -> Result<Self, RuntimeError> {
-        if config.hoop_roi.right <= config.hoop_roi.left
-            || config.hoop_roi.bottom <= config.hoop_roi.top
-        {
-            return Err(RuntimeError::InvalidRequest("hoop ROI is invalid".into()));
-        }
+        validate_config(&config)?;
+        validate_roi(&config.hoop_roi, "hoop")?;
+        validate_roi(&config.net_roi, "net")?;
         init_onnx()?;
         let session = Session::builder()
             .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?
@@ -135,6 +137,8 @@ impl RuntimeSession {
             config,
             ball_points: Vec::new(),
             candidates: Vec::new(),
+            processed_frames: 0,
+            previous_net_signature: None,
         })
     }
 
@@ -143,7 +147,10 @@ impl RuntimeSession {
     }
 
     pub fn push_frame(&mut self, frame: FrameInput) -> Result<FrameResponse, RuntimeError> {
-        let detections = detect(&mut self.session, &frame, self.config.confidence_threshold)?;
+        let image = decode_rgb(&frame)?;
+        let detections = detect_image(&mut self.session, &image, self.config.confidence_threshold)?;
+        self.processed_frames += 1;
+        self.update_net_motion(frame.time_ms, &image);
         if let Some(ball) = detections
             .iter()
             .filter(|detection| detection.class_id == 0)
@@ -152,8 +159,8 @@ impl RuntimeSession {
             let (x, y) = center(ball);
             self.ball_points.push((
                 frame.time_ms,
-                x / frame.width as f32,
-                y / frame.height as f32,
+                x / image.width() as f32,
+                y / image.height() as f32,
                 ball.confidence,
             ));
             self.detect_crossing();
@@ -161,8 +168,21 @@ impl RuntimeSession {
         Ok(FrameResponse {
             detections,
             candidates: self.candidates.clone(),
-            processed_frames: self.ball_points.len(),
+            processed_frames: self.processed_frames,
         })
+    }
+
+    fn update_net_motion(&mut self, time_ms: i64, image: &RgbImage) {
+        let signature = net_signature(image, &self.config.net_roi);
+        if let Some((_, previous)) = &self.previous_net_signature {
+            let motion_score = net_motion_score(&signature, previous);
+            for candidate in &mut self.candidates {
+                if time_ms >= candidate.event_ms && time_ms <= candidate.event_ms + 1_500 {
+                    candidate.net_motion_score = candidate.net_motion_score.max(motion_score);
+                }
+            }
+        }
+        self.previous_net_signature = Some((time_ms, signature));
     }
 
     fn detect_crossing(&mut self) {
@@ -174,10 +194,12 @@ impl RuntimeSession {
         let rim_y = (self.config.hoop_roi.top + self.config.hoop_roi.bottom) / 2.0;
         let rim_left = self.config.hoop_roi.left;
         let rim_right = self.config.hoop_roi.right;
-        if !(above.2 < rim_y && below.2 >= rim_y && below.1 >= rim_left && below.1 <= rim_right) {
+        let Some((crossing, crossing_x)) = crossing_at_rim(above, below, rim_y) else {
+            return;
+        };
+        if !(rim_left..=rim_right).contains(&crossing_x) {
             return;
         }
-        let crossing = ((rim_y - above.2) / (below.2 - above.2).max(1e-6)).clamp(0.0, 1.0);
         let event_ms = above.0 + ((below.0 - above.0) as f32 * crossing) as i64;
         if self
             .candidates
@@ -186,15 +208,15 @@ impl RuntimeSession {
         {
             return;
         }
-        let trajectory_score = (0.5 + (below.2 - above.2) * 2.0).clamp(0.0, 1.0);
+        let trajectory_score = trajectory_score(&self.ball_points);
         let crossing_score = (1.0
-            - ((below.1 - (rim_left + rim_right) / 2.0).abs()
+            - ((crossing_x - (rim_left + rim_right) / 2.0).abs()
                 / ((rim_right - rim_left) / 2.0).max(1e-6)))
         .clamp(0.0, 1.0);
         self.candidates.push(Candidate {
             id: format!("candidate_{event_ms}"),
             start_ms: (event_ms - self.config.clip_before_ms).max(0),
-            end_ms: event_ms + self.config.clip_after_ms,
+            end_ms: clip_end_ms(event_ms, self.config.clip_after_ms, self.config.duration_ms),
             event_ms,
             confidence: (0.5 * above.3 + 0.5 * below.3).clamp(0.0, 1.0),
             trajectory_score,
@@ -214,15 +236,78 @@ fn default_after_ms() -> i64 {
     3_000
 }
 
+fn crossing_at_rim(
+    above: (i64, f32, f32, f32),
+    below: (i64, f32, f32, f32),
+    rim_y: f32,
+) -> Option<(f32, f32)> {
+    if !(above.2 < rim_y && below.2 >= rim_y && below.2 > above.2) {
+        return None;
+    }
+    let crossing = ((rim_y - above.2) / (below.2 - above.2).max(1e-6)).clamp(0.0, 1.0);
+    let crossing_x = above.1 + (below.1 - above.1) * crossing;
+    Some((crossing, crossing_x))
+}
+
+fn validate_roi(roi: &Roi, name: &str) -> Result<(), RuntimeError> {
+    if !(0.0..=1.0).contains(&roi.left)
+        || !(0.0..=1.0).contains(&roi.top)
+        || !(0.0..=1.0).contains(&roi.right)
+        || !(0.0..=1.0).contains(&roi.bottom)
+        || roi.right <= roi.left
+        || roi.bottom <= roi.top
+    {
+        return Err(RuntimeError::InvalidRequest(format!(
+            "{name} ROI is invalid"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_config(config: &RuntimeConfig) -> Result<(), RuntimeError> {
+    if !config.confidence_threshold.is_finite()
+        || !(0.0..=1.0).contains(&config.confidence_threshold)
+    {
+        return Err(RuntimeError::InvalidRequest(
+            "confidence threshold is invalid".into(),
+        ));
+    }
+    if config.clip_before_ms < 0 || config.clip_after_ms < 0 {
+        return Err(RuntimeError::InvalidRequest(
+            "clip duration must not be negative".into(),
+        ));
+    }
+    if config.duration_ms.is_some_and(|duration| duration < 0) {
+        return Err(RuntimeError::InvalidRequest(
+            "video duration must not be negative".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn clip_end_ms(event_ms: i64, after_ms: i64, duration_ms: Option<i64>) -> i64 {
+    duration_ms
+        .map(|duration| (event_ms + after_ms).min(duration))
+        .unwrap_or(event_ms + after_ms)
+}
+
+fn net_motion_score(current: &[f32], previous: &[f32]) -> f32 {
+    if current.is_empty() || current.len() != previous.len() {
+        return 0.0;
+    }
+    let difference = current
+        .iter()
+        .zip(previous)
+        .map(|(current, old)| (current - old).abs())
+        .sum::<f32>()
+        / current.len() as f32;
+    (difference / 0.15).clamp(0.0, 1.0)
+}
+
 fn init_onnx() -> Result<(), RuntimeError> {
     let result = ORT_INIT.get_or_init(|| {
         let library = std::env::var_os("BHE_ORT_LIBRARY");
         if let Some(path) = library {
-            ORT_LIBRARY_PATH
-                .get_or_init(|| Mutex::new(None))
-                .lock()
-                .expect("ORT library path lock poisoned")
-                .replace(path.to_string_lossy().into_owned());
             ort::init_from(Path::new(&path))
                 .map(|builder| {
                     builder.with_name("bhe_runtime").commit();
@@ -275,17 +360,62 @@ fn preprocess(image: &RgbImage) -> Result<(Array4<f32>, f32, f32, f32), RuntimeE
             FilterType::Triangle,
         )
         .to_rgb8();
-    let offset_x = (MODEL_SIZE - resized.width()) / 2;
-    let offset_y = (MODEL_SIZE - resized.height()) / 2;
+    let offset_x = (MODEL_SIZE as i32 - resized.width() as i32).max(0) / 2;
+    let offset_y = (MODEL_SIZE as i32 - resized.height() as i32).max(0) / 2;
     let mut input = Array4::<f32>::zeros((1, 3, MODEL_SIZE as usize, MODEL_SIZE as usize));
     for (x, y, pixel) in resized.enumerate_pixels() {
-        let xx = (x + offset_x) as usize;
-        let yy = (y + offset_y) as usize;
+        let xx = (x as i32 + offset_x) as usize;
+        let yy = (y as i32 + offset_y) as usize;
         input[[0, 0, yy, xx]] = pixel[0] as f32 / 255.0;
         input[[0, 1, yy, xx]] = pixel[1] as f32 / 255.0;
         input[[0, 2, yy, xx]] = pixel[2] as f32 / 255.0;
     }
     Ok((input, scale, offset_x as f32, offset_y as f32))
+}
+
+fn net_signature(image: &RgbImage, roi: &Roi) -> Vec<f32> {
+    let width = image.width() as f32;
+    let height = image.height() as f32;
+    let left = (roi.left.clamp(0.0, 1.0) * width).floor() as u32;
+    let top = (roi.top.clamp(0.0, 1.0) * height).floor() as u32;
+    let right = (roi.right.clamp(0.0, 1.0) * width)
+        .ceil()
+        .max((left + 1) as f32) as u32;
+    let bottom = (roi.bottom.clamp(0.0, 1.0) * height)
+        .ceil()
+        .max((top + 1) as f32) as u32;
+    let right = right.min(image.width());
+    let bottom = bottom.min(image.height());
+    let mut result = Vec::with_capacity(64);
+    for row in 0..8 {
+        for column in 0..8 {
+            let x = (left + ((right.saturating_sub(left).max(1) - 1) * column / 7))
+                .min(right.saturating_sub(1));
+            let y = (top + ((bottom.saturating_sub(top).max(1) - 1) * row / 7))
+                .min(bottom.saturating_sub(1));
+            let pixel = image.get_pixel(x, y);
+            result.push(
+                (0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32)
+                    / 255.0,
+            );
+        }
+    }
+    result
+}
+
+fn trajectory_score(points: &[(i64, f32, f32, f32)]) -> f32 {
+    let Some(last_pair) = points.windows(2).last() else {
+        return 0.0;
+    };
+    let vertical = (last_pair[1].2 - last_pair[0].2).clamp(0.0, 1.0);
+    let confidence = points
+        .iter()
+        .rev()
+        .take(5)
+        .map(|point| point.3)
+        .sum::<f32>()
+        / points.len().clamp(1, 5) as f32;
+    (0.55 * (vertical * 4.0).clamp(0.0, 1.0) + 0.45 * confidence).clamp(0.0, 1.0)
 }
 
 fn iou(a: &Detection, b: &Detection) -> f32 {
@@ -352,20 +482,19 @@ fn decode_output(
     kept
 }
 
-fn detect(
+fn detect_image(
     session: &mut Session,
-    frame: &FrameInput,
+    image: &RgbImage,
     threshold: f32,
 ) -> Result<Vec<Detection>, RuntimeError> {
-    let image = decode_rgb(frame)?;
-    let (input, scale, offset_x, offset_y) = preprocess(&image)?;
+    let (input, scale, offset_x, offset_y) = preprocess(image)?;
     let tensor = Tensor::from_array(input)?;
     let outputs = session.run(ort::inputs![tensor])?;
     let (_, values) = outputs[0].try_extract_tensor::<f32>()?;
     Ok(decode_output(
         values,
-        frame.width,
-        frame.height,
+        image.width(),
+        image.height(),
         scale,
         offset_x,
         offset_y,
@@ -388,76 +517,28 @@ pub fn analyze(request: AnalysisRequest) -> Result<AnalysisResponse, RuntimeErro
             total_frames: 0,
         });
     }
-    if request.hoop_roi.right <= request.hoop_roi.left
-        || request.hoop_roi.bottom <= request.hoop_roi.top
-    {
-        return Err(RuntimeError::InvalidRequest("hoop ROI is invalid".into()));
-    }
-    init_onnx()?;
-    let mut session = Session::builder()
-        .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?
-        .with_intra_threads(1)
-        .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?
-        .commit_from_file(Path::new(&request.model_path))?;
-    let mut ball_points: Vec<(i64, f32, f32, f32)> = Vec::new();
+    let config = RuntimeConfig {
+        model_path: request.model_path,
+        hoop_roi: request.hoop_roi,
+        net_roi: request.net_roi,
+        duration_ms: request.duration_ms,
+        confidence_threshold: request.confidence_threshold,
+        clip_before_ms: request.clip_before_ms,
+        clip_after_ms: request.clip_after_ms,
+    };
+    let mut session = RuntimeSession::new(config)?;
     for frame in &request.frames {
-        let detections = detect(&mut session, frame, request.confidence_threshold)?;
-        if let Some(ball) = detections
-            .iter()
-            .filter(|d| d.class_id == 0)
-            .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
-        {
-            let (x, y) = center(ball);
-            ball_points.push((
-                frame.time_ms,
-                x / frame.width as f32,
-                y / frame.height as f32,
-                ball.confidence,
-            ));
-        }
-    }
-    let rim_y = (request.hoop_roi.top + request.hoop_roi.bottom) / 2.0;
-    let rim_left = request.hoop_roi.left;
-    let rim_right = request.hoop_roi.right;
-    let mut candidates = Vec::new();
-    for pair in ball_points.windows(2) {
-        let above = pair[0];
-        let below = pair[1];
-        if above.2 < rim_y && below.2 >= rim_y && below.1 >= rim_left && below.1 <= rim_right {
-            let crossing = ((rim_y - above.2) / (below.2 - above.2).max(1e-6)).clamp(0.0, 1.0);
-            let event_ms = above.0 + ((below.0 - above.0) as f32 * crossing) as i64;
-            let trajectory_score = (0.5 + (below.2 - above.2) * 2.0).clamp(0.0, 1.0);
-            let crossing_score = (1.0
-                - ((below.1 - (rim_left + rim_right) / 2.0).abs()
-                    / ((rim_right - rim_left) / 2.0).max(1e-6)))
-            .clamp(0.0, 1.0);
-            let confidence = (0.5 * above.3 + 0.5 * below.3).clamp(0.0, 1.0);
-            let id = format!("candidate_{event_ms}");
-            if candidates
-                .iter()
-                .all(|candidate: &Candidate| (candidate.event_ms - event_ms).abs() > 1_500)
-            {
-                candidates.push(Candidate {
-                    id,
-                    start_ms: (event_ms - request.clip_before_ms).max(0),
-                    end_ms: event_ms + request.clip_after_ms,
-                    event_ms,
-                    confidence,
-                    trajectory_score,
-                    crossing_score,
-                    net_motion_score: 0.0,
-                });
-            }
-        }
+        session.push_frame(frame.clone())?;
     }
     Ok(AnalysisResponse {
-        candidates,
+        candidates: session.candidates,
         processed_frames: request.frames.len(),
         total_frames: request.frames.len(),
     })
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
@@ -470,6 +551,10 @@ mod tests {
         }
     }
 
+    fn roi_json() -> serde_json::Value {
+        serde_json::json!({"left": 0.4, "top": 0.4, "right": 0.6, "bottom": 0.7})
+    }
+
     #[test]
     fn empty_request_has_zero_frame_counts() {
         let result = analyze(AnalysisRequest {
@@ -477,6 +562,7 @@ mod tests {
             frames: Vec::new(),
             hoop_roi: roi(),
             net_roi: roi(),
+            duration_ms: None,
             confidence_threshold: 0.1,
             clip_before_ms: 6_000,
             clip_after_ms: 3_000,
@@ -505,6 +591,7 @@ mod tests {
                 bottom: 0.7,
             },
             net_roi: roi(),
+            duration_ms: None,
             confidence_threshold: 0.1,
             clip_before_ms: 6_000,
             clip_after_ms: 3_000,
@@ -512,6 +599,64 @@ mod tests {
         assert!(
             matches!(result, Err(RuntimeError::InvalidRequest(message)) if message == "hoop ROI is invalid")
         );
+    }
+
+    #[test]
+    fn invalid_net_roi_is_rejected_before_model_loading() {
+        let result = create_session_json(
+            &serde_json::json!({
+                "model_path": "missing.onnx",
+                "hoop_roi": roi_json(),
+                "net_roi": {"left": -0.1, "top": 0.2, "right": 0.4, "bottom": 0.7}
+            })
+            .to_string(),
+        );
+        assert!(
+            matches!(result, Err(RuntimeError::InvalidRequest(message)) if message == "net ROI is invalid")
+        );
+    }
+
+    #[test]
+    fn invalid_analysis_parameters_are_rejected_before_model_loading() {
+        let result = create_session_json(
+            &serde_json::json!({
+                "model_path": "missing.onnx",
+                "hoop_roi": roi_json(),
+                "net_roi": roi_json(),
+                "confidence_threshold": 1.1,
+                "clip_before_ms": -1
+            })
+            .to_string(),
+        );
+        assert!(
+            matches!(result, Err(RuntimeError::InvalidRequest(message)) if message == "confidence threshold is invalid")
+        );
+    }
+
+    #[test]
+    fn crossing_uses_interpolated_x_not_the_below_detection() {
+        let result = crossing_at_rim((0, 0.2, 0.3, 0.9), (100, 0.8, 0.7, 0.9), 0.5)
+            .expect("descending points should cross the rim");
+        assert!((result.0 - 0.5).abs() < 1e-6);
+        assert!((result.1 - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn lateral_pass_is_not_a_rim_crossing() {
+        assert!(crossing_at_rim((0, 0.2, 0.5, 0.9), (100, 0.8, 0.5, 0.9), 0.5).is_none());
+    }
+
+    #[test]
+    fn net_motion_score_is_normalized_and_handles_shape_mismatch() {
+        assert_eq!(net_motion_score(&[0.2, 0.2], &[0.2]), 0.0);
+        assert_eq!(net_motion_score(&[0.2, 0.2], &[0.2, 0.2]), 0.0);
+        assert!(net_motion_score(&[0.8, 0.8], &[0.0, 0.0]) > 0.9);
+    }
+
+    #[test]
+    fn clip_end_is_bounded_by_video_duration() {
+        assert_eq!(clip_end_ms(9_500, 3_000, Some(10_000)), 10_000);
+        assert_eq!(clip_end_ms(9_500, 3_000, None), 12_500);
     }
 }
 
@@ -521,9 +666,14 @@ pub fn analyze_json(input: &str) -> Result<String, RuntimeError> {
 }
 
 pub fn create_session_json(input: &str) -> Result<RuntimeSession, RuntimeError> {
-    Ok(RuntimeSession::new(serde_json::from_str(input)?)?)
+    RuntimeSession::new(serde_json::from_str(input)?)
 }
 
+/// Creates a native analysis session from a JSON runtime configuration.
+///
+/// # Safety
+/// `config` must be a non-null pointer to a valid NUL-terminated UTF-8 string
+/// and remains valid for the duration of this call.
 #[no_mangle]
 pub unsafe extern "C" fn bhe_runtime_create_session(config: *const c_char) -> *mut RuntimeSession {
     if config.is_null() {
@@ -536,6 +686,12 @@ pub unsafe extern "C" fn bhe_runtime_create_session(config: *const c_char) -> *m
     }
 }
 
+/// Processes one JSON-encoded video frame in a native analysis session.
+///
+/// # Safety
+/// `session` must be a valid pointer returned by
+/// `bhe_runtime_create_session`, and `frame` must be a non-null pointer to a
+/// valid NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn bhe_runtime_push_frame(
     session: *mut RuntimeSession,
@@ -556,6 +712,11 @@ pub unsafe extern "C" fn bhe_runtime_push_frame(
     CString::new(output).unwrap().into_raw()
 }
 
+/// Releases a native analysis session.
+///
+/// # Safety
+/// `session` must be null or a pointer returned by
+/// `bhe_runtime_create_session` that has not already been released.
 #[no_mangle]
 pub unsafe extern "C" fn bhe_runtime_free_session(session: *mut RuntimeSession) {
     if !session.is_null() {
@@ -568,6 +729,11 @@ pub extern "C" fn bhe_runtime_version() -> *mut c_char {
     CString::new("bhe_runtime/0.1.0").unwrap().into_raw()
 }
 
+/// Analyzes a complete JSON request through the native runtime.
+///
+/// # Safety
+/// `input` must be a non-null pointer to a valid NUL-terminated UTF-8 string
+/// and remains valid for the duration of this call.
 #[no_mangle]
 pub unsafe extern "C" fn bhe_runtime_analyze_json(input: *const c_char) -> *mut c_char {
     if input.is_null() {
@@ -581,6 +747,11 @@ pub unsafe extern "C" fn bhe_runtime_analyze_json(input: *const c_char) -> *mut 
     CString::new(output).unwrap().into_raw()
 }
 
+/// Releases a string returned by this library.
+///
+/// # Safety
+/// `value` must be null or a pointer previously returned by this library that
+/// has not already been released.
 #[no_mangle]
 pub unsafe extern "C" fn bhe_runtime_free_string(value: *mut c_char) {
     if !value.is_null() {

@@ -66,12 +66,52 @@ class MobileAppState extends ChangeNotifier {
     }
   }
 
+  Future<bool> _matchesProjectVideo() async {
+    final expected = project.video;
+    if (expected == null) return false;
+    final file = File(expected.path);
+    if (!await file.exists()) return false;
+    final controller = VideoPlayerController.file(file);
+    try {
+      await controller.initialize();
+      final actual = controller.value;
+      if (actual.size.width.round() != expected.width ||
+          actual.size.height.round() != expected.height ||
+          (actual.duration.inMilliseconds - expected.durationMs).abs() > 1500) {
+        return false;
+      }
+      if (expected.sha256 != null && await _sha256(file) != expected.sha256) return false;
+      return true;
+    } on Object {
+      return false;
+    } finally {
+      await controller.dispose();
+    }
+  }
+
+  Future<void> _validateImportedVideoIfPresent() async {
+    if (project.video == null || !sourceVideoExists) {
+      errorMessage = '项目已打开，请重新选择原视频后继续。';
+      return;
+    }
+    if (!await _matchesProjectVideo()) {
+      errorMessage = '项目已打开，但当前原视频与项目记录不一致，请重新选择原视频。';
+    }
+  }
+
   Future<void> loadSavedProject() async {
     try {
       final directory = await _dataDirectory();
       final file = File('${directory.path}/project.bhe.json');
       if (await file.exists()) {
         project = const ProjectPackageCodec().decode(await file.readAsString());
+        if (project.lastAnalysisStatus == 'running') {
+          project = project.copyWith(
+            lastAnalysisStatus: 'interrupted',
+            lastAnalysisMessage: '应用上次退出时分析未完成，可重新分析。',
+          );
+          await _queueSave();
+        }
       }
     } on Object catch (error) {
       errorMessage = '读取本地项目失败：$error';
@@ -97,6 +137,7 @@ class MobileAppState extends ChangeNotifier {
   }
 
   Future<void> pickVideo() async {
+    if (analysing) await cancelAnalysis();
     final result = await FilePicker.platform.pickFiles(type: FileType.video);
     final path = result?.files.single.path;
     if (path == null) return;
@@ -131,6 +172,7 @@ class MobileAppState extends ChangeNotifier {
   }
 
   Future<void> importProject() async {
+    if (analysing) await cancelAnalysis();
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['bhe', 'json'],
@@ -143,7 +185,8 @@ class MobileAppState extends ChangeNotifier {
           ? _readProjectFromArchive(await file.readAsBytes())
           : await file.readAsString();
       project = const ProjectPackageCodec().decode(content);
-      errorMessage = sourceVideoExists ? null : '项目已打开，请重新选择原视频后继续。';
+      errorMessage = null;
+      await _validateImportedVideoIfPresent();
       await _queueSave();
       notifyListeners();
     } on Object catch (error) {
@@ -153,6 +196,7 @@ class MobileAppState extends ChangeNotifier {
   }
 
   Future<void> relinkVideo() async {
+    if (analysing) await cancelAnalysis();
     final result = await FilePicker.platform.pickFiles(type: FileType.video);
     final path = result?.files.single.path;
     if (path == null) return;
@@ -295,7 +339,7 @@ class MobileAppState extends ChangeNotifier {
 
   Future<void> exportClipsForPlayer(String? player) async {
     if (exporting) return;
-    if (!sourceVideoExists) {
+    if (!await _matchesProjectVideo()) {
       errorMessage = '请先重新选择原视频。';
       notifyListeners();
       return;
@@ -370,12 +414,23 @@ class MobileAppState extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (!await _matchesProjectVideo()) {
+      errorMessage = '当前原视频不可用或与项目记录不一致，请重新选择原视频。';
+      notifyListeners();
+      return;
+    }
     stage = AnalysisStage.validateInput;
     progress = 0;
     progressMessage = '正在准备本地分析';
     analysing = true;
     errorMessage = null;
     project = project.copyWith(candidates: const []);
+    project = project.copyWith(
+      lastAnalysisStatus: 'running',
+      lastAnalysisProgressPercent: 0,
+      lastAnalysisMessage: progressMessage,
+    );
+    await _queueSave();
     final stopwatch = Stopwatch()..start();
     final generation = ++_analysisGeneration;
     notifyListeners();
@@ -394,6 +449,13 @@ class MobileAppState extends ChangeNotifier {
         totalFrames = update.totalFrames;
         eta = update.eta;
         project = project.copyWith(candidates: update.candidates);
+        final percent = (progress * 100).round();
+        project = project.copyWith(
+          lastAnalysisStatus: 'running',
+          lastAnalysisProgressPercent: percent,
+          lastAnalysisMessage: update.message,
+        );
+        if (percent == 100 || percent % 5 == 0) unawaited(_queueSave());
         notifyListeners();
       }
       if (generation != _analysisGeneration) return;
@@ -401,12 +463,20 @@ class MobileAppState extends ChangeNotifier {
       project = project.copyWith(
         lastAnalysisDurationMs: stopwatch.elapsedMilliseconds,
         lastAnalysisAt: DateTime.now(),
+        lastAnalysisStatus: 'completed',
+        lastAnalysisProgressPercent: 100,
+        lastAnalysisMessage: '分析完成',
       );
       await _queueSave();
     } on Object catch (error) {
       if (generation != _analysisGeneration) return;
       stage = AnalysisStage.failed;
       errorMessage = error.toString();
+      project = project.copyWith(
+        lastAnalysisStatus: 'failed',
+        lastAnalysisMessage: errorMessage,
+      );
+      unawaited(_queueSave());
       notifyListeners();
     } finally {
       stopwatch.stop();
@@ -424,6 +494,11 @@ class MobileAppState extends ChangeNotifier {
     analysing = false;
     stage = AnalysisStage.cancelled;
     progressMessage = '分析已取消';
+    project = project.copyWith(
+      lastAnalysisStatus: 'cancelled',
+      lastAnalysisMessage: progressMessage,
+    );
+    unawaited(_queueSave());
     notifyListeners();
   }
 
@@ -630,6 +705,8 @@ class _ProjectSetup extends StatelessWidget {
         Text('上次分析：${_duration(state.project.lastAnalysisDurationMs!)}${state.project.lastAnalysisAt == null ? '' : ' · ${_dateTime(state.project.lastAnalysisAt!)}'}', style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 10),
       ],
+      if (state.project.lastAnalysisStatus == 'interrupted')
+        const _InfoBox(message: '上次分析没有完成，可以直接点击“重新分析”。'),
       if (state.errorMessage != null) _ErrorBox(message: state.errorMessage!),
       if (state.analysing) ...[
         LinearProgressIndicator(value: state.progress),
@@ -1205,6 +1282,22 @@ class _ErrorBox extends StatelessWidget {
   final String message;
   @override
   Widget build(BuildContext context) => Container(padding: const EdgeInsets.all(12), margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Theme.of(context).colorScheme.errorContainer, borderRadius: BorderRadius.circular(12)), child: Text(message));
+}
+
+class _InfoBox extends StatelessWidget {
+  const _InfoBox({required this.message});
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(message),
+      );
 }
 
 String _duration(int ms) {

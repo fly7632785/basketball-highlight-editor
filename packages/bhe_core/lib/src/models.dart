@@ -238,6 +238,9 @@ class ProjectSnapshot {
     this.players = const [],
     this.lastAnalysisDurationMs,
     this.lastAnalysisAt,
+    this.lastAnalysisStatus,
+    this.lastAnalysisProgressPercent,
+    this.lastAnalysisMessage,
     this.lastExportDurationMs,
   });
 
@@ -251,6 +254,9 @@ class ProjectSnapshot {
   final List<String> players;
   final int? lastAnalysisDurationMs;
   final DateTime? lastAnalysisAt;
+  final String? lastAnalysisStatus;
+  final int? lastAnalysisProgressPercent;
+  final String? lastAnalysisMessage;
   final int? lastExportDurationMs;
 
   int get includedCount => candidates
@@ -274,6 +280,9 @@ class ProjectSnapshot {
     List<String>? players,
     int? lastAnalysisDurationMs,
     DateTime? lastAnalysisAt,
+    String? lastAnalysisStatus,
+    int? lastAnalysisProgressPercent,
+    String? lastAnalysisMessage,
     bool clearLastAnalysis = false,
     int? lastExportDurationMs,
   }) => ProjectSnapshot(
@@ -287,6 +296,9 @@ class ProjectSnapshot {
         players: players ?? this.players,
         lastAnalysisDurationMs: clearLastAnalysis ? null : (lastAnalysisDurationMs ?? this.lastAnalysisDurationMs),
         lastAnalysisAt: clearLastAnalysis ? null : (lastAnalysisAt ?? this.lastAnalysisAt),
+        lastAnalysisStatus: clearLastAnalysis ? null : (lastAnalysisStatus ?? this.lastAnalysisStatus),
+        lastAnalysisProgressPercent: clearLastAnalysis ? null : (lastAnalysisProgressPercent ?? this.lastAnalysisProgressPercent),
+        lastAnalysisMessage: clearLastAnalysis ? null : (lastAnalysisMessage ?? this.lastAnalysisMessage),
         lastExportDurationMs: lastExportDurationMs ?? this.lastExportDurationMs,
       );
 
@@ -301,6 +313,9 @@ class ProjectSnapshot {
         'players': players,
         if (lastAnalysisDurationMs != null) 'last_analysis_duration_ms': lastAnalysisDurationMs,
         if (lastAnalysisAt != null) 'last_analysis_at': lastAnalysisAt!.toUtc().toIso8601String(),
+        if (lastAnalysisStatus != null) 'last_analysis_status': lastAnalysisStatus,
+        if (lastAnalysisProgressPercent != null) 'last_analysis_progress_percent': lastAnalysisProgressPercent,
+        if (lastAnalysisMessage != null) 'last_analysis_message': lastAnalysisMessage,
         if (lastExportDurationMs != null) 'last_export_duration_ms': lastExportDurationMs,
       };
 
@@ -320,6 +335,9 @@ class ProjectSnapshot {
         players: ((json['players'] as List?) ?? const []).whereType<String>().toList(),
         lastAnalysisDurationMs: (json['last_analysis_duration_ms'] as num?)?.toInt(),
         lastAnalysisAt: DateTime.tryParse(json['last_analysis_at'] as String? ?? ''),
+        lastAnalysisStatus: json['last_analysis_status'] as String?,
+        lastAnalysisProgressPercent: (json['last_analysis_progress_percent'] as num?)?.toInt(),
+        lastAnalysisMessage: json['last_analysis_message'] as String?,
         lastExportDurationMs: (json['last_export_duration_ms'] as num?)?.toInt(),
       );
 }

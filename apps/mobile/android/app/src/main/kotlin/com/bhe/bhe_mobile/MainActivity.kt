@@ -19,8 +19,8 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
-import java.util.Base64
 import java.util.concurrent.atomic.AtomicBoolean
+import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -99,11 +99,13 @@ class MainActivity : FlutterActivity() {
                 val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: endMs.toLong()
                 val actualEndMs = endMs.toLong().coerceAtMost(duration)
                 val intervalMs = (1000.0 / fps).toLong().coerceAtLeast(1L)
-                val totalFrames = ((actualEndMs - startMs) / intervalMs).toInt().coerceAtLeast(1)
+                val frameWindowMs = (actualEndMs - startMs).coerceAtLeast(1L)
+                val totalFrames = ((frameWindowMs + intervalMs - 1L) / intervalMs).toInt().coerceAtLeast(1)
                 val config = JSONObject()
                     .put("model_path", modelPath)
                     .put("hoop_roi", JSONObject(hoopRoi))
                     .put("net_roi", JSONObject(netRoi))
+                    .put("duration_ms", duration)
                     .put("confidence_threshold", 0.10)
                     .put("clip_before_ms", beforeMs)
                     .put("clip_after_ms", afterMs)
@@ -115,7 +117,7 @@ class MainActivity : FlutterActivity() {
                 var lastResponse = JSONObject().put("candidates", JSONArray())
                 var timeMs = startMs.toLong()
                 while (timeMs < actualEndMs && !analysisCancelled.get()) {
-                    val bitmap = retriever.getFrameAtTime(timeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+                    val bitmap = frameAt(retriever, timeMs * 1000L)
                     if (bitmap != null) {
                         val frame = bitmapToFrame(bitmap, timeMs)
                         bitmap.recycle()
@@ -151,9 +153,16 @@ class MainActivity : FlutterActivity() {
             .put("time_ms", timeMs)
             .put("width", bitmap.width)
             .put("height", bitmap.height)
-            .put("image_base64", Base64.getEncoder().encodeToString(bytes.toByteArray()))
+            .put("image_base64", Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP))
             .toString()
     }
+
+    private fun frameAt(retriever: MediaMetadataRetriever, timeUs: Long): Bitmap? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST, 960, 960)
+        } else {
+            retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+        }
 
     private fun emitProgress(stage: String, progress: Double, processed: Int, total: Int, message: String) {
         mainHandler.post {
