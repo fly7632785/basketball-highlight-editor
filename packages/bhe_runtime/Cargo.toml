@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT"
 
 [lib]
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }

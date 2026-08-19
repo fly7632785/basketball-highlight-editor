@@ -305,8 +305,12 @@ fn net_motion_score(current: &[f32], previous: &[f32]) -> f32 {
 }
 
 fn init_onnx() -> Result<(), RuntimeError> {
+    let library = std::env::var_os("BHE_ORT_LIBRARY");
+    init_onnx_from_path(library.as_deref().map(Path::new))
+}
+
+fn init_onnx_from_path(library: Option<&Path>) -> Result<(), RuntimeError> {
     let result = ORT_INIT.get_or_init(|| {
-        let library = std::env::var_os("BHE_ORT_LIBRARY");
         if let Some(path) = library {
             ort::init_from(Path::new(&path))
                 .map(|builder| {
@@ -667,6 +671,23 @@ pub fn analyze_json(input: &str) -> Result<String, RuntimeError> {
 
 pub fn create_session_json(input: &str) -> Result<RuntimeSession, RuntimeError> {
     RuntimeSession::new(serde_json::from_str(input)?)
+}
+
+/// Initializes ONNX Runtime from an explicit dynamic library path.
+///
+/// # Safety
+/// `library_path` must be a non-null pointer to a valid NUL-terminated UTF-8
+/// path and remains valid for the duration of this call.
+#[no_mangle]
+pub unsafe extern "C" fn bhe_runtime_initialize_onnx(library_path: *const c_char) -> bool {
+    if library_path.is_null() {
+        return false;
+    }
+    let path = CStr::from_ptr(library_path);
+    let Ok(path) = path.to_str() else {
+        return false;
+    };
+    init_onnx_from_path(Some(Path::new(path))).is_ok()
 }
 
 /// Creates a native analysis session from a JSON runtime configuration.

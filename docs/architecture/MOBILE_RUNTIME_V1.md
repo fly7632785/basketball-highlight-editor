@@ -64,6 +64,14 @@ building. It fails instead of producing a UI-only APK that appears to support
 analysis but cannot run it. Additional ABIs should be added only after their
 ONNX Runtime binaries and device performance are validated.
 
+### iOS native package
+
+`packages/bhe_runtime/include/bhe_runtime.h` is the stable C ABI header.
+`scripts/build_mobile_ios_runtime.sh` builds device and simulator static
+libraries when the iOS Rust targets and an ONNX Runtime XCFramework are
+available. Xcode linking remains an explicit integration step because the
+XCFramework is not checked into this repository.
+
 ## Media behavior
 
 - iOS uses `AVAssetExportSession` for MP4 clips.

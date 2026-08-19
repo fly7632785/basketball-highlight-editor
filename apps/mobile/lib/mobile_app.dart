@@ -707,6 +707,10 @@ class _ProjectSetup extends StatelessWidget {
       ],
       if (state.project.lastAnalysisStatus == 'interrupted')
         const _InfoBox(message: '上次分析没有完成，可以直接点击“重新分析”。'),
+      if (state.project.lastAnalysisStatus == 'failed')
+        _InfoBox(message: '上次分析失败：${state.project.lastAnalysisMessage ?? '请检查视频和检测区域后重试。'}'),
+      if (state.project.lastAnalysisStatus == 'cancelled')
+        const _InfoBox(message: '上次分析已取消，可以重新开始分析。'),
       if (state.errorMessage != null) _ErrorBox(message: state.errorMessage!),
       if (state.analysing) ...[
         LinearProgressIndicator(value: state.progress),

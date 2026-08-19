@@ -40,6 +40,17 @@ rustup target add aarch64-linux-android
 
 `BHE_ORT_ANDROID_DIR/arm64-v8a/libonnxruntime.so` 必须存在。原生 `.so` 不提交到 Git，脚本缺少任一依赖时会直接失败。
 
+## iOS Runtime 构建入口
+
+Rust 静态库和 C ABI 头文件可以使用以下脚本生成；脚本要求本机已经安装三个 iOS Rust target 和 ONNX Runtime XCFramework：
+
+```bash
+export BHE_ORT_IOS_XCFRAMEWORK="/path/to/onnxruntime.xcframework"
+../../scripts/build_mobile_ios_runtime.sh
+```
+
+脚本只负责生成 `device/simulator` 静态库和复制 XCFramework，不会自动修改 Xcode 工程，也不会在缺少依赖时生成不完整产物。
+
 ## iOS 状态
 
 iOS 的视频播放、项目和导出通道已经接入；本地分析 channel 当前会返回
