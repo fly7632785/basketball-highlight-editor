@@ -36,7 +36,7 @@ CLANG="$NDK/toolchains/llvm/prebuilt/darwin-arm64/bin/aarch64-linux-android21-cl
 
 echo "构建 Rust Android Runtime: $TARGET"
 CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CLANG" \
-  cargo build --manifest-path "$PACKAGE/Cargo.toml" --release --target "$TARGET"
+  cargo build --manifest-path "$PACKAGE/Cargo.toml" --release --target "$TARGET" --features dynamic-onnx
 
 DEST="$OUT/$ABI"
 mkdir -p "$DEST"

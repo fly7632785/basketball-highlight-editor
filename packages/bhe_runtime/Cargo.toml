@@ -7,10 +7,14 @@ license = "MIT"
 [lib]
 crate-type = ["rlib", "cdylib", "staticlib"]
 
+[features]
+default = []
+dynamic-onnx = ["ort/load-dynamic"]
+
 [dependencies]
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 ndarray = "0.17"
-ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "load-dynamic", "api-27"] }
+ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "api-27"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 base64 = "0.22"

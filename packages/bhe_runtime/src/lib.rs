@@ -305,10 +305,27 @@ fn net_motion_score(current: &[f32], previous: &[f32]) -> f32 {
 }
 
 fn init_onnx() -> Result<(), RuntimeError> {
-    let library = std::env::var_os("BHE_ORT_LIBRARY");
-    init_onnx_from_path(library.as_deref().map(Path::new))
+    let result = ORT_INIT.get_or_init(|| {
+        #[cfg(feature = "dynamic-onnx")]
+        {
+            let library = std::env::var_os("BHE_ORT_LIBRARY");
+            return init_onnx_from_path(library.as_deref().map(Path::new))
+                .map_err(|error| error.to_string());
+        }
+
+        #[cfg(not(feature = "dynamic-onnx"))]
+        {
+            ort::init().with_name("bhe_runtime").commit();
+            Ok(())
+        }
+    });
+    result
+        .as_ref()
+        .map(|_| ())
+        .map_err(|error| RuntimeError::InvalidRequest(format!("ONNX Runtime 初始化失败: {error}")))
 }
 
+#[cfg(feature = "dynamic-onnx")]
 fn init_onnx_from_path(library: Option<&Path>) -> Result<(), RuntimeError> {
     let result = ORT_INIT.get_or_init(|| {
         if let Some(path) = library {
@@ -680,6 +697,14 @@ pub fn create_session_json(input: &str) -> Result<RuntimeSession, RuntimeError> 
 /// path and remains valid for the duration of this call.
 #[no_mangle]
 pub unsafe extern "C" fn bhe_runtime_initialize_onnx(library_path: *const c_char) -> bool {
+    #[cfg(not(feature = "dynamic-onnx"))]
+    {
+        let _ = library_path;
+        return false;
+    }
+
+    #[cfg(feature = "dynamic-onnx")]
+    {
     if library_path.is_null() {
         return false;
     }
@@ -688,6 +713,7 @@ pub unsafe extern "C" fn bhe_runtime_initialize_onnx(library_path: *const c_char
         return false;
     };
     init_onnx_from_path(Some(Path::new(path))).is_ok()
+    }
 }
 
 /// Creates a native analysis session from a JSON runtime configuration.

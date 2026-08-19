@@ -35,7 +35,8 @@ android {
         versionName = flutter.versionName
         if (hasNativeRuntime) {
             ndk {
-                abiFilters += "arm64-v8a"
+                abiFilters.clear()
+                abiFilters.add("arm64-v8a")
             }
         }
     }

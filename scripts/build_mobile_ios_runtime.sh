@@ -16,24 +16,29 @@ command -v rustc >/dev/null 2>&1 || die "未找到 rustc。"
 [[ -n "$ORT_XCFRAMEWORK" && -d "$ORT_XCFRAMEWORK" ]] || \
   die "未找到 ONNX Runtime XCFramework。设置 BHE_ORT_IOS_XCFRAMEWORK。"
 
-for target in aarch64-apple-ios x86_64-apple-ios-sim arm64-apple-ios-sim; do
+export ORT_IOS_XCFWK_PATH="$ORT_XCFRAMEWORK"
+
+build_ios_target() {
+  local target="$1"
+  local minimum_flag="$2"
+  RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=${minimum_flag} -C link-arg=-framework -C link-arg=UIKit -C link-arg=-framework -C link-arg=Network -C link-arg=-framework -C link-arg=Security -C link-arg=-framework -C link-arg=SystemConfiguration -C link-arg=-framework -C link-arg=CoreFoundation" \
+    cargo build --manifest-path "$PACKAGE/Cargo.toml" --release --target "$target"
+}
+
+for target in aarch64-apple-ios aarch64-apple-ios-sim; do
   target_libdir="$(rustc --print target-libdir --target "$target" 2>/dev/null || true)"
   [[ -d "$target_libdir" ]] || \
-    die "未安装 Rust target $target。请执行：rustup target add $target"
+    die "未安装 Rust target ${target}。请执行：rustup target add ${target}"
 done
 
 rm -rf "$OUT"
 mkdir -p "$OUT/device" "$OUT/simulator" "$OUT/include" "$OUT/onnxruntime"
 
-cargo build --manifest-path "$PACKAGE/Cargo.toml" --release --target aarch64-apple-ios
-cargo build --manifest-path "$PACKAGE/Cargo.toml" --release --target x86_64-apple-ios-sim
-cargo build --manifest-path "$PACKAGE/Cargo.toml" --release --target arm64-apple-ios-sim
+build_ios_target aarch64-apple-ios -miphoneos-version-min=16.0
+build_ios_target aarch64-apple-ios-sim -mios-simulator-version-min=16.0
 
 cp "$PACKAGE/target/aarch64-apple-ios/release/libbhe_runtime.a" "$OUT/device/"
-lipo -create \
-  "$PACKAGE/target/x86_64-apple-ios-sim/release/libbhe_runtime.a" \
-  "$PACKAGE/target/arm64-apple-ios-sim/release/libbhe_runtime.a" \
-  -output "$OUT/simulator/libbhe_runtime.a"
+cp "$PACKAGE/target/aarch64-apple-ios-sim/release/libbhe_runtime.a" "$OUT/simulator/libbhe_runtime.a"
 cp "$PACKAGE/include/bhe_runtime.h" "$OUT/include/"
 cp -R "$ORT_XCFRAMEWORK" "$OUT/onnxruntime/"
 
