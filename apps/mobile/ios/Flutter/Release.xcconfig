@@ -1,1 +1,7 @@
 #include "Generated.xcconfig"
+
+BHE_RUNTIME_ROOT = $(PROJECT_DIR)/../../../dist/mobile-ios-runtime
+HEADER_SEARCH_PATHS = $(inherited) "$(BHE_RUNTIME_ROOT)/include"
+EXCLUDED_ARCHS[sdk=iphonesimulator*] = x86_64
+OTHER_LDFLAGS[sdk=iphoneos*] = $(inherited) -force_load "$(BHE_RUNTIME_ROOT)/device/libbhe_runtime.a" -F "$(BHE_RUNTIME_ROOT)/onnxruntime/onnxruntime.xcframework/ios-arm64" -framework onnxruntime -framework UIKit -framework Network -framework Security -framework SystemConfiguration -framework CoreFoundation -lc++
+OTHER_LDFLAGS[sdk=iphonesimulator*] = $(inherited) -force_load "$(BHE_RUNTIME_ROOT)/simulator/libbhe_runtime.a" -F "$(BHE_RUNTIME_ROOT)/onnxruntime/onnxruntime.xcframework/ios-arm64_x86_64-simulator" -framework onnxruntime -framework UIKit -framework Network -framework Security -framework SystemConfiguration -framework CoreFoundation -lc++

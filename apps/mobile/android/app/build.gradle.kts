@@ -9,6 +9,16 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
+    val hasNativeRuntime = file("src/main/jniLibs/arm64-v8a/libbhe_runtime.so").isFile &&
+        file("src/main/jniLibs/arm64-v8a/libonnxruntime.so").isFile
+    if (hasNativeRuntime) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+            }
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -23,6 +33,12 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        if (hasNativeRuntime) {
+            ndk {
+                abiFilters.clear()
+                abiFilters.add("arm64-v8a")
+            }
+        }
     }
 
     buildTypes {
@@ -30,6 +46,14 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
+    if (hasNativeRuntime) {
+        externalNativeBuild {
+            cmake {
+                version = "3.22.1"
+            }
         }
     }
 }

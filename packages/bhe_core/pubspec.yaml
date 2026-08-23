@@ -1,0 +1,10 @@
+name: bhe_core
+description: Shared domain models and project package codec for Basketball Highlight Editor.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  meta: ^1.16.0

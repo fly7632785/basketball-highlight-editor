@@ -1,5 +1,298 @@
 package com.bhe.bhe_mobile
 
+import android.content.ContentValues
+import android.graphics.Bitmap
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
+import android.media.MediaMuxer
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileInputStream
+import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicBoolean
+import android.util.Base64
+import org.json.JSONArray
+import org.json.JSONObject
 
-class MainActivity : FlutterActivity()
+class MainActivity : FlutterActivity() {
+    private val mediaChannelName = "com.bhe.bhe/mobile_media"
+    private val analysisChannelName = "com.bhe.bhe/mobile_analysis"
+    private val progressChannelName = "com.bhe.bhe/mobile_analysis_progress"
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val analysisCancelled = AtomicBoolean(false)
+    private var analysisThread: Thread? = null
+    private var progressSink: EventChannel.EventSink? = null
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, mediaChannelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "isAvailable" -> result.success(true)
+                    "exportClip" -> exportClip(call, result)
+                    "saveToLibrary" -> saveToLibrary(call, result)
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, analysisChannelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "analyzeVideo" -> analyzeVideo(call, result)
+                    "cancelAnalysis" -> {
+                        analysisCancelled.set(true)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, progressChannelName)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    progressSink = events
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    progressSink = null
+                }
+            })
+    }
+
+    private fun analyzeVideo(call: MethodCall, result: MethodChannel.Result) {
+        if (analysisThread?.isAlive == true) {
+            result.error("ANALYSIS_BUSY", "已有分析任务正在运行", null)
+            return
+        }
+        if (!NativeRuntime.available) {
+            result.error(
+                "NATIVE_RUNTIME_UNAVAILABLE",
+                "当前 Android 原生 Runtime 加载失败：${NativeRuntime.loadError ?: "未知错误"}",
+                null
+            )
+            return
+        }
+        val videoPath = call.argument<String>("videoPath")
+        val modelPath = call.argument<String>("modelPath")
+        val startMs = call.argument<Int>("startMs") ?: 0
+        val endMs = call.argument<Int>("endMs") ?: 0
+        val beforeMs = call.argument<Int>("beforeMs") ?: 6000
+        val afterMs = call.argument<Int>("afterMs") ?: 3000
+        val fps = (call.argument<Double>("fps") ?: 3.0).coerceIn(1.0, 10.0)
+        val hoopRoi = call.argument<Map<String, Any>>("hoopRoi")
+        val netRoi = call.argument<Map<String, Any>>("netRoi")
+        if (videoPath == null || modelPath == null || hoopRoi == null || netRoi == null || endMs <= startMs) {
+            result.error("INVALID_ARGUMENT", "分析参数无效", null)
+            return
+        }
+
+        analysisCancelled.set(false)
+        analysisThread = Thread {
+            var session = 0L
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(videoPath)
+                val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: endMs.toLong()
+                val actualEndMs = endMs.toLong().coerceAtMost(duration)
+                val intervalMs = (1000.0 / fps).toLong().coerceAtLeast(1L)
+                val frameWindowMs = (actualEndMs - startMs).coerceAtLeast(1L)
+                val totalFrames = ((frameWindowMs + intervalMs - 1L) / intervalMs).toInt().coerceAtLeast(1)
+                val config = JSONObject()
+                    .put("model_path", modelPath)
+                    .put("hoop_roi", JSONObject(hoopRoi))
+                    .put("net_roi", JSONObject(netRoi))
+                    .put("duration_ms", duration)
+                    .put("confidence_threshold", 0.10)
+                    .put("clip_before_ms", beforeMs)
+                    .put("clip_after_ms", afterMs)
+                session = NativeRuntime.createSession(config.toString())
+                if (session == 0L) throw IllegalStateException("Rust Runtime 无法加载模型或 ONNX Runtime")
+                emitProgress("prepareProxy", 0.05, 0, totalFrames, "正在准备本地分析")
+
+                var processed = 0
+                var lastResponse = JSONObject().put("candidates", JSONArray())
+                var timeMs = startMs.toLong()
+                while (timeMs < actualEndMs && !analysisCancelled.get()) {
+                    val bitmap = frameAt(retriever, timeMs * 1000L)
+                    if (bitmap != null) {
+                        val frame = bitmapToFrame(bitmap, timeMs)
+                        bitmap.recycle()
+                        lastResponse = JSONObject(NativeRuntime.pushFrame(session, frame))
+                        lastResponse.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
+                    }
+                    processed++
+                    if (processed == 1 || processed % 3 == 0) {
+                        emitProgress("refineCandidates", 0.05 + (processed.toDouble() / totalFrames * 0.90), processed, totalFrames, "正在分析视频帧")
+                    }
+                    timeMs += intervalMs
+                }
+                if (analysisCancelled.get()) throw InterruptedException("分析已取消")
+                emitProgress("persistCandidates", 0.98, processed, totalFrames, "正在写入分析结果")
+                val response = jsonObjectToMap(lastResponse)
+                mainHandler.post { result.success(response) }
+            } catch (_: InterruptedException) {
+                mainHandler.post { result.error("ANALYSIS_CANCELLED", "分析已取消", null) }
+            } catch (error: Exception) {
+                mainHandler.post { result.error("ANALYSIS_FAILED", error.message ?: "移动端分析失败", null) }
+            } finally {
+                if (session != 0L) NativeRuntime.freeSession(session)
+                retriever.release()
+                analysisThread = null
+            }
+        }.also { it.start() }
+    }
+
+    private fun bitmapToFrame(bitmap: Bitmap, timeMs: Long): String {
+        val bytes = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, bytes)
+        return JSONObject()
+            .put("time_ms", timeMs)
+            .put("width", bitmap.width)
+            .put("height", bitmap.height)
+            .put("image_base64", Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP))
+            .toString()
+    }
+
+    private fun frameAt(retriever: MediaMetadataRetriever, timeUs: Long): Bitmap? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST, 960, 960)
+        } else {
+            retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+        }
+
+    private fun emitProgress(stage: String, progress: Double, processed: Int, total: Int, message: String) {
+        mainHandler.post {
+            progressSink?.success(mapOf(
+                "stage" to stage,
+                "progress" to progress.coerceIn(0.0, 1.0),
+                "processedFrames" to processed,
+                "totalFrames" to total,
+                "message" to message,
+            ))
+        }
+    }
+
+    private fun exportClip(call: MethodCall, result: MethodChannel.Result) {
+        val inputPath = call.argument<String>("inputPath")
+        val outputPath = call.argument<String>("outputPath")
+        val startMs = call.argument<Int>("startMs")
+        val endMs = call.argument<Int>("endMs")
+        if (inputPath == null || outputPath == null || startMs == null || endMs == null || endMs <= startMs) {
+            result.error("INVALID_ARGUMENT", "视频片段参数无效", null)
+            return
+        }
+        Thread {
+            try {
+                File(outputPath).parentFile?.mkdirs()
+                File(outputPath).delete()
+                val extractor = MediaExtractor()
+                extractor.setDataSource(inputPath)
+                val trackMap = mutableMapOf<Int, Int>()
+                val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                for (index in 0 until extractor.trackCount) {
+                    val format = extractor.getTrackFormat(index)
+                    val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                    if (mime.startsWith("video/") || mime.startsWith("audio/")) {
+                        trackMap[index] = muxer.addTrack(format)
+                        extractor.selectTrack(index)
+                    }
+                }
+                if (trackMap.isEmpty()) throw IllegalStateException("视频没有可导出的音视频轨道")
+                muxer.start()
+                val endUs = endMs.toLong() * 1000L
+                extractor.seekTo(startMs.toLong() * 1000L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                val clipStartUs = extractor.sampleTime
+                if (clipStartUs < 0L) throw IllegalStateException("无法定位视频片段起点")
+                val buffer = ByteBuffer.allocate(16 * 1024 * 1024)
+                val info = android.media.MediaCodec.BufferInfo()
+                while (true) {
+                    val sourceTrack = extractor.sampleTrackIndex
+                    if (sourceTrack < 0 || extractor.sampleTime >= endUs) break
+                    val muxTrack = trackMap[sourceTrack]
+                    if (muxTrack != null) {
+                        buffer.clear()
+                        val size = extractor.readSampleData(buffer, 0)
+                        if (size <= 0) break
+                        info.offset = 0
+                        info.size = size
+                        info.presentationTimeUs = (extractor.sampleTime - clipStartUs).coerceAtLeast(0L)
+                        info.flags = extractor.sampleFlags
+                        muxer.writeSampleData(muxTrack, buffer, info)
+                    }
+                    extractor.advance()
+                }
+                muxer.stop()
+                muxer.release()
+                extractor.release()
+                mainHandler.post { result.success(outputPath) }
+            } catch (error: Exception) {
+                mainHandler.post { result.error("EXPORT_FAILED", error.message, null) }
+            }
+        }.start()
+    }
+
+    private fun saveToLibrary(call: MethodCall, result: MethodChannel.Result) {
+        val path = call.argument<String>("path")
+        if (path == null) {
+            result.error("INVALID_ARGUMENT", "媒体路径无效", null)
+            return
+        }
+        Thread {
+            try {
+                val source = File(path)
+                val values = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, source.name)
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/BHE")
+                        put(MediaStore.Video.Media.IS_PENDING, 1)
+                    }
+                }
+                val resolver = contentResolver
+                val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: throw IllegalStateException("无法创建相册文件")
+                try {
+                    resolver.openOutputStream(uri).use { output ->
+                        requireNotNull(output)
+                        FileInputStream(source).use { input -> input.copyTo(output) }
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        resolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
+                    }
+                } catch (error: Exception) {
+                    resolver.delete(uri, null, null)
+                    throw error
+                }
+                mainHandler.post { result.success(null) }
+            } catch (error: Exception) {
+                mainHandler.post { result.error("PHOTO_SAVE_FAILED", error.message, null) }
+            }
+        }.start()
+    }
+
+    private fun jsonObjectToMap(value: JSONObject): Map<String, Any?> = value.keys().asSequence().associateWith { key ->
+        when (val item = value.get(key)) {
+            is JSONObject -> jsonObjectToMap(item)
+            is JSONArray -> jsonArrayToList(item)
+            JSONObject.NULL -> null
+            else -> item
+        }
+    }
+
+    private fun jsonArrayToList(value: JSONArray): List<Any?> = (0 until value.length()).map { index ->
+        when (val item = value.get(index)) {
+            is JSONObject -> jsonObjectToMap(item)
+            is JSONArray -> jsonArrayToList(item)
+            JSONObject.NULL -> null
+            else -> item
+        }
+    }
+}
