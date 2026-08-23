@@ -98,7 +98,10 @@ def scan_video(args):
             "conf": args.conf,
         }, sort_keys=True).encode()).hexdigest()
         args.cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_path = args.cache_dir / f"{cache_key}.json"
+        # 文件名只取哈希前 24 位(96bit,缓存键足够防碰撞):完整 64 位
+        # 哈希 + 长项目目录名会超过 Windows MAX_PATH(260)导致
+        # FileNotFoundError。cache_key 元数据仍保留完整哈希。
+        cache_path = args.cache_dir / f"{cache_key[:24]}.json"
         if cache_path.exists():
             cached = read_json_cache(
                 cache_path,

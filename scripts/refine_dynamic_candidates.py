@@ -243,7 +243,10 @@ def main(args):
                 "net_roi": args.net_roi,
                 "signal_version": 4,
             }, sort_keys=True).encode()
-            cache_path = args.cache_dir / (hashlib.sha256(cache_key).hexdigest() + ".json")
+            # 文件名截断到 24 位避免 Windows MAX_PATH 超限(见 scan_video)。
+            cache_path = args.cache_dir / (
+                hashlib.sha256(cache_key).hexdigest()[:24] + ".json"
+            )
             legacy_cache_paths_by_index[index] = []
         cache_paths_by_index[index] = cache_path
         candidate_cache_paths = [cache_path, *legacy_cache_paths_by_index.get(index, [])]
