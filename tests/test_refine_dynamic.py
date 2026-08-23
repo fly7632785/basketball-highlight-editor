@@ -51,7 +51,7 @@ def test_main_does_not_load_yolo_when_all_detection_caches_hit(tmp_path, monkeyp
         "signal_version": 4,
     }, sort_keys=True).encode()
     cache_dir.mkdir()
-    (cache_dir / (refine_dynamic_candidates.hashlib.sha256(cache_key).hexdigest() + ".json")).write_text(
+    (cache_dir / (refine_dynamic_candidates.hashlib.sha256(cache_key).hexdigest()[:24] + ".json")).write_text(
         "[]", encoding="utf-8"
     )
 
@@ -187,7 +187,7 @@ def test_scan_video_cache_hit_skips_video_and_model_loading(tmp_path, monkeypatc
     }, sort_keys=True).encode()).hexdigest()
     cache_dir.mkdir()
     cached = {"records": [], "device": "cpu"}
-    (cache_dir / f"{cache_key}.json").write_text(json.dumps(cached), encoding="utf-8")
+    (cache_dir / f"{cache_key[:24]}.json").write_text(json.dumps(cached), encoding="utf-8")
 
     def fail_if_loaded(_model_path):
         pytest.fail("YOLO must not be initialized when coarse detection cache hits")
