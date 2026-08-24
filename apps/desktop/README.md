@@ -24,7 +24,7 @@ Flutter desktop application for V1. The UI talks to the local Python Engine thro
 The project was generated with Flutter 3.44.8. From the repository root, use the checked-in development SDK path or place Flutter on `PATH`:
 
 ```bash
-cd /Users/macmima1234/basketball-highlight-editor/apps/desktop
+cd <repo-root>/apps/desktop
 ../../.tooling/flutter/bin/flutter analyze
 ../../.tooling/flutter/bin/flutter test
 ../../.tooling/flutter/bin/flutter build macos --debug

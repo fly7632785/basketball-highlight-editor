@@ -647,6 +647,42 @@ void main() {
     });
   });
 
+  group('ProjectNotifier.setCandidatesPlayer', () {
+    test('批量设置球员标签后直接更新本地候选，不重复刷新列表', () async {
+      final fakeSession = _FakeProjectSession()
+        ..seedCandidates(<JsonMap>[
+          <String, dynamic>{'id': 'c1', 'review_status': 'pending'},
+          <String, dynamic>{'id': 'c2', 'review_status': 'pending'},
+        ])
+        ..players = <JsonMap>[
+          <String, dynamic>{'id': 'p1', 'name': '科比'},
+        ];
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(fakeSession),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(projectProvider.notifier);
+      await notifier.refreshCandidates();
+      final listCallsAfterHydration = fakeSession.listCandidatesCalls;
+
+      await notifier.setCandidatesPlayer(<String>['c1', 'c2'], 'p1');
+
+      final candidates = container.read(projectProvider).candidates;
+      expect(fakeSession.setCandidatesPlayerCalls, <List<String>>[
+        <String>['c1', 'c2'],
+      ]);
+      expect(fakeSession.listCandidatesCalls, listCallsAfterHydration);
+      expect(candidates[0]['player_id'], 'p1');
+      expect(candidates[0]['player_name'], '科比');
+      expect(candidates[1]['player_id'], 'p1');
+      expect(candidates[1]['player_name'], '科比');
+    });
+  });
+
   group('ProjectNotifier 错误路径', () {
     test('action 抛错时 push error notice,busy 复位 false', () async {
       final fakeSession = _FakeProjectSession()
@@ -695,9 +731,11 @@ class _FakeProjectSession extends ProjectSession {
   Duration previewDelay = Duration.zero;
 
   final List<JsonMap> _candidates = <JsonMap>[];
+  List<JsonMap> players = <JsonMap>[];
   List<JsonMap> reviewHistory = <JsonMap>[];
   JsonMap statistics = <String, dynamic>{};
   final List<String> startReviewCalls = <String>[];
+  final List<List<String>> setCandidatesPlayerCalls = <List<String>>[];
   final List<String> retryAnalysisCalls = <String>[];
   final List<String> deletedRoots = <String>[];
   final List<String> reviewCalls = <String>[];
@@ -861,10 +899,16 @@ class _FakeProjectSession extends ProjectSession {
           'job': <String, dynamic>{'id': jobId, 'state': 'cancelled'},
         };
 
+  int listCandidatesCalls = 0;
+
   @override
-  Future<JsonMap> listCandidates() async => <String, dynamic>{
-    'candidates': List<JsonMap>.from(_candidates),
-  };
+  Future<JsonMap> listCandidates() async {
+    listCandidatesCalls++;
+    return <String, dynamic>{
+      'candidates': List<JsonMap>.from(_candidates),
+      'players': List<JsonMap>.from(players),
+    };
+  }
 
   @override
   Future<JsonMap> listReviewHistory(String candidateId) async =>
@@ -908,6 +952,15 @@ class _FakeProjectSession extends ProjectSession {
       };
     }
     return <String, dynamic>{};
+  }
+
+  @override
+  Future<JsonMap> setCandidatesPlayer({
+    required List<String> candidateIds,
+    String? playerId,
+  }) async {
+    setCandidatesPlayerCalls.add(List<String>.from(candidateIds));
+    return <String, dynamic>{'updated': candidateIds.length};
   }
 
   @override

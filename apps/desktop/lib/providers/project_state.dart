@@ -1708,8 +1708,33 @@ class ProjectNotifier extends Notifier<ProjectState> {
       await ref
           .read(projectSessionProvider)
           .setCandidatesPlayer(candidateIds: candidateIds, playerId: playerId);
-      await refreshCandidates();
+      _setLocalCandidatePlayer(candidateIds, playerId);
     }, successMessage: '已更新 ${candidateIds.length} 个片段的球员标签');
+  }
+
+  void _setLocalCandidatePlayer(List<String> candidateIds, String? playerId) {
+    final selectedIds = candidateIds.toSet();
+    final playerName = playerId == null
+        ? null
+        : state.players
+              .cast<JsonMap?>()
+              .firstWhere(
+                (player) => player?['id']?.toString() == playerId,
+                orElse: () => null,
+              )?['name']
+              ?.toString();
+    state = state.copyWith(
+      candidates: [
+        for (final candidate in state.candidates)
+          selectedIds.contains(candidate['id']?.toString())
+              ? <String, dynamic>{
+                  ...candidate,
+                  'player_id': playerId,
+                  'player_name': playerName,
+                }
+              : candidate,
+      ],
+    );
   }
 
   /// 等价 app.dart:_export(623)。
