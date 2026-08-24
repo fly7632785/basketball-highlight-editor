@@ -26,6 +26,18 @@ Import video  →  Analyze with AI  →  Review candidates  →  Export highligh
 3. **Review** candidates in the video workbench, adjust ranges, or add missing moments.
 4. **Export** separate clips or one merged highlight reel in event-time order.
 
+## A look at the interface
+
+The review workbench keeps the video, candidate list, and keep/exclude actions together so you can move through a set of candidates quickly:
+
+![Review workbench](capture/screenshot-20260813-161507.png)
+
+After review, filter by player or candidate range, then choose a merged export or separate clips:
+
+![Export screen](capture/screenshot-20260813-161649.png)
+
+More import, analysis-range, and empty-state screens are collected in [`docs/SCREENSHOTS.en.md`](docs/SCREENSHOTS.en.md).
+
 ## What it feels like to use
 
 - Automatically suggest a hoop region, with manual drawing and adjustment when needed;

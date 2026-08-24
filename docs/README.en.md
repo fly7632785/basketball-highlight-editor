@@ -38,6 +38,7 @@ The root [`README.en.md`](../README.en.md) is the product overview and shortest 
 - [`DECISIONS_V1.md`](DECISIONS_V1.md): current product, algorithm, and engineering decisions; check this and runtime behavior when records disagree.
 - [`REQUIREMENTS_V1.md`](REQUIREMENTS_V1.md): V1 scope and implemented/partial/pending status.
 - [`USER_FLOW_V1.md`](USER_FLOW_V1.md): import, analysis, review, export, and failure paths.
+- [`SCREENSHOTS.en.md`](SCREENSHOTS.en.md): key screens and the user actions shown in each one.
 
 ## Release
 

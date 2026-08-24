@@ -38,6 +38,7 @@
 - [`DECISIONS_V1.md`](DECISIONS_V1.md)：当前产品、算法和工程决策；与旧记录冲突时优先看这里和运行时行为。
 - [`REQUIREMENTS_V1.md`](REQUIREMENTS_V1.md)：V1 范围、已实现/部分实现/未完成状态和发布门槛。
 - [`USER_FLOW_V1.md`](USER_FLOW_V1.md)：导入、分析、审核、导出和异常路径。
+- [`SCREENSHOTS.md`](SCREENSHOTS.md)：主要页面截图和对应的用户操作说明。
 
 ## 发布
 
