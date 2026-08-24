@@ -14,7 +14,7 @@ This repository is a source preview, not a final end-user installer. You provide
 - the bundled default detector, or a compatible model if using a slim package without large assets;
 - a game video that you are allowed to process.
 
-The source license does not automatically cover models, videos, training data, FFmpeg builds, or third-party dependencies. Read [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md) and [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md) before publishing.
+The source license does not automatically cover models, videos, training data, FFmpeg builds, or third-party dependencies. If you are preparing a release, read the release boundaries in [`RELEASE.en.md`](RELEASE.en.md).
 
 ## 2. Desktop development on macOS/Linux
 
@@ -208,23 +208,7 @@ Minimal request:
 
 stdout must contain only business JSONL; diagnostic logs go to stderr. [`architecture/ENGINE_PROTOCOL_V1.md`](architecture/ENGINE_PROTOCOL_V1.md) is the protocol source of truth.
 
-## 8. Export reviewed data
-
-```bash
-.venv/bin/python scripts/export_review_dataset.py /path/to/project
-```
-
-Include pending candidates and write CSV as well:
-
-```bash
-.venv/bin/python scripts/export_review_dataset.py /path/to/project \
-  --include-pending \
-  --csv
-```
-
-The output may contain real paths, notes, and player labels, so keep it local. See [`REVIEW_DATASET_EXPORT.md`](REVIEW_DATASET_EXPORT.md) for the fields.
-
-## 9. Minimum acceptance path
+## 8. Minimum acceptance path
 
 - The runtime check passes.
 - Python tests and affected Flutter tests pass.

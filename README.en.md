@@ -130,7 +130,7 @@ For the complete setup, Windows path, and troubleshooting flow, see [`docs/GETTI
 | Standard | Proxy coarse scan followed by source-video refinement | First runs, important games, or low tolerance for missed events |
 | Fast | `640×480 / 3 FPS` lower-cost proxy; source-video refinement is skipped | Quick inspection when some missed events are acceptable |
 
-Both modes keep the same review, manual-range, and export semantics. Fast mode has no fixed duration or accuracy guarantee. One roughly 4.6-minute cold-start sample took `75.73s` in Standard and `42.07s` in Fast; this illustrates that sample only and is not a universal promise. See [`docs/research/ANALYSIS_MODES_V1.md`](docs/research/ANALYSIS_MODES_V1.md) and [`docs/benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md`](docs/benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md).
+Both modes keep the same review, manual-range, and export semantics. Fast mode has no fixed duration or accuracy guarantee and may miss events. See [`docs/research/ANALYSIS_MODES_V1.md`](docs/research/ANALYSIS_MODES_V1.md) for the complete rules.
 
 The Fast entry point can be hidden at build time:
 
@@ -204,7 +204,7 @@ Runtime preparation and packaging commands are consolidated in [`docs/RELEASE.en
 - **Development:** [`docs/DEVELOPMENT.en.md`](docs/DEVELOPMENT.en.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - **Architecture:** [`docs/README.en.md`](docs/README.en.md) · [`docs/architecture/`](docs/architecture/)
 - **Product contracts:** [`docs/DECISIONS_V1.md`](docs/DECISIONS_V1.md) · [`docs/REQUIREMENTS_V1.md`](docs/REQUIREMENTS_V1.md) · [`docs/USER_FLOW_V1.md`](docs/USER_FLOW_V1.md)
-- **Open source and release:** [`docs/RELEASE.en.md`](docs/RELEASE.en.md) · [`docs/OPEN_SOURCE_AUDIT.md`](docs/OPEN_SOURCE_AUDIT.md) · [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) · [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md)
+- **Open source and release:** [`docs/RELEASE.en.md`](docs/RELEASE.en.md) · [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) · [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md)
 - **Community:** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) · [`SECURITY.md`](SECURITY.md) · [`CHANGELOG.md`](CHANGELOG.md) · [`LICENSE`](LICENSE)
 
 ## Acknowledgments

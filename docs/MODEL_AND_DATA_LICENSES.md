@@ -45,4 +45,4 @@ models/bball_model.pt
 - 演示视频、截图和标注的公开许可；
 - 发布物中对应的第三方声明。
 
-当前源码树检查结果和待处理项见 [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md)。
+当前源码树检查命令和发布阻塞项见 [`RELEASE.md`](RELEASE.md) 的第 1 节和第 7 节。

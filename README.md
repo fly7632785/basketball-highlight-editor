@@ -130,7 +130,7 @@ flutter run -d macos
 | 标准 | 代理粗扫后回到原视频精筛 | 首次分析、重要比赛、不能接受漏检时使用 |
 | 快速 | `640×480 / 3 FPS` 低成本代理，跳过原视频精筛 | 先快速浏览，接受可能漏检时使用 |
 
-两种模式使用相同的审核、手动调整和导出语义。快速模式不承诺固定耗时或准确率；当前单个约 4.6 分钟样本的冷启动记录为标准 `75.73s`、快速 `42.07s`，仅用于说明该样本的速度差异，不能代表所有视频。详见 [`docs/research/ANALYSIS_MODES_V1.md`](docs/research/ANALYSIS_MODES_V1.md) 和 [`docs/benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md`](docs/benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md)。
+两种模式使用相同的审核、手动调整和导出语义。快速模式不承诺固定耗时或准确率，可能漏检；完整规则见 [`docs/research/ANALYSIS_MODES_V1.md`](docs/research/ANALYSIS_MODES_V1.md)。
 
 可以在构建时隐藏快速模式入口：
 
@@ -204,7 +204,7 @@ macOS 运行时准备与构建命令集中在 [`docs/RELEASE.md`](docs/RELEASE.m
 - **开发贡献：** [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - **架构参考：** [`docs/README.md`](docs/README.md) · [`docs/architecture/`](docs/architecture/)
 - **产品契约：** [`docs/DECISIONS_V1.md`](docs/DECISIONS_V1.md) · [`docs/REQUIREMENTS_V1.md`](docs/REQUIREMENTS_V1.md) · [`docs/USER_FLOW_V1.md`](docs/USER_FLOW_V1.md)
-- **开源发布：** [`docs/RELEASE.md`](docs/RELEASE.md) · [`docs/OPEN_SOURCE_AUDIT.md`](docs/OPEN_SOURCE_AUDIT.md) · [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) · [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md)
+- **开源发布：** [`docs/RELEASE.md`](docs/RELEASE.md) · [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) · [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md)
 - **社区规则：** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) · [`SECURITY.md`](SECURITY.md) · [`CHANGELOG.md`](CHANGELOG.md) · [`LICENSE`](LICENSE)
 
 ## 致谢

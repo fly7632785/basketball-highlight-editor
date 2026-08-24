@@ -2,4 +2,4 @@
 
 这里仅保存本地实验标注。真实球员信息、视频路径和人工审核数据不要提交到公开仓库。
 
-导出审核数据的命令和字段见 [`../../docs/REVIEW_DATASET_EXPORT.md`](../../docs/REVIEW_DATASET_EXPORT.md)。
+审核数据导出属于本地实验工具；需要使用时运行 `scripts/export_review_dataset.py --help` 查看参数。导出文件可能包含真实路径、备注和球员标签，不要提交到公开仓库。

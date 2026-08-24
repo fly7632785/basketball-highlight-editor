@@ -42,7 +42,7 @@ cd ../..
 git diff --check
 ```
 
-`check_open_source.py` 发现的 error 必须在公开前处理；warning 需要逐项判断并记录。当前源码树的具体阻塞项见 [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md)。
+`check_open_source.py` 发现的 error 必须在公开前处理；warning 需要逐项判断并记录。当前发布阻塞项见本文第 7 节。
 
 ## 2. 授权核验
 
@@ -189,7 +189,7 @@ Android 当前主要验证 `arm64-v8a`，需要 Rust Runtime、ONNX Runtime Andr
 
 ## 7. 当前发布阻塞项
 
-依据 [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md)，以下事项未完成前推荐只发布源码预览：
+以下事项未完成前推荐只发布源码预览：
 
 - 清理或核验当前源码树中的模型、原生二进制、研究 checkout 和截图；
 - 逐项生成锁定依赖的许可证 notices；

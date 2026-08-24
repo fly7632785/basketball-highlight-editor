@@ -42,7 +42,7 @@ cd ../..
 git diff --check
 ```
 
-Every error from `check_open_source.py` must be fixed before publication. Warnings need an explicit decision and record. See [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md) for the current tree's blockers.
+Every error from `check_open_source.py` must be fixed before publication. Warnings need an explicit decision and record. The current release blockers are listed in section 7 of this guide.
 
 ## 2. Rights review
 
@@ -189,7 +189,7 @@ Do not create a “stable” or “all-platform supported” release without a r
 
 ## 7. Current release blockers
 
-According to [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md), prefer source-only publication until the following are complete:
+Prefer source-only publication until the following are complete:
 
 - remove or verify models, native binaries, research checkouts, and screenshots in the current source tree;
 - generate notices for every locked dependency;

@@ -14,7 +14,7 @@
 - 仓库内置的默认检测模型；如果使用不含大文件的精简发布包，再自行提供兼容模型；
 - 你有权处理的比赛视频。
 
-源码许可证不自动覆盖模型、视频、训练数据、FFmpeg 构建和第三方依赖。发布前请看 [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md) 和 [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md)。
+源码许可证不自动覆盖模型、视频、训练数据、FFmpeg 构建和第三方依赖。需要发布时再阅读 [`RELEASE.md`](RELEASE.md) 的发布边界。
 
 ## 2. 桌面端 macOS/Linux 开发环境
 
@@ -208,23 +208,7 @@ PYTHONPATH=engine/python .venv/bin/python -m basketball_engine
 
 stdout 只能输出业务 JSONL；诊断日志写 stderr。协议细节以 [`architecture/ENGINE_PROTOCOL_V1.md`](architecture/ENGINE_PROTOCOL_V1.md) 为准。
 
-## 8. 导出审核数据
-
-```bash
-.venv/bin/python scripts/export_review_dataset.py /path/to/project
-```
-
-包含待审核候选并生成 CSV：
-
-```bash
-.venv/bin/python scripts/export_review_dataset.py /path/to/project \
-  --include-pending \
-  --csv
-```
-
-导出文件可能包含真实路径、备注和球员标签，只应保留在本地。字段说明见 [`REVIEW_DATASET_EXPORT.md`](REVIEW_DATASET_EXPORT.md)。
-
-## 9. 最小验收
+## 8. 最小验收
 
 - 运行时检查成功；
 - Python 测试和受影响的 Flutter 测试通过；
