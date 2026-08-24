@@ -1,0 +1,42 @@
+name: Bug report
+description: 报告可复现的问题
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先确认没有提交真实视频、个人信息、密钥或其他敏感数据。
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: 受影响的版本或 commit。
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: 操作系统、芯片/架构、Python 和 Flutter 版本。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: 请给出最小复现步骤。
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: 请脱敏后粘贴日志，不要包含视频路径、密钥或个人数据。
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
