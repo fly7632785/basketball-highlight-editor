@@ -1313,8 +1313,7 @@ class EngineService:
                 if not isinstance(coarse_rim, dict):
                     coarse_rim = {}
                 # 粗扫坐标是代理视频像素,合成 overlay 时缩放到源视频。
-                source_w = float(video.get("width") or 0)
-                factor = (source_w / float(proxy_width)) if source_w > 0 and proxy_width else 1.0
+                proxy_factor = proxy_scale if proxy_scale > 0 else 1.0
                 for extra in coarse_matches:
                     extra_time = float(extra["time"])
                     if any(
@@ -1322,7 +1321,11 @@ class EngineService:
                         for refined_time in refined_times
                     ):
                         continue
-                    overlay = self._coarse_overlay(extra, coarse_rim, factor)
+                    overlay = self._coarse_overlay(
+                        extra,
+                        extra.get("rim") if isinstance(extra.get("rim"), dict) else coarse_rim,
+                        proxy_factor,
+                    )
                     if overlay is not None:
                         extra["overlay"] = overlay
                     matches.append(extra)

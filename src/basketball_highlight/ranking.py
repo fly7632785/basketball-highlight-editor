@@ -5,8 +5,10 @@ def candidate_priority(candidate):
     )
     gates = candidate.get("gates") if isinstance(candidate.get("gates"), dict) else {}
     source_rank = {
+        "local_window": 3,
         "local_track": 2,
         "box_center_fallback": 1,
+        "global": 1,
     }.get(candidate.get("rim_source"), 0)
     return (
         verdict_rank,

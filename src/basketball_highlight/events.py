@@ -567,30 +567,6 @@ def _complete_rim_crossing(track, above, below, rim):
         if above["time"] <= point["time"] <= below["time"]
         and rim_y - 1.5 * rim_height <= point["y"] <= rim_y + 0.5 * rim_height
     ]
-    # 快速下落(尤其移动机位)时,相邻检测可能跨过整个筐口带,没有采样
-    # 落在带内。用 above->below 线段插值补虚拟检测参与 complete 判定,
-    # 几何口径与 crossing_x_at_y 一致;对外统计仍只报真实采样,保持
-    # "带内无采样视为通过"的原有语义。
-    near_above_for_check = near_above
-    near_above_synthetic = not near_above
-    if near_above_synthetic:
-        # 快速下落时带内无真实采样,插值补一个仅用于满足"存在接近点"。
-        # 斜线入射在筐口上方的横向偏移是自然几何,不单独设走廊门;
-        # 进筐验证由筐口平面上的 crossing_inside 承担。
-        interpolated_x = crossing_x_at_y(above, below, rim_y - 0.5 * rim_height)
-        if interpolated_x is not None:
-            near_above_for_check = [
-                {"x": interpolated_x, "y": rim_y - 0.5 * rim_height}
-            ]
-    transition_for_check = transition_points
-    if not transition_for_check:
-        synthetic = []
-        for depth in (-1.0, -0.25, 0.25):
-            y = rim_y + depth * rim_height
-            interpolated_x = crossing_x_at_y(above, below, y)
-            if interpolated_x is not None:
-                synthetic.append({"x": interpolated_x, "y": y})
-        transition_for_check = synthetic
     x_cross = crossing_x_at_y(above, below, rim_y)
     half_width = max(1.0, float(rim["width"]) / 2.0)
     crossing_inside = (
@@ -599,7 +575,7 @@ def _complete_rim_crossing(track, above, below, rim):
         float(rim["center_x"]) + half_width
     )
     transition_inside = sum(
-        _point_in_rim_corridor(point, rim) for point in transition_for_check
+        _point_in_rim_corridor(point, rim) for point in transition_points
     )
     post_sample = post_rim[:3]
     # 穿网后的球会自然向外甩摆,越往下允许偏离筐口越宽(漏斗形),
@@ -619,12 +595,12 @@ def _complete_rim_crossing(track, above, below, rim):
     )
     complete = bool(
         crossing_inside
-        # 接近段只验证"球曾在筐口上方"(存在性):斜线入射/擦板入射在
-        # 筐口上方的横向偏移是正常几何,位置证据由筐口平面的
-        # crossing_inside 与过渡段走廊承担,不再重复设卡。
-        and near_above_for_check
-        and transition_for_check
-        and transition_inside / len(transition_for_check) >= 0.60
+        # 完整穿框必须有真实检测点证明球接近并经过筐口带。
+        # 仅凭 above->below 插值会把从侧边掠过、恰好在 rim_y 处
+        # 插值到框内的轨迹误标为 complete_crossing。
+        and near_above
+        and transition_points
+        and transition_inside / len(transition_points) >= 0.60
         and len(post_rim) >= 2
         and post_inside_count >= 2
     )

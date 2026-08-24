@@ -112,6 +112,22 @@ class EventsTest(unittest.TestCase):
         candidates = find_refined_crossings(records, {"center_x": 490, "rim_y": 325, "width": 20})
         self.assertEqual(candidates, [])
 
+    def test_interpolated_crossing_without_real_rim_points_is_not_complete(self):
+        records = [
+            {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [470, 280]}]},
+            {"time": 1.3, "detections": [{"name": "ball", "confidence": 0.8, "center": [510, 345]}]},
+            {"time": 1.4, "detections": [{"name": "ball", "confidence": 0.8, "center": [505, 365]}]},
+            {"time": 1.5, "detections": [{"name": "ball", "confidence": 0.8, "center": [500, 385]}]},
+        ]
+
+        candidates = find_refined_crossings(
+            records, {"center_x": 490, "rim_y": 325, "width": 20, "height": 20},
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertFalse(candidates[0]["complete_crossing"])
+        self.assertFalse(candidates[0]["overlay"]["crossing"]["valid"])
+
     def test_refined_crossing_requires_two_points_below_rim(self):
         records = [
             {"time": 1.0, "detections": [{"name": "ball", "confidence": 0.8, "center": [490, 300]}]},

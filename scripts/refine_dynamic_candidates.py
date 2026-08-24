@@ -14,7 +14,7 @@ from cache_io import read_json_cache, write_json_cache
 
 
 DETECTION_CACHE_VERSION = "python-v2.5-white-net-region"
-ALGORITHM_VERSION = "python-v2.10-white-net-trajectory"
+ALGORITHM_VERSION = "python-v2.12-white-net-trajectory"
 REFINED_SCHEMA_VERSION = 3
 
 

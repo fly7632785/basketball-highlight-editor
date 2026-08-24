@@ -121,12 +121,15 @@ def main(args):
     rim, drift_windows = estimate_rims_windowed(
         data["records"], args.hoop_conf, args.rim_window_sec
     )
-    candidates = find_candidate_crossings(
-        data["records"], rim,
-        max_gap_sec=args.max_gap_sec,
-        margin=args.margin,
-        min_descent_px=args.min_descent_px,
-    )
+    candidates = [
+        {**candidate, "rim": rim, "rim_source": "global"}
+        for candidate in find_candidate_crossings(
+            data["records"], rim,
+            max_gap_sec=args.max_gap_sec,
+            margin=args.margin,
+            min_descent_px=args.min_descent_px,
+        )
+    ]
     rim_mode = "global"
     if drift_windows:
         rim_mode = "windowed"
@@ -142,7 +145,12 @@ def main(args):
                 < window_end + context
             ]
             candidates.extend(
-                find_candidate_crossings(
+                {
+                    **candidate,
+                    "rim": local_rim,
+                    "rim_source": "local_window",
+                }
+                for candidate in find_candidate_crossings(
                     sliced, local_rim,
                     max_gap_sec=args.max_gap_sec,
                     margin=args.margin,
