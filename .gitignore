@@ -14,6 +14,7 @@ dist/
 data/*
 !data/
 !data/README.md
+data/labels/*
 !data/labels/
 !data/labels/README.md
 .social-publish/early-ball-1-scheduled.json
