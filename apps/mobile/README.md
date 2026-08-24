@@ -5,6 +5,7 @@
 ## 当前状态
 
 - Flutter UI、项目持久化、视频导入/播放、ROI、审核和项目包导入导出已接入；
+- 移动端 ONNX 模型已作为 Flutter asset 提供，正常源码构建不需要手动复制模型；
 - Android 支持原生抽帧、进度、取消、Rust/ONNX 分析、候选生成和视频导出，当前主要验证 `arm64-v8a`；
 - iOS 项目、播放、审核和导出通道可用，本地分析还需要 Rust 静态库、ONNX Runtime XCFramework 和 Runner 链接；
 - 缺少原生库时会返回 `NATIVE_RUNTIME_UNAVAILABLE`，不会返回伪造候选；

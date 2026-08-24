@@ -11,7 +11,7 @@ This repository is a source preview, not a final end-user installer. You provide
 - Python 3.11 and the project dependencies;
 - Flutter stable (the current development baseline is 3.44.8);
 - FFmpeg and FFprobe for desktop;
-- a detector compatible with the pipeline and licensed for your use;
+- the bundled default detector, or a compatible model if using a slim package without large assets;
 - a game video that you are allowed to process.
 
 The source license does not automatically cover models, videos, training data, FFmpeg builds, or third-party dependencies. Read [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md) and [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md) before publishing.
@@ -48,15 +48,15 @@ ffprobe -version
 
 A Homebrew build is suitable for local development, not automatically for a distributable `.app`. Distribution needs a self-contained or static build and an LGPL/GPL review.
 
-### 2.4 Provide a model
+### 2.4 Confirm the bundled model
 
-Place a local model at:
+The complete source repository currently includes the default desktop detector at:
 
 ```text
 models/bball_model.pt
 ```
 
-You can pass a custom path to the runtime check:
+After a normal clone, you do not need to download a model manually. Pass a custom path only when a release package omits the model or you want to replace it:
 
 ```bash
 .venv/bin/python scripts/check_runtime.py \
@@ -65,7 +65,7 @@ You can pass a custom path to the runtime check:
   --model /absolute/path/to/your-model.pt
 ```
 
-When the model is missing, the Engine returns `MODEL_LOAD_FAILED` and does not silently download an unknown weight. The model must expose the classes and format expected by the current scripts, and you must have the right to use it.
+If the model is actually missing, the Engine returns `MODEL_LOAD_FAILED` and does not silently download an unknown weight. A replacement must expose the classes and format expected by the current scripts, and you must have the right to use it.
 
 ### 2.5 Check the runtime
 
@@ -74,8 +74,7 @@ From the repository root:
 ```bash
 .venv/bin/python scripts/check_runtime.py \
   --root . \
-  --python .venv/bin/python \
-  --model models/bball_model.pt
+  --python .venv/bin/python
 ```
 
 A successful check includes:

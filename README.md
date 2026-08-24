@@ -58,7 +58,7 @@ Mobile Flutter UI ── platform channels ──> Android/iOS media + Rust/ONNX
 - Python 3.11；
 - Flutter stable，当前开发基线为 3.44.8；
 - `ffmpeg`、`ffprobe`；
-- 与当前检测流程兼容、且你有权使用的模型；
+- 仓库内置的默认检测模型（如使用精简发布包，再自行提供兼容模型）；
 - 分析和导出需要额外临时磁盘空间。
 
 Python 依赖定义在 [`requirements.txt`](requirements.txt)，开发依赖定义在 [`requirements-dev.txt`](requirements-dev.txt)。
@@ -85,7 +85,7 @@ python3.11 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
 ```
 
-### 2. 准备 FFmpeg 和模型
+### 2. 准备 FFmpeg（模型已随源码提供）
 
 macOS 开发环境可以使用 Homebrew：
 
@@ -93,21 +93,20 @@ macOS 开发环境可以使用 Homebrew：
 brew install ffmpeg
 ```
 
-将你有权使用的模型放在：
+当前仓库默认已包含桌面检测模型：
 
 ```text
 models/bball_model.pt
 ```
 
-模型缺失时，Engine 不会从未知地址静默下载。模型和数据授权见 [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md) 与 [`models/README.md`](models/README.md)。
+正常完整 clone 后不需要手动下载或复制模型。若你使用的发布包不含模型，或希望替换模型，才通过 `--model` 传入自定义路径。模型和数据授权见 [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md) 与 [`models/README.md`](models/README.md)。
 
 ### 3. 检查运行时
 
 ```bash
 .venv/bin/python scripts/check_runtime.py \
   --root . \
-  --python .venv/bin/python \
-  --model models/bball_model.pt
+  --python .venv/bin/python
 ```
 
 看到 `runtime: OK` 后再启动 UI。该检查只验证环境完整性，不验证算法准确率。

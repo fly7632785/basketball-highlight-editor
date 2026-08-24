@@ -37,15 +37,15 @@ flutter run -d macos
 
 届时优先升级到支持 SPM 的插件版本，并重新执行 `flutter pub get`、`flutter analyze`、`flutter test` 和 macOS 构建。不要为了消除警告直接删除视频插件。
 
-### Q3：为什么运行时检查找不到模型？
+### Q3：模型不是已经内置了吗？为什么运行时检查还会找不到？
 
-确认路径和文件名：
+是的，当前完整源码仓库默认内置：
 
 ```text
 models/bball_model.pt
 ```
 
-也可以传入自定义权重：
+如果你使用的是不含大文件的发布包、浅裁剪源码或手动删除过模型，才会出现缺失。也可以传入自定义权重：
 
 ```bash
 .venv/bin/python scripts/check_runtime.py \

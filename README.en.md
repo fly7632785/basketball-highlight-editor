@@ -58,7 +58,7 @@ The desktop UI does not access SQLite, detection JSON, or FFmpeg directly. The E
 - Python 3.11;
 - Flutter stable; the current development baseline is 3.44.8;
 - `ffmpeg` and `ffprobe`;
-- a detector compatible with the current pipeline and licensed for your use;
+- the bundled default detector (or a compatible model if using a slim release package);
 - additional temporary disk space for analysis and export.
 
 Python runtime requirements are in [`requirements.txt`](requirements.txt); development requirements are in [`requirements-dev.txt`](requirements-dev.txt).
@@ -85,7 +85,7 @@ python3.11 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
 ```
 
-### 2. Provide FFmpeg and a model
+### 2. Provide FFmpeg (the default model is bundled)
 
 For macOS development, Homebrew is one option:
 
@@ -93,21 +93,20 @@ For macOS development, Homebrew is one option:
 brew install ffmpeg
 ```
 
-Place a model you are authorized to use at:
+The repository currently includes the default desktop detector at:
 
 ```text
 models/bball_model.pt
 ```
 
-The Engine does not silently download a model from an unknown URL. See [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md) and [`models/README.md`](models/README.md).
+After a complete clone, you do not need to download or copy a model manually. If a release package omits the model, or you want to replace it, pass a custom path with `--model`. See [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md) and [`models/README.md`](models/README.md).
 
 ### 3. Check the runtime
 
 ```bash
 .venv/bin/python scripts/check_runtime.py \
   --root . \
-  --python .venv/bin/python \
-  --model models/bball_model.pt
+  --python .venv/bin/python
 ```
 
 Continue when the command reports `runtime: OK`. This validates environment completeness, not algorithmic accuracy.

@@ -11,7 +11,7 @@
 - Python 3.11 和项目依赖；
 - Flutter stable（当前开发基线为 3.44.8）；
 - FFmpeg 和 FFprobe（桌面端）；
-- 与检测流程兼容、且你有权使用的模型；
+- 仓库内置的默认检测模型；如果使用不含大文件的精简发布包，再自行提供兼容模型；
 - 你有权处理的比赛视频。
 
 源码许可证不自动覆盖模型、视频、训练数据、FFmpeg 构建和第三方依赖。发布前请看 [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md) 和 [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md)。
@@ -48,15 +48,15 @@ ffprobe -version
 
 Homebrew 版本适合本机开发，不代表可以直接复制到可分发 `.app`；发布时需要自包含或静态构建，并核对 LGPL/GPL 边界。
 
-### 2.4 准备模型
+### 2.4 确认内置模型
 
-把本地模型放到：
+当前完整源码仓库已经包含默认桌面模型：
 
 ```text
 models/bball_model.pt
 ```
 
-也可以在运行时检查时传入自定义路径：
+因此正常 clone 后不需要手动下载模型。只有在发布包不含模型或希望替换模型时，才传入自定义路径：
 
 ```bash
 .venv/bin/python scripts/check_runtime.py \
@@ -65,7 +65,7 @@ models/bball_model.pt
   --model /absolute/path/to/your-model.pt
 ```
 
-缺少模型时，Engine 会返回 `MODEL_LOAD_FAILED`，不会静默下载未知权重。模型必须使用当前检测脚本支持的类别和格式，并且你拥有使用权。
+如果当前目录确实缺少模型，Engine 会返回 `MODEL_LOAD_FAILED`，不会静默下载未知权重。替换模型必须兼容当前检测脚本的类别和格式，并且你拥有使用权。
 
 ### 2.5 检查运行时
 
@@ -74,8 +74,7 @@ models/bball_model.pt
 ```bash
 .venv/bin/python scripts/check_runtime.py \
   --root . \
-  --python .venv/bin/python \
-  --model models/bball_model.pt
+  --python .venv/bin/python
 ```
 
 成功时输出应包含：

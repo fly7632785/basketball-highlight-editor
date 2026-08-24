@@ -10,6 +10,11 @@ if [[ -z "$PYTHON_RUNTIME" || ! -x "$PYTHON_RUNTIME/bin/python3" ]]; then
   exit 2
 fi
 
+if [[ ! -f "$ROOT/models/bball_model.pt" ]]; then
+  echo "Bundled model not found: $ROOT/models/bball_model.pt" >&2
+  exit 2
+fi
+
 FFMPEG="${BHE_FFMPEG:-$(command -v ffmpeg || true)}"
 FFPROBE="${BHE_FFPROBE:-$(command -v ffprobe || true)}"
 if [[ -z "$FFMPEG" || -z "$FFPROBE" ]]; then
@@ -28,14 +33,14 @@ if [[ "$(uname -s)" == "Darwin" && "${BHE_ALLOW_EXTERNAL_FFMPEG:-0}" != "1" ]]; 
 fi
 
 rm -rf "$OUT"
-mkdir -p "$OUT"/bin "$OUT"/python "$OUT"/engine "$OUT"/scripts "$OUT"/src "$OUT"/docs/architecture "$OUT"/third_party/basketball-shot-detection
+mkdir -p "$OUT"/bin "$OUT"/python "$OUT"/engine "$OUT"/scripts "$OUT"/src "$OUT"/docs/architecture "$OUT"/models
 
 cp -R "$PYTHON_RUNTIME"/. "$OUT/python/"
 cp -R "$ROOT/engine/python" "$OUT/engine/"
 cp -R "$ROOT/scripts"/. "$OUT/scripts/"
 cp -R "$ROOT/src"/. "$OUT/src/"
 cp "$ROOT/docs/architecture/SQLITE_SCHEMA_V1.sql" "$OUT/docs/architecture/"
-cp "$ROOT/third_party/basketball-shot-detection/bball_model.pt" "$OUT/third_party/basketball-shot-detection/"
+cp "$ROOT/models/bball_model.pt" "$OUT/models/"
 cp "$FFMPEG" "$OUT/bin/ffmpeg"
 cp "$FFPROBE" "$OUT/bin/ffprobe"
 
@@ -44,6 +49,6 @@ cp "$FFPROBE" "$OUT/bin/ffprobe"
   --python "$OUT/python/bin/python3" \
   --ffmpeg "$OUT/bin/ffmpeg" \
   --ffprobe "$OUT/bin/ffprobe" \
-  --model "$OUT/third_party/basketball-shot-detection/bball_model.pt"
+  --model "$OUT/models/bball_model.pt"
 
 echo "Prepared runtime: $OUT"

@@ -31,15 +31,15 @@ It is a compatibility warning about the macOS plugin integration path, not autom
 
 Act when a future Flutter release turns it into a build error, the project moves to Swift Package Manager, or an actual Flutter/Xcode build fails. Prefer a plugin version with SPM support, then rerun `flutter pub get`, `flutter analyze`, `flutter test`, and the macOS build. Do not remove the video plugin just to silence the warning.
 
-### Q3: Why does the runtime check say that the model is missing?
+### Q3: Isn't the model bundled? Why does the runtime check say that it is missing?
 
-Check the conventional path:
+Yes. The complete source repository currently bundles the default detector at:
 
 ```text
 models/bball_model.pt
 ```
 
-Or pass a custom model path:
+The error usually means you are using a release/source package without large assets, or the file was removed locally. You can also pass a custom model path:
 
 ```bash
 .venv/bin/python scripts/check_runtime.py \
