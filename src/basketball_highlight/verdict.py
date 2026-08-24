@@ -54,9 +54,15 @@ def _post_crossing_evidence(track, below, rim, verification_window):
     ]
     previous_y = below["y"]
     rebound = False
+    # 与 events.find_refined_crossings 一致:球已深入篮下之后的回升是
+    # 落地反弹(进球的正常后续),只在篮筐附近平面内的回升才计为撞框
+    # 反弹,避免把进球后的落地弹跳误判为 missed。
+    rebound_zone_bottom = rim_y + max(2.5 * rim_height, 2.5 * rim_width)
     for point in later:
         if point["time"] <= below["time"]:
             continue
+        if point["y"] >= rebound_zone_bottom:
+            break
         if point["y"] < previous_y - max(rim_width * 0.25, rim_height * 0.18):
             rebound = True
             break
@@ -114,7 +120,10 @@ def resolve_verdict(
         and net_sequence >= 0.80
         and float(signals.get("net_below_peak", 0.0)) >= 0.25
     )
-    net_directional_support = net_support and net_sequence >= 0.99
+    # 方向性佐证与 net_support 同口径:此前额外要求时序分 >= 0.99,
+    # 接近完美的激活顺序在真实素材上几乎不可达,导致"网动+完整穿框
+    # 齐备"的进球永远停在 ambiguous。时序质量已由 0.80 门槛把关。
+    net_directional_support = net_support
     complete_crossing = candidate.get("complete_crossing", True) is True
     post_crossing_lateral_recovery = candidate.get(
         "post_crossing_lateral_recovery",

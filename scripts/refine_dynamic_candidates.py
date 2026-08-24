@@ -100,10 +100,13 @@ def _net_compatible_rims(left, right):
     width = max(1.0, float(left["width"]), float(right["width"]))
     height = max(1.0, float(left.get("height", 20)), float(right.get("height", 20)))
     width_ratio = float(left["width"]) / max(1.0, float(right["width"]))
+    # 篮网测量区宽约 4 倍筐宽,rim 估计小幅漂移(无人机悬停微动、
+    # 局部估计抖动)不需要作废测量;原 0.18 倍筐宽(约 11px)过严,
+    # 导致整段候选的篮网信号全部"未计算"。
     return (
-        abs(float(left["center_x"]) - float(right["center_x"])) <= width * 0.18
-        and abs(float(left["rim_y"]) - float(right["rim_y"])) <= max(4.0, height * 0.35)
-        and 0.85 <= width_ratio <= 1.18
+        abs(float(left["center_x"]) - float(right["center_x"])) <= width * 0.40
+        and abs(float(left["rim_y"]) - float(right["rim_y"])) <= max(6.0, height * 0.80)
+        and 0.70 <= width_ratio <= 1.40
     )
 
 

@@ -567,6 +567,30 @@ def _complete_rim_crossing(track, above, below, rim):
         if above["time"] <= point["time"] <= below["time"]
         and rim_y - 1.5 * rim_height <= point["y"] <= rim_y + 0.5 * rim_height
     ]
+    # 快速下落(尤其移动机位)时,相邻检测可能跨过整个筐口带,没有采样
+    # 落在带内。用 above->below 线段插值补虚拟检测参与 complete 判定,
+    # 几何口径与 crossing_x_at_y 一致;对外统计仍只报真实采样,保持
+    # "带内无采样视为通过"的原有语义。
+    near_above_for_check = near_above
+    near_above_synthetic = not near_above
+    if near_above_synthetic:
+        # 快速下落时带内无真实采样,插值补一个仅用于满足"存在接近点"。
+        # 斜线入射在筐口上方的横向偏移是自然几何,不单独设走廊门;
+        # 进筐验证由筐口平面上的 crossing_inside 承担。
+        interpolated_x = crossing_x_at_y(above, below, rim_y - 0.5 * rim_height)
+        if interpolated_x is not None:
+            near_above_for_check = [
+                {"x": interpolated_x, "y": rim_y - 0.5 * rim_height}
+            ]
+    transition_for_check = transition_points
+    if not transition_for_check:
+        synthetic = []
+        for depth in (-1.0, -0.25, 0.25):
+            y = rim_y + depth * rim_height
+            interpolated_x = crossing_x_at_y(above, below, y)
+            if interpolated_x is not None:
+                synthetic.append({"x": interpolated_x, "y": y})
+        transition_for_check = synthetic
     x_cross = crossing_x_at_y(above, below, rim_y)
     half_width = max(1.0, float(rim["width"]) / 2.0)
     crossing_inside = (
@@ -575,19 +599,32 @@ def _complete_rim_crossing(track, above, below, rim):
         float(rim["center_x"]) + half_width
     )
     transition_inside = sum(
-        _point_in_rim_corridor(point, rim) for point in transition_points
+        _point_in_rim_corridor(point, rim) for point in transition_for_check
     )
     post_sample = post_rim[:3]
+    # 穿网后的球会自然向外甩摆,越往下允许偏离筐口越宽(漏斗形),
+    # 否则把"穿网后甩出"误判为"未从筐口穿过"。
+    post_depth_line = rim_y + max(float(rim["width"]) * 0.35, rim_height * 0.5)
+    post_center_x = float(rim["center_x"])
+    post_half = max(1.0, float(rim["width"]) / 2.0)
+    post_width = max(1.0, float(rim["width"]))
+
+    def _post_in_funnel(point):
+        fall = max(0.0, point["y"] - post_depth_line)
+        allow = post_width * 0.35 + fall * 0.35
+        return abs(point["x"] - post_center_x) <= post_half + allow
+
     post_inside_count = sum(
-        _point_in_rim_corridor(point, rim, tolerance_ratio=0.35)
-        for point in post_sample
+        1 for point in post_sample if _post_in_funnel(point)
     )
     complete = bool(
         crossing_inside
-        and near_above
-        and _point_in_rim_corridor(near_above[-1], rim)
-        and transition_points
-        and transition_inside / len(transition_points) >= 0.70
+        # 接近段只验证"球曾在筐口上方"(存在性):斜线入射/擦板入射在
+        # 筐口上方的横向偏移是正常几何,位置证据由筐口平面的
+        # crossing_inside 与过渡段走廊承担,不再重复设卡。
+        and near_above_for_check
+        and transition_for_check
+        and transition_inside / len(transition_for_check) >= 0.60
         and len(post_rim) >= 2
         and post_inside_count >= 2
     )
@@ -596,7 +633,9 @@ def _complete_rim_crossing(track, above, below, rim):
         "post_rim_points": len(post_rim),
         "post_rim_corridor_points": len(post_inside),
         "transition_points": len(transition_points),
-        "transition_corridor_points": transition_inside,
+        "transition_corridor_points": (
+            sum(_point_in_rim_corridor(point, rim) for point in transition_points)
+        ),
         "crossing_inside_rim": crossing_inside,
     }
 
@@ -1003,9 +1042,17 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=2.0):
 
                 previous_y = below["y"]
                 rebounded = False
+                # 球已深入篮下之后的回升是落地反弹(进球的正常后续),
+                # 不算撞框反弹;只在篮筐附近平面内的回升才判为反弹信号。
+                rebound_zone_bottom = rim_y + max(
+                    2.5 * rim_height,
+                    2.5 * rim_width,
+                )
                 for point in later:
                     if point["time"] <= below["time"]:
                         continue
+                    if point["y"] >= rebound_zone_bottom:
+                        break
                     if point["y"] < previous_y - max(
                         rim_width * 0.25,
                         float(rim.get("height", 20)) * 0.18,

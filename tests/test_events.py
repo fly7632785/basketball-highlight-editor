@@ -439,7 +439,11 @@ class EventsTest(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["signals"]["net_motion_order"], "same_frame")
         self.assertTrue(candidates[0]["verification"]["net_support"])
-        self.assertEqual(candidates[0]["verdict"], "ambiguous")
+        # v2.12 语义:几何完整穿框 + 强网动支撑时,同时激活(same_frame)
+        # 不再阻止 made。移动机位/低采样率下球会在两帧之间穿过整张网,
+        # 顺序物理上不可分辨;此前要求 0.99 时序分导致真实进球永远
+        # 停留在 ambiguous。方向质量由 net_support 的 0.80 门槛把关。
+        self.assertEqual(candidates[0]["verdict"], "made")
 
     def test_refined_crossing_continues_after_incomplete_early_below_pair(self):
         records = [
