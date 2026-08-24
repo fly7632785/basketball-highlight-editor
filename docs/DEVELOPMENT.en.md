@@ -2,7 +2,7 @@
 
 [中文](DEVELOPMENT.md) · **English**
 
-This guide is for contributors changing code, protocols, algorithms, or UI. Read the root [`CONTRIBUTING.md`](../CONTRIBUTING.md) first, then the product contracts and architecture documents for the affected area.
+This guide is for contributors changing code, protocols, algorithms, or UI. Read the product contracts and architecture documents for the affected area.
 
 ## 1. Development environment
 
@@ -51,7 +51,6 @@ engine/python/adapters/       algorithm and export adapters
 src/basketball_highlight/     detection, event, trajectory, and review rules
 scripts/                      analysis, export, runtime, and mobile build scripts
 docs/architecture/            architecture, protocol, and database contracts
-design-system/                UI design system
 tests/                        Python tests
 apps/desktop/test/            desktop Flutter tests
 apps/mobile/test/             mobile Flutter tests
@@ -164,11 +163,11 @@ Fast and Standard are not separate products. Preserve:
 - no artificial speedup by limiting candidate count;
 - separate measurement of speed, recall, and error types on fixed videos.
 
-After changing parameters, add a dated benchmark and update [`research/ANALYSIS_MODES_V1.md`](research/ANALYSIS_MODES_V1.md). Do not turn one sample's timing into a universal promise.
+After changing parameters, add a dated benchmark and update [`benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md`](benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md) and the product decision documents. Do not turn one sample's timing into a universal promise.
 
 ## 7. UI changes
 
-The desktop UI source of truth is [`../design-system/courtside/MASTER.md`](../design-system/courtside/MASTER.md). For review-workspace changes, preserve:
+The desktop UI source of truth is [`../apps/desktop/lib/theme/app_theme.dart`](../apps/desktop/lib/theme/app_theme.dart) and the existing component implementation. For review-workspace changes, preserve:
 
 - the video as the primary area;
 - clear feedback for navigation, playback, and review state;

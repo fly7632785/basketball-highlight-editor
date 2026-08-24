@@ -7,7 +7,7 @@
 - Flutter / Dart；
 - Riverpod 项目状态；
 - go_router 页面路由；
-- Material 3 和 `design-system/courtside` 设计规范；
+- Material 3 和 `lib/theme/` 中的主题令牌；
 - media_kit 视频播放；
 - `engine/python` JSONL Engine。
 
@@ -45,4 +45,4 @@ flutter run -d macos
 - [`../../docs/architecture/ARCHITECTURE_V1.md`](../../docs/architecture/ARCHITECTURE_V1.md)
 - [`../../docs/architecture/ENGINE_PROTOCOL_V1.md`](../../docs/architecture/ENGINE_PROTOCOL_V1.md)
 - [`../../docs/DEVELOPMENT.md`](../../docs/DEVELOPMENT.md)
-- [`../../design-system/courtside/MASTER.md`](../../design-system/courtside/MASTER.md)
+- [`lib/theme/app_theme.dart`](lib/theme/app_theme.dart)

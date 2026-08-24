@@ -2,7 +2,7 @@
 
 **中文** · [English](DEVELOPMENT.en.md)
 
-这份文档面向修改代码、协议、算法或 UI 的贡献者。先阅读根目录 [`CONTRIBUTING.md`](../CONTRIBUTING.md)，再按变更范围阅读产品契约和架构文档。
+这份文档面向修改代码、协议、算法或 UI 的贡献者。请按变更范围阅读产品契约和架构文档。
 
 ## 1. 开发环境
 
@@ -51,7 +51,6 @@ engine/python/adapters/       算法脚本和导出适配
 src/basketball_highlight/     检测、事件、轨迹和审核规则
 scripts/                      分析、导出、运行时和移动端构建脚本
 docs/architecture/            架构、协议和数据库契约
-design-system/                UI 设计规范
 tests/                        Python 测试
 apps/desktop/test/            桌面 Flutter 测试
 apps/mobile/test/             移动 Flutter 测试
@@ -164,11 +163,11 @@ PYTHONPATH=src:scripts .venv/bin/python scripts/scan_video.py --help
 - 快速模式不能通过限制候选数量制造提速；
 - 速度、召回和错误类型要用固定视频分别测量。
 
-修改参数后，新增带日期的基准记录，并同步 [`research/ANALYSIS_MODES_V1.md`](research/ANALYSIS_MODES_V1.md)。不要把单样本耗时写成普遍保证。
+修改参数后，新增带日期的基准记录，并同步 [`benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md`](benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md) 和产品决策文档。不要把单样本耗时写成普遍保证。
 
 ## 7. UI 修改
 
-桌面 UI 以 [`../design-system/courtside/MASTER.md`](../design-system/courtside/MASTER.md) 为设计源。改动审核工作台时优先保证：
+桌面 UI 以 [`../apps/desktop/lib/theme/app_theme.dart`](../apps/desktop/lib/theme/app_theme.dart) 和现有组件实现为设计源。改动审核工作台时优先保证：
 
 - 视频区域占主要空间；
 - 候选切换、播放和审核状态有清晰反馈；

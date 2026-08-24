@@ -90,7 +90,7 @@ Do not edit JSON or SQLite directly; use the UI so review and export state remai
 
 ### Q8: What is the difference between Fast and Standard?
 
-Standard performs source-video refinement and favors quality. Fast uses a lower-cost proxy, skips refinement, and favors speed, so it may miss events. Review, manual range, and export semantics are the same. See [`research/ANALYSIS_MODES_V1.md`](research/ANALYSIS_MODES_V1.md).
+Standard performs source-video refinement and favors quality. Fast uses a lower-cost proxy, skips refinement, and favors speed, so it may miss events. Review, manual range, and export semantics are the same. See [`DECISIONS_V1.md`](DECISIONS_V1.md).
 
 ### Q9: Can I export or change modes while analysis is running?
 
@@ -144,4 +144,4 @@ The main costs are model inference, video decoding, and FFmpeg, not the JSONL se
 
 ### Q20: How do I report a security issue?
 
-Do not publish exploit details, video samples, secrets, or personal data in a public issue. Read the root [`SECURITY.md`](../SECURITY.md) and use GitHub private vulnerability reporting if enabled, or the repository's published security contact.
+Do not publish exploit details, video samples, secrets, or personal data in a public issue. Use GitHub private vulnerability reporting if enabled; otherwise contact the maintainers first to agree on a safe reporting channel.

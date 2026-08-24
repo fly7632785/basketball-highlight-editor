@@ -27,7 +27,7 @@
 | 分析记录 | 保存阶段耗时、缓存命中、设备和实际参数快照 | 能解释结果并验证性能改动 |
 | 快速模式开关 | 当前桌面入口默认可见，也可以用 `ENABLE_FAST_ANALYSIS=false` 隐藏 | 让发布构建可按质量闸门控制入口 |
 
-分析模式的完整参数、缓存和继承规则见 [`research/ANALYSIS_MODES_V1.md`](research/ANALYSIS_MODES_V1.md)。
+分析模式的产品规则、缓存和继承边界以本文件和当前运行时行为为准。
 
 ## 已吸收的开源思路
 
@@ -40,7 +40,7 @@
 | 体育集锦检测项目 | 运动触发、片段合并、前后时间窗口 | 用于候选去重和性能实验 |
 | `ai-sports-cut-agent` 等 Agent 项目 | 将分析、审核和导出分阶段组织 | 不直接引入云端 Agent 依赖 |
 
-完整研究来源和许可证边界见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+模型、数据和第三方依赖的许可证边界见 [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md)。
 
 ## 不属于当前发布前置的事项
 

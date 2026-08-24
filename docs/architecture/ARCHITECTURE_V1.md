@@ -153,7 +153,7 @@ V1 不实现完整移动端，但保留独立布局契约：
 
 设计源文件：
 
-`design-system/courtside/MASTER.md`
+`apps/desktop/lib/theme/app_theme.dart` 和 `apps/desktop/lib/theme/tokens.dart`
 
 产品覆盖规则：
 

@@ -136,7 +136,7 @@ An ROI that is too small can miss the ball trajectory; an ROI that is too large 
 - **Standard**: creates a proxy, performs a coarse scan, and refines windows against the source video; quality first.
 - **Fast**: uses a lower-cost proxy and skips source-video refinement; time first and may miss events.
 
-The mode is locked once analysis starts. Cancel the current job before switching modes. Rules, caching, and inheritance are documented in [`research/ANALYSIS_MODES_V1.md`](research/ANALYSIS_MODES_V1.md).
+The mode is locked once analysis starts. Cancel the current job before switching modes. Rules, caching, and inheritance are documented in [`DECISIONS_V1.md`](DECISIONS_V1.md).
 
 ## 5. Experimental Windows path
 

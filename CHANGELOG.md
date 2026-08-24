@@ -14,7 +14,7 @@
 ### Changed
 
 - 将 macOS 打包说明合并到 `docs/RELEASE.md`；
-- 将第三方许可证研究信息合并到 `docs/THIRD_PARTY_NOTICES.md`；
+- 增加模型、数据和第三方依赖的独立授权边界说明；
 - 将单样本分析基准移动到 `docs/benchmarks/`，与用户运行文档分开；
 - README 明确桌面端、Android 和 iOS 当前实现边界，不把移动端或二进制发布写成已完成。
 

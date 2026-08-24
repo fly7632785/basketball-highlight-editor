@@ -13,10 +13,8 @@ basketball-highlight-editor/
 ├── src/                            当前算法库（如存在）
 ├── scripts/                        当前算法脚本
 ├── data/                           本地研发数据，不进入正式项目目录
-├── docs/
-│   ├── architecture/
-│   └── research/
-└── design-system/
+└── docs/
+    └── architecture/
 ```
 
 ## 2. 用户项目目录

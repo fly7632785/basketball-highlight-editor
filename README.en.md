@@ -28,15 +28,15 @@ Import video  →  Analyze with AI  →  Review candidates  →  Export highligh
 
 ## A look at the interface
 
-The review workbench keeps the video, candidate list, and keep/exclude actions together so you can move through a set of candidates quickly:
+The review workbench keeps the video, candidate list, and keep/exclude actions together so you can move through a set of candidates quickly. The primary screenshots below use the dark theme:
 
-![Review workbench](capture/screenshot-20260813-161507.png)
+![Dark theme review workbench](capture/screenshot-20260813-150302.png)
 
 After review, filter by player or candidate range, then choose a merged export or separate clips:
 
-![Export screen](capture/screenshot-20260813-161649.png)
+![Dark theme export screen](capture/screenshot-20260813-150335.png)
 
-More import, analysis-range, and empty-state screens are collected in [`docs/SCREENSHOTS.en.md`](docs/SCREENSHOTS.en.md).
+The complete page and interaction guide, including a light-theme supplement, is in [`docs/SCREENSHOTS.en.md`](docs/SCREENSHOTS.en.md).
 
 ## What it feels like to use
 

@@ -22,14 +22,18 @@ data/labels/*
 third_party/
 third_party/*/weights/
 third_party/*/models/
-design-system/courtside/pages/
 
 # Local agent instructions and generated UI preview state.
 .agents/
 apps/desktop/.claude/
 apps/desktop/.codex/
+.claude/
+.social-publish/
 .superpowers/brainstorm/.last-*
 .superpowers/brainstorm/*/state/
 .superpowers/brainstorm/*/content/*.html
+
+# Local research checkouts are not part of the public source tree.
+.research/opensource-refs-*/
 /bin/
 /.zcode/

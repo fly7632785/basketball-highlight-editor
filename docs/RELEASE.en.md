@@ -15,7 +15,7 @@ The current repository should be described as source preview only. A successful 
 
 - `README.md` and `README.en.md`;
 - getting-started, FAQ, development, release, architecture, and protocol docs;
-- `LICENSE`, `NOTICE`, `CONTRIBUTING.md`, `SECURITY.md`, and `CODE_OF_CONDUCT.md`;
+- `LICENSE` and `NOTICE`;
 - dependency, model, and data-rights guidance;
 - local-use instructions for models, data, and screenshots.
 
@@ -58,7 +58,7 @@ Every error from `check_open_source.py` must be fixed before publication. Warnin
 | Demo videos/screenshots | Rights for people, teams, venues, and footage |
 | Android/iOS native libraries | Distribution terms for Rust, ONNX Runtime, and platform SDKs |
 
-If model or training-data rights cannot be proven, publish source only and ask users to provide their own model. See [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+If model or training-data rights cannot be proven, publish source only and ask users to provide their own model. See [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md).
 
 ## 3. macOS build
 

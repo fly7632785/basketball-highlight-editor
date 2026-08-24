@@ -15,7 +15,7 @@
 
 - `README.md` 和 `README.en.md`；
 - 入门、FAQ、开发、发布、架构和协议文档；
-- `LICENSE`、`NOTICE`、`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`；
+- `LICENSE` 和 `NOTICE`；
 - 依赖、模型和数据授权边界说明；
 - 模型、数据和截图的本地使用说明。
 
@@ -58,7 +58,7 @@ git diff --check
 | 演示视频/截图 | 人物、球队、场馆和画面的公开权利 |
 | Android/iOS 原生库 | Rust、ONNX Runtime 和平台 SDK 的分发条件 |
 
-如果模型或训练数据的权利无法证明，只发布源码，并要求使用者自行准备模型。详见 [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md) 和 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+如果模型或训练数据的权利无法证明，只发布源码，并要求使用者自行准备模型。详见 [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md)。
 
 ## 3. macOS 构建
 
