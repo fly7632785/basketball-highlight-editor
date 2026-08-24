@@ -1,38 +1,48 @@
 # Desktop App
 
-Flutter desktop application for V1. The UI talks to the local Python Engine through the JSON Lines protocol described in `docs/architecture/ENGINE_PROTOCOL_V1.md`.
+桌面端 Flutter 应用。UI 通过 JSONL 协议调用仓库内的 Python Engine，不直接操作 SQLite、检测 JSON 或 FFmpeg。
 
-## Current stack
+## 技术栈
 
-- Flutter / Dart
-- Riverpod `ProjectNotifier` session layer
-- go_router `StatefulShellRoute` with four desktop sections
-- Material 3 with project Design Tokens
-- JSON Lines connection to `engine/python`
+- Flutter / Dart；
+- Riverpod 项目状态；
+- go_router 页面路由；
+- Material 3 和 `design-system/courtside` 设计规范；
+- media_kit 视频播放；
+- `engine/python` JSONL Engine。
 
-## Application modules
+## 模块
 
-- `lib/app.dart`: application shell and theme selection
-- `lib/core/`: protocol client and app state
-- `lib/features/home/`: project entry and recent projects
-- `lib/features/import_video/`: video metadata and ROI setup
-- `lib/features/review/`: candidate review workspace
-- `lib/features/export/`: export actions and statistics
+- `lib/app.dart`：应用壳和主题；
+- `lib/core/`：协议客户端和会话状态；
+- `lib/features/home/`：项目入口和最近项目；
+- `lib/features/import_video/`：视频元数据、范围和 ROI；
+- `lib/features/review/`：候选审核工作台；
+- `lib/features/export/`：导出任务和统计。
 
-## Local development
+## 本地开发
 
-The project was generated with Flutter 3.44.8. From the repository root, use the checked-in development SDK path or place Flutter on `PATH`:
+从仓库根目录：
 
 ```bash
-cd <repo-root>/apps/desktop
-../../.tooling/flutter/bin/flutter analyze
-../../.tooling/flutter/bin/flutter test
-../../.tooling/flutter/bin/flutter build macos --debug
+cd apps/desktop
+flutter pub get
+flutter analyze
+flutter test
+flutter run -d macos
 ```
 
-The application modules follow:
+需要显式指定仓库运行时：
 
-- `docs/architecture/ARCHITECTURE_V1.md`
-- `docs/architecture/ENGINE_PROTOCOL_V1.md`
-- `design-system/courtside/MASTER.md`
-- `design-system/courtside/pages/review.md`
+```bash
+BHE_REPO_ROOT="$(pwd)/../.." \
+BHE_PYTHON="$(pwd)/../../.venv/bin/python" \
+flutter run -d macos
+```
+
+相关文档：
+
+- [`../../docs/architecture/ARCHITECTURE_V1.md`](../../docs/architecture/ARCHITECTURE_V1.md)
+- [`../../docs/architecture/ENGINE_PROTOCOL_V1.md`](../../docs/architecture/ENGINE_PROTOCOL_V1.md)
+- [`../../docs/DEVELOPMENT.md`](../../docs/DEVELOPMENT.md)
+- [`../../design-system/courtside/MASTER.md`](../../design-system/courtside/MASTER.md)

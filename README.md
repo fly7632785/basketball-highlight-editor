@@ -1,93 +1,224 @@
 # Basketball Highlight Editor
 
-固定机位篮球比赛视频的进球候选识别、人工审核和片段导出工具。
+> 固定机位篮球比赛视频的本地进球候选识别、人工审核与集锦导出工具。
 
-## 当前阶段
+**中文** · [English](README.en.md)
 
-项目已从算法调研进入 **V1 桌面产品工程化阶段**：Flutter macOS UI 与 Python Engine 已完成本地最小闭环，可执行“导入视频 → 提取预览帧 → 框选 ROI → 分析 → 审核 → 单独/合并导出”。
+## 项目状态
 
-## 已确定的产品边界
+**当前版本：V1 源码预览版。** 项目适合开发者在本地准备依赖后运行，不是开箱即用的最终安装包。桌面端是当前主产品路径；移动端是独立的实验性工程，Android 已有本地原生分析链路，iOS 的本地 AI 分析仍需要接入最终 Rust/ONNX Runtime 产物。
 
-- 固定机位
-- 单篮筐
-- 长视频批量扫描
-- 自动生成疑似进球片段
-- 分析结果默认保留，用户只需剔除误检后合并导出或单独导出
-- macOS、Windows 优先，后续适配 iOS、Android
+| 端 | 当前状态 | 适合做什么 |
+|---|---|---|
+| macOS Desktop | 主路径，支持完整导入 → 分析 → 审核 → 导出闭环 | 本地处理长视频 |
+| Windows Desktop | 兼容路径，提供运行时准备和打包脚本，仍需发布验收 | 开发与实验 |
+| Android Mobile | 独立 Flutter App；原生抽帧、Rust/ONNX 分析、审核和导出已接入，当前主要验证 `arm64-v8a` | 移动端分析与审核实验 |
+| iOS Mobile | 项目、播放、审核和导出可用；本地分析等待原生库链接 | 移动端 UI 与媒体流程验证 |
 
-## 文档入口
+> **重要：** 模型权重、输入视频、训练数据、FFmpeg 构建和第三方依赖不自动继承本项目的 MIT License。公开或分发前必须分别核验授权。
 
-- `docs/DECISIONS_V1.md`：当前产品、算法和工程决策，冲突时以此为准
-- `docs/REQUIREMENTS_V1.md`：V1 范围、验收状态和未完成项
-- `docs/architecture/ARCHITECTURE_V1.md`：系统边界和模块职责
-- `docs/architecture/ENGINE_PROTOCOL_V1.md`：Flutter ↔ Python Engine JSONL 契约
-- `docs/architecture/SQLITE_SCHEMA_V1.sql`：项目数据库结构
-- `docs/USER_FLOW_V1.md`：用户流程和异常路径
-- `docs/MACOS_PACKAGING_V1.md`：macOS 打包与运行时边界
-- `docs/research/ANALYSIS_MODES_V1.md`：快速/标准分析模式决策
-- `docs/research/ANALYSIS_MODE_BENCHMARK_20260812.md`：快速/标准模式实测基准
-- `design-system/courtside/MASTER.md`：当前 UI 设计规范
+## 功能概览
 
-`docs/research/` 其余文件是历史研究和实验记录，不作为当前实现契约。`third_party/` 是只读参考仓库，`data/` 是本地研发数据。
+- 导入视频并读取时长、分辨率、帧率、编码和文件大小；原视频默认只保存引用，不复制。
+- 自动建议篮筐 ROI（感兴趣区域），失败时支持手动框选和调整。
+- 标准/快速两档分析：标准质量优先，快速速度优先且可能漏检。
+- 显示分析阶段、进度、耗时，支持取消、失败重试和应用重启后的任务恢复提示。
+- 候选审核工作台支持原视频播放、候选切换、保留/排除、备注、时间范围调整和手动补漏。
+- 候选默认保留；只有排除的候选不会进入导出，避免用户逐条点击“确认”。
+- 支持分别导出和按事件时间合并导出，并保存导出记录和统计信息。
+- 桌面端使用 SQLite 保存项目、ROI、候选、审核、任务和导出状态。
 
-## 当前可验证命令
+## 适用范围
 
-### macOS
+当前算法针对**固定机位、单篮筐、单视频**优化，目标是生成高召回的“疑似进球”候选，再由用户审核。它不保证自动结果等于裁判结论，也不针对移动镜头、多篮筐、实时直播、云端协作或零误检场景承诺效果。
+
+## 架构
+
+```text
+Desktop Flutter UI ── JSONL ──> Python Engine ──> SQLite
+                                     ├── OpenCV / Ultralytics：采样与检测
+                                     ├── Python analysis：候选、轨迹与审核规则
+                                     └── FFmpeg / FFprobe：代理、预览与导出
+
+Mobile Flutter UI ── platform channels ──> Android/iOS media + Rust/ONNX Runtime
+```
+
+桌面端 UI 不直接读写 SQLite、检测 JSON 或调用 FFmpeg；Engine 通过 JSONL（JSON Lines，逐行 JSON 消息）协议提供能力。移动端不启动桌面 Python Engine，使用 `packages/bhe_core` 的数据模型和平台原生能力。
+
+- [桌面架构](docs/architecture/ARCHITECTURE_V1.md)
+- [Engine 协议](docs/architecture/ENGINE_PROTOCOL_V1.md)
+- [移动端 Runtime](docs/architecture/MOBILE_RUNTIME_V1.md)
+- [项目目录与生命周期](docs/architecture/PROJECT_LAYOUT_V1.md)
+
+## 环境要求
+
+### 桌面端
+
+- macOS 优先；Windows 仍是实验性兼容路径；
+- Python 3.11；
+- Flutter stable，当前开发基线为 3.44.8；
+- `ffmpeg`、`ffprobe`；
+- 与当前检测流程兼容、且你有权使用的模型；
+- 分析和导出需要额外临时磁盘空间。
+
+Python 依赖定义在 [`requirements.txt`](requirements.txt)，开发依赖定义在 [`requirements-dev.txt`](requirements-dev.txt)。
+
+### 移动端
+
+- Flutter stable 和 Android Studio/Xcode 对应的原生工具链；
+- Android 原生分析当前只验证 `arm64-v8a`，还需要 Rust、Android NDK、ONNX Runtime Android 库；
+- iOS 本地分析还需要 Rust iOS targets 和 ONNX Runtime XCFramework；
+- 移动端原生库不应把开发机路径或未核验二进制直接提交到公开发布物。
+
+## 快速开始：桌面端
+
+以下命令适用于 macOS/Linux shell；Windows 见 [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) 的 PowerShell 小节。
+
+### 1. 创建 Python 环境
 
 ```bash
-.venv/bin/python -m pytest -q
-PYTHONPATH=engine/python .venv/bin/python -m basketball_engine
-
-cd apps/desktop
-PATH="$PWD/../../.tooling/flutter/bin:$PATH" flutter analyze
-PATH="$PWD/../../.tooling/flutter/bin:$PATH" flutter test
-PATH="$PWD/../../.tooling/flutter/bin:$PATH" flutter build macos --debug
-```
-
-### Windows
-
-**一键搭建**（自动检测/安装工具链、建 venv、装依赖、下载 FFmpeg 到 `bin/`、自检）：
-
-```powershell
-git clone https://gitee.com/jafir-h/basketball-highlight-editor.git
+git clone <repository-url>
 cd basketball-highlight-editor
-powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1
+
+python3.11 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements-dev.txt
 ```
 
-脚本幂等可重跑；已具备部分环境时可加 `-SkipToolchain` 只做项目内设置，`-Yes` 跳过 VS 安装确认。需先开启 Windows 开发者模式（Flutter 插件构建的符号链接要求）。
+### 2. 准备 FFmpeg 和模型
 
-**手动方式**（前置：Visual Studio 2022 含 C++ 桌面开发、Python 3.12、Flutter stable、FFmpeg）：
+macOS 开发环境可以使用 Homebrew：
 
-```powershell
-python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt
+```bash
+brew install ffmpeg
+```
 
-.venv\Scripts\python -m pytest -q
-$env:PYTHONPATH="engine/python"; .venv\Scripts\python -m basketball_engine
+将你有权使用的模型放在：
 
-cd apps\desktop
+```text
+models/bball_model.pt
+```
+
+模型缺失时，Engine 不会从未知地址静默下载。模型和数据授权见 [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md) 与 [`models/README.md`](models/README.md)。
+
+### 3. 检查运行时
+
+```bash
+.venv/bin/python scripts/check_runtime.py \
+  --root . \
+  --python .venv/bin/python \
+  --model models/bball_model.pt
+```
+
+看到 `runtime: OK` 后再启动 UI。该检查只验证环境完整性，不验证算法准确率。
+
+### 4. 启动桌面端
+
+```bash
+cd apps/desktop
+flutter pub get
+flutter run -d macos
+```
+
+第一次使用：新建项目 → 选择视频 → 检查元数据 → 自动建议或手动框选 ROI → 选择分析模式 → 分析 → 审核候选 → 导出。
+
+更完整的首次运行、Windows 和故障排查步骤见 [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) 和 [`docs/FAQ.md`](docs/FAQ.md)。
+
+## 分析模式
+
+| 模式 | 处理方式 | 建议 |
+|---|---|---|
+| 标准 | 代理粗扫后回到原视频精筛 | 首次分析、重要比赛、不能接受漏检时使用 |
+| 快速 | `640×480 / 3 FPS` 低成本代理，跳过原视频精筛 | 先快速浏览，接受可能漏检时使用 |
+
+两种模式使用相同的审核、手动调整和导出语义。快速模式不承诺固定耗时或准确率；当前单个约 4.6 分钟样本的冷启动记录为标准 `75.73s`、快速 `42.07s`，仅用于说明该样本的速度差异，不能代表所有视频。详见 [`docs/research/ANALYSIS_MODES_V1.md`](docs/research/ANALYSIS_MODES_V1.md) 和 [`docs/benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md`](docs/benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md)。
+
+可以在构建时隐藏快速模式入口：
+
+```bash
+flutter run -d macos --dart-define=ENABLE_FAST_ANALYSIS=false
+```
+
+## 单独调试 Python Engine
+
+桌面端会自动启动 Engine。需要调试协议时，可手动启动：
+
+```bash
+PYTHONPATH=engine/python .venv/bin/python -m basketball_engine
+```
+
+Engine 从 stdin 读取 JSONL 请求、向 stdout 输出 JSONL 响应，stderr 仅用于诊断。协议命令、事件和错误码见 [`docs/architecture/ENGINE_PROTOCOL_V1.md`](docs/architecture/ENGINE_PROTOCOL_V1.md)。
+
+## 移动端开发
+
+```bash
+cd apps/mobile
+flutter pub get
 flutter analyze
 flutter test
-flutter build windows --debug    # 产物 build\windows\x64\runner\Debug\BHE.exe
+flutter build apk --debug
 ```
 
-Windows 平台说明：
-
-- 引擎通过仓库根 `.venv`（`findPython` Windows 分支）或 `BHE_PYTHON` 环境变量定位；FFmpeg 放入仓库根 `bin/` 即可被子进程 PATH 感知。
-- 窗口采用自绘标题栏（`TitleBarStyle.hidden`，仅 Windows），外观跟随应用主题。
-- 全流程（导入 → 自动 ROI → 分析 → 审核 → 导出）已在 Windows 10 实测跑通；引擎级端到端冒烟脚本可参考本地 `%TEMP%` 下的验证记录。
-- 发布运行时打包脚本：`scripts/prepare_windows_runtime.ps1`（Python + 引擎 + 模型 + FFmpeg 便携目录）。
-
-运行时检查：
+没有原生 Runtime 产物时，Android UI 仍可构建，但点击分析会明确返回 `NATIVE_RUNTIME_UNAVAILABLE`，不会伪造候选。要构建 Android 原生分析库：
 
 ```bash
-.venv/bin/python scripts/check_runtime.py --root . --python .venv/bin/python
+export BHE_ANDROID_NDK="$HOME/Library/Android/sdk/ndk/<version>"
+export BHE_ORT_ANDROID_DIR="/path/to/onnxruntime-android"
+rustup target add aarch64-linux-android
+../../scripts/build_mobile_runtime.sh
+flutter build apk --release
 ```
 
-导出人工审核训练数据（默认只导出已审核候选）：
+移动端完整边界和 iOS Runtime 准备方式见 [`apps/mobile/README.md`](apps/mobile/README.md) 与 [`docs/architecture/MOBILE_RUNTIME_V1.md`](docs/architecture/MOBILE_RUNTIME_V1.md)。
+
+## 测试与质量检查
 
 ```bash
-.venv/bin/python scripts/export_review_dataset.py /path/to/project --csv
+# 源码公开前检查：只检查 Git 跟踪内容和敏感路径
+python3 scripts/check_open_source.py
+
+# Python 测试
+.venv/bin/python -m pytest -q
+
+# 桌面 Flutter
+cd apps/desktop
+flutter analyze
+flutter test
+
+# 移动端 Flutter
+cd ../mobile
+flutter analyze
+flutter test
 ```
 
-本地闭环记录见 `docs/LOCAL_E2E_V1.md`。macOS 运行时准备和分发边界见 `docs/MACOS_PACKAGING_V1.md`；当前 Release `.app` 构建成功不等于已经完成可分发打包。
+其中移动端原生分析、模型推理和真实视频准确率不由普通单元测试替代，发布前需要在目标设备上单独验收。
+
+## 打包边界
+
+`flutter build macos --release` 或 Windows Release 构建成功，不等于最终用户可以安装。可分发桌面包还需要便携 Python、依赖、FFmpeg/FFprobe、已核验授权的模型、许可证 notices、代码签名、公证和干净机器验证。
+
+macOS 运行时准备与构建命令集中在 [`docs/RELEASE.md`](docs/RELEASE.md)；Windows 脚本属于实验性兼容路径。移动端 Android/iOS 的原生库准备见 [`docs/architecture/MOBILE_RUNTIME_V1.md`](docs/architecture/MOBILE_RUNTIME_V1.md)。
+
+## 文档导航
+
+- **开始使用：** [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) · [`docs/FAQ.md`](docs/FAQ.md)
+- **开发贡献：** [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- **架构参考：** [`docs/README.md`](docs/README.md) · [`docs/architecture/`](docs/architecture/)
+- **产品契约：** [`docs/DECISIONS_V1.md`](docs/DECISIONS_V1.md) · [`docs/REQUIREMENTS_V1.md`](docs/REQUIREMENTS_V1.md) · [`docs/USER_FLOW_V1.md`](docs/USER_FLOW_V1.md)
+- **开源发布：** [`docs/RELEASE.md`](docs/RELEASE.md) · [`docs/OPEN_SOURCE_AUDIT.md`](docs/OPEN_SOURCE_AUDIT.md) · [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) · [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md)
+- **社区规则：** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) · [`SECURITY.md`](SECURITY.md) · [`CHANGELOG.md`](CHANGELOG.md) · [`LICENSE`](LICENSE)
+
+## 隐私与数据安全
+
+- 原始视频默认只保存路径、元数据和可选指纹，不复制、不上传；
+- 分析、预览、审核和导出默认在本地完成；
+- 真实比赛视频、球员画面、球队标识、标注和导出文件不要提交到公开仓库；
+- 模型权重、训练数据、FFmpeg 和第三方依赖必须独立核验授权。
+
+## 贡献
+
+欢迎提交问题、测试反馈和聚焦明确的小范围修复。提交前请阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)，不要提交视频、模型、截图、密钥、个人路径或构建产物。
+
+## 许可证
+
+源码采用 [MIT License](LICENSE)。该许可证不自动覆盖模型权重、训练数据、输入视频、FFmpeg 构建产物或第三方依赖；分发前请阅读 [`NOTICE`](NOTICE) 和 [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md)。
