@@ -2197,18 +2197,25 @@ class _CandidateAnnotationPainter extends CustomPainter {
               .toList()
         : <Offset>[];
     if (points.length >= 2) {
-      final path = Path()..moveTo(points.first.dx, points.first.dy);
-      for (final point in points.skip(1)) {
-        path.lineTo(point.dx, point.dy);
+      final isCoarse = overlay['source'] == 'coarse_crossing';
+      final trajectoryPaint = Paint()
+        ..color = const Color(0xFFFFB454)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0
+        ..strokeCap = StrokeCap.round;
+      if (isCoarse) {
+        // 粗扫候选只有起止两个检测点,连线是估算:用虚线与精化的
+        // 实测轨迹区分,避免被误读为实测弧线。
+        for (var i = 0; i + 1 < points.length; i++) {
+          _drawDashedLine(canvas, points[i], points[i + 1], trajectoryPaint);
+        }
+      } else {
+        final path = Path()..moveTo(points.first.dx, points.first.dy);
+        for (final point in points.skip(1)) {
+          path.lineTo(point.dx, point.dy);
+        }
+        canvas.drawPath(path, trajectoryPaint);
       }
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = const Color(0xFFFFB454)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0
-          ..strokeCap = StrokeCap.round,
-      );
     }
 
     final crossing = overlay['crossing'];
@@ -2865,6 +2872,8 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
   Player? _player;
   VideoController? _controller;
   StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<bool>? _playingSubscription;
+  bool _playbackRequested = false;
   late int _startMs;
   late int _endMs;
   late final TextEditingController _startController;
@@ -2909,6 +2918,13 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
           setState(() => _positionMs = next);
         }
       });
+      _playingSubscription = player.stream.playing.listen((playing) {
+        // 防自动播放闸:未经用户请求的播放立即暂停,避免"界面没在
+        // 播放却有声音"。
+        if (playing && !_playbackRequested && mounted && identical(player, _player)) {
+          unawaited(player.pause());
+        }
+      });
       await player.open(Media(Uri.file(path).toString()), play: false);
       // 等媒体元数据就绪后再 seek:open 后立即 seek 在加载较慢时
       // (Windows 软件解码)会被丢弃,导致播放从 0 开始而非片段起点。
@@ -2928,6 +2944,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
   @override
   void dispose() {
     unawaited(_positionSubscription?.cancel());
+    unawaited(_playingSubscription?.cancel());
     final player = _player;
     _player = null;
     unawaited(() async {
@@ -2979,8 +2996,10 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
     final player = _player;
     if (player == null) return;
     if (player.state.playing) {
+      _playbackRequested = false;
       await player.pause();
     } else {
+      _playbackRequested = true;
       await player.play();
     }
   }

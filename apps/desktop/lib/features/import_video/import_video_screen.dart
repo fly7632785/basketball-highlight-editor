@@ -51,6 +51,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   bool _netUserEdited = false;
   bool _editingNet = false;
   int _analysisStartMs = 0;
+  bool _rangeTouched = false;
   int _analysisEndMs = 0;
   int _beforeSeconds = 6;
   int _afterSeconds = 3;
@@ -107,8 +108,12 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     _netUserEdited = state.netRoi != null;
     _hoopBbox = state.hoopBbox;
     _editingNet = false;
-    _analysisStartMs = _analysisStart(state);
-    _analysisEndMs = _analysisEnd(state);
+    // 导入流程(含自动识别)在后台 await 期间用户可能已调整分析范围,
+    // 完成后的状态同步不得覆盖用户手选的范围。
+    if (!_rangeTouched) {
+      _analysisStartMs = _analysisStart(state);
+      _analysisEndMs = _analysisEnd(state);
+    }
     _beforeSeconds = 6;
     _afterSeconds = 3;
     _analysisMode = state.analysisMode;
@@ -142,6 +147,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       final mode = draft['analysis_mode']?.toString();
       _analysisMode = mode == 'fast' ? 'fast' : 'standard';
       _netUserEdited = net != null;
+      // 草稿范围成为新基线,用户之后的调整重新生效。
+      _rangeTouched = range?['start_ms'] != null || range?['end_ms'] != null;
     });
   }
 
@@ -282,6 +289,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       // 元数据预检失败时仍交给正式导入流程处理。
     }
     final previousVideoId = existingState.video?['id']?.toString();
+    _rangeTouched = false;
     await ref.read(projectProvider.notifier).selectVideo(file.path);
     if (!mounted) return;
     final importedState = ref.read(projectProvider);
@@ -377,6 +385,15 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     if (_step == 2 && next != 2) _stopPreviewPlayback();
     setState(() => _step = next);
     await _persistDraft(step: next);
+    // 进入检测区域步骤时,标记画面跟随分析范围起点,而不是停在片头。
+    if (next == 2 && _analysisStartMs > 0) {
+      final state = ref.read(projectProvider);
+      if (state.previewTimeMs < _analysisStartMs) {
+        ref
+            .read(projectProvider.notifier)
+            .setPreviewTimeOnly(_analysisStartMs);
+      }
+    }
   }
 
   Future<void> _back() async {
@@ -467,6 +484,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       _showExistingDraft = false;
       _netUserEdited = false;
       _editingNet = false;
+      _rangeTouched = false;
       _syncFromState(next);
       setState(() => _step = 1);
     });
@@ -676,6 +694,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
             setState(() {
               _analysisStartMs = start;
               _analysisEndMs = end;
+              _rangeTouched = true;
             });
             unawaited(_persistDraft());
           },
@@ -693,8 +712,11 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           enabled: state.video != null && !busy,
           aspectRatio: sourceWidth / sourceHeight,
           onEditNetChanged: (value) => setState(() => _editingNet = value),
-          onPreviewTimeChanged: (timeMs) =>
-              unawaited(_refreshPreviewAt(timeMs)),
+          onPreviewTimeChanged: (timeMs) {
+            // 检测区域步骤由播放器即时 seek 呈现,这里只同步时间到
+            // 状态与草稿,不再触发引擎抽帧(大视频上每次抽帧 1-2 秒)。
+            ref.read(projectProvider.notifier).setPreviewTimeOnly(timeMs);
+          },
           onRefreshPreview: () =>
               unawaited(_refreshPreviewAt(state.previewTimeMs)),
           onPreviewPlaybackToggled: _togglePreviewPlayback,
@@ -1013,7 +1035,7 @@ class _AnalysisStep extends StatelessWidget {
   }
 }
 
-class _DetectionStep extends StatelessWidget {
+class _DetectionStep extends StatefulWidget {
   const _DetectionStep({
     required this.state,
     required this.hoopBbox,
@@ -1046,8 +1068,150 @@ class _DetectionStep extends StatelessWidget {
   final VoidCallback onResetNet;
 
   @override
+  State<_DetectionStep> createState() => _DetectionStepState();
+}
+
+class _DetectionStepState extends State<_DetectionStep> {
+  Player? _player;
+  VideoController? _controller;
+  StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<bool>? _playingSubscription;
+  bool _playerReady = false;
+  bool _playing = false;
+  bool _playingRequested = false;
+  int _lastSyncedMs = -1;
+
+  String? get _videoPath => widget.state.video?['source_path']?.toString();
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_openVideo());
+  }
+
+  @override
+  void dispose() {
+    // 组件卸载后纹理不再渲染,此时销毁是安全的(见 review 页同类处理)。
+    unawaited(_positionSubscription?.cancel());
+    unawaited(_playingSubscription?.cancel());
+    final player = _player;
+    _player = null;
+    _controller = null;
+    unawaited(() async {
+      if (player == null) return;
+      try {
+        await player.stop();
+      } catch (_) {}
+      try {
+        await player.dispose();
+      } catch (_) {}
+    }());
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DetectionStep oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.state.video?['source_path']?.toString() != _videoPath) {
+      unawaited(_openVideo());
+      return;
+    }
+    // 外部(进入步骤/自动识别)更新了标记画面时间时,播放器跟随 seek。
+    final previewMs = widget.state.previewTimeMs;
+    if (_playerReady && previewMs != _lastSyncedMs) {
+      _lastSyncedMs = previewMs;
+      unawaited(_player!.seek(Duration(milliseconds: previewMs)));
+    }
+    if (widget.previewPlaying != oldWidget.previewPlaying) {
+      _syncPlaying(widget.previewPlaying);
+    }
+  }
+
+  Future<void> _openVideo() async {
+    final path = _videoPath;
+    await _positionSubscription?.cancel();
+    await _playingSubscription?.cancel();
+    if (!mounted) return;
+    setState(() => _playerReady = false);
+    if (path == null || path.isEmpty || !File(path).existsSync()) return;
+    try {
+      if (_player == null) {
+        _player = Player();
+        _controller = VideoController(
+          _player!,
+          configuration: VideoControllerConfiguration(
+            enableHardwareAcceleration: !Platform.isWindows,
+          ),
+        );
+      }
+      _positionSubscription = _player!.stream.position.listen((position) {
+        if (!mounted || !_playing) return;
+        _lastSyncedMs = position.inMilliseconds;
+        widget.onPreviewTimeChanged(position.inMilliseconds);
+      });
+      _playingSubscription = _player!.stream.playing.listen((playing) {
+        if (!mounted) return;
+        // 防自动播放闸:media_kit 偶尔在 open/seek 后意外触发播放,
+        // 造成"界面没在播放却有声音"。未经用户请求的播放立即暂停。
+        if (playing && !_playingRequested) {
+          unawaited(_player!.pause());
+          return;
+        }
+        setState(() => _playing = playing);
+      });
+      await _player!.open(Media(Uri.file(path).toString()), play: false);
+      final target = widget.state.previewTimeMs;
+      if (target > 0) await _player!.seek(Duration(milliseconds: target));
+      _lastSyncedMs = target;
+      if (mounted) setState(() => _playerReady = true);
+    } catch (_) {
+      // 播放器创建/打开失败时回退到引擎抽帧预览。
+      _player = null;
+      _controller = null;
+      if (mounted) setState(() => _playerReady = false);
+    }
+  }
+
+  void _syncPlaying(bool playing) {
+    final player = _player;
+    if (player == null) return;
+    if (playing) {
+      unawaited(player.play());
+    } else {
+      unawaited(player.pause());
+    }
+  }
+
+  void _seekTo(int timeMs) {
+    final player = _player;
+    if (player == null) return;
+    _lastSyncedMs = timeMs;
+    unawaited(player.seek(Duration(milliseconds: timeMs)));
+    widget.onPreviewTimeChanged(timeMs);
+  }
+
+  void _togglePlaying() {
+    final player = _player;
+    if (player == null || !_playerReady) return;
+    if (_playing) {
+      _playingRequested = false;
+      unawaited(player.pause());
+    } else {
+      final duration =
+          (widget.state.video?['duration_ms'] as num?)?.toInt() ?? 0;
+      if (duration > 0 && widget.state.previewTimeMs >= duration) {
+        _lastSyncedMs = 0;
+        unawaited(player.seek(Duration.zero));
+      }
+      _playingRequested = true;
+      unawaited(player.play());
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final state = widget.state;
     return _InfoPanel(
       title: '检测区域',
       icon: LucideIcons.target,
@@ -1072,27 +1236,33 @@ class _DetectionStep extends StatelessWidget {
             const SizedBox(height: Spacing.sm),
           ],
           _RoiCanvas(
-            enabled: enabled && !state.previewRefreshing,
+            enabled: widget.enabled && !state.previewRefreshing,
+            videoController: _playerReady ? _controller : null,
             previewPath: state.previewPath,
-            aspectRatio: aspectRatio,
-            roi: editingNet ? netRoi : roi,
-            secondaryRoi: editingNet ? roi : netRoi,
-            activeColor: editingNet ? Colors.white : c.orange,
-            secondaryColor: editingNet ? c.orange : Colors.white,
-            activeLabel: editingNet ? '篮网检测区' : '投篮分析区',
-            secondaryLabel: editingNet ? '投篮分析区' : '篮网检测区',
-            onRefreshPreview: onRefreshPreview,
-            onChanged: onChanged,
+            aspectRatio: widget.aspectRatio,
+            roi: widget.editingNet ? widget.netRoi : widget.roi,
+            secondaryRoi: widget.editingNet ? widget.roi : widget.netRoi,
+            activeColor: widget.editingNet ? Colors.white : c.orange,
+            secondaryColor: widget.editingNet ? c.orange : Colors.white,
+            activeLabel: widget.editingNet ? '篮网检测区' : '投篮分析区',
+            secondaryLabel: widget.editingNet ? '投篮分析区' : '篮网检测区',
+            onRefreshPreview: widget.onRefreshPreview,
+            onChanged: widget.onChanged,
             onEditComplete: () {},
           ),
           const SizedBox(height: Spacing.sm),
           _PreviewTimeControls(
             timeMs: state.previewTimeMs,
             durationMs: (state.video?['duration_ms'] as num?)?.toInt() ?? 0,
-            enabled: enabled && !state.roiDetecting && !state.previewRefreshing,
-            playing: previewPlaying,
-            onStep: onPreviewTimeChanged,
-            onTogglePlayback: onPreviewPlaybackToggled,
+            enabled: widget.enabled &&
+                !state.roiDetecting &&
+                !state.previewRefreshing,
+            playing: _playing,
+            onStep: _playerReady
+                ? _seekTo
+                : (timeMs) => widget.onPreviewTimeChanged(timeMs),
+            onTogglePlayback:
+                _playerReady ? _togglePlaying : widget.onPreviewPlaybackToggled,
           ),
           if (state.previewRefreshing) ...[
             const SizedBox(height: Spacing.xs),
@@ -1123,20 +1293,24 @@ class _DetectionStep extends StatelessWidget {
                 index: '1',
                 label: '投篮分析区',
                 color: c.orange,
-                selected: !editingNet,
-                onPressed: enabled ? () => onEditNetChanged(false) : null,
+                selected: !widget.editingNet,
+                onPressed: widget.enabled
+                    ? () => widget.onEditNetChanged(false)
+                    : null,
               ),
               const SizedBox(width: Spacing.sm),
               _CalibrationTargetButton(
                 index: '2',
                 label: '篮网检测区',
                 color: Colors.white,
-                selected: editingNet,
-                onPressed: enabled ? () => onEditNetChanged(true) : null,
+                selected: widget.editingNet,
+                onPressed: widget.enabled
+                    ? () => widget.onEditNetChanged(true)
+                    : null,
               ),
               const Spacer(),
               TextButton.icon(
-                onPressed: enabled ? onResetNet : null,
+                onPressed: widget.enabled ? widget.onResetNet : null,
                 icon: const Icon(Icons.restart_alt_rounded, size: 16),
                 label: const Text('重置篮网区'),
               ),
@@ -1144,7 +1318,7 @@ class _DetectionStep extends StatelessWidget {
           ),
           const SizedBox(height: Spacing.xs),
           Text(
-            editingNet
+            widget.editingNet
                 ? '当前编辑白色篮网区域：覆盖篮圈下方到网底，尽量不要包含篮板、球员或地面。'
                 : '当前编辑橙色投篮分析区域：覆盖来球轨迹、篮圈和篮网下方的落球范围。',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -2381,10 +2555,12 @@ class _RoiCanvas extends StatefulWidget {
     required this.onRefreshPreview,
     required this.onChanged,
     required this.onEditComplete,
+    this.videoController,
   });
 
   final bool enabled;
   final String? previewPath;
+  final VideoController? videoController;
   final double aspectRatio;
   final Rect? roi;
   final Rect? secondaryRoi;
@@ -2534,7 +2710,14 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                               : null,
                           child: Stack(
                             children: [
-                              if (widget.previewPath != null &&
+                              if (widget.videoController != null)
+                                Positioned.fill(
+                                  child: Video(
+                                    controller: widget.videoController!,
+                                    controls: NoVideoControls,
+                                  ),
+                                )
+                              else if (widget.previewPath != null &&
                                   File(widget.previewPath!).existsSync())
                                 Positioned.fill(
                                   child: Image.file(

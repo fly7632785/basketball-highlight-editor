@@ -418,6 +418,18 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   Future<bool> refreshPreview() => refreshPreviewAt(state.previewTimeMs);
 
+  /// 仅更新标记画面时间(检测区域步骤由播放器 seek 即时呈现),
+  /// 不触发引擎抽帧。返回钳位后的时间。
+  int setPreviewTimeOnly(int timeMs) {
+    final video = state.video;
+    final duration = (video?['duration_ms'] as num?)?.toInt() ?? 0;
+    final target = timeMs.clamp(0, duration > 0 ? duration : 0).toInt();
+    if (!_disposed) {
+      state = state.copyWith(previewTimeMs: target);
+    }
+    return target;
+  }
+
   Future<bool> refreshPreviewAt(int timeMs) async {
     final video = state.video;
     if (video == null || state.previewRefreshing) return false;
