@@ -31,7 +31,7 @@ from .protocol import ProtocolError
 from .storage import ProjectStore, new_id
 
 
-ANALYSIS_ALGORITHM_VERSION = "python-v2.10-white-net-trajectory"
+ANALYSIS_ALGORITHM_VERSION = "python-v2.12-white-net-trajectory"
 
 
 class EngineService:
@@ -550,6 +550,7 @@ class EngineService:
             duration = float(payload.get("duration", 20.0))
             max_samples = int(payload.get("max_samples", 12))
             confidence = float(payload.get("confidence", 0.05))
+            start_ms = max(0.0, float(payload.get("start_ms", 0.0)))
         except (TypeError, ValueError) as exc:
             raise ProtocolError("INVALID_REQUEST", "自动 ROI 参数格式无效") from exc
         if (
@@ -561,6 +562,7 @@ class EngineService:
             or not math.isfinite(confidence)
             or confidence <= 0
             or confidence >= 1
+            or not math.isfinite(start_ms)
         ):
             raise ProtocolError("INVALID_REQUEST", "自动 ROI 参数必须在有效范围内")
 
@@ -573,6 +575,8 @@ class EngineService:
             str(source),
             "--model",
             str(model_path),
+            "--start",
+            str(start_ms / 1000.0),
             "--output",
             str(output),
             "--sample-fps",
@@ -1064,6 +1068,62 @@ class EngineService:
             retry_payload["output_path"] = checkpoint["output_path"]
         return self.start_export(retry_payload)
 
+    @staticmethod
+    def _coarse_overlay(
+        match: Dict[str, Any],
+        rim: Dict[str, Any],
+        factor: float,
+    ) -> Dict[str, Any] | None:
+        """为粗扫兜底候选合成最小可视化 overlay。
+
+        粗扫没有 refine 轨迹,但保留了构成穿框的两次检测(above/below)
+        和粗扫 rim 估计;按 proxy->source 比例缩放后供审核页画出
+        篮筐框、两点连线与推定穿框点(黄色,valid=False)。
+        """
+        above = match.get("above")
+        below = match.get("below")
+        if not isinstance(above, dict) or not isinstance(below, dict):
+            return None
+
+        def scaled(point: Dict[str, Any]) -> Dict[str, float]:
+            return {
+                "time": round(float(point.get("time", 0.0) or 0.0), 3),
+                "x": round(float(point.get("x", 0.0) or 0.0) * factor, 1),
+                "y": round(float(point.get("y", 0.0) or 0.0) * factor, 1),
+            }
+
+        rim_width = float(rim.get("width", 0.0) or 0.0) * factor
+        rim_height = float(rim.get("height", 0.0) or 0.0) * factor
+        rim_center_x = float(rim.get("center_x", 0.0) or 0.0) * factor
+        rim_raw_y = float(rim.get("rim_y", 0.0) or 0.0) * factor
+        # 与 refine 的 hoop_box_plane 校正一致:YOLO 篮筐框中心偏下,
+        # 取框上部为筐口平面。
+        plane_y = rim_raw_y - rim_height * 0.28
+
+        a = scaled(above)
+        b = scaled(below)
+        crossing = None
+        span = b["y"] - a["y"]
+        if abs(span) > 1e-6 and a["y"] <= plane_y <= b["y"]:
+            t = (plane_y - a["y"]) / span
+            crossing = {
+                "x": round(a["x"] + (b["x"] - a["x"]) * t, 1),
+                "y": round(plane_y, 1),
+                "time": round(a["time"] + (b["time"] - a["time"]) * t, 3),
+                "valid": False,
+            }
+        return {
+            "rim": {
+                "center_x": round(rim_center_x, 1),
+                "rim_y": round(plane_y, 1),
+                "width": round(rim_width, 1),
+                "height": round(rim_height * 0.45, 1),
+            },
+            "trajectory": [a, b],
+            "crossing": crossing,
+            "source": "coarse_crossing",
+        }
+
     def _run_analysis(self, payload: Dict[str, Any], job_id: str) -> None:
         store = self._require_store(payload)
         analysis_started = time.perf_counter()
@@ -1237,6 +1297,36 @@ class EngineService:
                 if mode == "standard"
                 else flatten_coarse_matches(pipeline["refined"])
             )
+            if mode == "standard":
+                # 高召回兜底:refine 轨迹验证失败(移动机位下易发生)的
+                # 粗扫穿框不丢弃,以粗扫证据保留为待审核候选,交给用户
+                # 确认/排除。±2s 内已有 refined 结果的不再重复保留。
+                try:
+                    coarse_data = json.loads(
+                        Path(coarse_candidates).read_text(encoding="utf-8")
+                    )
+                    coarse_matches = flatten_coarse_matches(coarse_data)
+                except (OSError, ValueError):
+                    coarse_matches = []
+                refined_times = [float(match["time"]) for match in matches]
+                coarse_rim = coarse_data.get("rim") if isinstance(coarse_data, dict) else None
+                if not isinstance(coarse_rim, dict):
+                    coarse_rim = {}
+                # 粗扫坐标是代理视频像素,合成 overlay 时缩放到源视频。
+                source_w = float(video.get("width") or 0)
+                factor = (source_w / float(proxy_width)) if source_w > 0 and proxy_width else 1.0
+                for extra in coarse_matches:
+                    extra_time = float(extra["time"])
+                    if any(
+                        abs(extra_time - refined_time) <= 2.0
+                        for refined_time in refined_times
+                    ):
+                        continue
+                    overlay = self._coarse_overlay(extra, coarse_rim, factor)
+                    if overlay is not None:
+                        extra["overlay"] = overlay
+                    matches.append(extra)
+                matches.sort(key=lambda match: float(match["time"]))
             detection_counts = self._detection_counts(coarse_detections)
             rows = [
                 candidate_to_row(
@@ -1247,7 +1337,11 @@ class EngineService:
                     before_seconds=float(payload.get("before_seconds", 6)),
                     after_seconds=float(payload.get("after_seconds", 3)),
                     detector_version=f"{ANALYSIS_ALGORITHM_VERSION}:{mode}",
-                    analysis_source="coarse" if mode == "fast" else "refined",
+                    analysis_source=(
+                        "coarse"
+                        if mode == "fast" or match.get("coarse_crossing")
+                        else "refined"
+                    ),
                 )
                 for match in matches
             ]

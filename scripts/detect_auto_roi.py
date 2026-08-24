@@ -27,6 +27,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True)
     parser.add_argument("--sample-fps", type=float, default=1.0)
     parser.add_argument("--duration", type=float, default=20.0)
+    parser.add_argument(
+        "--start",
+        type=float,
+        default=0.0,
+        help="采样起始秒;配合分析范围使用,避免从片头热身画面采样",
+    )
     parser.add_argument("--max-samples", type=int, default=12)
     parser.add_argument("--conf", type=float, default=0.05)
     parser.add_argument("--imgsz", type=int, default=1280)
@@ -58,6 +64,8 @@ def detect(args: argparse.Namespace) -> dict:
     cap = cv2.VideoCapture(str(video))
     if not cap.isOpened():
         raise ValueError(f"VIDEO_OPEN_FAILED: {video}")
+    if args.start > 0:
+        cap.set(cv2.CAP_PROP_POS_MSEC, args.start * 1000.0)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -68,9 +76,14 @@ def detect(args: argparse.Namespace) -> dict:
     model = YOLO(str(model_path))
     device = select_device(args.device)
     stride = max(1, round(fps / args.sample_fps))
-    max_frame = min(int(args.duration * fps), int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0))
+    start_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES) or 0)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    max_frame = start_frame + min(
+        int(args.duration * fps),
+        max(0, total_frames - start_frame),
+    )
     detections = []
-    frame_index = 0
+    frame_index = start_frame
     samples = 0
     while frame_index < max_frame and samples < args.max_samples:
         if not cap.grab():
@@ -103,6 +116,11 @@ def detect(args: argparse.Namespace) -> dict:
                         }
                     )
             samples += 1
+            # 攒够稳定中位数所需的检测即可提前结束:CPU 推理每帧 2-4 秒,
+            # 固定采满 8 帧浪费一半时间。select_stable_hoop 用中位数聚合,
+            # 5 个样本已足够稳定。
+            if len(detections) >= 5:
+                break
         frame_index += 1
     cap.release()
 
