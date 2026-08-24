@@ -2,7 +2,7 @@
 
 **中文** · [English](README.en.md)
 
-根目录 [`README.md`](../README.md) 是项目概览和最短运行路径。本目录按“入门 → 排障 → 开发 → 架构 → 发布”组织；产品契约和研究记录只在需要修改对应行为时阅读。
+根目录 [`README.md`](../README.md) 是产品介绍和最短运行路径。本目录只保留“使用产品 → 理解产品 → 开发 → 架构 → 发布”所需的核心入口。
 
 ## 按任务查找
 
@@ -10,13 +10,12 @@
 |---|---|
 | 第一次安装和运行桌面端 | [`GETTING_STARTED.md`](GETTING_STARTED.md) |
 | 候选为空、模型、FFmpeg、插件警告 | [`FAQ.md`](FAQ.md) |
-| 修改代码、补测试、提交 PR | [`DEVELOPMENT.md`](DEVELOPMENT.md) 和 [`../CONTRIBUTING.md`](../CONTRIBUTING.md) |
+| 修改代码、补测试 | [`DEVELOPMENT.md`](DEVELOPMENT.md) |
 | 打包 macOS/Windows | [`RELEASE.md`](RELEASE.md) |
 | 理解桌面端架构 | [`architecture/ARCHITECTURE_V1.md`](architecture/ARCHITECTURE_V1.md) |
 | 调试 Flutter ↔ Engine 协议 | [`architecture/ENGINE_PROTOCOL_V1.md`](architecture/ENGINE_PROTOCOL_V1.md) |
 | 理解项目目录和缓存 | [`architecture/PROJECT_LAYOUT_V1.md`](architecture/PROJECT_LAYOUT_V1.md) |
 | 理解移动端原生 Runtime | [`architecture/MOBILE_RUNTIME_V1.md`](architecture/MOBILE_RUNTIME_V1.md) |
-| 了解 Fast/Standard 分析模式 | [`research/ANALYSIS_MODES_V1.md`](research/ANALYSIS_MODES_V1.md) |
 
 ## 用户文档
 
@@ -34,17 +33,15 @@
 - [`../apps/desktop/README.md`](../apps/desktop/README.md)：桌面 Flutter 模块。
 - [`../apps/mobile/README.md`](../apps/mobile/README.md)：移动端开发和原生库准备。
 
-## 产品契约与研究
+## 产品文档
 
 - [`DECISIONS_V1.md`](DECISIONS_V1.md)：当前产品、算法和工程决策；与旧记录冲突时优先看这里和运行时行为。
 - [`REQUIREMENTS_V1.md`](REQUIREMENTS_V1.md)：V1 范围、已实现/部分实现/未完成状态和发布门槛。
 - [`USER_FLOW_V1.md`](USER_FLOW_V1.md)：导入、分析、审核、导出和异常路径。
-- [`research/ANALYSIS_MODES_V1.md`](research/ANALYSIS_MODES_V1.md)：两档模式规则、缓存、继承和质量闸门。
 
-## 开源与发布
+## 发布
 
 - [`RELEASE.md`](RELEASE.md)：源码预览发布、桌面运行时、签名、公证和许可证检查。
-- 根目录 [`CONTRIBUTING.md`](../CONTRIBUTING.md)、[`SECURITY.md`](../SECURITY.md)、[`CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md)、[`CHANGELOG.md`](../CHANGELOG.md) 和 [`LICENSE`](../LICENSE)。
 
 ## 文档约定
 
@@ -54,4 +51,4 @@
 - 不在文档中写入个人绝对路径、真实视频路径、密钥、未授权模型下载地址或未脱敏截图。
 - 协议命令、数据库字段、分析参数或发布依赖发生变化时，同时更新本索引和对应中英文入口。
 
-数据库 schema、审核数据集导出、性能样本、授权核对和源码树审计属于维护/发布材料，不放入主导航；需要时由开发与发布文档按需引用。一次性本地闭环记录、许可证研究笔记和研究 checkout 清单不再作为主文档维护，稳定结论集中到产品契约和第三方声明中。
+数据库 schema、模型授权和底层性能记录属于开发/发布材料，不放入产品主导航；需要时按相关文档中的说明查阅。

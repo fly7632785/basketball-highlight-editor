@@ -1,82 +1,64 @@
-# Basketball Highlight Editor
+# 🏀 Basketball Highlight Editor
 
-> 固定机位篮球比赛视频的本地进球候选识别、人工审核与集锦导出工具。
+> 把一场完整的篮球比赛，变成可以直接分享的精彩集锦。
 
-**中文** · [English](README.en.md)
+一个**本地运行的 AI 篮球视频剪辑工具**：自动找出疑似进球片段，你只需要快速审核，最后一键导出集锦。
 
-## 项目状态
+**[快速开始](docs/GETTING_STARTED.md)** · **[常见问题](docs/FAQ.md)** · [English](README.en.md)
 
-**当前版本：V1 源码预览版。** 项目适合开发者在本地准备依赖后运行，不是开箱即用的最终安装包。桌面端是当前主产品路径；移动端是独立的实验性工程，Android 已有本地原生分析链路，iOS 的本地 AI 分析仍需要接入最终 Rust/ONNX Runtime 产物。
+## 为什么值得试试？
 
-| 端 | 当前状态 | 适合做什么 |
-|---|---|---|
-| macOS Desktop | 主路径，支持完整导入 → 分析 → 审核 → 导出闭环 | 本地处理长视频 |
-| Windows Desktop | 兼容路径，提供运行时准备和打包脚本，仍需发布验收 | 开发与实验 |
-| Android Mobile | 独立 Flutter App；原生抽帧、Rust/ONNX 分析、审核和导出已接入，当前主要验证 `arm64-v8a` | 移动端分析与审核实验 |
-| iOS Mobile | 项目、播放、审核和导出可用；本地分析等待原生库链接 | 移动端 UI 与媒体流程验证 |
+| 你遇到的问题 | Basketball Highlight Editor 的做法 |
+|---|---|
+| 一场比赛太长，手动回看很耗时 | AI 自动扫描视频，先给出疑似进球候选 |
+| 自动剪辑容易误检，结果不可控 | 候选默认进入审核，你可以保留、排除、调整和补充 |
+| 视频素材不想上传云端 | 分析、预览、审核和导出默认都在本地完成 |
+| 想快速看结果，又不想牺牲质量 | 提供快速模式和标准模式，按场景选择 |
 
-> **重要：** 模型权重、输入视频、训练数据、FFmpeg 构建和第三方依赖不自动继承本项目的 MIT License。公开或分发前必须分别核验授权。
-
-## 功能概览
-
-- 导入视频并读取时长、分辨率、帧率、编码和文件大小；原视频默认只保存引用，不复制。
-- 自动建议篮筐 ROI（感兴趣区域），失败时支持手动框选和调整。
-- 标准/快速两档分析：标准质量优先，快速速度优先且可能漏检。
-- 显示分析阶段、进度、耗时，支持取消、失败重试和应用重启后的任务恢复提示。
-- 候选审核工作台支持原视频播放、候选切换、保留/排除、备注、时间范围调整和手动补漏。
-- 候选默认保留；只有排除的候选不会进入导出，避免用户逐条点击“确认”。
-- 支持分别导出和按事件时间合并导出，并保存导出记录和统计信息。
-- 桌面端使用 SQLite 保存项目、ROI、候选、审核、任务和导出状态。
-
-## 适用范围
-
-当前算法针对**固定机位、单篮筐、单视频**优化，目标是生成高召回的“疑似进球”候选，再由用户审核。它不保证自动结果等于裁判结论，也不针对移动镜头、多篮筐、实时直播、云端协作或零误检场景承诺效果。
-
-## 架构
+## 从比赛视频到精彩集锦
 
 ```text
-Desktop Flutter UI ── JSONL ──> Python Engine ──> SQLite
-                                     ├── OpenCV / Ultralytics：采样与检测
-                                     ├── Python analysis：候选、轨迹与审核规则
-                                     └── FFmpeg / FFprobe：代理、预览与导出
-
-Mobile Flutter UI ── platform channels ──> Android/iOS media + Rust/ONNX Runtime
+导入比赛视频  →  AI 自动分析  →  审核候选片段  →  导出集锦
 ```
 
-桌面端 UI 不直接读写 SQLite、检测 JSON 或调用 FFmpeg；Engine 通过 JSONL（JSON Lines，逐行 JSON 消息）协议提供能力。移动端不启动桌面 Python Engine，使用 `packages/bhe_core` 的数据模型和平台原生能力。
+1. **导入**：选择比赛视频，检查时长和画面信息。
+2. **分析**：自动识别篮筐区域和疑似进球事件。
+3. **审核**：在视频工作台中逐个查看候选，调整片段范围或手动补漏。
+4. **导出**：分别导出片段，或按比赛时间合并成一条集锦。
 
-- [桌面架构](docs/architecture/ARCHITECTURE_V1.md)
-- [Engine 协议](docs/architecture/ENGINE_PROTOCOL_V1.md)
-- [移动端 Runtime](docs/architecture/MOBILE_RUNTIME_V1.md)
-- [项目目录与生命周期](docs/architecture/PROJECT_LAYOUT_V1.md)
+## 你可以用它做什么
 
-## 环境要求
+- 自动建议篮筐区域，也支持手动框选和调整；
+- 使用**标准模式**获得更完整的分析，或使用**快速模式**快速浏览结果；
+- 在原视频上播放候选，保留/排除、修改时间范围、添加备注；
+- 候选默认保留，不需要逐条点击“确认”；
+- 支持单独导出和按事件时间合并导出；
+- 分析进度、阶段耗时、任务恢复和导出记录清晰可见。
 
-### 桌面端
+## 适合谁？
 
-- macOS 优先；Windows 仍是实验性兼容路径；
-- Python 3.11；
-- Flutter stable，当前开发基线为 3.44.8；
-- `ffmpeg`、`ffprobe`；
-- 仓库内置的默认检测模型（如使用精简发布包，再自行提供兼容模型）；
-- 分析和导出需要额外临时磁盘空间。
+- 想快速整理校队、业余联赛或训练赛集锦的球员和教练；
+- 需要反复复盘比赛、但不想手动拖完整视频的人；
+- 希望素材留在自己电脑上、同时保留人工控制权的创作者和开发者。
 
-Python 依赖定义在 [`requirements.txt`](requirements.txt)，开发依赖定义在 [`requirements-dev.txt`](requirements-dev.txt)。
+当前版本优先针对**固定机位、单篮筐、单场比赛视频**优化。AI 负责缩小回看范围，最终是否保留由你决定。
 
-### 移动端
+## 快速开始（macOS）
 
-- Flutter stable 和 Android Studio/Xcode 对应的原生工具链；
-- Android 原生分析当前只验证 `arm64-v8a`，还需要 Rust、Android NDK、ONNX Runtime Android 库；
-- iOS 本地分析还需要 Rust iOS targets 和 ONNX Runtime XCFramework；
-- 移动端原生库不应把开发机路径或未核验二进制直接提交到公开发布物。
+完整源码仓库已经包含默认检测模型，正常 clone 后不需要额外下载模型。
 
-## 快速开始：桌面端
+### 1. 准备环境
 
-以下命令适用于 macOS/Linux shell；Windows 见 [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) 的 PowerShell 小节。
-
-### 1. 创建 Python 环境
+需要 Python 3.11、Flutter stable 和 FFmpeg。macOS 可使用 Homebrew 安装 FFmpeg：
 
 ```bash
+brew install ffmpeg
+```
+
+### 2. 安装项目依赖
+
+```bash
+# 在 GitHub 的 Code 菜单复制仓库地址
 git clone <repository-url>
 cd basketball-highlight-editor
 
@@ -85,154 +67,57 @@ python3.11 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
 ```
 
-### 2. 准备 FFmpeg（模型已随源码提供）
-
-macOS 开发环境可以使用 Homebrew：
-
-```bash
-brew install ffmpeg
-```
-
-当前仓库默认已包含桌面检测模型：
-
-```text
-models/bball_model.pt
-```
-
-正常完整 clone 后不需要手动下载或复制模型。若你使用的发布包不含模型，或希望替换模型，才通过 `--model` 传入自定义路径。模型和数据授权见 [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md) 与 [`models/README.md`](models/README.md)。
-
-### 3. 检查运行时
+### 3. 检查并启动
 
 ```bash
 .venv/bin/python scripts/check_runtime.py \
   --root . \
   --python .venv/bin/python
-```
 
-看到 `runtime: OK` 后再启动 UI。该检查只验证环境完整性，不验证算法准确率。
-
-### 4. 启动桌面端
-
-```bash
 cd apps/desktop
 flutter pub get
 flutter run -d macos
 ```
 
-第一次使用：新建项目 → 选择视频 → 检查元数据 → 自动建议或手动框选 ROI → 选择分析模式 → 分析 → 审核候选 → 导出。
+启动后按照“新建项目 → 选择视频 → 分析 → 审核 → 导出”操作即可。Windows、移动端和完整排障步骤见 [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)。
 
-更完整的首次运行、Windows 和故障排查步骤见 [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) 和 [`docs/FAQ.md`](docs/FAQ.md)。
+## 两种分析方式
 
-## 分析模式
-
-| 模式 | 处理方式 | 建议 |
+| 模式 | 适合场景 | 特点 |
 |---|---|---|
-| 标准 | 代理粗扫后回到原视频精筛 | 首次分析、重要比赛、不能接受漏检时使用 |
-| 快速 | `640×480 / 3 FPS` 低成本代理，跳过原视频精筛 | 先快速浏览，接受可能漏检时使用 |
+| **标准模式** | 重要比赛、希望尽量完整 | 质量优先，包含原视频精筛 |
+| **快速模式** | 先快速浏览、快速定位片段 | 速度优先，可能漏检 |
 
-两种模式使用相同的审核、手动调整和导出语义。快速模式不承诺固定耗时或准确率，可能漏检；完整规则见 [`docs/research/ANALYSIS_MODES_V1.md`](docs/research/ANALYSIS_MODES_V1.md)。
+两种模式使用相同的审核、调整和导出流程。快速模式不是“自动替你做决定”，而是让你更快得到第一版候选。
 
-可以在构建时隐藏快速模式入口：
+## 核心技术（给开发者）
 
-```bash
-flutter run -d macos --dart-define=ENABLE_FAST_ANALYSIS=false
-```
+- **Flutter**：桌面端和移动端界面；
+- **Python + OpenCV + YOLO**：视频采样、篮球/篮筐检测和候选生成；
+- **SQLite**：保存项目、分析任务、候选和审核状态；
+- **FFmpeg / FFprobe**：视频元数据、预览和导出；
+- **Rust + ONNX Runtime**：移动端本地推理路径。
 
-## 单独调试 Python Engine
+想了解实现细节，可以从 [`docs/README.md`](docs/README.md) 开始，再阅读 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) 和 [`docs/architecture/`](docs/architecture/)。
 
-桌面端会自动启动 Engine。需要调试协议时，可手动启动：
+## 当前版本
 
-```bash
-PYTHONPATH=engine/python .venv/bin/python -m basketball_engine
-```
+macOS 桌面端是当前最完整、最推荐的体验路径。Windows 和移动端工程已提供开发入口，但仍属于持续完善中的实验性路径。
 
-Engine 从 stdin 读取 JSONL 请求、向 stdout 输出 JSONL 响应，stderr 仅用于诊断。协议命令、事件和错误码见 [`docs/architecture/ENGINE_PROTOCOL_V1.md`](docs/architecture/ENGINE_PROTOCOL_V1.md)。
+## 文档
 
-## 移动端开发
+- **开始使用**：[`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) · [`docs/FAQ.md`](docs/FAQ.md)
+- **产品说明**：[`docs/USER_FLOW_V1.md`](docs/USER_FLOW_V1.md) · [`docs/REQUIREMENTS_V1.md`](docs/REQUIREMENTS_V1.md) · [`docs/DECISIONS_V1.md`](docs/DECISIONS_V1.md)
+- **开发指南**：[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
+- **架构参考**：[`docs/README.md`](docs/README.md) · [`docs/architecture/`](docs/architecture/)
+- **发布说明**：[`docs/RELEASE.md`](docs/RELEASE.md)
 
-```bash
-cd apps/mobile
-flutter pub get
-flutter analyze
-flutter test
-flutter build apk --debug
-```
+## 开源致谢
 
-没有原生 Runtime 产物时，Android UI 仍可构建，但点击分析会明确返回 `NATIVE_RUNTIME_UNAVAILABLE`，不会伪造候选。要构建 Android 原生分析库：
+本项目在模型、检测流程和产品工作流上参考了 [HoopCut](https://github.com/RuiYang0122/HoopCut)、[basketball-highlights](https://github.com/reborncd/basketball-highlights)、[ShotMarker](https://github.com/zhangrunhao/ShotMarker)、[basketball_clipper](https://github.com/snowroll/basketball_clipper)、[ball-yolo](https://github.com/griftt/ball-yolo)、[basketball-highlights](https://github.com/ClarkWang1214/basketball-highlights) 和 [ai-sports-cut-agent](https://github.com/bond0060/ai-sports-cut-agent)。感谢所有作者的公开分享。
 
-```bash
-export BHE_ANDROID_NDK="$HOME/Library/Android/sdk/ndk/<version>"
-export BHE_ORT_ANDROID_DIR="/path/to/onnxruntime-android"
-rustup target add aarch64-linux-android
-../../scripts/build_mobile_runtime.sh
-flutter build apk --release
-```
+## 隐私与许可证
 
-移动端完整边界和 iOS Runtime 准备方式见 [`apps/mobile/README.md`](apps/mobile/README.md) 与 [`docs/architecture/MOBILE_RUNTIME_V1.md`](docs/architecture/MOBILE_RUNTIME_V1.md)。
+视频默认只保留本地路径和元数据，不上传到云端。源码采用 [MIT License](LICENSE)；模型、训练数据、视频素材和第三方依赖请分别遵守各自授权条件。
 
-## 测试与质量检查
-
-```bash
-# 源码公开前检查：只检查 Git 跟踪内容和敏感路径
-python3 scripts/check_open_source.py
-
-# Python 测试
-.venv/bin/python -m pytest -q
-
-# 桌面 Flutter
-cd apps/desktop
-flutter analyze
-flutter test
-
-# 移动端 Flutter
-cd ../mobile
-flutter analyze
-flutter test
-```
-
-其中移动端原生分析、模型推理和真实视频准确率不由普通单元测试替代，发布前需要在目标设备上单独验收。
-
-## 打包边界
-
-`flutter build macos --release` 或 Windows Release 构建成功，不等于最终用户可以安装。可分发桌面包还需要便携 Python、依赖、FFmpeg/FFprobe、已核验授权的模型、许可证 notices、代码签名、公证和干净机器验证。
-
-macOS 运行时准备与构建命令集中在 [`docs/RELEASE.md`](docs/RELEASE.md)；Windows 脚本属于实验性兼容路径。移动端 Android/iOS 的原生库准备见 [`docs/architecture/MOBILE_RUNTIME_V1.md`](docs/architecture/MOBILE_RUNTIME_V1.md)。
-
-## 文档导航
-
-- **开始使用：** [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) · [`docs/FAQ.md`](docs/FAQ.md)
-- **开发贡献：** [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md)
-- **架构参考：** [`docs/README.md`](docs/README.md) · [`docs/architecture/`](docs/architecture/)
-- **产品契约：** [`docs/DECISIONS_V1.md`](docs/DECISIONS_V1.md) · [`docs/REQUIREMENTS_V1.md`](docs/REQUIREMENTS_V1.md) · [`docs/USER_FLOW_V1.md`](docs/USER_FLOW_V1.md)
-- **开源发布：** [`docs/RELEASE.md`](docs/RELEASE.md) · [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) · [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md)
-- **社区规则：** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) · [`SECURITY.md`](SECURITY.md) · [`CHANGELOG.md`](CHANGELOG.md) · [`LICENSE`](LICENSE)
-
-## 致谢
-
-本项目的检测、候选片段生成和审核工作流设计参考了以下开源项目，感谢各位作者的公开分享：
-
-- [HoopCut](https://github.com/RuiYang0122/HoopCut)：篮球视频剪辑与集锦产品思路；
-- [basketball-highlights](https://github.com/reborncd/basketball-highlights)：篮球进球检测和候选片段处理思路；
-- [ShotMarker](https://github.com/zhangrunhao/ShotMarker)：投篮/进球事件标记与视频审核思路；
-- [basketball_clipper](https://github.com/snowroll/basketball_clipper)：篮筐区域、轨迹判断和片段裁剪思路；
-- [ball-yolo](https://github.com/griftt/ball-yolo)：篮球目标检测与 YOLO 应用思路；
-- [basketball-highlights](https://github.com/ClarkWang1214/basketball-highlights)：篮球集锦生成与端侧工具流程；
-- [ai-sports-cut-agent](https://github.com/bond0060/ai-sports-cut-agent)：AI 体育剪辑工具和模型工程化思路；
-- [Basketball-Shot-Detection](https://github.com/josephattalla/Basketball-Shot-Detection)：默认桌面检测权重来源记录，以及球/篮筐检测思路参考。
-
-默认桌面权重 `models/bball_model.pt` 当前与本地研究参考项目 [`Basketball-Shot-Detection`](https://github.com/josephattalla/Basketball-Shot-Detection) 中的 `bball_model.pt` 具有相同的 SHA-256（`40f3e596652a427ba290b3f72384e49aed12caf1a8ae41beaef4a8fffcf09fa3`）。本项目在此基础上重新组织了运行时、候选生成、人工审核和导出流程；除明确保留的模型文件外，不将上述项目作为运行时依赖，也不声称复制其代码。模型权重、训练数据及各参考项目的具体授权边界请以 [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) 和 [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md) 为准。
-
-## 隐私与数据安全
-
-- 原始视频默认只保存路径、元数据和可选指纹，不复制、不上传；
-- 分析、预览、审核和导出默认在本地完成；
-- 真实比赛视频、球员画面、球队标识、标注和导出文件不要提交到公开仓库；
-- 模型权重、训练数据、FFmpeg 和第三方依赖必须独立核验授权。
-
-## 贡献
-
-欢迎提交问题、测试反馈和聚焦明确的小范围修复。提交前请阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)，不要提交视频、模型、截图、密钥、个人路径或构建产物。
-
-## 许可证
-
-源码采用 [MIT License](LICENSE)。该许可证不自动覆盖模型权重、训练数据、输入视频、FFmpeg 构建产物或第三方依赖；分发前请阅读 [`NOTICE`](NOTICE) 和 [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md)。
+如果这个项目对你有帮助，欢迎试用、反馈问题，或在 GitHub 上点一个 Star ⭐
