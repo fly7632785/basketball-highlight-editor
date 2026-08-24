@@ -1,14 +1,14 @@
-# 🏀 Basketball Highlight Editor
+# Basketball Highlight Editor
 
-> Turn a full basketball game into highlights you can actually share.
+If you have recorded a full basketball game, you know how hard it is to find the few moments worth keeping. Basketball Highlight Editor finds possible scoring events first, then leaves the final call to you.
 
-A **local AI basketball video editing tool** that finds suspected scoring moments, lets you review them quickly, and exports a highlight reel when you are ready.
+It is a local basketball video analysis and editing tool: automated candidate detection, human review, and highlight export in one workflow.
 
 [中文](README.md) · **[Getting started](docs/GETTING_STARTED.en.md)** · [FAQ](docs/FAQ.en.md)
 
-## Why try it?
+## What problem does it solve?
 
-| The problem | How Basketball Highlight Editor helps |
+| You may be dealing with | What it does |
 |---|---|
 | Rewatching a whole game takes too long | AI scans the video and proposes suspected scoring moments |
 | Fully automatic editing is hard to trust | Review, keep, exclude, adjust, or add every candidate yourself |
@@ -26,7 +26,7 @@ Import video  →  Analyze with AI  →  Review candidates  →  Export highligh
 3. **Review** candidates in the video workbench, adjust ranges, or add missing moments.
 4. **Export** separate clips or one merged highlight reel in event-time order.
 
-## What you can do
+## What it feels like to use
 
 - Automatically suggest a hoop region, with manual drawing and adjustment when needed;
 - Use **Standard** mode for a more complete analysis or **Fast** mode for a quicker first pass;
@@ -120,4 +120,4 @@ The model, detection workflow, and product ideas were informed by [HoopCut](http
 
 Videos are referenced locally and are not uploaded to a cloud service by default. The source code is released under the [MIT License](LICENSE); models, training data, video assets, and third-party dependencies remain subject to their own terms.
 
-If this project helps you, try it, share feedback, or leave a Star on GitHub ⭐
+The project is still being refined. If you use it on a real game video, feedback about what worked and what did not is welcome.
