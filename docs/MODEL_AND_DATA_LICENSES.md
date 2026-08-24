@@ -23,6 +23,14 @@ models/bball_model.pt
 
 移动端的 Flutter 资源和 ONNX/Rust Runtime 是独立的发布对象，应在打包前分别确认授权和 ABI 兼容性。模型缺失时，运行时检查应明确报告，不应静默从未知地址下载；完整源码 clone 默认使用仓库内的模型。
 
+当前默认桌面权重 `models/bball_model.pt` 与研究参考项目 [`Basketball-Shot-Detection`](https://github.com/josephattalla/Basketball-Shot-Detection) 的 `bball_model.pt` SHA-256 一致：
+
+```text
+40f3e596652a427ba290b3f72384e49aed12caf1a8ae41beaef4a8fffcf09fa3
+```
+
+该哈希用于来源追踪，不等于已经确认模型权重、训练数据可以按本项目 MIT License 再分发。发布前仍需取得并记录对应授权；若无法证明，应从公开发布物中移除权重并要求用户自行提供。
+
 ## 本地数据约定
 
 真实比赛视频、球员图像、球队信息、人工标注和审核导出文件只用于本地验证，不应提交到公开仓库。即使视频来自公开平台，也需要确认下载、再处理和再分发权限。

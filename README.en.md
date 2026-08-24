@@ -207,6 +207,21 @@ Runtime preparation and packaging commands are consolidated in [`docs/RELEASE.en
 - **Open source and release:** [`docs/RELEASE.en.md`](docs/RELEASE.en.md) · [`docs/OPEN_SOURCE_AUDIT.md`](docs/OPEN_SOURCE_AUDIT.md) · [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) · [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md)
 - **Community:** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) · [`SECURITY.md`](SECURITY.md) · [`CHANGELOG.md`](CHANGELOG.md) · [`LICENSE`](LICENSE)
 
+## Acknowledgments
+
+This project was informed by the following open-source projects. We are grateful to their authors for sharing their work:
+
+- [HoopCut](https://github.com/RuiYang0122/HoopCut): basketball video editing and highlight-product ideas;
+- [basketball-highlights](https://github.com/reborncd/basketball-highlights): basketball scoring detection and candidate-clip ideas;
+- [ShotMarker](https://github.com/zhangrunhao/ShotMarker): shot/scoring event marking and video-review ideas;
+- [basketball_clipper](https://github.com/snowroll/basketball_clipper): hoop-region, trajectory reasoning, and clip-cutting ideas;
+- [ball-yolo](https://github.com/griftt/ball-yolo): basketball object detection and YOLO application ideas;
+- [basketball-highlights](https://github.com/ClarkWang1214/basketball-highlights): basketball highlight generation and edge-tool workflow ideas;
+- [ai-sports-cut-agent](https://github.com/bond0060/ai-sports-cut-agent): AI sports-editing tools and model-engineering ideas;
+- [Basketball-Shot-Detection](https://github.com/josephattalla/Basketball-Shot-Detection): provenance record for the default desktop weight and reference for ball/hoop detection ideas.
+
+The default desktop weight at `models/bball_model.pt` currently has the same SHA-256 as `bball_model.pt` in the local research reference project [`Basketball-Shot-Detection`](https://github.com/josephattalla/Basketball-Shot-Detection): `40f3e596652a427ba290b3f72384e49aed12caf1a8ae41beaef4a8fffcf09fa3`. This project reorganizes the runtime, candidate generation, human review, and export workflow around that reference. Except for explicitly retained model files, the projects above are not runtime dependencies, and this project does not claim to copy their code. See [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) and [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md) for the applicable model, dataset, and project-license boundaries.
+
 ## Privacy and data safety
 
 - Source videos are referenced by path and metadata and are not copied or uploaded by default.

@@ -207,6 +207,21 @@ macOS 运行时准备与构建命令集中在 [`docs/RELEASE.md`](docs/RELEASE.m
 - **开源发布：** [`docs/RELEASE.md`](docs/RELEASE.md) · [`docs/OPEN_SOURCE_AUDIT.md`](docs/OPEN_SOURCE_AUDIT.md) · [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) · [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md)
 - **社区规则：** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) · [`SECURITY.md`](SECURITY.md) · [`CHANGELOG.md`](CHANGELOG.md) · [`LICENSE`](LICENSE)
 
+## 致谢
+
+本项目的检测、候选片段生成和审核工作流设计参考了以下开源项目，感谢各位作者的公开分享：
+
+- [HoopCut](https://github.com/RuiYang0122/HoopCut)：篮球视频剪辑与集锦产品思路；
+- [basketball-highlights](https://github.com/reborncd/basketball-highlights)：篮球进球检测和候选片段处理思路；
+- [ShotMarker](https://github.com/zhangrunhao/ShotMarker)：投篮/进球事件标记与视频审核思路；
+- [basketball_clipper](https://github.com/snowroll/basketball_clipper)：篮筐区域、轨迹判断和片段裁剪思路；
+- [ball-yolo](https://github.com/griftt/ball-yolo)：篮球目标检测与 YOLO 应用思路；
+- [basketball-highlights](https://github.com/ClarkWang1214/basketball-highlights)：篮球集锦生成与端侧工具流程；
+- [ai-sports-cut-agent](https://github.com/bond0060/ai-sports-cut-agent)：AI 体育剪辑工具和模型工程化思路；
+- [Basketball-Shot-Detection](https://github.com/josephattalla/Basketball-Shot-Detection)：默认桌面检测权重来源记录，以及球/篮筐检测思路参考。
+
+默认桌面权重 `models/bball_model.pt` 当前与本地研究参考项目 [`Basketball-Shot-Detection`](https://github.com/josephattalla/Basketball-Shot-Detection) 中的 `bball_model.pt` 具有相同的 SHA-256（`40f3e596652a427ba290b3f72384e49aed12caf1a8ae41beaef4a8fffcf09fa3`）。本项目在此基础上重新组织了运行时、候选生成、人工审核和导出流程；除明确保留的模型文件外，不将上述项目作为运行时依赖，也不声称复制其代码。模型权重、训练数据及各参考项目的具体授权边界请以 [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) 和 [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md) 为准。
+
 ## 隐私与数据安全
 
 - 原始视频默认只保存路径、元数据和可选指纹，不复制、不上传；
