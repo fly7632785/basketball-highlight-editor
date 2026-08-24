@@ -50,7 +50,8 @@ engine/python/                JSONL Engine、任务和存储适配
 engine/python/adapters/       算法脚本和导出适配
 src/basketball_highlight/     检测、事件、轨迹和审核规则
 scripts/                      分析、导出、运行时和移动端构建脚本
-docs/architecture/            架构、协议和数据库契约
+docs/ARCHITECTURE.md         架构、协议和运行时说明
+docs/architecture/SQLITE_SCHEMA_V1.sql  SQLite 数据库契约
 tests/                        Python 测试
 apps/desktop/test/            桌面 Flutter 测试
 apps/mobile/test/             移动 Flutter 测试
@@ -181,7 +182,7 @@ PYTHONPATH=src:scripts .venv/bin/python scripts/scan_video.py --help
 
 修改 Engine 命令时同步：
 
-1. [`architecture/ENGINE_PROTOCOL_V1.md`](architecture/ENGINE_PROTOCOL_V1.md)；
+1. [`ARCHITECTURE.md`](ARCHITECTURE.md)；
 2. Engine handler 和 Flutter client；
 3. 协议测试与错误路径测试；
 4. 版本兼容说明。
@@ -191,9 +192,9 @@ PYTHONPATH=src:scripts .venv/bin/python scripts/scan_video.py --help
 1. [`architecture/SQLITE_SCHEMA_V1.sql`](architecture/SQLITE_SCHEMA_V1.sql)；
 2. storage 初始化和读写逻辑；
 3. 旧项目、空值和迁移测试；
-4. [`architecture/PROJECT_LAYOUT_V1.md`](architecture/PROJECT_LAYOUT_V1.md) 的生命周期说明。
+4. [`ARCHITECTURE.md`](ARCHITECTURE.md) 的生命周期说明。
 
-修改移动端 channel、Rust C ABI、ONNX 输入输出或 ABI 时同步 [`architecture/MOBILE_RUNTIME_V1.md`](architecture/MOBILE_RUNTIME_V1.md)、Android/iOS 构建说明和目标平台测试。
+修改移动端 channel、Rust C ABI、ONNX 输入输出或 ABI 时同步 [`ARCHITECTURE.md`](ARCHITECTURE.md)、Android/iOS 构建说明和目标平台测试。
 
 ## 9. 提交前检查
 

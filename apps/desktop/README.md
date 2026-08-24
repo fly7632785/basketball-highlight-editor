@@ -42,7 +42,6 @@ flutter run -d macos
 
 相关文档：
 
-- [`../../docs/architecture/ARCHITECTURE_V1.md`](../../docs/architecture/ARCHITECTURE_V1.md)
-- [`../../docs/architecture/ENGINE_PROTOCOL_V1.md`](../../docs/architecture/ENGINE_PROTOCOL_V1.md)
+- [`../../docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md)
 - [`../../docs/DEVELOPMENT.md`](../../docs/DEVELOPMENT.md)
 - [`lib/theme/app_theme.dart`](lib/theme/app_theme.dart)

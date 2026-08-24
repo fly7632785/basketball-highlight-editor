@@ -43,7 +43,7 @@ export BHE_ORT_IOS_XCFRAMEWORK="/path/to/onnxruntime.xcframework"
 ../../scripts/build_mobile_ios_runtime.sh
 ```
 
-脚本会生成 device/simulator 静态库、C ABI header 和 XCFramework 副本，但不会自动修改 Xcode 工程。完整接入状态见 [`../../docs/architecture/MOBILE_RUNTIME_V1.md`](../../docs/architecture/MOBILE_RUNTIME_V1.md)。
+脚本会生成 device/simulator 静态库、C ABI header 和 XCFramework 副本，但不会自动修改 Xcode 工程。完整接入状态见 [`../../docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md)。
 
 ## 项目包
 

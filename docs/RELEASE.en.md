@@ -14,14 +14,14 @@ The current repository should be described as source preview only. A successful 
 ### Include
 
 - `README.md` and `README.en.md`;
-- getting-started, FAQ, development, release, architecture, and protocol docs;
+- user guide, development, release, architecture, and protocol docs;
 - `LICENSE` and `NOTICE`;
 - dependency, model, and data-rights guidance;
 - local-use instructions for models, data, and screenshots.
 
 ### Do not include
 
-- unverified `.pt`, `.onnx`, `.pth`, `.bin`, or other model/native-runtime binaries;
+- unverified `.pt`, `.onnx`, `.pth`, `.bin`, or other model/native-runtime binaries; the source checkout includes a default model, but a public Release still requires a rights review; the source checkout includes a default model, but a public Release still requires a rights review;
 - real game videos, exported clips, real labels, or unsanitized screenshots;
 - `.venv/`, `.tooling/`, `build/`, `dist/`, or personal paths;
 - API keys, private keys, personal contact details, or third-party source checkouts;
@@ -58,7 +58,19 @@ Every error from `check_open_source.py` must be fixed before publication. Warnin
 | Demo videos/screenshots | Rights for people, teams, venues, and footage |
 | Android/iOS native libraries | Distribution terms for Rust, ONNX Runtime, and platform SDKs |
 
-If model or training-data rights cannot be proven, publish source only and ask users to provide their own model. See [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md).
+If model or training-data rights cannot be proven, publish source only and ask users to provide their own model. See the “Model and data licensing” section below.
+
+## 2.1 Model and data licensing
+
+The source is MIT-licensed. That does not make model weights, training data, input video, FFmpeg, or other dependencies MIT-licensed. Before publishing, review the source, version, hash, license, and redistribution terms for each model and dataset; dependency notices; demo footage and screenshots; and Android/iOS native libraries and ABIs.
+
+The full source checkout currently includes `models/bball_model.pt` and the mobile ONNX artifact, so a normal clone does not need a separate model download. This is a local-start convenience, not a statement that the weights have unrestricted commercial redistribution rights. The default desktop weight has the same SHA-256 as `bball_model.pt` in [`Basketball-Shot-Detection`](https://github.com/josephattalla/Basketball-Shot-Detection):
+
+```text
+40f3e596652a427ba290b3f72384e49aed12caf1a8ae41beaef4a8fffcf09fa3
+```
+
+The hash tracks provenance only. If rights cannot be proven, publish source only and ask users to provide a model they are allowed to use. Do not silently download weights from an unknown URL. Real game footage, labels, and review exports are for local validation and should not enter the public repository.
 
 ## 3. macOS build
 
@@ -172,7 +184,7 @@ Windows remains a compatibility path. Validate the Flutter toolchain, Python/Tor
 
 Android currently targets `arm64-v8a` and needs the Rust runtime, Android ONNX Runtime library, and a complete APK for that ABI. iOS project, media, and export paths can build, but local analysis still needs the Rust static library, the ONNX Runtime XCFramework, and Runner linking. Do not publish a build without these artifacts as a full AI-analysis release.
 
-See [`architecture/MOBILE_RUNTIME_V1.md`](architecture/MOBILE_RUNTIME_V1.md) and [`../apps/mobile/README.md`](../apps/mobile/README.md) for the mobile build entry points.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`../apps/mobile/README.md`](../apps/mobile/README.md) for the mobile build entry points.
 
 ## 6. Version and change records
 

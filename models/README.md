@@ -16,7 +16,7 @@ models/bball_model.pt
 
 ## 移动端
 
-移动端可能需要 ONNX 模型和对应的 Rust/ONNX Runtime。模型转换入口见 [`../scripts/export_mobile_model.py`](../scripts/export_mobile_model.py)，Android/iOS 原生构建边界见 [`../docs/architecture/MOBILE_RUNTIME_V1.md`](../docs/architecture/MOBILE_RUNTIME_V1.md)。
+移动端可能需要 ONNX 模型和对应的 Rust/ONNX Runtime。模型转换入口见 [`../scripts/export_mobile_model.py`](../scripts/export_mobile_model.py)，Android/iOS 原生构建边界见 [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)。
 
 ## 公开发布前
 

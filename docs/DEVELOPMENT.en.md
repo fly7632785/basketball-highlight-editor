@@ -50,7 +50,8 @@ engine/python/                JSONL Engine, jobs, and storage adapters
 engine/python/adapters/       algorithm and export adapters
 src/basketball_highlight/     detection, event, trajectory, and review rules
 scripts/                      analysis, export, runtime, and mobile build scripts
-docs/architecture/            architecture, protocol, and database contracts
+docs/ARCHITECTURE.en.md      architecture, protocol, and runtime notes
+docs/architecture/SQLITE_SCHEMA_V1.sql  SQLite database contract
 tests/                        Python tests
 apps/desktop/test/            desktop Flutter tests
 apps/mobile/test/             mobile Flutter tests
@@ -181,7 +182,7 @@ Attach screenshots only when they are cleared for public use. Do not submit scre
 
 When changing an Engine command, update:
 
-1. [`architecture/ENGINE_PROTOCOL_V1.md`](architecture/ENGINE_PROTOCOL_V1.md);
+1. [`ARCHITECTURE.md`](ARCHITECTURE.md);
 2. the Engine handler and Flutter client;
 3. protocol and error-path tests;
 4. compatibility notes.
@@ -191,9 +192,9 @@ When changing SQLite, update:
 1. [`architecture/SQLITE_SCHEMA_V1.sql`](architecture/SQLITE_SCHEMA_V1.sql);
 2. storage initialization and reads/writes;
 3. legacy-project, null, and migration tests;
-4. lifecycle notes in [`architecture/PROJECT_LAYOUT_V1.md`](architecture/PROJECT_LAYOUT_V1.md).
+4. lifecycle notes in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-When changing mobile channels, the Rust C ABI, ONNX inputs/outputs, or ABIs, update [`architecture/MOBILE_RUNTIME_V1.md`](architecture/MOBILE_RUNTIME_V1.md), Android/iOS build notes, and target-platform tests.
+When changing mobile channels, the Rust C ABI, ONNX inputs/outputs, or ABIs, update [`ARCHITECTURE.md`](ARCHITECTURE.md), Android/iOS build notes, and target-platform tests.
 
 ## 9. Pre-submit checks
 

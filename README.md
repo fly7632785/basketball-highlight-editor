@@ -4,7 +4,7 @@
 
 它是一个本地运行的篮球视频分析和剪辑工具：自动找候选，人工做判断，最后导出集锦。
 
-**[快速开始](docs/GETTING_STARTED.md)** · **[常见问题](docs/FAQ.md)** · [English](README.en.md)
+**[用户指南](docs/USER_GUIDE.md)** · [English](README.en.md)
 
 ## 它解决的是什么问题？
 
@@ -36,7 +36,7 @@
 
 ![深色主题导出集锦](capture/screenshot-20260813-150335.png)
 
-完整的页面和操作说明见 [`docs/SCREENSHOTS.md`](docs/SCREENSHOTS.md)，白色主题也在文档最后提供补充截图。
+完整的页面、按钮和交互说明见 [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)，文档以深色主题截图为主，并在最后补充白色主题。
 
 ## 实际用起来
 
@@ -91,7 +91,7 @@ flutter pub get
 flutter run -d macos
 ```
 
-启动后按照“新建项目 → 选择视频 → 分析 → 审核 → 导出”操作即可。Windows、移动端和完整排障步骤见 [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)。
+启动后按照“新建项目 → 选择视频 → 分析 → 审核 → 导出”操作即可。Windows、移动端和排障步骤见 [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)。
 
 ## 两种分析方式
 
@@ -110,7 +110,7 @@ flutter run -d macos
 - **FFmpeg / FFprobe**：视频元数据、预览和导出；
 - **Rust + ONNX Runtime**：移动端本地推理路径。
 
-想了解实现细节，可以从 [`docs/README.md`](docs/README.md) 开始，再阅读 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) 和 [`docs/architecture/`](docs/architecture/)。
+实现细节见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)；开发命令见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
 
 ## 当前版本
 
@@ -118,11 +118,11 @@ macOS 桌面端是当前最完整、最推荐的体验路径。Windows 和移动
 
 ## 文档
 
-- **开始使用**：[`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) · [`docs/FAQ.md`](docs/FAQ.md)
-- **产品说明**：[`docs/USER_FLOW_V1.md`](docs/USER_FLOW_V1.md) · [`docs/REQUIREMENTS_V1.md`](docs/REQUIREMENTS_V1.md) · [`docs/DECISIONS_V1.md`](docs/DECISIONS_V1.md)
+- **用户指南**：[`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)（安装、完整流程、截图和 FAQ）
+- **产品规格**：[`docs/PRODUCT_SPEC.md`](docs/PRODUCT_SPEC.md)（范围、状态和产品决策）
 - **开发指南**：[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
-- **架构参考**：[`docs/README.md`](docs/README.md) · [`docs/architecture/`](docs/architecture/)
-- **发布说明**：[`docs/RELEASE.md`](docs/RELEASE.md)
+- **架构与协议**：[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- **发布与授权**：[`docs/RELEASE.md`](docs/RELEASE.md)
 
 ## 开源致谢
 

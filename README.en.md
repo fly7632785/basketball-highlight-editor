@@ -4,7 +4,7 @@ If you have recorded a full basketball game, you know how hard it is to find the
 
 It is a local basketball video analysis and editing tool: automated candidate detection, human review, and highlight export in one workflow.
 
-[中文](README.md) · **[Getting started](docs/GETTING_STARTED.en.md)** · [FAQ](docs/FAQ.en.md)
+[中文](README.md) · **[User guide](docs/USER_GUIDE.en.md)**
 
 ## What problem does it solve?
 
@@ -36,7 +36,7 @@ After review, filter by player or candidate range, then choose a merged export o
 
 ![Dark theme export screen](capture/screenshot-20260813-150335.png)
 
-The complete page and interaction guide, including a light-theme supplement, is in [`docs/SCREENSHOTS.en.md`](docs/SCREENSHOTS.en.md).
+The complete page and interaction guide, including a light-theme supplement, is in [`docs/USER_GUIDE.en.md`](docs/USER_GUIDE.en.md).
 
 ## What it feels like to use
 
@@ -91,7 +91,7 @@ flutter pub get
 flutter run -d macos
 ```
 
-Then follow: create a project → choose a video → analyze → review → export. Windows, mobile, and troubleshooting details are in [`docs/GETTING_STARTED.en.md`](docs/GETTING_STARTED.en.md).
+Then follow: create a project → choose a video → analyze → review → export. Windows, mobile, and troubleshooting details are in [`docs/USER_GUIDE.en.md`](docs/USER_GUIDE.en.md).
 
 ## Two analysis modes
 
@@ -110,7 +110,7 @@ Both modes use the same review, adjustment, and export workflow. Fast mode does 
 - **FFmpeg / FFprobe** for metadata, previews, and export;
 - **Rust + ONNX Runtime** for the mobile native-inference path.
 
-For implementation details, start with [`docs/README.en.md`](docs/README.en.md), then see [`docs/DEVELOPMENT.en.md`](docs/DEVELOPMENT.en.md) and [`docs/architecture/`](docs/architecture/).
+Implementation details are in [`docs/ARCHITECTURE.en.md`](docs/ARCHITECTURE.en.md); development commands are in [`docs/DEVELOPMENT.en.md`](docs/DEVELOPMENT.en.md).
 
 ## Current status
 
@@ -118,11 +118,11 @@ The macOS desktop app is the most complete and recommended path today. Windows a
 
 ## Documentation
 
-- **Getting started**: [`docs/GETTING_STARTED.en.md`](docs/GETTING_STARTED.en.md) · [`docs/FAQ.en.md`](docs/FAQ.en.md)
-- **Product docs**: [`docs/USER_FLOW_V1.md`](docs/USER_FLOW_V1.md) · [`docs/REQUIREMENTS_V1.md`](docs/REQUIREMENTS_V1.md) · [`docs/DECISIONS_V1.md`](docs/DECISIONS_V1.md)
+- **User guide**: [`docs/USER_GUIDE.en.md`](docs/USER_GUIDE.en.md) — installation, workflow, screenshots, and FAQ
+- **Product specification**: [`docs/PRODUCT_SPEC.md`](docs/PRODUCT_SPEC.md) — scope, status, and product decisions
 - **Development**: [`docs/DEVELOPMENT.en.md`](docs/DEVELOPMENT.en.md)
-- **Architecture**: [`docs/README.en.md`](docs/README.en.md) · [`docs/architecture/`](docs/architecture/)
-- **Release**: [`docs/RELEASE.en.md`](docs/RELEASE.en.md)
+- **Architecture and protocol**: [`docs/ARCHITECTURE.en.md`](docs/ARCHITECTURE.en.md)
+- **Release and licensing**: [`docs/RELEASE.en.md`](docs/RELEASE.en.md)
 
 ## Open-source acknowledgments
 

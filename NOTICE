@@ -4,5 +4,5 @@ This repository is distributed under the MIT License. See LICENSE.
 
 Third-party packages, fonts, codecs, model weights, and reference repositories
 may have separate licenses. They are not automatically covered by the project
-license. See docs/MODEL_AND_DATA_LICENSES.md before redistributing a build or
+license. See docs/RELEASE.md#模型与数据授权 before redistributing a build or
 model, and include the applicable notices with each release artifact.

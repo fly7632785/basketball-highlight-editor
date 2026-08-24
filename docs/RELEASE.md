@@ -14,14 +14,14 @@
 ### 应包含
 
 - `README.md` 和 `README.en.md`；
-- 入门、FAQ、开发、发布、架构和协议文档；
+- 用户指南、开发、发布、架构和协议文档；
 - `LICENSE` 和 `NOTICE`；
 - 依赖、模型和数据授权边界说明；
 - 模型、数据和截图的本地使用说明。
 
 ### 不应包含
 
-- 未核验授权的 `.pt`、`.onnx`、`.pth`、`.bin` 或其他模型/原生运行时二进制；
+- 未核验授权的 `.pt`、`.onnx`、`.pth`、`.bin` 或其他模型/原生运行时二进制；源码仓库虽包含默认模型，但公开 Release 必须先完成权利核验；
 - 真实比赛视频、导出片段、真实标注和未脱敏截图；
 - `.venv/`、`.tooling/`、`build/`、`dist/` 和个人路径；
 - API key、私钥、真实联系方式或第三方源码 checkout；
@@ -58,7 +58,24 @@ git diff --check
 | 演示视频/截图 | 人物、球队、场馆和画面的公开权利 |
 | Android/iOS 原生库 | Rust、ONNX Runtime 和平台 SDK 的分发条件 |
 
-如果模型或训练数据的权利无法证明，只发布源码，并要求使用者自行准备模型。详见 [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md)。
+如果模型或训练数据的权利无法证明，只发布源码，并要求使用者自行准备模型。详见本文“模型与数据授权”。
+
+## 2.1 模型与数据授权
+
+源码采用 MIT，不代表模型权重、训练数据、输入视频、FFmpeg 或其他依赖可以按 MIT 分发。公开前需要分别核对：
+
+- 模型代码、权重和训练数据的来源、版本、哈希与再分发条件；
+- Python、Flutter/Dart、FFmpeg、ONNX Runtime 和平台 SDK 的许可证与 notices；
+- 演示视频、截图、球员画面、球队标识和场馆素材的公开使用权；
+- Android/iOS 原生库、静态链接物和 ABI 的分发条件。
+
+当前完整源码包含 `models/bball_model.pt` 和移动端 ONNX 产物，正常 clone 后不需要手动下载模型。这解决的是本地启动体验，不等于模型获得了无限制的商业再分发权。默认桌面权重与研究参考项目 [`Basketball-Shot-Detection`](https://github.com/josephattalla/Basketball-Shot-Detection) 的 `bball_model.pt` SHA-256 一致：
+
+```text
+40f3e596652a427ba290b3f72384e49aed12caf1a8ae41beaef4a8fffcf09fa3
+```
+
+该哈希只用于来源追踪。权利无法证明时，只发布源码，并要求使用者自行准备模型；不要从未知地址静默下载。真实比赛视频、人工标注和审核导出文件只用于本地验证，不应提交到公开仓库。
 
 ## 3. macOS 构建
 
@@ -172,7 +189,7 @@ Windows 当前属于兼容路径，仍需验证 Flutter 工具链、Python/Torch
 
 Android 当前主要验证 `arm64-v8a`，需要 Rust Runtime、ONNX Runtime Android 库和对应 ABI 的完整 APK。iOS 项目、媒体和导出可构建，但本地分析仍需要 Rust 静态库、ONNX Runtime XCFramework 和 Runner 链接；没有这些产物时不要发布为完整 AI 分析版本。
 
-移动端构建入口见 [`architecture/MOBILE_RUNTIME_V1.md`](architecture/MOBILE_RUNTIME_V1.md) 和 [`../apps/mobile/README.md`](../apps/mobile/README.md)。
+移动端构建入口见 [`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`../apps/mobile/README.md`](../apps/mobile/README.md)。
 
 ## 6. 版本与变更记录
 
