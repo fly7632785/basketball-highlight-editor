@@ -90,7 +90,7 @@ Then follow: create a project → choose a video → analyze → review → expo
 
 Both modes use the same review, adjustment, and export workflow. Fast mode does not make decisions for you; it helps you reach the first reviewable result sooner.
 
-## Core technology (for developers)
+## Core technology
 
 - **Flutter** for desktop and mobile UI;
 - **Python + OpenCV + YOLO** for video sampling, basketball/hoop detection, and candidate generation;
