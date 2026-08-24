@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1260" viewBox="0 0 920 1260">
+  <rect width="920" height="1260" fill="#0b0e14"/>
+  <text x="40" y="52" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600">BHE · 移动端审核工作台 v2</text>
+  <text x="40" y="82" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="13">全屏卡片流 · 上滑保留 / 下滑排除 · 单手 30 秒审 10 片段</text>
+
+  <!-- ============ Frame A: 默认态 ============ -->
+  <rect x="20" y="130" width="430" height="932" rx="28" fill="#121620" stroke="#31343f" stroke-width="2"/>
+  <rect x="33" y="143" width="404" height="906" rx="20" fill="#0b0e14"/>
+
+  <!-- header -->
+  <rect x="33" y="143" width="404" height="60" rx="20" fill="#121620"/>
+  <path d="M57 168l10-10m-10 10l10 10" fill="none" stroke="#e6e8ee" stroke-width="2" stroke-linecap="round"/>
+  <text x="84" y="173" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="600">30分钟训练赛</text>
+  <rect x="330" y="156" width="86" height="30" rx="15" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="373" y="176" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600" text-anchor="middle">12 / 58</text>
+
+  <!-- progress -->
+  <rect x="33" y="203" width="404" height="4" fill="#1a1f2b"/>
+  <rect x="33" y="203" width="84" height="4" fill="#ff6b2c"/>
+
+  <!-- candidate meta -->
+  <text x="57" y="243" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="600">候选 #12</text>
+  <text x="57" y="264" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12">00:18 – 00:27 · 9 秒 · 置信度 82%</text>
+  <rect x="341" y="228" width="75" height="26" rx="13" fill="#2a1f14" stroke="#ff6b2c" stroke-opacity=".5"/>
+  <text x="378" y="246" fill="#ff9d66" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">轨迹通过</text>
+
+  <!-- video card (stack top) -->
+  <g transform="translate(0 0)">
+    <rect x="33" y="282" width="404" height="500" rx="14" fill="#1d292a"/>
+    <path d="M33 560L437 498v188H33z" fill="#263537"/>
+    <path d="M33 561l404-62M33 591l404-62M33 622l404-62" stroke="#536464" stroke-width="1" opacity=".7"/>
+    <rect x="275" y="441" width="78" height="6" fill="#f0f1eb"/>
+    <rect x="345" y="440" width="4" height="43" fill="#f0f1eb"/>
+    <ellipse cx="314" cy="488" rx="25" ry="6" fill="none" stroke="#f08c46" stroke-width="3"/>
+    <path d="M290 491l7 46m10-43l4 45m10-44l-1 42m11-41l-7 40M295 537l34 0" fill="none" stroke="#d9e0d9" stroke-width="1.5"/>
+    <circle cx="229" cy="436" r="11" fill="#df7a35" stroke="#f9b06c" stroke-width="2"/>
+    <path d="M229 448 C253 450 279 462 305 484" fill="none" stroke="#f08c46" stroke-width="2" stroke-dasharray="5 4"/>
+    <circle cx="305" cy="484" r="4" fill="#3fb950"/>
+    <rect x="284" y="432" width="60" height="110" fill="none" stroke="#f08c46" stroke-width="1.5" stroke-dasharray="4 3" opacity=".9"/>
+    <!-- loop badge -->
+    <rect x="385" y="296" width="40" height="24" rx="6" fill="#0b0e14" opacity=".78"/>
+    <path d="M396 308a6 6 0 1 1 2 4.5" fill="none" stroke="#e6e8ee" stroke-width="1.6"/>
+    <path d="M394 313l1-4 4 1" fill="none" stroke="#e6e8ee" stroke-width="1.6"/>
+    <!-- time chip -->
+    <rect x="45" y="296" width="88" height="24" rx="6" fill="#0b0e14" opacity=".78"/>
+    <text x="89" y="312" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">00:18 · 自动循环</text>
+    <!-- play -->
+    <circle cx="235" cy="532" r="26" fill="#0b0e14" opacity=".72"/>
+    <path d="M230 520l16 12-16 12z" fill="#fff"/>
+    <!-- next-card peek (bottom) -->
+    <rect x="49" y="726" width="372" height="44" rx="10" fill="#121620" stroke="#31343f"/>
+    <text x="70" y="753" fill="#6b7280" font-family="Inter, Arial, sans-serif" font-size="11">下一个 · 候选 #13 · 01:42 · 9 秒</text>
+  </g>
+
+  <!-- gesture hints -->
+  <path d="M235 792l0-16m0 16l-6-7m6 7l6-7" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round"/>
+  <text x="235" y="824" fill="#3fb950" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="600" text-anchor="middle">上滑 · 保留</text>
+  <path d="M235 848l0 16m0-16l-6 7m6-7l6 7" fill="none" stroke="#f85149" stroke-width="2" stroke-linecap="round"/>
+  <text x="235" y="880" fill="#f85149" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="600" text-anchor="middle">下滑 · 排除</text>
+
+  <!-- replay row -->
+  <rect x="57" y="896" width="100" height="40" rx="8" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="107" y="921" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">↺ 重播</text>
+  <rect x="169" y="896" width="100" height="40" rx="8" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="219" y="921" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">0.5× 慢放</text>
+  <rect x="281" y="896" width="130" height="40" rx="8" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="346" y="921" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">球员 · 备注 · 证据</text>
+
+  <!-- decision buttons (backup for swipe) -->
+  <rect x="57" y="948" width="174" height="56" rx="10" fill="#3fb950"/>
+  <text x="144" y="982" fill="#07130b" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600" text-anchor="middle">保留</text>
+  <rect x="243" y="948" width="168" height="56" rx="10" fill="#0b0e14" stroke="#f85149" stroke-width="1.5"/>
+  <text x="327" y="982" fill="#ffb3b0" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600" text-anchor="middle">排除</text>
+
+  <!-- undo -->
+  <text x="235" y="1030" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">↶ 撤销上一个 · 已审 11 保留 7</text>
+
+  <!-- ============ Frame B: 滑动中 ============ -->
+  <rect x="470" y="130" width="430" height="932" rx="28" fill="#121620" stroke="#31343f" stroke-width="2"/>
+  <rect x="483" y="143" width="404" height="906" rx="20" fill="#0b0e14"/>
+  <rect x="483" y="143" width="404" height="60" rx="20" fill="#121620"/>
+  <path d="M507 168l10-10m-10 10l10 10" fill="none" stroke="#e6e8ee" stroke-width="2" stroke-linecap="round"/>
+  <text x="534" y="173" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="600">30分钟训练赛</text>
+  <rect x="780" y="156" width="86" height="30" rx="15" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="823" y="176" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600" text-anchor="middle">13 / 58</text>
+  <rect x="483" y="203" width="404" height="4" fill="#1a1f2b"/>
+  <rect x="483" y="203" width="91" height="4" fill="#ff6b2c"/>
+
+  <!-- release pill -->
+  <rect x="623" y="222" width="124" height="34" rx="17" fill="#16241a" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="685" y="244" fill="#3fb950" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle">松开手指 · 保留</text>
+
+  <!-- card sliding up, next card behind -->
+  <rect x="497" y="288" width="376" height="470" rx="14" fill="#121620" stroke="#31343f" opacity=".8"/>
+  <text x="685" y="528" fill="#6b7280" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">候选 #13 等待中</text>
+
+  <g transform="rotate(-3 685 500) translate(0 -70)">
+    <rect x="483" y="282" width="404" height="500" rx="14" fill="#1d292a" stroke="#3fb950" stroke-width="2.5"/>
+    <path d="M483 560L887 498v188H483z" fill="#263537"/>
+    <path d="M483 561l404-62M483 591l404-62M483 622l404-62" stroke="#536464" stroke-width="1" opacity=".7"/>
+    <rect x="725" y="441" width="78" height="6" fill="#f0f1eb"/>
+    <rect x="795" y="440" width="4" height="43" fill="#f0f1eb"/>
+    <ellipse cx="764" cy="488" rx="25" ry="6" fill="none" stroke="#f08c46" stroke-width="3"/>
+    <path d="M740 491l7 46m10-43l4 45m10-44l-1 42m11-41l-7 40M745 537l34 0" fill="none" stroke="#d9e0d9" stroke-width="1.5"/>
+    <!-- big check -->
+    <circle cx="685" cy="480" r="52" fill="#3fb950" opacity=".22"/>
+    <circle cx="685" cy="480" r="34" fill="#3fb950"/>
+    <path d="M671 480l10 10 20-20" fill="none" stroke="#07130b" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- tilt hint -->
+    <text x="685" y="556" fill="#3fb950" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600" text-anchor="middle">卡片跟随手指上移 · 边框变绿</text>
+  </g>
+
+  <!-- spring note -->
+  <rect x="507" y="800" width="356" height="56" rx="10" fill="#121620" stroke="#31343f"/>
+  <text x="685" y="824" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle">滑出 1/3 屏即生效</text>
+  <text x="685" y="844" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">松手卡片弹走（250ms），下一张自动播放</text>
+
+  <rect x="507" y="872" width="356" height="56" rx="10" fill="#121620" stroke="#31343f"/>
+  <text x="685" y="896" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle">反悔？边缘右滑 = 系统返回</text>
+  <text x="685" y="916" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">不用横向手势做判定，避免与系统手势冲突</text>
+
+  <!-- annotations -->
+  <text x="40" y="1108" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">交互要点</text>
+  <text x="40" y="1132" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12">1 竖向滑动判定（避让系统横滑返回）  2 视频自动循环播放，看到即判  3 按钮是滑动的等价备选（≥56px 触达区）</text>
+  <text x="40" y="1154" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12">4 置信度/轨迹证据收进 chips，不占决策区  5 撤销常驻，误划零成本  6 审完自动进入汇总→导出</text>
+  <text x="40" y="1186" fill="#6b7280" font-family="Inter, Arial, sans-serif" font-size="11">动效：卡片跟手（阻尼 0.9）· 判定后弹走 250ms · 下张淡入 150ms · 尊重 reduce-motion</text>
+</svg>

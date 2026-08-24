@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -20,11 +21,15 @@ import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
+    private val tag = "BHE-Analysis"
     private val mediaChannelName = "com.bhe.bhe/mobile_media"
     private val analysisChannelName = "com.bhe.bhe/mobile_analysis"
     private val progressChannelName = "com.bhe.bhe/mobile_analysis_progress"
@@ -68,11 +73,14 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun analyzeVideo(call: MethodCall, result: MethodChannel.Result) {
+        Log.i(tag, "analyzeVideo request received")
         if (analysisThread?.isAlive == true) {
+            Log.w(tag, "analysis rejected: another task is still running")
             result.error("ANALYSIS_BUSY", "已有分析任务正在运行", null)
             return
         }
         if (!NativeRuntime.available) {
+            Log.e(tag, "native runtime unavailable: ${NativeRuntime.loadError}")
             result.error(
                 "NATIVE_RUNTIME_UNAVAILABLE",
                 "当前 Android 原生 Runtime 加载失败：${NativeRuntime.loadError ?: "未知错误"}",
@@ -90,6 +98,7 @@ class MainActivity : FlutterActivity() {
         val hoopRoi = call.argument<Map<String, Any>>("hoopRoi")
         val netRoi = call.argument<Map<String, Any>>("netRoi")
         if (videoPath == null || modelPath == null || hoopRoi == null || netRoi == null || endMs <= startMs) {
+            Log.e(tag, "invalid arguments: videoPath=$videoPath modelPath=$modelPath startMs=$startMs endMs=$endMs")
             result.error("INVALID_ARGUMENT", "分析参数无效", null)
             return
         }
@@ -99,12 +108,18 @@ class MainActivity : FlutterActivity() {
             var session = 0L
             val retriever = MediaMetadataRetriever()
             try {
+                Log.i(tag, "analysis thread started video=$videoPath model=$modelPath range=${startMs}..${endMs}ms fps=$fps")
+                emitProgress("validateInput", 0.03, 0, 0, "正在读取视频信息")
+                Log.i(tag, "setDataSource start")
                 retriever.setDataSource(videoPath)
+                Log.i(tag, "setDataSource success")
                 val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: endMs.toLong()
                 val actualEndMs = endMs.toLong().coerceAtMost(duration)
                 val intervalMs = (1000.0 / fps).toLong().coerceAtLeast(1L)
                 val frameWindowMs = (actualEndMs - startMs).coerceAtLeast(1L)
                 val totalFrames = ((frameWindowMs + intervalMs - 1L) / intervalMs).toInt().coerceAtLeast(1)
+                Log.i(tag, "video metadata duration=${duration}ms actualEnd=${actualEndMs}ms totalFrames=$totalFrames interval=${intervalMs}ms")
+                emitProgress("prepareProxy", 0.05, 0, totalFrames, "正在加载本地模型")
                 val config = JSONObject()
                     .put("model_path", modelPath)
                     .put("hoop_roi", JSONObject(hoopRoi))
@@ -113,7 +128,27 @@ class MainActivity : FlutterActivity() {
                     .put("confidence_threshold", 0.10)
                     .put("clip_before_ms", beforeMs)
                     .put("clip_after_ms", afterMs)
-                session = NativeRuntime.createSession(config.toString())
+                val onnxPath = File(applicationInfo.nativeLibraryDir, "libonnxruntime.so").absolutePath
+                Log.i(tag, "initializeOnnx start path=$onnxPath exists=${File(onnxPath).isFile}")
+                if (!File(onnxPath).isFile || !NativeRuntime.initializeOnnx(onnxPath)) {
+                    throw IllegalStateException("ONNX Runtime 初始化失败：Android 原生推理库未正确安装或无法加载")
+                }
+                Log.i(tag, "initializeOnnx success")
+                Log.i(tag, "createSession start modelExists=${File(modelPath).isFile} modelBytes=${File(modelPath).length()}")
+                emitProgress("prepareProxy", 0.06, 0, totalFrames, "正在加载本地模型（最多 60 秒）")
+                val runtimeExecutor = Executors.newSingleThreadExecutor()
+                val runtimeFuture = runtimeExecutor.submit<Long> {
+                    NativeRuntime.createSession(config.toString())
+                }
+                session = try {
+                    runtimeFuture.get(60, TimeUnit.SECONDS)
+                } catch (_: TimeoutException) {
+                    runtimeFuture.cancel(true)
+                    throw IllegalStateException("本地模型加载超过 60 秒，请检查 ONNX Runtime 或重新安装应用")
+                } finally {
+                    runtimeExecutor.shutdownNow()
+                }
+                Log.i(tag, "createSession returned session=$session")
                 if (session == 0L) throw IllegalStateException("Rust Runtime 无法加载模型或 ONNX Runtime")
                 emitProgress("prepareProxy", 0.05, 0, totalFrames, "正在准备本地分析")
 
@@ -121,14 +156,17 @@ class MainActivity : FlutterActivity() {
                 var lastResponse = JSONObject().put("candidates", JSONArray())
                 var timeMs = startMs.toLong()
                 while (timeMs < actualEndMs && !analysisCancelled.get()) {
+                    if (processed == 0) Log.i(tag, "first frame decode start timeMs=$timeMs")
                     val bitmap = frameAt(retriever, timeMs * 1000L)
                     if (bitmap != null) {
                         val frame = bitmapToFrame(bitmap, timeMs)
                         bitmap.recycle()
                         lastResponse = JSONObject(NativeRuntime.pushFrame(session, frame))
                         lastResponse.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
+                        if (processed == 0) Log.i(tag, "first frame inference success")
                     }
                     processed++
+                    if (processed % 30 == 0) Log.i(tag, "frame progress=$processed/$totalFrames timeMs=$timeMs")
                     if (processed == 1 || processed % 3 == 0) {
                         emitProgress("refineCandidates", 0.05 + (processed.toDouble() / totalFrames * 0.90), processed, totalFrames, "正在分析视频帧")
                     }
@@ -137,14 +175,18 @@ class MainActivity : FlutterActivity() {
                 if (analysisCancelled.get()) throw InterruptedException("分析已取消")
                 emitProgress("persistCandidates", 0.98, processed, totalFrames, "正在写入分析结果")
                 val response = jsonObjectToMap(lastResponse)
+                Log.i(tag, "analysis completed processed=$processed candidates=${lastResponse.optJSONArray("candidates")?.length() ?: 0}")
                 mainHandler.post { result.success(response) }
             } catch (_: InterruptedException) {
+                Log.i(tag, "analysis cancelled")
                 mainHandler.post { result.error("ANALYSIS_CANCELLED", "分析已取消", null) }
             } catch (error: Exception) {
+                Log.e(tag, "analysis failed: ${error.stackTraceToString()}")
                 mainHandler.post { result.error("ANALYSIS_FAILED", error.message ?: "移动端分析失败", null) }
             } finally {
                 if (session != 0L) NativeRuntime.freeSession(session)
                 retriever.release()
+                Log.i(tag, "analysis thread finished")
                 analysisThread = null
             }
         }.also { it.start() }

@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="1160" viewBox="0 0 860 1160">
+  <rect width="860" height="1160" fill="#0b0e14"/>
+  <text x="40" y="52" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600">BHE · 移动端审核工作台</text>
+  <text x="40" y="82" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="13">桌面版视觉语言 · 视频优先 · 连续审核</text>
+
+  <!-- phone frame -->
+  <rect x="215" y="118" width="430" height="932" rx="28" fill="#121620" stroke="#31343f" stroke-width="2"/>
+  <rect x="228" y="131" width="404" height="906" rx="20" fill="#0b0e14"/>
+
+  <!-- status/header -->
+  <rect x="228" y="131" width="404" height="66" rx="20" fill="#121620"/>
+  <path d="M252 164l8-8m-8 8l8 8" fill="none" stroke="#e6e8ee" stroke-width="2" stroke-linecap="round"/>
+  <text x="278" y="160" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="600">30分钟训练赛</text>
+  <text x="278" y="179" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">审核工作台</text>
+  <text x="494" y="166" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="14" text-anchor="end">12 / 58</text>
+  <circle cx="560" cy="164" r="16" fill="#1a1f2b" stroke="#31343f"/>
+  <path d="M553 160h14M553 164h14M553 168h14" stroke="#9aa0ac" stroke-width="1.6" stroke-linecap="round"/>
+  <circle cx="602" cy="164" r="16" fill="#1a1f2b" stroke="#31343f"/>
+  <circle cx="597" cy="164" r="1.5" fill="#9aa0ac"/><circle cx="602" cy="164" r="1.5" fill="#9aa0ac"/><circle cx="607" cy="164" r="1.5" fill="#9aa0ac"/>
+
+  <!-- video -->
+  <rect x="228" y="197" width="404" height="227" fill="#202a2d"/>
+  <rect x="228" y="197" width="404" height="227" fill="#1d292a"/>
+  <!-- court/hoop scene -->
+  <path d="M228 350L632 288v136H228z" fill="#263537"/>
+  <path d="M228 351l404-64M228 381l404-64M228 412l404-64" stroke="#536464" stroke-width="1" opacity=".7"/>
+  <rect x="470" y="231" width="78" height="6" fill="#f0f1eb"/>
+  <rect x="540" y="230" width="4" height="43" fill="#f0f1eb"/>
+  <ellipse cx="509" cy="278" rx="25" ry="6" fill="none" stroke="#f08c46" stroke-width="3"/>
+  <path d="M485 281l7 46m10-43l4 45m10-44l-1 42m11-41l-7 40M490 327l34 0" fill="none" stroke="#d9e0d9" stroke-width="1.5"/>
+  <circle cx="424" cy="226" r="11" fill="#df7a35" stroke="#f9b06c" stroke-width="2"/>
+  <path d="M424 238 C448 240 474 252 500 274" fill="none" stroke="#f08c46" stroke-width="2" stroke-dasharray="5 4"/>
+  <circle cx="500" cy="274" r="4" fill="#3fb950"/>
+  <rect x="479" y="222" width="60" height="110" fill="none" stroke="#f08c46" stroke-width="1.5" stroke-dasharray="4 3" opacity=".9"/>
+  <rect x="558" y="209" width="58" height="26" rx="6" fill="#0b0e14" opacity=".78"/>
+  <text x="587" y="226" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="10" text-anchor="middle">标注  A</text>
+  <circle cx="430" cy="311" r="24" fill="#0b0e14" opacity=".72"/>
+  <path d="M425 300l15 11-15 11z" fill="#fff"/>
+  <rect x="240" y="398" width="88" height="22" rx="4" fill="#0b0e14" opacity=".76"/>
+  <text x="250" y="413" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="10">00:18 · 9秒</text>
+
+  <!-- timeline and controls -->
+  <text x="240" y="448" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="10">00:14</text>
+  <text x="620" y="448" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="10" text-anchor="end">00:23</text>
+  <rect x="240" y="457" width="380" height="4" rx="2" fill="#31343f"/>
+  <rect x="240" y="457" width="182" height="4" rx="2" fill="#ff6b2c"/>
+  <circle cx="422" cy="459" r="6" fill="#ff6b2c" stroke="#fff" stroke-width="2"/>
+  <rect x="240" y="477" width="84" height="32" rx="7" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="282" y="498" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">−2 秒</text>
+  <rect x="332" y="477" width="84" height="32" rx="7" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="374" y="498" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">重播</text>
+  <rect x="424" y="477" width="84" height="32" rx="7" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="466" y="498" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">1×</text>
+  <rect x="516" y="477" width="104" height="32" rx="7" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="568" y="498" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">+2 秒</text>
+
+  <!-- decision buttons -->
+  <rect x="240" y="523" width="184" height="50" rx="8" fill="#3fb950"/>
+  <text x="332" y="554" fill="#07130b" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600" text-anchor="middle">✓  保留</text>
+  <rect x="436" y="523" width="184" height="50" rx="8" fill="#4b2429" stroke="#f85149" stroke-width="1"/>
+  <text x="528" y="554" fill="#ffb3b0" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600" text-anchor="middle">×  排除</text>
+
+  <!-- compact actions -->
+  <rect x="240" y="587" width="116" height="32" rx="7" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="298" y="608" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">球员标签</text>
+  <rect x="364" y="587" width="78" height="32" rx="7" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="403" y="608" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">备注</text>
+  <rect x="450" y="587" width="88" height="32" rx="7" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="494" y="608" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">调范围</text>
+  <rect x="546" y="587" width="74" height="32" rx="7" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="583" y="608" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">更多</text>
+
+  <!-- evidence -->
+  <rect x="240" y="634" width="380" height="43" rx="7" fill="#121620" stroke="#31343f"/>
+  <text x="254" y="652" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="10">算法证据</text>
+  <text x="254" y="668" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="11">置信度 82%  ·  轨迹通过  ·  穿框通过  ·  篮网待确认</text>
+  <path d="M600 650l6 6-6 6" fill="none" stroke="#9aa0ac" stroke-width="1.5"/>
+
+  <!-- candidate list -->
+  <text x="240" y="710" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="600">候选片段</text>
+  <text x="620" y="710" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="10" text-anchor="end">已审核 11 / 58</text>
+  <rect x="240" y="725" width="380" height="72" rx="8" fill="#1a1f2b" stroke="#ff6b2c" stroke-width="1.5"/>
+  <rect x="252" y="737" width="80" height="48" rx="5" fill="#263537"/>
+  <circle cx="299" cy="757" r="8" fill="#df7a35"/><path d="M268 774l62-15" stroke="#536464" stroke-width="2"/>
+  <text x="346" y="749" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">#12</text>
+  <text x="390" y="749" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">00:18 · 9秒</text>
+  <text x="346" y="770" fill="#f0b35a" font-family="Inter, Arial, sans-serif" font-size="11">Kobe</text>
+  <circle cx="598" cy="761" r="13" fill="#3fb950"/><path d="M592 761l4 4 7-8" fill="none" stroke="#07130b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="240" y="807" width="380" height="72" rx="8" fill="#121620" stroke="#23242f"/>
+  <rect x="252" y="819" width="80" height="48" rx="5" fill="#263537"/>
+  <circle cx="303" cy="838" r="8" fill="#df7a35"/><path d="M268 855l62-15" stroke="#536464" stroke-width="2"/>
+  <text x="346" y="831" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">#13</text>
+  <text x="390" y="831" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">00:31 · 9秒</text>
+  <text x="346" y="852" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">未标记</text>
+  <circle cx="598" cy="843" r="13" fill="#4b2429" stroke="#f85149"/><path d="M593 838l10 10m0-10l-10 10" stroke="#ffb3b0" stroke-width="1.8" stroke-linecap="round"/>
+
+  <!-- bottom hint -->
+  <text x="430" y="1007" fill="#6b7280" font-family="Inter, Arial, sans-serif" font-size="10" text-anchor="middle">上滑下一个 · 下滑上一个 · 点击视频暂停/继续</text>
+</svg>

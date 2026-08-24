@@ -12,6 +12,9 @@ object NativeRuntime {
     val loadError: String? = loadResult.second
 
     @JvmStatic
+    external fun initializeOnnx(libraryPath: String?): Boolean
+
+    @JvmStatic
     external fun createSession(config: String): Long
 
     @JvmStatic
