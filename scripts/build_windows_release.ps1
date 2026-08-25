@@ -61,7 +61,20 @@ if ($Zip -or $PackageOut) {
     $PackageDirectory = Split-Path -Parent $PackageOut
     New-Item -ItemType Directory -Force -Path $PackageDirectory | Out-Null
     if (Test-Path $PackageOut) { Remove-Item -Force $PackageOut }
-    Compress-Archive -Force -Path "$ReleaseDir\*" -DestinationPath $PackageOut
+
+    # Put the application inside one top-level directory. Without this
+    # staging directory, extracting the zip scatters BHE.exe and runtime\
+    # into the user's current folder.
+    $PackageRoot = Join-Path ([System.IO.Path]::GetTempPath()) "bhe-package-$PID"
+    $PackageAppRoot = Join-Path $PackageRoot "BHE"
+    if (Test-Path $PackageRoot) { Remove-Item -Recurse -Force $PackageRoot }
+    New-Item -ItemType Directory -Force -Path $PackageAppRoot | Out-Null
+    try {
+        Copy-Item -Recurse -Force "$ReleaseDir\*" $PackageAppRoot
+        Compress-Archive -Force -Path $PackageAppRoot -DestinationPath $PackageOut
+    } finally {
+        if (Test-Path $PackageRoot) { Remove-Item -Recurse -Force $PackageRoot }
+    }
     $Hash = (Get-FileHash -Algorithm SHA256 -Path $PackageOut).Hash.ToLowerInvariant()
     $HashFile = "$PackageOut.sha256"
     "$Hash  $([System.IO.Path]::GetFileName($PackageOut))" | Set-Content -Encoding ascii -NoNewline $HashFile
