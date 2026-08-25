@@ -10,11 +10,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from basketball_highlight.events import find_refined_crossings
 from basketball_highlight.ranking import dedupe_candidates
+from basketball_highlight.tracking import link_ball_detections
 from cache_io import read_json_cache, write_json_cache
 
 
 DETECTION_CACHE_VERSION = "python-v2.5-white-net-region"
-ALGORITHM_VERSION = "python-v2.12-white-net-trajectory"
+ALGORITHM_VERSION = "python-v2.14-white-net-trajectory"
 REFINED_SCHEMA_VERSION = 3
 
 
@@ -330,43 +331,33 @@ def main(args):
         merged = dedupe_candidates(tagged_matches, 2.0)
         matches = [match for match in merged if match.get("score", 0.0) >= args.min_score]
         # 精化验证失败(轨迹串联不出穿框)的候选:把已扫出的高清球检测
-        # 以速度门限贪心串联成 fallback 轨迹(source 坐标),供引擎的
-        # 粗扫兜底候选直接使用——高清数据已经付过算力,不该浪费。
+        # 从粗扫 above 真检测出发，以筐宽归一化门限双向关联成
+        # fallback 轨迹(source 坐标),供引擎的粗扫兜底候选直接使用。
         fallback_trajectory = []
         if not matches:
-            window_balls = []
-            for record in records:
-                for item in record.get("detections", []):
-                    if (
-                        str(item.get("name", "")).lower() == "ball"
-                        and isinstance(item.get("center"), list)
-                        and len(item["center"]) >= 2
-                    ):
-                        window_balls.append(
-                            (
-                                float(record["time"]),
-                                float(item["center"][0]),
-                                float(item["center"][1]),
-                            )
-                        )
-            window_balls.sort(key=lambda point: point[0])
-            chain = []
-            for point in window_balls:
-                if not chain:
-                    chain.append(point)
-                    continue
-                if point[0] <= chain[-1][0]:
-                    continue
-                dt = point[0] - chain[-1][0]
-                dist = (
-                    (point[1] - chain[-1][1]) ** 2
-                    + (point[2] - chain[-1][2]) ** 2
-                ) ** 0.5
-                if dist <= 60.0 + 1400.0 * dt:
-                    chain.append(point)
+            above = coarse.get("above") if isinstance(coarse, dict) else None
+            if isinstance(above, dict):
+                anchor = {
+                    "time": float(above.get("time", coarse["time"])),
+                    "x": float(above["x"]) * args.proxy_scale,
+                    "y": float(above["y"]) * args.proxy_scale,
+                }
+                chain = link_ball_detections(
+                    records,
+                    anchor=anchor,
+                    rim_width=float(local_rim["width"]),
+                    start_time=float(coarse["time"]) - args.window,
+                    end_time=float(coarse["time"]) + args.window,
+                )
+            else:
+                chain = []
             fallback_trajectory = [
-                {"time": round(t, 3), "x": round(x, 1), "y": round(y, 1)}
-                for t, x, y in chain
+                {
+                    "time": round(point["time"], 3),
+                    "x": round(point["x"], 1),
+                    "y": round(point["y"], 1),
+                }
+                for point in chain
             ]
         results.append({
             "index": index + 1,

@@ -6,8 +6,12 @@ import threading
 from pathlib import Path
 
 import pytest
+import refine_dynamic_candidates
 
-from engine.python.basketball_engine.service import EngineService
+from engine.python.basketball_engine.service import (
+    ANALYSIS_ALGORITHM_VERSION,
+    EngineService,
+)
 from engine.python.basketball_engine.storage import ProjectStore
 from engine.python.basketball_engine.protocol import ProtocolError, parse_request
 
@@ -2226,3 +2230,52 @@ def test_start_export_includes_unreviewed_candidates_by_default(tmp_path: Path):
     assert job["state"] == "completed"
     assert exports[0]["candidate_count"] == 1
     assert Path(exports[0]["metadata"]["files"][0]).is_file()
+
+
+def test_coarse_overlay_uses_nearest_ball_independent_of_detection_order():
+    match = {
+        "time": 10.0,
+        "above": {"time": 9.9, "x": 100.0, "y": 50.0},
+        "below": {"time": 10.2, "x": 115.0, "y": 100.0},
+    }
+    rim = {"center_x": 110.0, "rim_y": 80.0, "width": 40.0, "height": 20.0}
+    records = [
+        {
+            "time": 10.0,
+            "detections": [
+                {"name": "ball", "center": [190.0, 55.0]},
+                {"name": "ball", "center": [105.0, 55.0]},
+            ],
+        },
+        {
+            "time": 10.1,
+            "detections": [{"name": "ball", "center": [110.0, 75.0]}],
+        },
+    ]
+
+    far_first = EngineService._coarse_overlay(match, rim, 1.0, records)
+    records[0]["detections"].reverse()
+    near_first = EngineService._coarse_overlay(match, rim, 1.0, records)
+
+    assert far_first["trajectory"] == near_first["trajectory"]
+    assert far_first["trajectory"][1]["x"] == 105.0
+
+
+def test_tracking_association_has_a_new_consistent_algorithm_version():
+    assert ANALYSIS_ALGORITHM_VERSION == "python-v2.14-white-net-trajectory"
+    assert refine_dynamic_candidates.ALGORITHM_VERSION == ANALYSIS_ALGORITHM_VERSION
+
+
+def test_coarse_overlay_rejects_incomplete_crossing_points():
+    overlay = EngineService._coarse_overlay(
+        {
+            "time": 10.0,
+            "above": {"time": 9.9, "y": 50.0},
+            "below": {"time": 10.2, "x": 115.0, "y": 100.0},
+        },
+        {"center_x": 110.0, "rim_y": 80.0, "width": 40.0, "height": 20.0},
+        1.0,
+        [],
+    )
+
+    assert overlay is None

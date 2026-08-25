@@ -88,6 +88,79 @@ def test_main_does_not_load_yolo_when_all_detection_caches_hit(tmp_path, monkeyp
     assert result["device"] == "auto"
 
 
+def test_fallback_trajectory_is_anchored_and_detection_order_independent(
+    tmp_path, monkeypatch
+):
+    video = tmp_path / "source.mp4"
+    model_path = tmp_path / "model.pt"
+    coarse_path = tmp_path / "coarse.json"
+    video.write_bytes(b"video")
+    model_path.write_bytes(b"model")
+    rim = {"center_x": 110, "rim_y": 80, "width": 40, "height": 20}
+    coarse_path.write_text(
+        json.dumps({
+            "candidates": [{
+                "time": 10.0,
+                "rim": rim,
+                "above": {"time": 9.9, "x": 100.0, "y": 50.0},
+                "below": {"time": 10.2, "x": 115.0, "y": 100.0},
+            }]
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(refine_dynamic_candidates, "load_yolo_model", lambda _: object())
+    monkeypatch.setattr(refine_dynamic_candidates, "select_device", lambda _: "cpu")
+    monkeypatch.setattr(refine_dynamic_candidates, "find_refined_crossings", lambda *_: [])
+
+    def run(order, output_name):
+        records = [
+            {
+                "time": 10.0,
+                "detections": [
+                    {"name": "ball", "center": list(center)}
+                    for center in order
+                ],
+            },
+            {
+                "time": 10.1,
+                "detections": [{"name": "ball", "center": [110.0, 75.0]}],
+            },
+        ]
+        monkeypatch.setattr(
+            refine_dynamic_candidates,
+            "load_scan_window",
+            lambda: lambda *_args, **_kwargs: records,
+        )
+        output = tmp_path / output_name
+        refine_dynamic_candidates.main(Namespace(
+            video=str(video),
+            model=str(model_path),
+            coarse=str(coarse_path),
+            roi=[0, 0, 200, 200],
+            net_roi=None,
+            proxy_scale=1.0,
+            window=2.5,
+            sample_fps=10,
+            scale=2,
+            conf=0.1,
+            batch=8,
+            cache_dir=None,
+            min_score=0.0,
+            device="auto",
+            output=str(output),
+        ))
+        return json.loads(output.read_text(encoding="utf-8"))["results"][0][
+            "fallback_trajectory"
+        ]
+
+    far_first = run([(190.0, 55.0), (105.0, 55.0)], "far-first.json")
+    near_first = run([(105.0, 55.0), (190.0, 55.0)], "near-first.json")
+
+    assert far_first == near_first
+    assert far_first[0] == {"time": 9.9, "x": 100.0, "y": 50.0}
+    assert far_first[1]["x"] == 105.0
+
+
 def test_refine_dynamic_module_defers_heavy_detection_imports():
     script = """
 import builtins

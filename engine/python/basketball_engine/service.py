@@ -29,9 +29,10 @@ from .adapters.analysis import (
 from .adapters.export import export_goal_clips
 from .protocol import ProtocolError
 from .storage import ProjectStore, new_id
+from basketball_highlight.tracking import link_ball_detections
 
 
-ANALYSIS_ALGORITHM_VERSION = "python-v2.13-white-net-trajectory"
+ANALYSIS_ALGORITHM_VERSION = "python-v2.14-white-net-trajectory"
 
 
 class EngineService:
@@ -1110,7 +1111,7 @@ class EngineService:
             },
             "trajectory": traj,
             "crossing": crossing,
-            "source": "coarse_crossing",
+            "source": "refined_fallback",
         }
 
     @staticmethod
@@ -1131,6 +1132,13 @@ class EngineService:
         below = match.get("below")
         if not isinstance(above, dict) or not isinstance(below, dict):
             return None
+        required_point_fields = ("time", "x", "y")
+        if any(
+            field not in point
+            for point in (above, below)
+            for field in required_point_fields
+        ):
+            return None
 
         def scaled(point: Dict[str, Any]) -> Dict[str, float]:
             return {
@@ -1148,65 +1156,22 @@ class EngineService:
         plane_y = rim_raw_y - rim_height * 0.28
 
         event_time = float(match.get("time", 0.0) or 0.0)
-        # 窗口内所有球检测(proxy 坐标),按时间排序。
-        window_balls: list[tuple[float, float, float]] = []
-        for record in records or []:
-            try:
-                record_time = float(record.get("time", 0.0))
-            except (TypeError, ValueError):
-                continue
-            if abs(record_time - event_time) > 1.5:
-                continue
-            for item in record.get("detections", []):
-                if (
-                    item.get("name") == "ball"
-                    and isinstance(item.get("center"), list)
-                    and len(item["center"]) >= 2
-                ):
-                    window_balls.append(
-                        (
-                            record_time,
-                            float(item["center"][0]),
-                            float(item["center"][1]),
-                        )
-                    )
-        window_balls.sort(key=lambda point: point[0])
-
-        # 以 above 为锚做贪心最近邻串联,速度门限剔除跳变点:
-        # 多人多球画面里"每帧最高分检测"会在不同物体间跳,直接连线
-        # 会把不同物体串成乱线;超速点剔除,宁可保留真实空档。
-        # 门限约 550px/s(proxy),约为篮球飞行速度的 1.5 倍余量。
-        chain: list[tuple[float, float, float]] = [
-            (
-                float(above.get("time", 0.0) or 0.0),
-                float(above.get("x", 0.0) or 0.0),
-                float(above.get("y", 0.0) or 0.0),
-            )
-        ]
-        for cand in window_balls:
-            if cand[0] <= chain[-1][0]:
-                continue
-            dt = cand[0] - chain[-1][0]
-            dist = ((cand[1] - chain[-1][1]) ** 2 + (cand[2] - chain[-1][2]) ** 2) ** 0.5
-            if dist <= 40.0 + 550.0 * dt:
-                chain.append(cand)
-        # 终点锚:below 在门限内则确保收尾。
-        below_tuple = (
-            float(below.get("time", 0.0) or 0.0),
-            float(below.get("x", 0.0) or 0.0),
-            float(below.get("y", 0.0) or 0.0),
+        # 从构成候选的 above 真检测双向关联。每帧只取真正最近点，
+        # 且门限按筐宽归一化，避免检测顺序和视频尺度改变轨迹。
+        chain = link_ball_detections(
+            records or [],
+            anchor=above,
+            rim_width=float(rim.get("width", 0.0) or 0.0),
+            start_time=event_time - 1.5,
+            end_time=event_time + 1.5,
         )
-        if below_tuple[0] > chain[-1][0]:
-            dt = below_tuple[0] - chain[-1][0]
-            dist = (
-                (below_tuple[1] - chain[-1][1]) ** 2
-                + (below_tuple[2] - chain[-1][2]) ** 2
-            ) ** 0.5
-            if dist <= 40.0 + 550.0 * dt:
-                chain.append(below_tuple)
         trajectory = [
-            {"time": round(t, 3), "x": round(x * factor, 1), "y": round(y * factor, 1)}
-            for t, x, y in chain
+            {
+                "time": round(point["time"], 3),
+                "x": round(point["x"] * factor, 1),
+                "y": round(point["y"] * factor, 1),
+            }
+            for point in chain
         ]
         if len(trajectory) < 3:
             a = scaled(above)
