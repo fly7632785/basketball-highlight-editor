@@ -329,6 +329,45 @@ def main(args):
             ]
         merged = dedupe_candidates(tagged_matches, 2.0)
         matches = [match for match in merged if match.get("score", 0.0) >= args.min_score]
+        # 精化验证失败(轨迹串联不出穿框)的候选:把已扫出的高清球检测
+        # 以速度门限贪心串联成 fallback 轨迹(source 坐标),供引擎的
+        # 粗扫兜底候选直接使用——高清数据已经付过算力,不该浪费。
+        fallback_trajectory = []
+        if not matches:
+            window_balls = []
+            for record in records:
+                for item in record.get("detections", []):
+                    if (
+                        str(item.get("name", "")).lower() == "ball"
+                        and isinstance(item.get("center"), list)
+                        and len(item["center"]) >= 2
+                    ):
+                        window_balls.append(
+                            (
+                                float(record["time"]),
+                                float(item["center"][0]),
+                                float(item["center"][1]),
+                            )
+                        )
+            window_balls.sort(key=lambda point: point[0])
+            chain = []
+            for point in window_balls:
+                if not chain:
+                    chain.append(point)
+                    continue
+                if point[0] <= chain[-1][0]:
+                    continue
+                dt = point[0] - chain[-1][0]
+                dist = (
+                    (point[1] - chain[-1][1]) ** 2
+                    + (point[2] - chain[-1][2]) ** 2
+                ) ** 0.5
+                if dist <= 60.0 + 1400.0 * dt:
+                    chain.append(point)
+            fallback_trajectory = [
+                {"time": round(t, 3), "x": round(x, 1), "y": round(y, 1)}
+                for t, x, y in chain
+            ]
         results.append({
             "index": index + 1,
             "coarse": coarse,
@@ -336,6 +375,7 @@ def main(args):
             "rim_local": local_rim,
             "rim_legacy": legacy_rim,
             "refined": matches,
+            "fallback_trajectory": fallback_trajectory,
             "sampled_frames": len(records),
             "ball_frames": sum(
                 any(

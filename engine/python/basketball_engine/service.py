@@ -31,7 +31,7 @@ from .protocol import ProtocolError
 from .storage import ProjectStore, new_id
 
 
-ANALYSIS_ALGORITHM_VERSION = "python-v2.12-white-net-trajectory"
+ANALYSIS_ALGORITHM_VERSION = "python-v2.13-white-net-trajectory"
 
 
 class EngineService:
@@ -1069,16 +1069,63 @@ class EngineService:
         return self.start_export(retry_payload)
 
     @staticmethod
+    def _refined_fallback_overlay(
+        match: Dict[str, Any],
+        fallback: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
+        """用精化阶段已扫出的高清轨迹(source 坐标)为兜底候选合成 overlay。
+
+        精化验证失败只是"轨迹串联不出穿框",窗口内的高清球检测依然
+        有效;轨迹与 rim 都已是源视频坐标,无需缩放。
+        """
+        traj = fallback.get("trajectory") or []
+        rim = fallback.get("rim") or {}
+        if len(traj) < 3 or "rim_y" not in rim or "center_x" not in rim:
+            return None
+        rim_y = float(rim["rim_y"])
+        crossing = None
+        for a, b in zip(traj, traj[1:]):
+            span = float(b["y"]) - float(a["y"])
+            if abs(span) > 1e-6 and float(a["y"]) <= rim_y <= float(b["y"]):
+                t = (rim_y - float(a["y"])) / span
+                crossing = {
+                    "x": round(
+                        float(a["x"]) + (float(b["x"]) - float(a["x"])) * t, 1
+                    ),
+                    "y": round(rim_y, 1),
+                    "time": round(
+                        float(a["time"])
+                        + (float(b["time"]) - float(a["time"])) * t,
+                        3,
+                    ),
+                    "valid": False,
+                }
+                break
+        return {
+            "rim": {
+                "center_x": round(float(rim.get("center_x", 0.0)), 1),
+                "rim_y": round(rim_y, 1),
+                "width": round(float(rim.get("width", 0.0)), 1),
+                "height": round(float(rim.get("height", 0.0)) * 0.45, 1),
+            },
+            "trajectory": traj,
+            "crossing": crossing,
+            "source": "coarse_crossing",
+        }
+
+    @staticmethod
     def _coarse_overlay(
         match: Dict[str, Any],
         rim: Dict[str, Any],
         factor: float,
+        records: list | None = None,
     ) -> Dict[str, Any] | None:
         """为粗扫兜底候选合成最小可视化 overlay。
 
         粗扫没有 refine 轨迹,但保留了构成穿框的两次检测(above/below)
         和粗扫 rim 估计;按 proxy->source 比例缩放后供审核页画出
-        篮筐框、两点连线与推定穿框点(黄色,valid=False)。
+        篮筐框、轨迹与推定穿框点(黄色,valid=False)。轨迹优先取
+        穿越前后 ±1.5s 的真实球检测(多点),否则退化为起止两点。
         """
         above = match.get("above")
         below = match.get("below")
@@ -1100,16 +1147,88 @@ class EngineService:
         # 取框上部为筐口平面。
         plane_y = rim_raw_y - rim_height * 0.28
 
-        a = scaled(above)
-        b = scaled(below)
+        event_time = float(match.get("time", 0.0) or 0.0)
+        # 窗口内所有球检测(proxy 坐标),按时间排序。
+        window_balls: list[tuple[float, float, float]] = []
+        for record in records or []:
+            try:
+                record_time = float(record.get("time", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if abs(record_time - event_time) > 1.5:
+                continue
+            for item in record.get("detections", []):
+                if (
+                    item.get("name") == "ball"
+                    and isinstance(item.get("center"), list)
+                    and len(item["center"]) >= 2
+                ):
+                    window_balls.append(
+                        (
+                            record_time,
+                            float(item["center"][0]),
+                            float(item["center"][1]),
+                        )
+                    )
+        window_balls.sort(key=lambda point: point[0])
+
+        # 以 above 为锚做贪心最近邻串联,速度门限剔除跳变点:
+        # 多人多球画面里"每帧最高分检测"会在不同物体间跳,直接连线
+        # 会把不同物体串成乱线;超速点剔除,宁可保留真实空档。
+        # 门限约 550px/s(proxy),约为篮球飞行速度的 1.5 倍余量。
+        chain: list[tuple[float, float, float]] = [
+            (
+                float(above.get("time", 0.0) or 0.0),
+                float(above.get("x", 0.0) or 0.0),
+                float(above.get("y", 0.0) or 0.0),
+            )
+        ]
+        for cand in window_balls:
+            if cand[0] <= chain[-1][0]:
+                continue
+            dt = cand[0] - chain[-1][0]
+            dist = ((cand[1] - chain[-1][1]) ** 2 + (cand[2] - chain[-1][2]) ** 2) ** 0.5
+            if dist <= 40.0 + 550.0 * dt:
+                chain.append(cand)
+        # 终点锚:below 在门限内则确保收尾。
+        below_tuple = (
+            float(below.get("time", 0.0) or 0.0),
+            float(below.get("x", 0.0) or 0.0),
+            float(below.get("y", 0.0) or 0.0),
+        )
+        if below_tuple[0] > chain[-1][0]:
+            dt = below_tuple[0] - chain[-1][0]
+            dist = (
+                (below_tuple[1] - chain[-1][1]) ** 2
+                + (below_tuple[2] - chain[-1][2]) ** 2
+            ) ** 0.5
+            if dist <= 40.0 + 550.0 * dt:
+                chain.append(below_tuple)
+        trajectory = [
+            {"time": round(t, 3), "x": round(x * factor, 1), "y": round(y * factor, 1)}
+            for t, x, y in chain
+        ]
+        if len(trajectory) < 3:
+            a = scaled(above)
+            b = scaled(below)
+            trajectory = [a, b]
+
         crossing = None
-        span = b["y"] - a["y"]
-        if abs(span) > 1e-6 and a["y"] <= plane_y <= b["y"]:
-            t = (plane_y - a["y"]) / span
+        above_point = scaled(above)
+        below_point = scaled(below)
+        span = below_point["y"] - above_point["y"]
+        if abs(span) > 1e-6 and above_point["y"] <= plane_y <= below_point["y"]:
+            t = (plane_y - above_point["y"]) / span
             crossing = {
-                "x": round(a["x"] + (b["x"] - a["x"]) * t, 1),
+                "x": round(
+                    above_point["x"] + (below_point["x"] - above_point["x"]) * t, 1
+                ),
                 "y": round(plane_y, 1),
-                "time": round(a["time"] + (b["time"] - a["time"]) * t, 3),
+                "time": round(
+                    above_point["time"]
+                    + (below_point["time"] - above_point["time"]) * t,
+                    3,
+                ),
                 "valid": False,
             }
         return {
@@ -1119,7 +1238,7 @@ class EngineService:
                 "width": round(rim_width, 1),
                 "height": round(rim_height * 0.45, 1),
             },
-            "trajectory": [a, b],
+            "trajectory": trajectory,
             "crossing": crossing,
             "source": "coarse_crossing",
         }
@@ -1314,6 +1433,39 @@ class EngineService:
                     coarse_rim = {}
                 # 粗扫坐标是代理视频像素,合成 overlay 时缩放到源视频。
                 proxy_factor = proxy_scale if proxy_scale > 0 else 1.0
+                # 粗扫检测记录:为兜底候选的轨迹带上穿越前后的真实
+                # 检测点(而非只有起止两点),配合平滑渲染呈现弧线。
+                coarse_records = []
+                try:
+                    scan_data = json.loads(
+                        Path(coarse_detections).read_text(encoding="utf-8")
+                    )
+                    coarse_records = scan_data.get("records", [])
+                except (OSError, ValueError):
+                    coarse_records = []
+                # 精化验证失败但已扫出的高清轨迹(source 坐标),
+                # 供兜底候选直接使用,优于粗扫稀疏轨迹。
+                refined_fallbacks: list[dict] = []
+                pipeline_refined = pipeline.get("refined") or {}
+                if isinstance(pipeline_refined, dict):
+                    for result in pipeline_refined.get("results", []):
+                        if not isinstance(result, dict):
+                            continue
+                        traj = result.get("fallback_trajectory")
+                        coarse_entry = result.get("coarse") or {}
+                        if (
+                            isinstance(traj, list)
+                            and len(traj) >= 3
+                            and isinstance(coarse_entry, dict)
+                            and "time" in coarse_entry
+                        ):
+                            refined_fallbacks.append(
+                                {
+                                    "time": float(coarse_entry["time"]),
+                                    "trajectory": traj,
+                                    "rim": result.get("rim_local") or {},
+                                }
+                            )
                 for extra in coarse_matches:
                     extra_time = float(extra["time"])
                     if any(
@@ -1321,11 +1473,24 @@ class EngineService:
                         for refined_time in refined_times
                     ):
                         continue
-                    overlay = self._coarse_overlay(
-                        extra,
-                        extra.get("rim") if isinstance(extra.get("rim"), dict) else coarse_rim,
-                        proxy_factor,
-                    )
+                    # 优先使用精化阶段已扫出的高清轨迹;不可用时退回
+                    # 粗扫记录的速度门限串联轨迹。
+                    overlay = None
+                    for fallback in refined_fallbacks:
+                        if abs(fallback["time"] - extra_time) <= 1.0:
+                            overlay = self._refined_fallback_overlay(
+                                extra, fallback,
+                            )
+                            break
+                    if overlay is None:
+                        overlay = self._coarse_overlay(
+                            extra,
+                            extra.get("rim")
+                            if isinstance(extra.get("rim"), dict)
+                            else coarse_rim,
+                            proxy_factor,
+                            records=coarse_records,
+                        )
                     if overlay is not None:
                         extra["overlay"] = overlay
                     matches.append(extra)

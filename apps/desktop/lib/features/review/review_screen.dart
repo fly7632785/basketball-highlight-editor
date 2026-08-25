@@ -2203,17 +2203,24 @@ class _CandidateAnnotationPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.0
         ..strokeCap = StrokeCap.round;
-      if (isCoarse) {
-        // 粗扫候选只有起止两个检测点,连线是估算:用虚线与精化的
-        // 实测轨迹区分,避免被误读为实测弧线。
+      if (isCoarse && points.length <= 2) {
+        // 仅剩起止两点时连线是估算:用虚线与实测轨迹区分;
+        // 多点粗扫轨迹是真实检测,走平滑实线。
         for (var i = 0; i + 1 < points.length; i++) {
           _drawDashedLine(canvas, points[i], points[i + 1], trajectoryPaint);
         }
       } else {
+        // 检测点是离散采样(约 10fps),直接连线呈折线;用二次贝塞尔
+        // 过中点的方式平滑为弧线。
         final path = Path()..moveTo(points.first.dx, points.first.dy);
-        for (final point in points.skip(1)) {
-          path.lineTo(point.dx, point.dy);
+        for (var i = 0; i + 1 < points.length; i++) {
+          final mid = Offset(
+            (points[i].dx + points[i + 1].dx) / 2,
+            (points[i].dy + points[i + 1].dy) / 2,
+          );
+          path.quadraticBezierTo(points[i].dx, points[i].dy, mid.dx, mid.dy);
         }
+        path.lineTo(points.last.dx, points.last.dy);
         canvas.drawPath(path, trajectoryPaint);
       }
     }
