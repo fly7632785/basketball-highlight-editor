@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="1160" viewBox="0 0 860 1160">
+  <rect width="860" height="1160" fill="#0b0e14"/>
+  <text x="40" y="52" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600">BHE · 移动端导入视频 v2</text>
+  <text x="40" y="82" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="13">三入口来源选择 · 耗时预期前置 · 本地处理声明</text>
+
+  <rect x="215" y="118" width="430" height="932" rx="28" fill="#121620" stroke="#31343f" stroke-width="2"/>
+  <rect x="228" y="131" width="404" height="906" rx="20" fill="#0b0e14"/>
+
+  <!-- header -->
+  <rect x="228" y="131" width="404" height="60" rx="20" fill="#121620"/>
+  <path d="M252 156l10-10m-10 10l10 10" fill="none" stroke="#e6e8ee" stroke-width="2" stroke-linecap="round"/>
+  <text x="280" y="161" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600">导入视频</text>
+  <text x="280" y="180" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">第 1 步 / 共 3 步</text>
+  <!-- step dots -->
+  <circle cx="556" cy="161" r="5" fill="#ff6b2c"/>
+  <circle cx="576" cy="161" r="5" fill="#31343f"/>
+  <circle cx="596" cy="161" r="5" fill="#31343f"/>
+
+  <!-- source: gallery (primary) -->
+  <rect x="252" y="215" width="356" height="96" rx="12" fill="#1a1f2b" stroke="#ff6b2c" stroke-width="1.5"/>
+  <rect x="270" y="239" width="48" height="48" rx="10" fill="#2a1f14"/>
+  <rect x="281" y="251" width="16" height="12" rx="2" fill="none" stroke="#ff6b2c" stroke-width="2"/>
+  <circle cx="297" cy="256" r="2.5" fill="#ff6b2c"/>
+  <path d="M281 263l5-4 5 4 6-6 5 6" fill="none" stroke="#ff6b2c" stroke-width="2" stroke-linejoin="round"/>
+  <text x="334" y="252" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="600">从相册选取</text>
+  <text x="334" y="274" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">推荐 · 直接访问拍摄的比赛视频</text>
+  <text x="334" y="292" fill="#3fb950" font-family="Inter, Arial, sans-serif" font-size="10">已授权</text>
+  <path d="M584 255l8 8-8 8" fill="none" stroke="#9aa0ac" stroke-width="1.5"/>
+
+  <!-- source: files -->
+  <rect x="252" y="325" width="356" height="80" rx="12" fill="#1a1f2b" stroke="#31343f"/>
+  <rect x="270" y="341" width="48" height="48" rx="10" fill="#121620"/>
+  <path d="M283 358h22v18h-22z" fill="none" stroke="#9aa0ac" stroke-width="2"/>
+  <path d="M289 355h10l3 3h3v18h-16z" fill="none" stroke="#9aa0ac" stroke-width="1.6"/>
+  <text x="334" y="360" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="600">文件 App / 本地</text>
+  <text x="334" y="380" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">MP4 / MOV / HEVC · 适合导入无人机、相机素材</text>
+
+  <!-- source: camera -->
+  <rect x="252" y="419" width="356" height="80" rx="12" fill="#1a1f2b" stroke="#31343f"/>
+  <rect x="270" y="435" width="48" height="48" rx="10" fill="#121620"/>
+  <rect x="282" y="450" width="22" height="16" rx="3" fill="none" stroke="#9aa0ac" stroke-width="2"/>
+  <path d="M287 450l2-4h8l2 4" fill="none" stroke="#9aa0ac" stroke-width="1.6"/>
+  <circle cx="293" cy="458" r="4" fill="none" stroke="#9aa0ac" stroke-width="1.6"/>
+  <text x="334" y="454" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="600">现场拍摄</text>
+  <text x="334" y="474" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">拍完直接进入分析，无需保存中转</text>
+
+  <!-- selected video card -->
+  <text x="252" y="540" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">已选择</text>
+  <rect x="252" y="554" width="356" height="88" rx="12" fill="#121620" stroke="#31343f"/>
+  <rect x="266" y="568" width="112" height="60" rx="6" fill="#1d292a"/>
+  <ellipse cx="322" cy="592" rx="16" ry="4" fill="none" stroke="#f08c46" stroke-width="2.5"/>
+  <path d="M310 594l4 26 6-24 5 25 5-23 5 22" fill="none" stroke="#d9e0d9" stroke-width="1.2"/>
+  <text x="394" y="588" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">周六半场3v3.mp4</text>
+  <text x="394" y="608" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">28 分 12 秒 · 1.9 GB · 1440×1080 · HEVC</text>
+  <rect x="394" y="620" width="26" height="22" rx="5" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="407" y="635" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">×</text>
+
+  <!-- time estimate -->
+  <rect x="252" y="662" width="356" height="76" rx="12" fill="#2a1f14" stroke="#ff6b2c" stroke-opacity=".35"/>
+  <circle cx="282" cy="700" r="15" fill="none" stroke="#ff6b2c" stroke-width="2"/>
+  <path d="M282 691v9l6 4" fill="none" stroke="#ff6b2c" stroke-width="2" stroke-linecap="round"/>
+  <text x="312" y="694" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">预计分析约 4 分钟（标准质量）</text>
+  <text x="312" y="714" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">期间请保持应用在前台 · 锁屏会自动暂停并可恢复</text>
+
+  <!-- privacy -->
+  <rect x="252" y="756" width="356" height="52" rx="12" fill="#121620" stroke="#31343f"/>
+  <path d="M274 782a6 6 0 1 1 4-10" fill="none" stroke="#3fb950" stroke-width="1.8"/>
+  <rect x="268" y="774" width="12" height="10" rx="2" fill="none" stroke="#3fb950" stroke-width="1.8"/>
+  <text x="298" y="788" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">视频全程在本机处理，不上传、不联网识别</text>
+
+  <!-- CTA -->
+  <rect x="252" y="930" width="356" height="56" rx="10" fill="#ff6b2c"/>
+  <text x="430" y="964" fill="#1a0d05" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600" text-anchor="middle">下一步 · 确认配置</text>
+
+  <text x="40" y="1108" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">优化点</text>
+  <text x="40" y="1132" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12">1 相册/文件/拍摄三入口（原稿只有文件选择）  2 耗时与前台约束在选片前就说明  3 视频信息（编码/分辨率）前置展示</text>
+  <text x="40" y="1154" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12">4 HEVC 标注提醒兼容性  5 隐私声明常驻（本地处理是产品核心卖点）</text>
+</svg>

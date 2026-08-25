@@ -309,8 +309,16 @@ fn init_onnx() -> Result<(), RuntimeError> {
         #[cfg(feature = "dynamic-onnx")]
         {
             let library = std::env::var_os("BHE_ORT_LIBRARY");
-            return init_onnx_from_path(library.as_deref().map(Path::new))
-                .map_err(|error| error.to_string());
+            if let Some(path) = library {
+                ort::init_from(Path::new(&path))
+                    .map(|builder| {
+                        builder.with_name("bhe_runtime").commit();
+                    })
+                    .map_err(|error| error.to_string())
+            } else {
+                ort::init().with_name("bhe_runtime").commit();
+                Ok(())
+            }
         }
 
         #[cfg(not(feature = "dynamic-onnx"))]
@@ -705,14 +713,14 @@ pub unsafe extern "C" fn bhe_runtime_initialize_onnx(library_path: *const c_char
 
     #[cfg(feature = "dynamic-onnx")]
     {
-    if library_path.is_null() {
-        return false;
-    }
-    let path = CStr::from_ptr(library_path);
-    let Ok(path) = path.to_str() else {
-        return false;
-    };
-    init_onnx_from_path(Some(Path::new(path))).is_ok()
+        if library_path.is_null() {
+            return init_onnx_from_path(None).is_ok();
+        }
+        let path = CStr::from_ptr(library_path);
+        let Ok(path) = path.to_str() else {
+            return false;
+        };
+        init_onnx_from_path(Some(Path::new(path))).is_ok()
     }
 }
 

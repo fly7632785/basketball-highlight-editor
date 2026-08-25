@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="1420" viewBox="0 0 860 1420">
+  <rect width="860" height="1420" fill="#0b0e14"/>
+  <text x="40" y="54" fill="#ff6b2c" font-family="Inter, Arial, sans-serif" font-size="38" font-style="italic" font-weight="800">BHE</text>
+  <text x="42" y="82" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="13">Basketball Highlight Editor</text>
+  <circle cx="800" cy="53" r="20" fill="#121620" stroke="#31343f"/>
+  <path d="M800 41v5m0 14v5m-12-12h5m14 0h5m-17-9l4 4m8 8l4 4m0-16l-4 4m-8 8l-4 4" stroke="#e6e8ee" stroke-width="1.7" stroke-linecap="round"/>
+  <circle cx="800" cy="53" r="8" fill="none" stroke="#e6e8ee" stroke-width="1.7"/>
+
+  <!-- hero -->
+  <rect x="32" y="118" width="796" height="248" rx="12" fill="#121620" stroke="#31343f"/>
+  <text x="66" y="174" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="600">把整场比赛，变成你的</text>
+  <text x="66" y="214" fill="#ff6b2c" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="700">高光。</text>
+  <text x="66" y="250" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="15">导入视频 · 本地分析 · 快速审核 · 导出集锦</text>
+  <rect x="66" y="286" width="190" height="46" rx="8" fill="#ff6b2c"/>
+  <text x="161" y="315" fill="#fff" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="600" text-anchor="middle">＋  新建项目</text>
+  <rect x="270" y="286" width="168" height="46" rx="8" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="354" y="315" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="500" text-anchor="middle">▣  打开项目</text>
+  <!-- subtle visual mark -->
+  <path d="M620 300c48-74 45-132-5-164" fill="none" stroke="#ff6b2c" stroke-width="2" stroke-dasharray="6 5" opacity=".55"/>
+  <circle cx="615" cy="136" r="13" fill="#df7a35"/>
+  <path d="M680 140h68v8h-68zm60 8v58m-60 0h72" fill="none" stroke="#9aa0ac" stroke-width="4" opacity=".5"/>
+
+  <!-- current project -->
+  <text x="32" y="416" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="600">当前项目</text>
+  <rect x="32" y="438" width="796" height="206" rx="12" fill="#121620" stroke="#31343f"/>
+  <rect x="52" y="458" width="184" height="108" rx="7" fill="#263537"/>
+  <path d="M52 541l184-38v63H52z" fill="#314444"/>
+  <path d="M143 478h38v51M143 529h52M158 532l-5 29m17-28l4 28m16-27l10 26" stroke="#d9e0d9" stroke-width="2" fill="none"/>
+  <text x="260" y="483" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="600">湖人 vs 勇士_20240512</text>
+  <text x="260" y="512" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="13">02:18:35 · 1080p · 上次分析 08/20 12:51</text>
+  <rect x="680" y="462" width="122" height="38" rx="7" fill="#1a1f2b" stroke="#ff6b2c"/>
+  <text x="741" y="487" fill="#ff6b2c" font-family="Inter, Arial, sans-serif" font-size="13" text-anchor="middle">继续分析</text>
+  <line x1="260" y1="536" x2="802" y2="536" stroke="#23242f"/>
+  <text x="278" y="572" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12">保留</text>
+  <text x="278" y="604" fill="#3fb950" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600">203</text>
+  <text x="402" y="572" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12">排除</text>
+  <text x="402" y="604" fill="#f85149" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600">28</text>
+  <text x="526" y="572" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12">候选片段</text>
+  <text x="526" y="604" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600">231</text>
+  <text x="662" y="572" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12">分析状态</text>
+  <circle cx="670" cy="598" r="6" fill="#3fb950"/>
+  <text x="685" y="604" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="14">已完成</text>
+
+  <!-- workflow -->
+  <rect x="32" y="674" width="796" height="156" rx="12" fill="#121620" stroke="#31343f"/>
+  <text x="56" y="710" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600">工作流程</text>
+  <line x1="103" y1="762" x2="706" y2="762" stroke="#3fb950" stroke-width="3"/>
+  <line x1="706" y1="762" x2="765" y2="762" stroke="#31343f" stroke-width="3"/>
+  <g fill="#3fb950">
+    <circle cx="103" cy="762" r="17"/><circle cx="254" cy="762" r="17"/><circle cx="405" cy="762" r="17"/><circle cx="556" cy="762" r="17"/>
+  </g>
+  <circle cx="707" cy="762" r="17" fill="#121620" stroke="#6b7280" stroke-width="2"/>
+  <path d="M96 762l5 5 9-10m137 5l5 5 9-10m137 5l5 5 9-10m137 5l5 5 9-10" fill="none" stroke="#07130b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="103" y="798" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">导入视频</text>
+  <text x="254" y="798" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">框选篮筐</text>
+  <text x="405" y="798" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">分析扫描</text>
+  <text x="556" y="798" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">审核候选</text>
+  <text x="707" y="798" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">导出集锦</text>
+
+  <!-- recent projects -->
+  <text x="32" y="884" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="600">最近项目</text>
+  <text x="828" y="884" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="end">全部项目 〉</text>
+  <g>
+    <rect x="32" y="908" width="796" height="92" rx="10" fill="#121620" stroke="#23242f"/>
+    <rect x="48" y="924" width="116" height="60" rx="5" fill="#263537"/>
+    <circle cx="108" cy="945" r="8" fill="#df7a35"/>
+    <text x="184" y="943" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="600">湖人 vs 勇士_20240512</text>
+    <text x="184" y="967" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">02:18:35 · 231 个候选 · 最后分析 08/20</text>
+    <text x="728" y="958" fill="#ff6b2c" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">继续审核</text>
+    <text x="802" y="958" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="16" text-anchor="middle">•••</text>
+    <rect x="32" y="1012" width="796" height="92" rx="10" fill="#121620" stroke="#23242f"/>
+    <rect x="48" y="1028" width="116" height="60" rx="5" fill="#263537"/>
+    <circle cx="106" cy="1048" r="8" fill="#df7a35"/>
+    <text x="184" y="1047" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="600">训练赛_20240510</text>
+    <text x="184" y="1071" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">01:42:18 · 186 个候选 · 最后分析 08/19</text>
+    <text x="728" y="1060" fill="#ff6b2c" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">继续审核</text>
+    <text x="802" y="1060" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="16" text-anchor="middle">•••</text>
+    <rect x="32" y="1116" width="796" height="92" rx="10" fill="#121620" stroke="#23242f"/>
+    <rect x="48" y="1132" width="116" height="60" rx="5" fill="#263537"/>
+    <circle cx="110" cy="1151" r="8" fill="#df7a35"/>
+    <text x="184" y="1151" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="600">季后赛_半决赛G3</text>
+    <text x="184" y="1175" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">01:58:42 · 214 个候选 · 最后分析 08/18</text>
+    <text x="728" y="1164" fill="#ff6b2c" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">继续审核</text>
+    <text x="802" y="1164" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="16" text-anchor="middle">•••</text>
+  </g>
+  <text x="430" y="1362" fill="#6b7280" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle">本地处理 · 原始视频不会上传</text>
+</svg>

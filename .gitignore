@@ -11,7 +11,11 @@ dist/
 **/.dart_tool/
 **/xcshareddata/swiftpm/
 # 本地研发数据(视频/标注/产物),不进仓库。
-data/
+data/*
+!data/
+!data/README.md
+!data/labels/
+!data/labels/README.md
 .social-publish/early-ball-1-scheduled.json
 .social-publish/early-ball-合集.json
 third_party/

@@ -1,35 +1,32 @@
 # BHE Mobile Runtime V1
 
-## Current boundary
+## 当前边界
 
-`apps/mobile` is an independent Flutter application. It does not launch the
-desktop Python Engine and does not depend on a desktop project. The Flutter
-layer owns project state, local persistence, video playback, ROI editing and
-the review workflow.
+`apps/mobile` 是独立的 Flutter 应用，不启动桌面 Python Engine，也不依赖桌面项目。Flutter 层负责项目状态、项目包、视频播放、ROI 编辑和审核流程；平台层负责媒体操作，原生 Runtime 负责移动端推理。
 
-The mobile runtime is currently in staged integration:
+当前状态：
 
-- Flutter UI, project persistence and analysis progress recovery are ready.
-- Android video frame extraction and the Rust/ONNX JNI seam are ready.
-- The Android Rust/ONNX shared libraries are build inputs, not checked-in
-  binaries.
-- iOS analysis deliberately reports `NATIVE_RUNTIME_UNAVAILABLE` until the
-  Rust static library and ONNX Runtime XCFramework are linked into Runner.
+- Flutter UI、项目持久化、项目包导入/导出和分析进度恢复路径已实现；
+- Android 已实现视频抽帧、进度回传、取消、片段导出，以及 Rust/ONNX JNI seam；当前主要验证 `arm64-v8a`；
+- Android 原生 `.so` 和 ONNX Runtime 是构建输入，不应把未核验的开发产物当作公开发布附件；
+- iOS 的项目、播放、审核和导出 channel 已接入；本地分析仍需要 Rust 静态库、ONNX Runtime XCFramework 和 Runner 链接；
+- 缺少原生库时统一返回 `NATIVE_RUNTIME_UNAVAILABLE`，不会用空候选掩盖 Runtime 缺失。
 
-## Native seams
+## 原生边界
 
-- `MobileAnalysisEngine`: ONNX/Rust inference and candidate generation.
-- `MobileExportEngine`: native video clipping.
-- Flutter channel `com.bhe.bhe/mobile_media`: platform media operations.
+- `MobileAnalysisEngine`：抽象移动端推理和候选生成；
+- `NativeAnalysisEngine`：Flutter 与平台分析 channel 的桥接；
+- `MobileExportEngine`：移动端视频片段导出；
+- `com.bhe.bhe/mobile_media`：视频导出、保存到媒体库等平台媒体操作；
+- `com.bhe.bhe/mobile_analysis`：启动/取消分析；
+- `com.bhe.bhe/mobile_analysis_progress`：分析进度事件；
+- `packages/bhe_runtime/include/bhe_runtime.h`：Rust C ABI 边界。
 
-The default platform implementation returns an explicit unavailable error
-when its native runtime is not packaged. It never generates empty or
-fabricated candidates to hide a missing runtime.
+平台实现必须显式报告参数错误、Runtime 缺失、模型加载失败、取消和导出失败。不要返回空数组来伪装分析成功。
 
-## Model export
+## 模型与输入
 
-The desktop-validated checkpoint must be exported and compared before it is
-bundled in the app:
+桌面模型转换为移动 ONNX 的入口：
 
 ```bash
 .venv/bin/python scripts/export_mobile_model.py \
@@ -37,47 +34,59 @@ bundled in the app:
   --output models/bball_model.onnx
 ```
 
-The repository contains the exported ONNX artifact. Python ONNX Runtime CPU
-smoke testing passed; numerical parity against the desktop detector and
-mobile ONNX Runtime/Rust packaging remain separate runtime tasks.
+转换产物需要分别验证：
 
-### Android native package
+- 桌面模型与 ONNX 数值/候选一致性；
+- Android/iOS ONNX Runtime 加载；
+- Rust 输入的图像尺寸、归一化、类别映射和输出格式；
+- 真机长视频的内存、温度、耗时和取消行为。
 
-The supported local build entry point currently targets `arm64-v8a`:
+模型权利独立于源码许可证，见 [`../MODEL_AND_DATA_LICENSES.md`](../MODEL_AND_DATA_LICENSES.md)。
+
+## Android 构建
+
+当前支持的本地入口目标为 `arm64-v8a`：
 
 ```bash
 export BHE_ANDROID_NDK="$HOME/Library/Android/sdk/ndk/<version>"
 export BHE_ORT_ANDROID_DIR="/path/to/onnxruntime-android"
+rustup target add aarch64-linux-android
 scripts/build_mobile_runtime.sh
 cd apps/mobile
 flutter build apk --release
 ```
 
-`BHE_ORT_ANDROID_DIR` must contain:
+`BHE_ORT_ANDROID_DIR` 必须包含：
 
 ```text
 arm64-v8a/libonnxruntime.so
 ```
 
-The script checks Rust, the Android NDK and the Rust Android target before
-building. It fails instead of producing a UI-only APK that appears to support
-analysis but cannot run it. Additional ABIs should be added only after their
-ONNX Runtime binaries and device performance are validated.
+脚本会检查 Rust、Android NDK、Rust target 和 ONNX Runtime 文件；缺少任一项时失败，而不是生成看似支持分析、实际不能推理的 APK。增加其他 ABI 前，先验证对应 ONNX Runtime 二进制和设备性能。
 
-### iOS native package
+## iOS 构建
 
-`packages/bhe_runtime/include/bhe_runtime.h` is the stable C ABI header.
-`scripts/build_mobile_ios_runtime.sh` builds device and simulator static
-libraries when the iOS Rust targets and an ONNX Runtime XCFramework are
-available. Xcode linking remains an explicit integration step because the
-XCFramework is not checked into this repository.
+Rust 静态库和 C ABI 头文件生成入口：
 
-## Media behavior
+```bash
+export BHE_ORT_IOS_XCFRAMEWORK="/path/to/onnxruntime.xcframework"
+scripts/build_mobile_ios_runtime.sh
+```
 
-- iOS uses `AVAssetExportSession` for MP4 clips.
-- Android uses `MediaExtractor` and `MediaMuxer` for audio/video tracks.
-- Project packages contain result metadata and never copy the original video.
-- A missing source video must be relinked before analysis or clip export.
-- Relinking checks duration, dimensions and a quick SHA-256 fingerprint made
-  from the file head, tail and size, avoiding a full read of multi-gigabyte
-  videos.
+脚本要求 `aarch64-apple-ios`、`aarch64-apple-ios-sim` targets 和 ONNX Runtime XCFramework，生成 device/simulator 静态库与头文件。它不会自动把产物写入 Xcode 工程，也不会在缺少依赖时生成不完整产物。
+
+完成真正 iOS 分析发布前还要：
+
+1. 将静态库、头文件和 XCFramework 接入 Runner；
+2. 验证 Debug/Release 的 linker search path 和 framework flags；
+3. 在真机和模拟器分别验证模型加载、帧抽取、取消和导出；
+4. 核对静态链接和发布物的许可证 notices。
+
+## 媒体和项目包行为
+
+- iOS 使用 `AVAssetExportSession` 导出 MP4 片段；
+- Android 使用 `MediaExtractor` 和 `MediaMuxer` 复制音视频轨道；
+- 项目包保存项目设置、视频元数据、ROI、候选、审核状态和标签，不复制原始视频；
+- 重新打开项目时必须重新关联原视频；
+- 重新关联会校验时长、尺寸和由文件头/尾/大小计算的快速 SHA-256 指纹，避免完整读取多 GB 视频；
+- 保存到媒体库需要用户授权，失败必须向 UI 返回明确错误。

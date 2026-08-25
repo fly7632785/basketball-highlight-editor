@@ -1,60 +1,48 @@
 # BHE Mobile
 
-`BHE Mobile` 是独立的 Flutter 移动端工程，项目数据和视频处理都在本机完成，不启动桌面 Python Engine。
+`BHE Mobile` 是独立的 Flutter 移动端工程。它不启动桌面 Python Engine，项目数据和媒体处理在本机完成；移动端推理通过 Android/iOS 原生 channel 接入 Rust/ONNX Runtime。
 
-## 当前能力
+## 当前状态
 
-- 选择视频、读取视频元数据并保存项目。
-- 设置分析质量、分析范围和片段时长。
-- 触摸调整篮筐/篮网 ROI（感兴趣区域）。
-- Android 原生抽帧、进度回传、取消分析和视频导出通道。
-- Rust ONNX Runtime 会话、篮球检测、穿框几何判断、轨迹分数和基础篮网运动分数。
-- 候选审核、球员标签、备注、项目包导入导出。
-- 分析中断后重新打开项目可以识别并重新分析。
+- Flutter UI、项目持久化、视频导入/播放、ROI、审核和项目包导入导出已接入；
+- Android 支持原生抽帧、进度、取消、Rust/ONNX 分析、候选生成和视频导出，当前主要验证 `arm64-v8a`；
+- iOS 项目、播放、审核和导出通道可用，本地分析还需要 Rust 静态库、ONNX Runtime XCFramework 和 Runner 链接；
+- 缺少原生库时会返回 `NATIVE_RUNTIME_UNAVAILABLE`，不会返回伪造候选；
+- 移动端真机长视频性能、模型一致性、多 ABI 和 iOS 分析仍需单独验收。
 
 ## 本地开发
 
 ```bash
 cd apps/mobile
-../../.tooling/flutter/bin/flutter pub get
-../../.tooling/flutter/bin/flutter analyze
-../../.tooling/flutter/bin/flutter test
-../../.tooling/flutter/bin/flutter build apk --debug
-../../.tooling/flutter/bin/flutter build ios --simulator --no-codesign
+flutter pub get
+flutter analyze
+flutter test
+flutter build apk --debug
+flutter build ios --simulator --no-codesign
 ```
-
-没有原生库时，Android UI 和导出仍可构建，但点击分析会明确提示
-`NATIVE_RUNTIME_UNAVAILABLE`，不会返回伪造候选。
 
 ## Android 原生分析库
 
-Android 目前支持 `arm64-v8a` 构建。先准备 Rust Android target 和 ONNX Runtime Android 库：
+当前入口只针对 `arm64-v8a`：
 
 ```bash
 export BHE_ANDROID_NDK="$HOME/Library/Android/sdk/ndk/<version>"
 export BHE_ORT_ANDROID_DIR="/path/to/onnxruntime-android"
 rustup target add aarch64-linux-android
 ../../scripts/build_mobile_runtime.sh
-../../.tooling/flutter/bin/flutter build apk --release
+flutter build apk --release
 ```
 
-`BHE_ORT_ANDROID_DIR/arm64-v8a/libonnxruntime.so` 必须存在。原生 `.so` 不提交到 Git，脚本缺少任一依赖时会直接失败。
+`BHE_ORT_ANDROID_DIR/arm64-v8a/libonnxruntime.so` 必须存在。Rust Runtime 和 ONNX Runtime 原生库是构建输入，不应把带个人路径或未核验授权的二进制加入公开发布物。
 
-## iOS Runtime 构建入口
-
-Rust 静态库和 C ABI 头文件可以使用以下脚本生成；脚本要求本机已经安装三个 iOS Rust target 和 ONNX Runtime XCFramework：
+## iOS Runtime
 
 ```bash
 export BHE_ORT_IOS_XCFRAMEWORK="/path/to/onnxruntime.xcframework"
 ../../scripts/build_mobile_ios_runtime.sh
 ```
 
-脚本只负责生成 `device/simulator` 静态库和复制 XCFramework，不会自动修改 Xcode 工程，也不会在缺少依赖时生成不完整产物。
-
-## iOS 状态
-
-iOS 的视频播放、项目和导出通道已经接入；本地分析 channel 当前会返回
-`NATIVE_RUNTIME_UNAVAILABLE`。要启用真机分析，还需要把 Rust 静态库、ONNX Runtime XCFramework 和 iOS 视频抽帧 FFI 接入 Runner。没有这些产物时不应打包成“支持 AI 分析”的发布版本。
+脚本会生成 device/simulator 静态库、C ABI header 和 XCFramework 副本，但不会自动修改 Xcode 工程。完整接入状态见 [`../../docs/architecture/MOBILE_RUNTIME_V1.md`](../../docs/architecture/MOBILE_RUNTIME_V1.md)。
 
 ## 项目包
 

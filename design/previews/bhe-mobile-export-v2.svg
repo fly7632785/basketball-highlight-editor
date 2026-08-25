@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="1160" viewBox="0 0 860 1160">
+  <rect width="860" height="1160" fill="#0b0e14"/>
+  <text x="40" y="52" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600">BHE · 移动端导出集锦 v2</text>
+  <text x="40" y="82" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="13">导出不是终点 · 保存相册与系统分享是主按钮</text>
+
+  <rect x="215" y="118" width="430" height="932" rx="28" fill="#121620" stroke="#31343f" stroke-width="2"/>
+  <rect x="228" y="131" width="404" height="906" rx="20" fill="#0b0e14"/>
+
+  <rect x="228" y="131" width="404" height="60" rx="20" fill="#121620"/>
+  <path d="M252 156l10-10m-10 10l10 10" fill="none" stroke="#e6e8ee" stroke-width="2" stroke-linecap="round"/>
+  <text x="280" y="161" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600">导出集锦</text>
+  <text x="280" y="180" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">30分钟训练赛 · 已审核 58 / 58</text>
+
+  <!-- stats -->
+  <rect x="252" y="211" width="356" height="80" rx="12" fill="#121620" stroke="#31343f"/>
+  <text x="276" y="245" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="600">20 个片段</text>
+  <text x="276" y="270" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">总时长 3 分 12 秒 · 预计文件 180 MB</text>
+  <rect x="510" y="228" width="86" height="46" rx="8" fill="#16241a"/>
+  <text x="553" y="257" fill="#3fb950" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600" text-anchor="middle">已选 20</text>
+
+  <!-- filter chips -->
+  <rect x="252" y="307" width="70" height="30" rx="15" fill="#ff6b2c"/>
+  <text x="287" y="327" fill="#1a0d05" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle">全部</text>
+  <rect x="330" y="307" width="70" height="30" rx="15" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="365" y="327" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">杨磊 8</text>
+  <rect x="408" y="307" width="70" height="30" rx="15" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="443" y="327" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">齐鑫 6</text>
+  <rect x="486" y="307" width="80" height="30" rx="15" fill="#1a1f2b" stroke="#31343f"/>
+  <text x="526" y="327" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="middle">未标记 6</text>
+
+  <!-- mode -->
+  <rect x="252" y="353" width="356" height="48" rx="12" fill="#121620" stroke="#31343f"/>
+  <rect x="260" y="361" width="168" height="32" rx="8" fill="#ff6b2c"/>
+  <text x="344" y="382" fill="#1a0d05" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600" text-anchor="middle">合并成片</text>
+  <rect x="432" y="361" width="168" height="32" rx="8" fill="#1a1f2b"/>
+  <text x="516" y="382" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="13" text-anchor="middle">分片导出</text>
+
+  <!-- done card -->
+  <rect x="252" y="421" width="356" height="150" rx="12" fill="#16241a" stroke="#3fb950" stroke-opacity=".5"/>
+  <circle cx="288" cy="457" r="18" fill="#3fb950" opacity=".18"/>
+  <path d="M279 457l6 6 12-12" fill="none" stroke="#3fb950" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="320" y="452" fill="#3fb950" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">导出完成 · 1 分 48 秒</text>
+  <text x="320" y="474" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="600">周六半场3v3_集锦.mp4</text>
+  <text x="320" y="494" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="11">1080p · 178 MB · 20 个片段</text>
+  <rect x="320" y="508" width="130" height="24" rx="6" fill="#121620" stroke="#31343f"/>
+  <text x="385" y="524" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="10" text-anchor="middle">重新导出 · 改分辨率</text>
+
+  <!-- primary: save to album -->
+  <rect x="252" y="593" width="356" height="56" rx="10" fill="#ff6b2c"/>
+  <path d="M276 616h24v20h-24z" fill="none" stroke="#1a0d05" stroke-width="2"/>
+  <path d="M282 613l4-5h6l4 5" fill="none" stroke="#1a0d05" stroke-width="2"/>
+  <text x="336" y="627" fill="#1a0d05" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600">保存到相册</text>
+
+  <!-- secondary: share -->
+  <rect x="252" y="661" width="356" height="56" rx="10" fill="#1a1f2b" stroke="#31343f"/>
+  <circle cx="290" cy="676" r="4" fill="#e6e8ee"/>
+  <path d="M293 679l16 8-16 8" fill="#e6e8ee"/>
+  <circle cx="286" cy="695" r="4" fill="#e6e8ee"/>
+  <text x="330" y="695" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600">分享给朋友</text>
+  <text x="336" y="695" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="0"> </text>
+  <text x="430" y="694" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="10">微信 / 飞书 / 抖音</text>
+
+  <!-- history -->
+  <text x="252" y="762" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">历史导出</text>
+  <rect x="252" y="776" width="356" height="54" rx="10" fill="#121620" stroke="#31343f"/>
+  <text x="272" y="798" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12">杨磊个人集锦.mp4</text>
+  <text x="272" y="816" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="10">8 片段 · 昨天 · 62 MB</text>
+  <text x="588" y="800" fill="#3fb950" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="end">已存相册</text>
+  <text x="588" y="816" fill="#6b7280" font-family="Inter, Arial, sans-serif" font-size="10" text-anchor="end">再次分享</text>
+  <rect x="252" y="838" width="356" height="54" rx="10" fill="#121620" stroke="#31343f"/>
+  <text x="272" y="860" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="12">训练赛0912_集锦.mp4</text>
+  <text x="272" y="878" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="10">15 片段 · 3 天前 · 130 MB</text>
+  <text x="588" y="862" fill="#3fb950" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="end">已存相册</text>
+  <text x="588" y="878" fill="#6b7280" font-family="Inter, Arial, sans-serif" font-size="10" text-anchor="end">再次分享</text>
+
+  <text x="40" y="1108" fill="#e6e8ee" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">优化点</text>
+  <text x="40" y="1132" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12">1 原稿导出后无出口动作；v2 主按钮 = 保存相册，次按钮 = 系统分享（微信/飞书/抖音）</text>
+  <text x="40" y="1154" fill="#9aa0ac" font-family="Inter, Arial, sans-serif" font-size="12">2 历史导出支持「再次分享」  3 球员筛选 chips 化  4 完成态展示文件信息与重导入口</text>
+</svg>

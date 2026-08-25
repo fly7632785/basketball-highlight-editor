@@ -9,6 +9,12 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     val hasNativeRuntime = file("src/main/jniLibs/arm64-v8a/libbhe_runtime.so").isFile &&
         file("src/main/jniLibs/arm64-v8a/libonnxruntime.so").isFile
     if (hasNativeRuntime) {
