@@ -216,3 +216,6 @@ models/bball_model.onnx
 视频默认只在本地处理，不上传到云端。源码、模型、训练数据、比赛画面和第三方依赖的授权范围并不相同，发布或分发前请查看 [`docs/research/LICENSE_NOTES.md`](docs/research/LICENSE_NOTES.md) 和 [`docs/research/THIRD_PARTY_MANIFEST.md`](docs/research/THIRD_PARTY_MANIFEST.md)。
 
 如果你用它剪过一场比赛，欢迎反馈：哪些地方真的省时间，哪些误检最烦，哪些操作还不顺手。这个项目最需要的不是漂亮的宣传语，而是这些真实使用反馈。
+
+# 致谢
+感谢 [Linux.do](https://linux.do/) 社区。

@@ -222,3 +222,6 @@ Issues, test feedback, and focused fixes are welcome. Read [`CONTRIBUTING.md`](C
 ## License
 
 The source code is released under the [MIT License](LICENSE). This does not automatically cover model weights, training data, input videos, FFmpeg builds, or third-party dependencies. Read [`NOTICE`](NOTICE) and [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) before redistribution.
+
+# Thanks
+Thank [Linux.do](https://linux.do/) 
