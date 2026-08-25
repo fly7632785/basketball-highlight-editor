@@ -28,5 +28,18 @@ jobs:
         working-directory: apps/desktop
       - run: flutter analyze
         working-directory: apps/desktop
-      - run: flutter test
+      - name: flutter test
         working-directory: apps/desktop
+        shell: bash
+        run: |
+          set +e
+          flutter test --reporter expanded 2>&1 | tee "$RUNNER_TEMP/flutter-test.log"
+          test_status=${PIPESTATUS[0]}
+          if [ "$test_status" -ne 0 ]; then
+            grep -E ' -[1-9][0-9]*:|Test failed|Expected:' "$RUNNER_TEMP/flutter-test.log" \
+              | tail -20 \
+              | while IFS= read -r failure; do
+                  echo "::error title=Flutter test failure::$failure"
+                done
+          fi
+          exit "$test_status"
