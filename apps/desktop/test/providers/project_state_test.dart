@@ -718,7 +718,10 @@ class _StubEngineBootstrap extends EngineBootstrapNotifier {
   AsyncValue<bool> build() => const AsyncData<bool>(true);
 
   @override
-  Future<void> ensure() async {}
+  Future<void> ensure({
+    String? runtimeRootOverride,
+    String? pythonExecutableOverride,
+  }) async {}
 }
 
 /// 子类化 ProjectSession(方案 A)。重写所有被 ProjectNotifier 调用的高层方法,
