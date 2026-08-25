@@ -59,6 +59,18 @@ fi
 
 echo "Built macOS app: $APP"
 
+write_sha256() {
+  local artifact="$1"
+  local artifact_dir
+  local artifact_name
+  artifact_dir="$(dirname "$artifact")"
+  artifact_name="$(basename "$artifact")"
+  (
+    cd "$artifact_dir"
+    shasum -a 256 "$artifact_name"
+  ) | tee "${artifact}.sha256"
+}
+
 if [[ "${BHE_SKIP_PACKAGE:-0}" != "1" ]]; then
   package_version="${BUILD_NAME:-local}"
   package_kind="adhoc"
@@ -71,7 +83,7 @@ if [[ "${BHE_SKIP_PACKAGE:-0}" != "1" ]]; then
   mkdir -p "$(dirname "$PACKAGE_OUT")"
   rm -f "$PACKAGE_OUT"
   ditto -c -k --norsrc --keepParent "$APP" "$PACKAGE_OUT"
-  shasum -a 256 "$PACKAGE_OUT" | tee "${PACKAGE_OUT}.sha256"
+  write_sha256 "$PACKAGE_OUT"
   echo "Packaged macOS app: $PACKAGE_OUT"
 
   if [[ "${BHE_SKIP_DMG:-0}" != "1" ]]; then
@@ -85,7 +97,7 @@ if [[ "${BHE_SKIP_PACKAGE:-0}" != "1" ]]; then
     rm -f "$DMG_OUT"
     hdiutil create -volname "BHE" -srcfolder "$dmg_staging" \
       -ov -format UDZO "$DMG_OUT"
-    shasum -a 256 "$DMG_OUT" | tee "${DMG_OUT}.sha256"
+    write_sha256 "$DMG_OUT"
     echo "Packaged macOS installer: $DMG_OUT"
   fi
 fi
