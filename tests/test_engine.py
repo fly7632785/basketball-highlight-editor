@@ -51,6 +51,40 @@ def test_inspect_video_rejects_invalid_ffprobe_duration(tmp_path: Path, monkeypa
     assert error.value.code == "VIDEO_OPEN_FAILED"
 
 
+def test_inspect_video_uses_runtime_ffprobe_and_surfaces_stderr(tmp_path: Path, monkeypatch):
+    source = tmp_path / "broken.mp4"
+    source.write_bytes(b"video")
+    ffprobe = tmp_path / "runtime" / "bin" / "ffprobe"
+    ffprobe.parent.mkdir(parents=True)
+    ffprobe.write_bytes(b"binary")
+    ffprobe.chmod(0o755)
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        raise subprocess.CalledProcessError(
+            8,
+            command,
+            stderr="Unrecognized option 'show_entries'.",
+        )
+
+    monkeypatch.setattr(
+        "engine.python.basketball_engine.service.resolve_media_tool",
+        lambda name: str(ffprobe) if name == "ffprobe" else name,
+    )
+    monkeypatch.setattr(
+        "engine.python.basketball_engine.service.subprocess.run",
+        fake_run,
+    )
+
+    with pytest.raises(ProtocolError) as error:
+        EngineService().inspect_video({"video_path": str(source)})
+
+    assert calls[0][0] == str(ffprobe)
+    assert "exit=8" in error.value.message
+    assert "Unrecognized option" in error.value.message
+
+
 def test_create_project_and_statistics(tmp_path: Path):
     service = EngineService()
     result = service.handle("create_project", {"name": "测试项目", "root_path": str(tmp_path / "project")})

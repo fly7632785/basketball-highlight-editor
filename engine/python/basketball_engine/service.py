@@ -29,6 +29,7 @@ from .adapters.analysis import (
 from .adapters.export import export_goal_clips
 from .protocol import ProtocolError
 from .storage import ProjectStore, new_id
+from .media_tools import resolve_media_tool
 from basketball_highlight.tracking import link_ball_detections
 
 
@@ -362,8 +363,9 @@ class EngineService:
         path = Path(raw_path).expanduser().resolve()
         if not path.is_file():
             raise ProtocolError("VIDEO_NOT_FOUND", f"视频不存在: {path}")
+        ffprobe = resolve_media_tool("ffprobe")
         command = [
-            "ffprobe",
+            ffprobe,
             "-v",
             "error",
             "-show_entries",
@@ -382,13 +384,17 @@ class EngineService:
                 timeout=30,
             )
             probe = json.loads(completed.stdout)
-        except (
-            OSError,
-            subprocess.CalledProcessError,
-            subprocess.TimeoutExpired,
-            json.JSONDecodeError,
-        ) as exc:
-            raise ProtocolError("VIDEO_OPEN_FAILED", f"无法读取视频元数据: {exc}") from exc
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            detail = f"ffprobe={ffprobe}, exit={exc.returncode}"
+            if stderr:
+                detail += f": {stderr[-500:]}"
+            raise ProtocolError("VIDEO_OPEN_FAILED", f"无法读取视频元数据（{detail}）") from exc
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+            raise ProtocolError(
+                "VIDEO_OPEN_FAILED",
+                f"无法读取视频元数据（ffprobe={ffprobe}）: {exc}",
+            ) from exc
         if not isinstance(probe, dict):
             raise ProtocolError("VIDEO_OPEN_FAILED", "视频元数据格式无效")
         streams = probe.get("streams")
@@ -719,7 +725,7 @@ class EngineService:
             f".{output_path.stem}.{os.getpid()}.tmp{output_path.suffix}"
         )
         command = [
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
             "-ss", f"{time_ms / 1000:.3f}", "-i", str(source),
             "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3", str(temporary_path),
         ]
@@ -788,7 +794,7 @@ class EngineService:
                 f".{output_path.stem}.{job_id}.{index}.tmp{output_path.suffix}"
             )
             command = [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
                 "-ss", f"{time_ms / 1000:.3f}", "-i", str(source),
                 "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3",
                 str(temporary_path),

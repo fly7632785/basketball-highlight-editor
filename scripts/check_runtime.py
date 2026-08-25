@@ -45,11 +45,11 @@ def _check_imports(python_path: str) -> tuple[bool, str]:
     return True, "ok"
 
 
-def _check_binary(path: str | None) -> tuple[bool, str]:
+def _check_binary(path: str | None, expected_name: str) -> tuple[bool, str]:
     if not path:
         return False, "not found"
     try:
-        subprocess.run(
+        result = subprocess.run(
             [path, "-version"],
             check=True,
             capture_output=True,
@@ -57,6 +57,9 @@ def _check_binary(path: str | None) -> tuple[bool, str]:
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         return False, str(exc)
+    version = f"{result.stdout}\n{result.stderr}".lower()
+    if f"{expected_name} version" not in version:
+        return False, f"{path} is not {expected_name} ({version.splitlines()[0] if version else 'no version output'})"
     return True, str(Path(path).resolve())
 
 
@@ -87,8 +90,8 @@ def main() -> int:
         "python": args.python_path,
         "detail": imports_detail,
     }
-    ffmpeg_ok, ffmpeg_detail = _check_binary(args.ffmpeg)
-    ffprobe_ok, ffprobe_detail = _check_binary(args.ffprobe)
+    ffmpeg_ok, ffmpeg_detail = _check_binary(args.ffmpeg, "ffmpeg")
+    ffprobe_ok, ffprobe_detail = _check_binary(args.ffprobe, "ffprobe")
     checks["ffmpeg"] = {"ok": ffmpeg_ok, "detail": ffmpeg_detail}
     checks["ffprobe"] = {"ok": ffprobe_ok, "detail": ffprobe_detail}
 

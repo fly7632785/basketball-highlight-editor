@@ -25,6 +25,10 @@ if [[ -z "$FFMPEG" || -z "$FFPROBE" ]]; then
   echo "ffmpeg and ffprobe are required; set BHE_FFMPEG and BHE_FFPROBE if needed" >&2
   exit 2
 fi
+if [[ "$FFMPEG" -ef "$FFPROBE" ]] || cmp -s "$FFMPEG" "$FFPROBE"; then
+  echo "ffmpeg and ffprobe resolve to the same binary; provide a real ffprobe executable" >&2
+  exit 2
+fi
 
 if [[ "$(uname -s)" == "Darwin" && "${BHE_ALLOW_EXTERNAL_FFMPEG:-0}" != "1" ]]; then
   external_deps="$(otool -L "$FFMPEG" "$FFPROBE" | grep -E '/(usr/local|opt/homebrew|opt/local)/' || true)"

@@ -45,6 +45,9 @@ class EngineClient implements EngineTransport {
     final environment = Map<String, String>.from(Platform.environment);
     environment['PYTHONPATH'] = enginePythonPath;
     environment['PYTHONIOENCODING'] = 'utf-8';
+    // 让 Engine 内部的 Python 代码能稳定定位 runtime/bin 下的媒体工具，
+    // 不依赖 macOS 从 Finder 启动 App 时不完整的 PATH。
+    environment['BHE_RUNTIME_ROOT'] = workingDirectory;
     if (extraPath != null && extraPath.isNotEmpty) {
       final existingPath = environment['PATH'];
       environment['PATH'] = [

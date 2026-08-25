@@ -8,6 +8,7 @@ from typing import Any, Dict
 from uuid import uuid4
 
 from .analysis import PipelineCancelled, terminate_process
+from ..media_tools import resolve_media_tool
 
 
 def preferred_video_codec() -> str:
@@ -45,7 +46,7 @@ def build_clip_command(
     if codec == "libx264":
         codec_options = ["-c:v", codec, "-preset", "veryfast", "-crf", "22"]
     command = [
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
         "-ss", f"{start_ms / 1000:.3f}", "-i", str(source_video),
         "-t", f"{duration:.3f}",
         "-map", "0:v:0?", "-map", "0:a?",
@@ -60,7 +61,7 @@ def validate_media_file(path: Path) -> None:
         raise OSError(f"导出文件为空: {path}")
     result = subprocess.run(
         [
-            "ffprobe", "-v", "error",
+            resolve_media_tool("ffprobe"), "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
             str(path),
@@ -182,7 +183,7 @@ def export_goal_clips(
                 encoding="utf-8",
             )
             merge_command = [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
                 "-f", "concat", "-safe", "0", "-i", str(concat_file),
                 "-c", "copy", str(merged_path),
             ]
@@ -199,7 +200,7 @@ def export_goal_clips(
                 # valid concat output.
                 run_atomic_ffmpeg(
                     [
-                        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                        resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
                         "-f", "concat", "-safe", "0", "-i", str(concat_file),
                         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
                         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
