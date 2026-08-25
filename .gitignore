@@ -33,5 +33,11 @@ apps/desktop/.codex/
 .superpowers/brainstorm/*/content/*.html
 .claude/
 .social-publish/
+.research/opensource-refs-20260806/
+apps/desktop/assets/fonts/
+apps/mobile/assets/models/
+apps/mobile/android/app/src/main/jniLibs/**/*.so
+models/*.onnx
+models/*.pt
 /bin/
 /.zcode/
