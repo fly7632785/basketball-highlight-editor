@@ -26,5 +26,7 @@ apps/desktop/.codex/
 .superpowers/brainstorm/.last-*
 .superpowers/brainstorm/*/state/
 .superpowers/brainstorm/*/content/*.html
+.claude/
+.social-publish/
 /bin/
 /.zcode/
