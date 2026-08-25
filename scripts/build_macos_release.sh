@@ -58,7 +58,11 @@ echo "Built macOS app: $APP"
 if [[ "${BHE_SKIP_PACKAGE:-0}" != "1" ]]; then
   if [[ -z "$PACKAGE_OUT" ]]; then
     package_version="${BUILD_NAME:-local}"
-    PACKAGE_OUT="$ROOT/dist/BHE-macos-arm64-v${package_version}.zip"
+    package_kind="adhoc"
+    if [[ -n "${BHE_CODESIGN_IDENTITY:-}" ]]; then
+      package_kind="signed"
+    fi
+    PACKAGE_OUT="$ROOT/dist/BHE-macos-arm64-v${package_version}-${package_kind}.zip"
   fi
   mkdir -p "$(dirname "$PACKAGE_OUT")"
   rm -f "$PACKAGE_OUT"
