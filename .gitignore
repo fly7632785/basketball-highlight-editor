@@ -16,6 +16,7 @@ data/*
 !data/README.md
 !data/labels/
 !data/labels/README.md
+data/labels/*.json
 .social-publish/early-ball-1-scheduled.json
 .social-publish/early-ball-合集.json
 third_party/
