@@ -10,6 +10,7 @@ APP="$APP_DIR/$APP_NAME.app"
 BUILD_NAME="${BHE_BUILD_NAME:-}"
 BUILD_NUMBER="${BHE_BUILD_NUMBER:-}"
 PACKAGE_OUT="${BHE_PACKAGE_OUT:-}"
+DMG_OUT="${BHE_DMG_OUT:-}"
 
 if [[ ! -x "$FLUTTER" ]]; then
   echo "Flutter SDK not found: $FLUTTER" >&2
@@ -48,20 +49,22 @@ if [[ -n "${BHE_CODESIGN_IDENTITY:-}" ]]; then
     --sign "$BHE_CODESIGN_IDENTITY" "$APP"
 else
   # Re-sign ad hoc after embedding the runtime so Flutter's original seal is
-  # not invalidated by the copied Engine/Python/model/FFmpeg files.
-  codesign --deep --force --options runtime --sign - "$APP"
+  # not invalidated by the copied Engine/Python/model/FFmpeg files. Do not
+  # enable hardened runtime for an ad-hoc build: macOS rejects the embedded
+  # media_kit frameworks without a real Developer ID Team ID.
+  codesign --deep --force --sign - "$APP"
   echo "Warning: app uses an ad-hoc signature; this package is for local/testing use and is not notarized." >&2
 fi
 
 echo "Built macOS app: $APP"
 
 if [[ "${BHE_SKIP_PACKAGE:-0}" != "1" ]]; then
+  package_version="${BUILD_NAME:-local}"
+  package_kind="adhoc"
+  if [[ -n "${BHE_CODESIGN_IDENTITY:-}" ]]; then
+    package_kind="signed"
+  fi
   if [[ -z "$PACKAGE_OUT" ]]; then
-    package_version="${BUILD_NAME:-local}"
-    package_kind="adhoc"
-    if [[ -n "${BHE_CODESIGN_IDENTITY:-}" ]]; then
-      package_kind="signed"
-    fi
     PACKAGE_OUT="$ROOT/dist/BHE-macos-arm64-v${package_version}-${package_kind}.zip"
   fi
   mkdir -p "$(dirname "$PACKAGE_OUT")"
@@ -69,4 +72,19 @@ if [[ "${BHE_SKIP_PACKAGE:-0}" != "1" ]]; then
   ditto -c -k --norsrc --keepParent "$APP" "$PACKAGE_OUT"
   shasum -a 256 "$PACKAGE_OUT" | tee "${PACKAGE_OUT}.sha256"
   echo "Packaged macOS app: $PACKAGE_OUT"
+
+  if [[ "${BHE_SKIP_DMG:-0}" != "1" ]]; then
+    if [[ -z "$DMG_OUT" ]]; then
+      DMG_OUT="$ROOT/dist/BHE-macos-arm64-v${package_version}-${package_kind}.dmg"
+    fi
+    dmg_staging="$(mktemp -d "${TMPDIR:-/tmp}/bhe-dmg.XXXXXX")"
+    trap 'rm -rf "$dmg_staging"' EXIT
+    ditto "$APP" "$dmg_staging/$APP_NAME.app"
+    ln -s /Applications "$dmg_staging/Applications"
+    rm -f "$DMG_OUT"
+    hdiutil create -volname "BHE" -srcfolder "$dmg_staging" \
+      -ov -format UDZO "$DMG_OUT"
+    shasum -a 256 "$DMG_OUT" | tee "${DMG_OUT}.sha256"
+    echo "Packaged macOS installer: $DMG_OUT"
+  fi
 fi
