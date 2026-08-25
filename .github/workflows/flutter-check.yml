@@ -26,8 +26,21 @@ jobs:
           channel: stable
       - run: flutter pub get
         working-directory: apps/desktop
-      - run: flutter analyze
+      - name: flutter analyze
         working-directory: apps/desktop
+        shell: bash
+        run: |
+          set +e
+          flutter analyze 2>&1 | tee "$RUNNER_TEMP/flutter-analyze.log"
+          analyze_status=${PIPESTATUS[0]}
+          if [ "$analyze_status" -ne 0 ]; then
+            grep -E '^[[:space:]]*(error|warning|info) •|Error:' "$RUNNER_TEMP/flutter-analyze.log" \
+              | head -10 \
+              | while IFS= read -r detail; do
+                  echo "::error title=Flutter analyze detail::$detail"
+                done
+          fi
+          exit "$analyze_status"
       - name: flutter test
         working-directory: apps/desktop
         shell: bash
