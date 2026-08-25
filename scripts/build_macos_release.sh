@@ -9,6 +9,7 @@ APP_NAME="${BHE_APP_NAME:-BHE}"
 APP="$APP_DIR/$APP_NAME.app"
 BUILD_NAME="${BHE_BUILD_NAME:-}"
 BUILD_NUMBER="${BHE_BUILD_NUMBER:-}"
+ARCH="${BHE_ARCH:-$(uname -m)}"
 PACKAGE_OUT="${BHE_PACKAGE_OUT:-}"
 DMG_OUT="${BHE_DMG_OUT:-}"
 
@@ -42,7 +43,7 @@ cp -R "$RUNTIME_OUT"/. "$APP_RUNTIME/"
   --python "$APP_RUNTIME/python/bin/python3" \
   --ffmpeg "$APP_RUNTIME/bin/ffmpeg" \
   --ffprobe "$APP_RUNTIME/bin/ffprobe" \
-  --model "$APP_RUNTIME/third_party/basketball-shot-detection/bball_model.pt"
+  --model "$APP_RUNTIME/models/bball_model.pt"
 
 if [[ -n "${BHE_CODESIGN_IDENTITY:-}" ]]; then
   codesign --deep --force --options runtime \
@@ -65,7 +66,7 @@ if [[ "${BHE_SKIP_PACKAGE:-0}" != "1" ]]; then
     package_kind="signed"
   fi
   if [[ -z "$PACKAGE_OUT" ]]; then
-    PACKAGE_OUT="$ROOT/dist/BHE-macos-arm64-v${package_version}-${package_kind}.zip"
+    PACKAGE_OUT="$ROOT/dist/BHE-macos-${ARCH}-v${package_version}-${package_kind}.zip"
   fi
   mkdir -p "$(dirname "$PACKAGE_OUT")"
   rm -f "$PACKAGE_OUT"
@@ -75,7 +76,7 @@ if [[ "${BHE_SKIP_PACKAGE:-0}" != "1" ]]; then
 
   if [[ "${BHE_SKIP_DMG:-0}" != "1" ]]; then
     if [[ -z "$DMG_OUT" ]]; then
-      DMG_OUT="$ROOT/dist/BHE-macos-arm64-v${package_version}-${package_kind}.dmg"
+      DMG_OUT="$ROOT/dist/BHE-macos-${ARCH}-v${package_version}-${package_kind}.dmg"
     fi
     dmg_staging="$(mktemp -d "${TMPDIR:-/tmp}/bhe-dmg.XXXXXX")"
     trap 'rm -rf "$dmg_staging"' EXIT

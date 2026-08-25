@@ -1,11 +1,14 @@
 # 构建 Windows 发布包:Release exe + runtime,可选打 zip。
 # 用法:
-#   powershell -File scripts\build_windows_release.ps1 [-Zip] [-PythonRuntime ...] [-Ffmpeg ...] [-Ffprobe ...]
+#   powershell -File scripts\build_windows_release.ps1 [-Zip] [-Version ...]
+#     [-PackageOut ...] [-PythonRuntime ...] [-Ffmpeg ...] [-Ffprobe ...]
 #
 # 产物: apps\desktop\build\windows\x64\runner\Release\ (exe 与 runtime\ 同级),
-# -Zip 时另存 dist\BHE-windows-x64.zip。
+# -Zip 时另存带版本号的 dist\BHE-windows-x64-v<Version>.zip 和 SHA-256 文件。
 param(
     [switch]$Zip,
+    [string]$Version = "local",
+    [string]$PackageOut,
     [string]$PythonRuntime,
     [string]$Ffmpeg,
     [string]$Ffprobe,
@@ -47,11 +50,23 @@ Copy-Item -Recurse -Force "$RuntimeOut" $AppRuntime
     --model "$AppRuntime\models\bball_model.pt"
 if ($LASTEXITCODE -ne 0) { Write-Error "runtime check failed" }
 
-if ($Zip) {
+if ($Zip -or $PackageOut) {
     $Dist = "$Root\dist"
     New-Item -ItemType Directory -Force -Path $Dist | Out-Null
-    Compress-Archive -Force -Path "$ReleaseDir\*" -DestinationPath "$Dist\BHE-windows-x64.zip"
-    Write-Host "zip ready: $Dist\BHE-windows-x64.zip"
+    if (-not $PackageOut) {
+        $PackageOut = "$Dist\BHE-windows-x64-v$Version.zip"
+    } elseif (-not [System.IO.Path]::IsPathRooted($PackageOut)) {
+        $PackageOut = Join-Path $Root $PackageOut
+    }
+    $PackageDirectory = Split-Path -Parent $PackageOut
+    New-Item -ItemType Directory -Force -Path $PackageDirectory | Out-Null
+    if (Test-Path $PackageOut) { Remove-Item -Force $PackageOut }
+    Compress-Archive -Force -Path "$ReleaseDir\*" -DestinationPath $PackageOut
+    $Hash = (Get-FileHash -Algorithm SHA256 -Path $PackageOut).Hash.ToLowerInvariant()
+    $HashFile = "$PackageOut.sha256"
+    "$Hash  $([System.IO.Path]::GetFileName($PackageOut))" | Set-Content -Encoding ascii -NoNewline $HashFile
+    Write-Host "zip ready: $PackageOut"
+    Write-Host "sha256 ready: $HashFile"
 }
 
 Write-Host "release ready: $ReleaseDir"

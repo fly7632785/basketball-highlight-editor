@@ -7,7 +7,7 @@ Treat releases as two separate deliverables:
 1. **Source preview**: source, documentation, tests, and licenses;
 2. **Desktop binary**: Flutter plus Python, dependencies, FFmpeg/FFprobe, and a model.
 
-The current repository should be described as source preview only. A successful source build does not make an `.app`, APK, or model attachment a ready-to-install release.
+After a `v*` tag is pushed, GitHub Actions builds Intel macOS, Apple Silicon macOS, and Windows x64 desktop packages and uploads them to the matching GitHub Release. Desktop packages include portable Python, dependencies, FFmpeg/FFprobe, and `models/bball_model.pt`; mobile releases remain out of scope here.
 
 ## 1. Source-publication checklist
 
@@ -21,7 +21,7 @@ The current repository should be described as source preview only. A successful 
 
 ### Do not include
 
-- unverified `.pt`, `.onnx`, `.pth`, `.bin`, or other model/native-runtime binaries;
+- unverified model/native-runtime binaries; `models/bball_model.pt` is an intentional exception required by the desktop release and still needs a separate rights review;
 - real game videos, exported clips, real labels, or unsanitized screenshots;
 - `.venv/`, `.tooling/`, `build/`, `dist/`, or personal paths;
 - API keys, private keys, personal contact details, or third-party source checkouts;
@@ -179,12 +179,15 @@ Build and create a zip:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build_windows_release.ps1 `
+  -Version 0.1.0-alpha.3 `
   -PythonRuntime C:\path\to\portable-python `
   -Ffmpeg C:\path\to\ffmpeg.exe `
   -Ffprobe C:\path\to\ffprobe.exe `
   -RuntimeOut dist\windows-runtime `
   -Zip
 ```
+
+The script creates `dist\BHE-windows-x64-v0.1.0-alpha.3.zip` and its `.sha256` checksum. Once a `v*` tag is pushed, GitHub Actions builds Windows x64, Intel macOS, and Apple Silicon macOS packages on hosted runners and uploads them to the GitHub Release; an Intel Mac is not needed locally.
 
 Windows remains a compatibility path. Validate the Flutter toolchain, Python/Torch/OpenCV/Ultralytics, FFmpeg DLLs, and installation flow; these scripts are not a formal installer or signing process.
 
@@ -209,9 +212,9 @@ Do not create a “stable” or “all-platform supported” release without a r
 
 ## 7. Current release blockers
 
-According to [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md), prefer source-only publication until the following are complete:
+According to [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md), complete the following before calling a release stable:
 
-- remove or verify models, native binaries, research checkouts, and screenshots in the current source tree;
+- remove or verify other models, native binaries, research checkouts, and screenshots in the current source tree;
 - generate notices for every locked dependency;
 - confirm model-weight and training-data rights;
 - replace demo material with publishable videos and screenshots;

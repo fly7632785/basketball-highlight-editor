@@ -7,7 +7,7 @@
 1. **源码预览版**：源码、文档、测试和许可证；
 2. **桌面二进制版**：额外携带 Python、依赖、FFmpeg/FFprobe、模型和 Flutter 应用。
 
-当前仓库只应按源码预览版描述。源码构建成功不代表可以把 `.app`、APK 或模型附件当作普通用户可直接安装的发布物。
+推送 `v*` tag 后，GitHub Actions 会自动构建 macOS Intel、macOS Apple Silicon 和 Windows x64 桌面包，并将产物上传到对应 GitHub Release。桌面包会携带便携 Python、依赖、FFmpeg/FFprobe 和 `models/bball_model.pt`；移动端仍不在本次发布范围内。
 
 ## 1. 源码公开前检查
 
@@ -21,7 +21,7 @@
 
 ### 不应包含
 
-- 未核验授权的 `.pt`、`.onnx`、`.pth`、`.bin` 或其他模型/原生运行时二进制；
+- 未核验授权的模型/原生运行时二进制；桌面发布所需的 `models/bball_model.pt` 是当前明确的例外，仍应单独核对其授权；
 - 真实比赛视频、导出片段、真实标注和未脱敏截图；
 - `.venv/`、`.tooling/`、`build/`、`dist/` 和个人路径；
 - API key、私钥、真实联系方式或第三方源码 checkout；
@@ -179,12 +179,15 @@ powershell -ExecutionPolicy Bypass -File scripts\prepare_windows_runtime.ps1 `
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build_windows_release.ps1 `
+  -Version 0.1.0-alpha.3 `
   -PythonRuntime C:\path\to\portable-python `
   -Ffmpeg C:\path\to\ffmpeg.exe `
   -Ffprobe C:\path\to\ffprobe.exe `
   -RuntimeOut dist\windows-runtime `
   -Zip
 ```
+
+脚本会生成 `dist\BHE-windows-x64-v0.1.0-alpha.3.zip` 和对应的 `.sha256` 校验文件。推送 `v*` tag 后，GitHub Actions 会在 Windows x64、macOS Intel 和 macOS Apple Silicon runner 上自动构建并把这些产物上传到 Release；本地没有 Intel Mac 也不影响 Intel 包构建。
 
 Windows 当前属于兼容路径，仍需验证 Flutter 工具链、Python/Torch/OpenCV/Ultralytics、FFmpeg DLL 和安装流程；它不能替代正式安装器、签名和用户验收。
 
@@ -209,9 +212,9 @@ Android 当前主要验证 `arm64-v8a`，需要 Rust Runtime、ONNX Runtime Andr
 
 ## 7. 当前发布阻塞项
 
-依据 [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md)，以下事项未完成前推荐只发布源码预览：
+依据 [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md)，以下事项仍需在正式稳定版前完成：
 
-- 清理或核验当前源码树中的模型、原生二进制、研究 checkout 和截图；
+- 清理或核验当前源码树中的其他模型、原生二进制、研究 checkout 和截图；
 - 逐项生成锁定依赖的许可证 notices；
 - 确认模型权重和训练数据授权；
 - 使用公开授权的演示视频和截图；

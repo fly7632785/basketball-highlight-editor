@@ -1,0 +1,259 @@
+name: Desktop release packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build, for example v0.1.0-alpha.3"
+        required: true
+        default: "v0.1.0-alpha.3"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.44.8"
+  PYTHON_BUILD_STANDALONE_TAG: "20260814"
+  PYTHON_VERSION: "3.11.16"
+  TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  macos:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x86_64
+            python_target: x86_64-apple-darwin
+            ffmpeg_url: https://evermeet.cx/ffmpeg/get/zip
+            ffprobe_url: https://evermeet.cx/ffmpeg/get/ffprobe/zip
+          - runner: macos-15
+            arch: arm64
+            python_target: aarch64-apple-darwin
+            ffmpeg_url: https://www.osxexperts.net/ffmpeg81arm.zip
+            ffprobe_url: https://www.osxexperts.net/ffprobe81arm.zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Install Flutter dependencies
+        working-directory: apps/desktop
+        run: flutter pub get
+
+      - name: Download portable Python
+        id: python
+        shell: bash
+        env:
+          PYTHON_TARGET: ${{ matrix.python_target }}
+        run: |
+          set -euo pipefail
+          archive="cpython-${PYTHON_VERSION}+${PYTHON_BUILD_STANDALONE_TAG}-${PYTHON_TARGET}-install_only.tar.gz"
+          encoded_archive="${archive//+/%2B}"
+          url="https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_BUILD_STANDALONE_TAG}/${encoded_archive}"
+          mkdir -p "$RUNNER_TEMP/bhe-python"
+          curl --fail --location --retry 3 --retry-delay 2 "$url" -o "$RUNNER_TEMP/python.tar.gz"
+          tar -xzf "$RUNNER_TEMP/python.tar.gz" -C "$RUNNER_TEMP/bhe-python"
+          python_root="$RUNNER_TEMP/bhe-python/python"
+          test -x "$python_root/bin/python3"
+          echo "root=$python_root" >> "$GITHUB_OUTPUT"
+          "$python_root/bin/python3" --version
+
+      - name: Install Python runtime dependencies
+        shell: bash
+        env:
+          PYTHON_ROOT: ${{ steps.python.outputs.root }}
+        run: |
+          set -euo pipefail
+          export PIP_DISABLE_PIP_VERSION_CHECK=1
+          "$PYTHON_ROOT/bin/python3" -m pip install --no-cache-dir --upgrade pip
+          "$PYTHON_ROOT/bin/python3" -m pip install --no-cache-dir -r requirements.txt
+          "$PYTHON_ROOT/bin/python3" -c 'import cv2, numpy, pandas, psutil, torch, ultralytics; print("runtime imports: OK")'
+
+      - name: Download self-contained FFmpeg
+        id: ffmpeg
+        shell: bash
+        env:
+          FFMPEG_URL: ${{ matrix.ffmpeg_url }}
+          FFPROBE_URL: ${{ matrix.ffprobe_url }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bhe-ffmpeg" "$RUNNER_TEMP/bhe-ffprobe"
+          curl --fail --location --retry 3 --retry-delay 2 "$FFMPEG_URL" -o "$RUNNER_TEMP/ffmpeg.zip"
+          curl --fail --location --retry 3 --retry-delay 2 "$FFPROBE_URL" -o "$RUNNER_TEMP/ffprobe.zip"
+          unzip -oq "$RUNNER_TEMP/ffmpeg.zip" -d "$RUNNER_TEMP/bhe-ffmpeg"
+          unzip -oq "$RUNNER_TEMP/ffprobe.zip" -d "$RUNNER_TEMP/bhe-ffprobe"
+          ffmpeg_path="$(find "$RUNNER_TEMP/bhe-ffmpeg" -type f -name ffmpeg -print -quit)"
+          ffprobe_path="$(find "$RUNNER_TEMP/bhe-ffprobe" -type f -name ffprobe -print -quit)"
+          test -n "$ffmpeg_path" && test -n "$ffprobe_path"
+          chmod +x "$ffmpeg_path" "$ffprobe_path"
+          file "$ffmpeg_path" "$ffprobe_path"
+          echo "ffmpeg=$ffmpeg_path" >> "$GITHUB_OUTPUT"
+          echo "ffprobe=$ffprobe_path" >> "$GITHUB_OUTPUT"
+
+      - name: Build macOS package
+        shell: bash
+        env:
+          PYTHON_ROOT: ${{ steps.python.outputs.root }}
+          FFMPEG_PATH: ${{ steps.ffmpeg.outputs.ffmpeg }}
+          FFPROBE_PATH: ${{ steps.ffmpeg.outputs.ffprobe }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          version="${TAG_NAME#v}"
+          package="$GITHUB_WORKSPACE/dist/BHE-macos-${ARCH}-v${version}-adhoc.zip"
+          dmg="$GITHUB_WORKSPACE/dist/BHE-macos-${ARCH}-v${version}-adhoc.dmg"
+          BHE_PYTHON_RUNTIME="$PYTHON_ROOT" \
+          BHE_FFMPEG="$FFMPEG_PATH" \
+          BHE_FFPROBE="$FFPROBE_PATH" \
+          BHE_BUILD_NAME="$version" \
+          BHE_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" \
+          BHE_PACKAGE_OUT="$package" \
+          BHE_DMG_OUT="$dmg" \
+          FLUTTER_BIN="$(command -v flutter)" \
+          scripts/build_macos_release.sh
+          file "apps/desktop/build/macos/Build/Products/Release/BHE.app/Contents/MacOS/BHE"
+          codesign --verify --deep --strict "apps/desktop/build/macos/Build/Products/Release/BHE.app"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BHE-macos-${{ matrix.arch }}
+          path: |
+            dist/BHE-macos-${{ matrix.arch }}-v*-adhoc.zip
+            dist/BHE-macos-${{ matrix.arch }}-v*-adhoc.zip.sha256
+            dist/BHE-macos-${{ matrix.arch }}-v*-adhoc.dmg
+            dist/BHE-macos-${{ matrix.arch }}-v*-adhoc.dmg.sha256
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Install Flutter dependencies
+        working-directory: apps/desktop
+        run: flutter pub get
+
+      - name: Download portable Python
+        id: python
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archive = "cpython-$env:PYTHON_VERSION+$env:PYTHON_BUILD_STANDALONE_TAG-x86_64-pc-windows-msvc-install_only.tar.gz"
+          $encodedArchive = $archive.Replace('+', '%2B')
+          $url = "https://github.com/astral-sh/python-build-standalone/releases/download/$env:PYTHON_BUILD_STANDALONE_TAG/$encodedArchive"
+          $pythonBase = Join-Path $env:RUNNER_TEMP "bhe-python"
+          New-Item -ItemType Directory -Force -Path $pythonBase | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile (Join-Path $env:RUNNER_TEMP "python.tar.gz")
+          tar -xzf (Join-Path $env:RUNNER_TEMP "python.tar.gz") -C $pythonBase
+          $pythonRoot = Join-Path $pythonBase "python"
+          if (-not (Test-Path (Join-Path $pythonRoot "python.exe"))) { throw "portable Python was not extracted" }
+          "root=$pythonRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          & (Join-Path $pythonRoot "python.exe") --version
+
+      - name: Install Python runtime dependencies
+        shell: pwsh
+        env:
+          PYTHON_ROOT: ${{ steps.python.outputs.root }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $python = Join-Path $env:PYTHON_ROOT "python.exe"
+          & $python -m pip install --no-cache-dir --upgrade pip
+          & $python -m pip install --no-cache-dir -r requirements.txt
+          & $python -c "import cv2, numpy, pandas, psutil, torch, ultralytics; print('runtime imports: OK')"
+
+      - name: Download self-contained FFmpeg
+        id: ffmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-lgpl-8.1.zip"
+          $archive = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
+          $extract = Join-Path $env:RUNNER_TEMP "bhe-ffmpeg"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          Expand-Archive -Path $archive -DestinationPath $extract -Force
+          $ffmpeg = Get-ChildItem -Path $extract -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+          $ffprobe = Get-ChildItem -Path $extract -Recurse -Filter "ffprobe.exe" | Select-Object -First 1
+          if (-not $ffmpeg -or -not $ffprobe) { throw "ffmpeg.exe or ffprobe.exe was not found" }
+          "ffmpeg=$($ffmpeg.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "ffprobe=$($ffprobe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          & $ffmpeg.FullName -version | Select-Object -First 1
+
+      - name: Build Windows package
+        shell: pwsh
+        env:
+          PYTHON_ROOT: ${{ steps.python.outputs.root }}
+          FFMPEG_PATH: ${{ steps.ffmpeg.outputs.ffmpeg }}
+          FFPROBE_PATH: ${{ steps.ffmpeg.outputs.ffprobe }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:TAG_NAME -replace '^v', ''
+          $package = Join-Path $env:GITHUB_WORKSPACE "dist\BHE-windows-x64-v$version.zip"
+          & powershell -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\build_windows_release.ps1" `
+            -Version $version `
+            -PythonRuntime $env:PYTHON_ROOT `
+            -Ffmpeg $env:FFMPEG_PATH `
+            -Ffprobe $env:FFPROBE_PATH `
+            -RuntimeOut "$env:GITHUB_WORKSPACE\dist\windows-runtime" `
+            -PackageOut $package
+          if ($LASTEXITCODE -ne 0) { throw "Windows package build failed" }
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BHE-windows-x64
+          path: |
+            dist/BHE-windows-x64-v*.zip
+            dist/BHE-windows-x64-v*.zip.sha256
+          if-no-files-found: error
+
+  release:
+    name: Upload GitHub Release
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: BHE-*
+          path: dist
+          merge-multiple: true
+
+      - name: List release files
+        run: |
+          set -euo pipefail
+          find dist -maxdepth 1 -type f -print -exec sha256sum {} \;
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: Basketball Highlight Editor ${{ env.TAG_NAME }}
+          generate_release_notes: true
+          prerelease: ${{ contains(env.TAG_NAME, '-') }}
+          fail_on_unmatched_files: true
+          files: dist/*

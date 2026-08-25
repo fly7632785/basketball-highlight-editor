@@ -4,7 +4,7 @@
 
 ## 公开策略
 
-当前目标是先发布**源码预览版**，让开发者理解架构并在本地准备依赖后运行。当前不承诺提供可直接安装的 macOS/Windows 桌面包，也不承诺移动端二进制可以在所有设备上执行本地 AI 分析。
+当前目标是发布**桌面预览版**：源码可直接查看，推送 `v*` tag 后由 GitHub Actions 构建 macOS Intel、macOS Apple Silicon 和 Windows x64 包。移动端仍是独立实验路径，不承诺所有设备都能执行本地 AI 分析。
 
 ## 文档整理结果
 
@@ -20,9 +20,9 @@
 
 ## 当前源码树仍需处理的阻塞项
 
-以下项目在当前 `feature/mobile-app` 基线中仍然存在，公开 GitHub 前必须清理、替换或取得明确授权：
+以下项目仍需在正式稳定版前清理、替换或取得明确授权：
 
-- `models/bball_model.pt`、`models/bball_model.onnx`；
+- `models/bball_model.onnx`；桌面发布所需的 `models/bball_model.pt` 已作为明确的内置运行时模型保留；
 - `apps/mobile/assets/models/bball_model.onnx`；
 - `apps/mobile/android/app/src/main/jniLibs/arm64-v8a/*.so`；
 - `apps/desktop/assets/fonts/*.ttf` 当前是占位文本，不是可分发的有效字体文件；
@@ -34,7 +34,7 @@
 ## 发布前必须完成
 
 - 运行 `python3 scripts/check_open_source.py`，并处理所有 error；
-- 从 Git 历史和当前索引中清理未授权模型、原生二进制、视频、截图、研究 checkout 和个人数据；
+- 从 Git 历史和当前索引中清理其他未授权模型、原生二进制、视频、截图、研究 checkout 和个人数据；
 - 根据实际 `requirements*.txt`、`pubspec.lock`、`Cargo.lock` 和 FFmpeg 构建生成 notices；
 - 核验模型权重、训练数据、演示视频和截图的公开权利；
 - 在没有仓库、Homebrew、开发 `.venv` 和个人路径的干净机器上验证 macOS；

@@ -6,7 +6,7 @@
 
 ## Project status
 
-**Current version: V1 source preview.** This repository is intended for developers who prepare the local runtime themselves; it is not a ready-to-install end-user package. Desktop is the primary product path. Mobile is an independent experimental app: Android has a native analysis path, while iOS local AI analysis still requires the final Rust/ONNX Runtime artifacts to be linked.
+**Current version: V1 desktop preview.** Downloadable desktop packages are built by GitHub Actions for Intel macOS, Apple Silicon macOS, and Windows x64 whenever a `v*` tag is pushed. Desktop is the primary product path. Mobile is an independent experimental app: Android has a native analysis path, while iOS local AI analysis still requires the final Rust/ONNX Runtime artifacts to be linked.
 
 | Target | Status | Intended use |
 |---|---|---|
@@ -224,4 +224,4 @@ Issues, test feedback, and focused fixes are welcome. Read [`CONTRIBUTING.md`](C
 The source code is released under the [MIT License](LICENSE). This does not automatically cover model weights, training data, input videos, FFmpeg builds, or third-party dependencies. Read [`NOTICE`](NOTICE) and [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) before redistribution.
 
 # Thanks
-Thank [Linux.do](https://linux.do/) 
+Thank [Linux.do](https://linux.do/)

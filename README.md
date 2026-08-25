@@ -115,7 +115,7 @@
 
 ## 开始使用
 
-当前仓库提供源码部署方式，macOS 是最完整的体验路径，Windows 已提供兼容路径。暂时没有把它包装成“下载后双击就能用”的安装包，所以第一次需要准备本地开发环境。
+你可以直接从 GitHub Releases 下载桌面包；每次推送 `v*` tag 后，GitHub Actions 会自动生成 macOS Intel、macOS Apple Silicon 和 Windows x64 版本。想参与开发或自己构建时，再按下面的源码部署步骤准备环境。
 
 ### macOS
 

@@ -30,6 +30,10 @@ BLOCKED_SUFFIXES = {
     ".weights",
     ".zip",
 }
+# The desktop release intentionally bundles the project model so a fresh clone
+# and the generated packages work without a silent download from an unknown
+# address. Other model/native artifacts remain blocked by the audit.
+ALLOWED_RELEASE_ARTIFACTS = {"models/bball_model.pt"}
 BLOCKED_PATH_PARTS = (
     ".research/opensource-refs-",
     ".venv/",
@@ -128,7 +132,10 @@ def main() -> int:
             errors.append(f"tracked OS metadata: {relative}")
         if any(part in normalized for part in BLOCKED_PATH_PARTS):
             errors.append(f"private/generated/reference path: {relative}")
-        if path.suffix.lower() in BLOCKED_SUFFIXES:
+        if (
+            path.suffix.lower() in BLOCKED_SUFFIXES
+            and relative not in ALLOWED_RELEASE_ARTIFACTS
+        ):
             errors.append(f"binary/video/model artifact: {relative}")
         if path.suffix.lower() in {".ttf", ".otf"} and not _font_is_valid(root / path):
             errors.append(f"font file is not a valid font binary: {relative}")
