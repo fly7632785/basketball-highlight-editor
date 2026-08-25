@@ -116,6 +116,19 @@ FLUTTER_BIN="$(command -v flutter)" \
 scripts/build_macos_release.sh
 ```
 
+The script now produces both the `.app` and a zip archive by default, together with a SHA-256 checksum file. Pass an explicit version when preparing a release build:
+
+```bash
+BHE_BUILD_NAME=0.1.0-alpha.2 \
+BHE_BUILD_NUMBER=2 \
+BHE_PYTHON_RUNTIME=/path/to/portable-python \
+BHE_FFMPEG=/path/to/static/ffmpeg \
+BHE_FFPROBE=/path/to/static/ffprobe \
+scripts/build_macos_release.sh
+```
+
+Without `BHE_CODESIGN_IDENTITY`, the script applies only an ad-hoc signature (a local temporary signature) so the `.app` remains sealed after the bundled runtime is copied in. This is not an Apple Developer ID signature and does not include notarization. Use this package for local or test-machine validation, not as a public stable installer. If Gatekeeper blocks the first launch, use Finder's **Open** action after confirming the package's source, or remove the quarantine attribute only after that review.
+
 With code signing:
 
 ```bash

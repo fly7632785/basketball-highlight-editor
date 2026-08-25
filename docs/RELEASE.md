@@ -116,6 +116,19 @@ FLUTTER_BIN="$(command -v flutter)" \
 scripts/build_macos_release.sh
 ```
 
+脚本默认会同时生成 `.app` 和 zip 包，并在旁边生成 SHA-256 校验文件。发布版本可显式传入版本号：
+
+```bash
+BHE_BUILD_NAME=0.1.0-alpha.2 \
+BHE_BUILD_NUMBER=2 \
+BHE_PYTHON_RUNTIME=/path/to/portable-python \
+BHE_FFMPEG=/path/to/static/ffmpeg \
+BHE_FFPROBE=/path/to/static/ffprobe \
+scripts/build_macos_release.sh
+```
+
+未配置 `BHE_CODESIGN_IDENTITY` 时，脚本只做 ad-hoc 签名（本机临时签名），让嵌入运行时后的 `.app` 保持完整签名封装；这不等于 Apple Developer ID 签名，也不包含公证。该包适合开发者本机或测试机验证，不应直接当作面向公众的正式安装包。首次打开时若被 Gatekeeper 拦截，可在 Finder 中右键应用选择“打开”，或在确认来源可信后移除下载隔离属性。
+
 需要签名时：
 
 ```bash
