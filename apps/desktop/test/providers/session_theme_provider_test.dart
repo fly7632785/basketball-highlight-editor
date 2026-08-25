@@ -174,10 +174,7 @@ void main() {
       expect(container.read(engineBootstrapProvider).isLoading, isTrue);
     });
 
-    // ensure() 依赖 Platform.environment/Directory.current,无法在测试中注入;
-    // 这里用 FakeEngineClient 短路子进程,宽松断言 ensure 完结后 state 已结算。
-    // 沙盒外运行时:命中硬编码 /Users/.../basketball-highlight-editor
-    // 候选时为 AsyncData(true);无 runtime 时为 AsyncError。
+    // ensure() 默认读取真实运行环境；这里仅验证失败状态可以结算。
     test('ensure() 完结后 state 不再 loading', () async {
       final container = ProviderContainer(
         overrides: <Override>[
@@ -195,13 +192,29 @@ void main() {
       final client = FakeEngineClient(
         startDelay: const Duration(milliseconds: 20),
       );
+      final runtimeRoot = Directory.systemTemp.createTempSync(
+        'engine_bootstrap_test_',
+      );
+      Directory('${runtimeRoot.path}/engine/python').createSync(
+        recursive: true,
+      );
+      addTearDown(() => runtimeRoot.deleteSync(recursive: true));
       final container = ProviderContainer(
         overrides: <Override>[engineClientProvider.overrideWithValue(client)],
       );
       addTearDown(container.dispose);
       final notifier = container.read(engineBootstrapProvider.notifier);
 
-      await Future.wait([notifier.ensure(), notifier.ensure()]);
+      await Future.wait([
+        notifier.ensure(
+          runtimeRootOverride: runtimeRoot.path,
+          pythonExecutableOverride: 'python3',
+        ),
+        notifier.ensure(
+          runtimeRootOverride: runtimeRoot.path,
+          pythonExecutableOverride: 'python3',
+        ),
+      ]);
 
       expect(client.startCalls, 1);
       expect(client.helloCalls, 1);

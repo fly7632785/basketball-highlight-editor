@@ -109,37 +109,48 @@ class EngineBootstrapNotifier extends Notifier<AsyncValue<bool>> {
   AsyncValue<bool> build() => const AsyncValue<bool>.loading();
 
   /// 等价 app.dart:_ensureEngine。已就绪时直接返回,否则重新跑启动流程。
-  Future<void> ensure() {
+  Future<void> ensure({
+    String? runtimeRootOverride,
+    String? pythonExecutableOverride,
+  }) {
     final client = ref.read(engineClientProvider);
     if (state.valueOrNull == true && client.isRunning) {
       return Future<void>.value();
     }
     final current = _ensureInFlight;
     if (current != null) return current;
-    final future = _ensure();
+    final future = _ensure(
+      runtimeRootOverride: runtimeRootOverride,
+      pythonExecutableOverride: pythonExecutableOverride,
+    );
     _ensureInFlight = future;
     return future.whenComplete(() {
       if (identical(_ensureInFlight, future)) _ensureInFlight = null;
     });
   }
 
-  Future<void> _ensure() async {
+  Future<void> _ensure({
+    String? runtimeRootOverride,
+    String? pythonExecutableOverride,
+  }) async {
     final client = ref.read(engineClientProvider);
     client.onUnexpectedExit = _handleUnexpectedExit;
     state = const AsyncValue<bool>.loading();
     state = await AsyncValue.guard(() async {
       final env = Platform.environment;
-      final runtimeRoot = findRuntimeRoot(
-        env: env,
-        resolvedExecutable: Platform.resolvedExecutable,
-        currentDir: Directory.current.path,
-      );
+      final runtimeRoot = runtimeRootOverride ??
+          findRuntimeRoot(
+            env: env,
+            resolvedExecutable: Platform.resolvedExecutable,
+            currentDir: Directory.current.path,
+          );
       if (runtimeRoot == null) {
         throw const SessionStateException(
           '未找到本地 Engine 运行目录。开发环境请从项目根目录启动，正式版本请先完成运行时打包。',
         );
       }
-      final pythonPath = findPython(runtimeRoot, env: env);
+      final pythonPath = pythonExecutableOverride ??
+          findPython(runtimeRoot, env: env);
       final runtimeBin = Directory('$runtimeRoot/bin').existsSync()
           ? '$runtimeRoot/bin'
           : null;
