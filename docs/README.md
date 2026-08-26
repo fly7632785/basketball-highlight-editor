@@ -11,7 +11,7 @@
 | 第一次安装和运行桌面端 | [`GETTING_STARTED.md`](GETTING_STARTED.md) |
 | 候选为空、模型、FFmpeg、插件警告 | [`FAQ.md`](FAQ.md) |
 | 修改代码、补测试、提交 PR | [`DEVELOPMENT.md`](DEVELOPMENT.md) 和 [`../CONTRIBUTING.md`](../CONTRIBUTING.md) |
-| 打包 macOS/Windows | [`RELEASE.md`](RELEASE.md) |
+| 打包 macOS/Windows/Android | [`RELEASE.md`](RELEASE.md) |
 | 理解桌面端架构 | [`architecture/ARCHITECTURE_V1.md`](architecture/ARCHITECTURE_V1.md) |
 | 调试 Flutter ↔ Engine 协议 | [`architecture/ENGINE_PROTOCOL_V1.md`](architecture/ENGINE_PROTOCOL_V1.md) |
 | 理解项目目录和缓存 | [`architecture/PROJECT_LAYOUT_V1.md`](architecture/PROJECT_LAYOUT_V1.md) |
@@ -51,7 +51,7 @@
 
 ## 开源与发布
 
-- [`RELEASE.md`](RELEASE.md)：源码预览发布、桌面运行时、签名、公证和许可证检查。
+- [`RELEASE.md`](RELEASE.md)：源码预览发布、桌面/Android 运行时、签名、公证和许可证检查。
 - [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md)：当前源码树的公开阻塞项。
 - [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md)：模型、训练数据、视频和推理依赖的授权边界。
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)：运行时依赖和研究参考的集中清单。

@@ -6,7 +6,7 @@
 
 ## Project status
 
-**Current version: V1 desktop preview.** Downloadable desktop packages are built by GitHub Actions for Intel macOS, Apple Silicon macOS, and Windows x64 whenever a `v*` tag is pushed. Desktop is the primary product path. Mobile is an independent experimental app: Android has a native analysis path, while iOS local AI analysis still requires the final Rust/ONNX Runtime artifacts to be linked.
+**Current version: V1 desktop preview.** GitHub Actions builds downloadable packages for Intel macOS, Apple Silicon macOS, Windows x64, and Android `arm64-v8a` whenever a `v*` tag is pushed. The Android APK is `debug-signed` for sideloaded testing, not a Google Play production package. Desktop is the primary product path. Mobile is an independent experimental app: Android has a native analysis path, while iOS local AI analysis still requires the final Rust/ONNX Runtime artifacts to be linked.
 
 | Target | Status | Intended use |
 |---|---|---|

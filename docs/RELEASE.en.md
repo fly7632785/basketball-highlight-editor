@@ -2,12 +2,13 @@
 
 [中文](RELEASE.md) · **English**
 
-Treat releases as two separate deliverables:
+Treat releases as three separate deliverables:
 
 1. **Source preview**: source, documentation, tests, and licenses;
 2. **Desktop binary**: Flutter plus Python, dependencies, FFmpeg/FFprobe, and a model.
+3. **Android sideload test build**: ONNX model, Rust Runtime, and ONNX Runtime Android library.
 
-After a `v*` tag is pushed, GitHub Actions builds Intel macOS, Apple Silicon macOS, and Windows x64 desktop packages and uploads them to the matching GitHub Release. Desktop packages include portable Python, dependencies, FFmpeg/FFprobe, and `models/bball_model.pt`; mobile releases remain out of scope here.
+After a `v*` tag is pushed, GitHub Actions builds Intel macOS, Apple Silicon macOS, Windows x64, and Android `arm64-v8a` packages and uploads them to the matching GitHub Release. Desktop packages include portable Python, dependencies, FFmpeg/FFprobe, and `models/bball_model.pt`; the Android job exports the ONNX model, compiles the Rust runtime, and downloads the official ONNX Runtime Android library.
 
 ## 1. Source-publication checklist
 
@@ -193,7 +194,7 @@ Windows remains a compatibility path. Validate the Flutter toolchain, Python/Tor
 
 ## 5. Mobile release boundary
 
-Android currently targets `arm64-v8a` and needs the Rust runtime, Android ONNX Runtime library, and a complete APK for that ABI. iOS project, media, and export paths can build, but local analysis still needs the Rust static library, the ONNX Runtime XCFramework, and Runner linking. Do not publish a build without these artifacts as a full AI-analysis release.
+Android currently publishes an `arm64-v8a` APK only. The release workflow signs it with the debug certificate, so the filename includes `debug-signed`: it is suitable for sideloaded device testing but not for Google Play submission. Users must allow installation from the relevant unknown source. iOS project, media, and export paths can build, but local analysis still needs the Rust static library, the ONNX Runtime XCFramework, and Runner linking. Do not publish a build without these artifacts as a full AI-analysis release.
 
 See [`architecture/MOBILE_RUNTIME_V1.md`](architecture/MOBILE_RUNTIME_V1.md) and [`../apps/mobile/README.md`](../apps/mobile/README.md) for the mobile build entry points.
 

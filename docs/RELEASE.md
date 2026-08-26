@@ -2,12 +2,13 @@
 
 **中文** · [English](RELEASE.en.md)
 
-项目发布物分成两类，必须分别验收：
+项目发布物分成三类，必须分别验收：
 
 1. **源码预览版**：源码、文档、测试和许可证；
 2. **桌面二进制版**：额外携带 Python、依赖、FFmpeg/FFprobe、模型和 Flutter 应用。
+3. **Android 侧载测试版**：额外携带 ONNX 模型、Rust Runtime 和 ONNX Runtime Android 库。
 
-推送 `v*` tag 后，GitHub Actions 会自动构建 macOS Intel、macOS Apple Silicon 和 Windows x64 桌面包，并将产物上传到对应 GitHub Release。桌面包会携带便携 Python、依赖、FFmpeg/FFprobe 和 `models/bball_model.pt`；移动端仍不在本次发布范围内。
+推送 `v*` tag 后，GitHub Actions 会自动构建 macOS Intel、macOS Apple Silicon、Windows x64 和 Android `arm64-v8a` 包，并将产物上传到对应 GitHub Release。桌面包会携带便携 Python、依赖、FFmpeg/FFprobe 和 `models/bball_model.pt`；Android 包在 CI 中导出 ONNX 模型、编译 Rust Runtime 并下载官方 ONNX Runtime Android 库。
 
 ## 1. 源码公开前检查
 
@@ -193,7 +194,7 @@ Windows 当前属于兼容路径，仍需验证 Flutter 工具链、Python/Torch
 
 ## 5. 移动端发布边界
 
-Android 当前主要验证 `arm64-v8a`，需要 Rust Runtime、ONNX Runtime Android 库和对应 ABI 的完整 APK。iOS 项目、媒体和导出可构建，但本地分析仍需要 Rust 静态库、ONNX Runtime XCFramework 和 Runner 链接；没有这些产物时不要发布为完整 AI 分析版本。
+Android 当前只发布 `arm64-v8a` APK。Release 工作流会使用调试证书签名，因此文件名会标记为 `debug-signed`：可用于真机侧载测试，但不是 Google Play 可提交的正式签名包。安装前需在 Android 系统中允许该来源安装未知应用。iOS 项目、媒体和导出可构建，但本地分析仍需要 Rust 静态库、ONNX Runtime XCFramework 和 Runner 链接；没有这些产物时不要发布为完整 AI 分析版本。
 
 移动端构建入口见 [`architecture/MOBILE_RUNTIME_V1.md`](architecture/MOBILE_RUNTIME_V1.md) 和 [`../apps/mobile/README.md`](../apps/mobile/README.md)。
 

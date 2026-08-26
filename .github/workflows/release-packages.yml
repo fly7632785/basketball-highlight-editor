@@ -1,4 +1,4 @@
-name: Desktop release packages
+name: BHE release packages
 
 on:
   push:
@@ -22,6 +22,8 @@ env:
   FLUTTER_VERSION: "3.44.8"
   PYTHON_BUILD_STANDALONE_TAG: "20260814"
   PYTHON_VERSION: "3.11.16"
+  ANDROID_NDK_VERSION: "27.0.12077973"
+  ONNXRUNTIME_VERSION: "1.22.0"
   TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
@@ -231,9 +233,92 @@ jobs:
             dist/BHE-windows-x64-v*.zip.sha256
           if-no-files-found: error
 
+  android:
+    name: Android arm64-v8a
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Set up Python for ONNX export
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;${ANDROID_NDK_VERSION}"
+
+      - name: Set up Rust Android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Export mobile ONNX model
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir ultralytics onnx
+          python scripts/export_mobile_model.py \
+            --model models/bball_model.pt \
+            --output apps/mobile/assets/models/bball_model.onnx
+          test -s apps/mobile/assets/models/bball_model.onnx
+
+      - name: Download ONNX Runtime Android library
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/onnxruntime-android.aar"
+          runtime_dir="$RUNNER_TEMP/onnxruntime-android"
+          url="https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/${ONNXRUNTIME_VERSION}/onnxruntime-android-${ONNXRUNTIME_VERSION}.aar"
+          curl --fail --location --retry 3 --retry-delay 2 "$url" -o "$archive"
+          mkdir -p "$runtime_dir"
+          unzip -q "$archive" -d "$runtime_dir"
+          test -f "$runtime_dir/jni/arm64-v8a/libonnxruntime.so"
+          mkdir -p "$runtime_dir/arm64-v8a"
+          cp "$runtime_dir/jni/arm64-v8a/libonnxruntime.so" "$runtime_dir/arm64-v8a/"
+          echo "BHE_ORT_ANDROID_DIR=$runtime_dir" >> "$GITHUB_ENV"
+
+      - name: Build Rust Android Runtime
+        run: BHE_ANDROID_NDK="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" scripts/build_mobile_runtime.sh
+
+      - name: Install Flutter dependencies
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: Build Android package
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          version="${TAG_NAME#v}"
+          flutter build apk --release \
+            --build-name="$version" \
+            --build-number="${GITHUB_RUN_NUMBER}"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "$GITHUB_WORKSPACE/dist/BHE-android-arm64-v8a-v${version}-debug-signed.apk"
+          cd "$GITHUB_WORKSPACE/dist"
+          sha256sum "BHE-android-arm64-v8a-v${version}-debug-signed.apk" \
+            > "BHE-android-arm64-v8a-v${version}-debug-signed.apk.sha256"
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BHE-android-arm64-v8a
+          path: |
+            dist/BHE-android-arm64-v8a-v*-debug-signed.apk
+            dist/BHE-android-arm64-v8a-v*-debug-signed.apk.sha256
+          if-no-files-found: error
+
   release:
     name: Upload GitHub Release
-    needs: [macos, windows]
+    needs: [macos, windows, android]
     runs-on: ubuntu-latest
     steps:
       - name: Download all packages

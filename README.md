@@ -121,7 +121,7 @@
 
 ## 开始使用
 
-你可以直接从 GitHub Releases 下载桌面包；每次推送 `v*` tag 后，GitHub Actions 会自动生成 macOS Intel、macOS Apple Silicon 和 Windows x64 版本。想参与开发或自己构建时，再按下面的源码部署步骤准备环境。
+你可以直接从 GitHub Releases 下载桌面包或 Android `arm64-v8a` 测试包；每次推送 `v*` tag 后，GitHub Actions 会自动生成 macOS Intel、macOS Apple Silicon、Windows x64 和 Android `arm64-v8a` 版本。Android 包为 `debug-signed` 侧载测试包，不是 Google Play 正式签名包。想参与开发或自己构建时，再按下面的源码部署步骤准备环境。
 
 ### macOS
 

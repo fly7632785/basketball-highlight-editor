@@ -11,7 +11,7 @@ The root [`README.en.md`](../README.en.md) is the project overview and shortest 
 | Install and run the desktop app | [`GETTING_STARTED.en.md`](GETTING_STARTED.en.md) |
 | Troubleshoot candidates, models, FFmpeg, or plugin warnings | [`FAQ.en.md`](FAQ.en.md) |
 | Change code, add tests, or submit a PR | [`DEVELOPMENT.en.md`](DEVELOPMENT.en.md) and [`../CONTRIBUTING.md`](../CONTRIBUTING.md) |
-| Package macOS/Windows | [`RELEASE.en.md`](RELEASE.en.md) |
+| Package macOS/Windows/Android | [`RELEASE.en.md`](RELEASE.en.md) |
 | Understand the desktop architecture | [`architecture/ARCHITECTURE_V1.md`](architecture/ARCHITECTURE_V1.md) |
 | Debug the Flutter ↔ Engine protocol | [`architecture/ENGINE_PROTOCOL_V1.md`](architecture/ENGINE_PROTOCOL_V1.md) |
 | Understand project folders and caches | [`architecture/PROJECT_LAYOUT_V1.md`](architecture/PROJECT_LAYOUT_V1.md) |
@@ -51,7 +51,7 @@ The root [`README.en.md`](../README.en.md) is the project overview and shortest 
 
 ## Open source and release
 
-- [`RELEASE.en.md`](RELEASE.en.md): source-preview release, desktop runtime, signing, notarization, and license checks.
+- [`RELEASE.en.md`](RELEASE.en.md): source-preview release, desktop/Android runtime, signing, notarization, and license checks.
 - [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md): current source-tree blockers.
 - [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md): rights boundaries for models, training data, videos, and inference dependencies.
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md): consolidated runtime-dependency and research-reference list.

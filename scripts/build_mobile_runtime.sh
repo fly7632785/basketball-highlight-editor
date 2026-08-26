@@ -37,8 +37,14 @@ else
   [[ -d "$TARGET_LIBDIR" ]] || die "Rust target ${TARGET} is not installed; run: rustup target add ${TARGET}"
 fi
 
-CLANG="$NDK/toolchains/llvm/prebuilt/darwin-arm64/bin/aarch64-linux-android21-clang"
-[[ -x "$CLANG" ]] || CLANG="$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android21-clang"
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) NDK_HOST_TAG="darwin-arm64" ;;
+  Darwin-x86_64) NDK_HOST_TAG="darwin-x86_64" ;;
+  Linux-x86_64) NDK_HOST_TAG="linux-x86_64" ;;
+  *) die "不支持当前主机上的 Android NDK：$(uname -s)-$(uname -m)" ;;
+esac
+
+CLANG="$NDK/toolchains/llvm/prebuilt/$NDK_HOST_TAG/bin/aarch64-linux-android21-clang"
 [[ -x "$CLANG" ]] || die "NDK 中未找到 aarch64-linux-android21-clang。"
 
 echo "构建 Rust Android Runtime: $TARGET"
