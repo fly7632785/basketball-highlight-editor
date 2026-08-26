@@ -95,14 +95,9 @@
 
 下面这段录屏展示了从导入视频、分析候选到审核和导出的完整操作流程：
 
-![播放操作录屏](capture/录制视频封面.jpg)
+[![播放操作录屏](capture/录制视频封面.jpg)](https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4)
 
-<!-- GitHub 会将这个 OSS 视频地址渲染为可播放的视频；仓库不再保存大体积演示视频。 -->
-<video src="https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4" controls muted preload="metadata" width="720">
-  你的浏览器不支持 video 标签，可[点击打开操作录屏](https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4)。
-</video>
-
-如果当前页面无法直接播放，也可以[点击打开操作录屏](https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4)。
+点击封面即可打开 OSS 上的操作录屏。仓库不保存大体积演示视频，避免下载项目时额外占用 Git 空间。
 
 排除的候选不会被删除，之后仍然可以恢复或复核：
 
