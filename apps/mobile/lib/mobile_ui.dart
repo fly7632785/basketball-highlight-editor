@@ -1539,6 +1539,7 @@ class _ReviewViewState extends State<_ReviewView> {
                     selectedIndex: selectedIndex,
                     onSelect: _select,
                     onAdd: () => _addManualCandidate(context),
+                    onShortcuts: () => _showShortcuts(context),
                   ),
                 ),
                 Expanded(
@@ -2267,6 +2268,7 @@ class _CandidateRail extends StatelessWidget {
     required this.selectedIndex,
     required this.onSelect,
     required this.onAdd,
+    required this.onShortcuts,
   });
   final ScrollController controller;
   final List<GlobalKey> itemKeys;
@@ -2274,6 +2276,7 @@ class _CandidateRail extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelect;
   final VoidCallback onAdd;
+  final VoidCallback onShortcuts;
 
   @override
   Widget build(BuildContext context) => ColoredBox(
@@ -2287,6 +2290,17 @@ class _CandidateRail extends StatelessWidget {
               Text(
                 '候选 ${candidates.length}',
                 style: Theme.of(context).textTheme.labelMedium,
+              ),
+              IconButton(
+                onPressed: onShortcuts,
+                icon: const Icon(LucideIcons.info, size: 17),
+                tooltip: '查看审核操作提示',
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 34,
+                  height: 34,
+                ),
+                padding: EdgeInsets.zero,
               ),
               const Spacer(),
               TextButton.icon(
