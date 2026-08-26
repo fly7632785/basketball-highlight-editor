@@ -87,6 +87,14 @@ pub struct Detection {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct EvidencePoint {
+    pub time_ms: i64,
+    pub x: f32,
+    pub y: f32,
+    pub confidence: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct Candidate {
     pub id: String,
     pub start_ms: i64,
@@ -96,6 +104,13 @@ pub struct Candidate {
     pub trajectory_score: f32,
     pub crossing_score: f32,
     pub net_motion_score: f32,
+    pub trajectory: Vec<EvidencePoint>,
+    pub crossing: EvidencePoint,
+    pub reason: String,
+    pub verdict: String,
+    pub complete_crossing: bool,
+    pub rebound: bool,
+    pub evidence_source: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -157,12 +172,12 @@ impl RuntimeSession {
             .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
         {
             let (x, y) = center(ball);
-            self.ball_points.push((
+            self.push_ball_point(
                 frame.time_ms,
                 x / image.width() as f32,
                 y / image.height() as f32,
                 ball.confidence,
-            ));
+            );
             self.detect_crossing();
         }
         Ok(FrameResponse {
@@ -170,6 +185,22 @@ impl RuntimeSession {
             candidates: self.candidates.clone(),
             processed_frames: self.processed_frames,
         })
+    }
+
+    fn push_ball_point(&mut self, time_ms: i64, x: f32, y: f32, confidence: f32) {
+        if let Some(previous) = self.ball_points.last() {
+            let dt = time_ms - previous.0;
+            let dx = x - previous.1;
+            let dy = y - previous.2;
+            let distance = (dx * dx + dy * dy).sqrt();
+            if dt <= 0 || dt > 1_200 || distance > 0.24 {
+                self.ball_points.clear();
+            }
+        }
+        self.ball_points.push((time_ms, x, y, confidence));
+        if self.ball_points.len() > 24 {
+            self.ball_points.remove(0);
+        }
     }
 
     fn update_net_motion(&mut self, time_ms: i64, image: &RgbImage) {
@@ -200,6 +231,11 @@ impl RuntimeSession {
         if !(rim_left..=rim_right).contains(&crossing_x) {
             return;
         }
+        let recent_start = self.ball_points.len().saturating_sub(8);
+        let recent = &self.ball_points[recent_start..];
+        if !complete_crossing(recent, rim_y, rim_left, rim_right) {
+            return;
+        }
         let event_ms = above.0 + ((below.0 - above.0) as f32 * crossing) as i64;
         if self
             .candidates
@@ -208,11 +244,23 @@ impl RuntimeSession {
         {
             return;
         }
-        let trajectory_score = trajectory_score(&self.ball_points);
+        let trajectory_score = trajectory_score(recent);
         let crossing_score = (1.0
             - ((crossing_x - (rim_left + rim_right) / 2.0).abs()
                 / ((rim_right - rim_left) / 2.0).max(1e-6)))
         .clamp(0.0, 1.0);
+        let trajectory = recent
+            .iter()
+            .rev()
+            .take(24)
+            .rev()
+            .map(|point| EvidencePoint {
+                time_ms: point.0,
+                x: point.1,
+                y: point.2,
+                confidence: point.3,
+            })
+            .collect();
         self.candidates.push(Candidate {
             id: format!("candidate_{event_ms}"),
             start_ms: (event_ms - self.config.clip_before_ms).max(0),
@@ -222,7 +270,20 @@ impl RuntimeSession {
             trajectory_score,
             crossing_score,
             net_motion_score: 0.0,
+            trajectory,
+            crossing: EvidencePoint {
+                time_ms: event_ms,
+                x: crossing_x,
+                y: rim_y,
+                confidence: (above.3 + below.3) / 2.0,
+            },
+            reason: "uncertain".into(),
+            verdict: "ambiguous".into(),
+            complete_crossing: true,
+            rebound: false,
+            evidence_source: "rust_onnx".into(),
         });
+        self.ball_points.clear();
     }
 }
 
@@ -247,6 +308,55 @@ fn crossing_at_rim(
     let crossing = ((rim_y - above.2) / (below.2 - above.2).max(1e-6)).clamp(0.0, 1.0);
     let crossing_x = above.1 + (below.1 - above.1) * crossing;
     Some((crossing, crossing_x))
+}
+
+fn complete_crossing(
+    points: &[(i64, f32, f32, f32)],
+    rim_y: f32,
+    rim_left: f32,
+    rim_right: f32,
+) -> bool {
+    if points.len() < 3 {
+        return false;
+    }
+    let above = points[points.len() - 2];
+    let below = points[points.len() - 1];
+    if below.0 <= above.0 || below.0 - above.0 > 1_000 {
+        return false;
+    }
+    if below.2 - above.2 < 0.015 {
+        return false;
+    }
+
+    let width = (rim_right - rim_left).max(0.01);
+    let corridor_padding = (width * 0.35).max(0.025);
+    let corridor_left = rim_left - corridor_padding;
+    let corridor_right = rim_right + corridor_padding;
+    let near_rim = points
+        .iter()
+        .filter(|point| (point.2 - rim_y).abs() <= 0.18)
+        .collect::<Vec<_>>();
+    if near_rim.len() < 3 {
+        return false;
+    }
+    if near_rim
+        .iter()
+        .any(|point| point.1 < corridor_left || point.1 > corridor_right)
+    {
+        return false;
+    }
+
+    let above_count = near_rim.iter().filter(|point| point.2 < rim_y).count();
+    let below_count = near_rim.iter().filter(|point| point.2 >= rim_y).count();
+    if above_count < 2 || below_count < 1 {
+        return false;
+    }
+
+    let previous_above = points[..points.len() - 2]
+        .iter()
+        .rev()
+        .find(|point| point.2 < rim_y);
+    previous_above.is_some_and(|previous| above.2 + 0.04 >= previous.2)
 }
 
 fn validate_roi(roi: &Roi, name: &str) -> Result<(), RuntimeError> {
@@ -673,6 +783,26 @@ mod tests {
     #[test]
     fn lateral_pass_is_not_a_rim_crossing() {
         assert!(crossing_at_rim((0, 0.2, 0.5, 0.9), (100, 0.8, 0.5, 0.9), 0.5).is_none());
+    }
+
+    #[test]
+    fn complete_crossing_requires_a_stable_vertical_path_through_the_rim() {
+        let points = [
+            (0, 0.48, 0.30, 0.9),
+            (300, 0.49, 0.42, 0.9),
+            (600, 0.50, 0.54, 0.9),
+        ];
+        assert!(complete_crossing(&points, 0.48, 0.42, 0.58));
+    }
+
+    #[test]
+    fn complete_crossing_rejects_a_side_pass_that_only_interpolates_inside() {
+        let points = [
+            (0, 0.05, 0.30, 0.9),
+            (300, 0.18, 0.42, 0.9),
+            (600, 0.50, 0.54, 0.9),
+        ];
+        assert!(!complete_crossing(&points, 0.48, 0.42, 0.58));
     }
 
     #[test]

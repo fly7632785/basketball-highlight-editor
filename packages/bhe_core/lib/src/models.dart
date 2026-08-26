@@ -83,6 +83,43 @@ class Roi {
 }
 
 @immutable
+class EvidencePoint {
+  const EvidencePoint({
+    required this.timeMs,
+    required this.x,
+    required this.y,
+    this.confidence,
+  });
+
+  final int timeMs;
+  final double x;
+  final double y;
+  final double? confidence;
+
+  Map<String, dynamic> toJson() => {
+        'time_ms': timeMs,
+        'x': x,
+        'y': y,
+        if (confidence != null) 'confidence': confidence,
+      };
+
+  factory EvidencePoint.fromJson(Map<String, dynamic> json) {
+    final timeMs = json['time_ms'];
+    final timeSeconds = json['time'];
+    return EvidencePoint(
+      timeMs: timeMs is num
+          ? timeMs.round()
+          : timeSeconds is num
+          ? (timeSeconds * 1000).round()
+          : 0,
+      x: (json['x'] as num?)?.toDouble() ?? 0,
+      y: (json['y'] as num?)?.toDouble() ?? 0,
+      confidence: (json['confidence'] as num?)?.toDouble(),
+    );
+  }
+}
+
+@immutable
 class Candidate {
   const Candidate({
     required this.id,
@@ -96,6 +133,14 @@ class Candidate {
     this.trajectoryScore,
     this.crossingScore,
     this.netMotionScore,
+    this.trajectory = const [],
+    this.crossingPoint,
+    this.predictedLandingPoint,
+    this.reason,
+    this.verdict,
+    this.completeCrossing,
+    this.rebound,
+    this.evidenceSource,
   });
 
   final String id;
@@ -109,6 +154,14 @@ class Candidate {
   final double? trajectoryScore;
   final double? crossingScore;
   final double? netMotionScore;
+  final List<EvidencePoint> trajectory;
+  final EvidencePoint? crossingPoint;
+  final EvidencePoint? predictedLandingPoint;
+  final String? reason;
+  final String? verdict;
+  final bool? completeCrossing;
+  final bool? rebound;
+  final String? evidenceSource;
 
   Candidate copyWith({
     int? startMs,
@@ -130,6 +183,14 @@ class Candidate {
         trajectoryScore: trajectoryScore,
         crossingScore: crossingScore,
         netMotionScore: netMotionScore,
+        trajectory: trajectory,
+        crossingPoint: crossingPoint,
+        predictedLandingPoint: predictedLandingPoint,
+        reason: reason,
+        verdict: verdict,
+        completeCrossing: completeCrossing,
+        rebound: rebound,
+        evidenceSource: evidenceSource,
       );
 
   Duration get duration => Duration(milliseconds: endMs - startMs);
@@ -151,24 +212,114 @@ class Candidate {
         if (trajectoryScore != null) 'trajectory_score': trajectoryScore,
         if (crossingScore != null) 'crossing_score': crossingScore,
         if (netMotionScore != null) 'net_motion_score': netMotionScore,
+        if (trajectory.isNotEmpty)
+          'trajectory': trajectory.map((point) => point.toJson()).toList(),
+        if (crossingPoint != null) 'crossing': crossingPoint!.toJson(),
+        if (predictedLandingPoint != null)
+          'prediction': predictedLandingPoint!.toJson(),
+        if (reason != null) 'reason': reason,
+        if (verdict != null) 'verdict': verdict,
+        if (completeCrossing != null) 'complete_crossing': completeCrossing,
+        if (rebound != null) 'rebound': rebound,
+        if (evidenceSource != null) 'evidence_source': evidenceSource,
       };
 
-  factory Candidate.fromJson(Map<String, dynamic> json) => Candidate(
+  factory Candidate.fromJson(Map<String, dynamic> json) {
+    final evidence = json['evidence'] is Map
+        ? (json['evidence'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final overlay = json['overlay'] is Map
+        ? (json['overlay'] as Map).cast<String, dynamic>()
+        : evidence['overlay'] is Map
+        ? (evidence['overlay'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final trajectoryValue =
+        json['trajectory'] ?? overlay['trajectory'] ?? evidence['trajectory'];
+    final crossingValue =
+        json['crossing'] ?? overlay['crossing'] ?? evidence['crossing'];
+    final predictionValue =
+        json['prediction'] ?? overlay['prediction'] ?? evidence['prediction'];
+    final suggestion = evidence['review_reason_suggestion'];
+    final reasonValue =
+        json['reason'] ?? (suggestion is Map ? suggestion['primary'] : null);
+    return Candidate(
         id: json['id'] as String? ?? 'candidate',
-        startMs: (json['start_ms'] as num?)?.toInt() ?? 0,
-        endMs: (json['end_ms'] as num?)?.toInt() ?? 0,
-        eventMs: (json['event_ms'] as num?)?.toInt() ?? 0,
-        confidence: (json['confidence'] as num?)?.toDouble() ?? 0,
+        startMs: _intValue(json['start_ms'] ?? json['review_start_ms']),
+        endMs: _intValue(json['end_ms'] ?? json['review_end_ms']),
+        eventMs: _intValue(json['event_ms'] ?? json['event_time_ms']),
+        confidence: _scoreValue(json['confidence']),
         selection: CandidateSelection.values.firstWhere(
           (value) => value.name == json['selection'],
           orElse: () => CandidateSelection.included,
         ),
         player: json['player'] as String?,
         note: json['note'] as String?,
-        trajectoryScore: (json['trajectory_score'] as num?)?.toDouble(),
-        crossingScore: (json['crossing_score'] as num?)?.toDouble(),
-        netMotionScore: (json['net_motion_score'] as num?)?.toDouble(),
+        trajectoryScore: _scoreValueOrNull(
+          json['trajectory_score'] ??
+              (json['trajectory'] is Map
+                  ? (json['trajectory'] as Map)['trajectory_score']
+                  : null),
+        ),
+        crossingScore: _scoreValueOrNull(json['crossing_score']),
+        netMotionScore: _scoreValueOrNull(
+          json['net_motion_score'] ??
+              (json['signals'] is Map
+                  ? (json['signals'] as Map)['net_score']
+                  : null),
+        ),
+        trajectory: _pointList(trajectoryValue),
+        crossingPoint: _pointValue(crossingValue),
+        predictedLandingPoint: _pointValue(predictionValue),
+        reason: reasonValue as String? ?? evidence['reason'] as String?,
+        verdict: json['verdict'] as String? ?? evidence['verdict'] as String?,
+        completeCrossing: _boolValue(
+          json['complete_crossing'] ?? evidence['complete_crossing'],
+        ),
+        rebound: _boolValue(json['rebound'] ?? evidence['rebound']),
+        evidenceSource: json['evidence_source'] as String? ??
+            evidence['analysis_source'] as String?,
       );
+  }
+}
+
+int _intValue(Object? value) => value is num ? value.toInt() : 0;
+
+double _scoreValue(Object? value) => _scoreValueOrNull(value) ?? 0;
+
+double? _scoreValueOrNull(Object? value) {
+  if (value is num) return value.toDouble();
+  if (value is! String) return null;
+  return switch (value.toLowerCase()) {
+    'high' => .85,
+    'medium' => .6,
+    'low' => .3,
+    _ => double.tryParse(value),
+  };
+}
+
+bool? _boolValue(Object? value) {
+  if (value is bool) return value;
+  if (value is String) {
+    return switch (value.toLowerCase()) {
+      'true' || 'yes' || 'made' => true,
+      'false' || 'no' || 'missed' => false,
+      _ => null,
+    };
+  }
+  return null;
+}
+
+EvidencePoint? _pointValue(Object? value) {
+  if (value is! Map) return null;
+  return EvidencePoint.fromJson(value.cast<String, dynamic>());
+}
+
+List<EvidencePoint> _pointList(Object? value) {
+  if (value is! List) return const [];
+  return value
+      .whereType<Map>()
+      .map((item) => EvidencePoint.fromJson(item.cast<String, dynamic>()))
+      .toList();
 }
 
 @immutable

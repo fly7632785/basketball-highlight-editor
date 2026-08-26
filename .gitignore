@@ -12,6 +12,8 @@ dist/
 **/xcshareddata/swiftpm/
 # 本地研发数据(视频/标注/产物),不进仓库。
 capture/*.mp4
+capture/qa/
+cookies.json
 data/*
 !data/
 !data/README.md
