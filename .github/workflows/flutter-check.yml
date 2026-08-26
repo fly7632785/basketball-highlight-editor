@@ -71,17 +71,17 @@ jobs:
           channel: stable
       - run: flutter pub get
         working-directory: apps/mobile
+      - name: Prepare placeholder model for structural checks
+        run: |
+          mkdir -p apps/mobile/assets/models
+          printf 'CI placeholder; release builds export the validated ONNX model.\n' \
+            > apps/mobile/assets/models/bball_model.onnx
       - name: flutter analyze
         working-directory: apps/mobile
         run: flutter analyze .
       - name: flutter test
         working-directory: apps/mobile
         run: flutter test
-      - name: Prepare placeholder model for APK structure check
-        run: |
-          mkdir -p apps/mobile/assets/models
-          printf 'CI placeholder; release builds export the validated ONNX model.\n' \
-            > apps/mobile/assets/models/bball_model.onnx
       - name: flutter build apk
         working-directory: apps/mobile
         run: flutter build apk --debug
