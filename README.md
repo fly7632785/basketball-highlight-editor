@@ -95,11 +95,9 @@
 
 下面这段录屏展示了从导入视频、分析候选到审核和导出的完整操作流程：
 
-<video src="https://github.com/fly7632785/basketball-highlight-editor/raw/refs/heads/main/capture/%E5%BD%95%E5%88%B6%E8%A7%86%E9%A2%91.mp4" controls muted playsinline preload="metadata" width="100%">
-  <a href="capture/录制视频.mp4">播放操作录屏</a>
-</video>
+[![播放操作录屏](capture/录制视频封面.jpg)](capture/录制视频.mp4)
 
-如果当前页面没有自动加载视频，也可以[点击打开操作录屏](capture/录制视频.mp4)。
+点击上方封面即可打开操作录屏；如果当前页面没有自动播放，也可以[点击打开操作录屏](capture/录制视频.mp4)。
 
 排除的候选不会被删除，之后仍然可以恢复或复核：
 
