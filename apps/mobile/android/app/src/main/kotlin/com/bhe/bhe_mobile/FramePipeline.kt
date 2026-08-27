@@ -31,6 +31,7 @@ class FramePipeline(private val videoPath: String) {
     private var videoHeight = 0
     private var rotationDegrees = 0
     private var fallbackRetriever: MediaMetadataRetriever? = null
+    private var outputImageUnavailableLogged = false
 
     /** Opens the video and prepares the decoder near [startUs]. */
     fun prepare(startUs: Long = 0L) {
@@ -144,7 +145,10 @@ class FramePipeline(private val videoPath: String) {
         val image = try {
             decoder.getOutputImage(bufferIndex)
         } catch (error: IllegalStateException) {
-            Log.w(tag, "decoder output image unavailable", error)
+            if (!outputImageUnavailableLogged) {
+                Log.w(tag, "decoder output image unavailable; using fallback decoder", error)
+                outputImageUnavailableLogged = true
+            }
             null
         } ?: return null
         val width = image.width
