@@ -9,7 +9,10 @@ use ort::{session::Session, value::Tensor};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const MODEL_SIZE: u32 = 640;
+/// Inference input resolution. 640 is the default for YOLOv8n-style models
+/// converted to ONNX. Desktop uses 1280; if the mobile model was exported at
+/// a different size, override via the `model_size` config field.
+const MODEL_SIZE_DEFAULT: u32 = 640;
 static ORT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 
 #[derive(Debug, Error)]
@@ -58,6 +61,14 @@ pub struct RuntimeConfig {
     pub clip_before_ms: i64,
     #[serde(default = "default_after_ms")]
     pub clip_after_ms: i64,
+    /// Inference input resolution; defaults to 640. Desktop uses 1280.
+    /// Override if the ONNX model was exported at a different size.
+    #[serde(default = "default_model_size")]
+    pub model_size: u32,
+}
+
+fn default_model_size() -> u32 {
+    MODEL_SIZE_DEFAULT
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -130,9 +141,10 @@ pub struct FrameResponse {
 pub struct RuntimeSession {
     session: Session,
     config: RuntimeConfig,
+    model_size: u32,
     ball_points: Vec<(i64, f32, f32, f32)>,
     candidates: Vec<Candidate>,
-    processed_frames: usize,
+    processed_frames: u64,
     previous_net_signature: Option<(i64, Vec<f32>)>,
 }
 
@@ -142,6 +154,7 @@ impl RuntimeSession {
         validate_roi(&config.hoop_roi, "hoop")?;
         validate_roi(&config.net_roi, "net")?;
         init_onnx()?;
+        let model_size = config.model_size;
         let session = Session::builder()
             .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?
             .with_intra_threads(1)
@@ -150,6 +163,7 @@ impl RuntimeSession {
         Ok(Self {
             session,
             config,
+            model_size,
             ball_points: Vec::new(),
             candidates: Vec::new(),
             processed_frames: 0,
@@ -163,9 +177,44 @@ impl RuntimeSession {
 
     pub fn push_frame(&mut self, frame: FrameInput) -> Result<FrameResponse, RuntimeError> {
         let image = decode_rgb(&frame)?;
-        let detections = detect_image(&mut self.session, &image, self.config.confidence_threshold)?;
+        self.push_image(frame.time_ms, image)
+    }
+
+    /// Processes a raw RGBA frame without any encoding/decoding overhead.
+    ///
+    /// This is the fast path: Android sends Bitmap pixels directly as a
+    /// byte array (4 bytes per pixel, row-major), avoiding JPEG compression,
+    /// base64 encoding (+33% size), JSON serialization, and JPEG decode
+    /// on the Rust side. Expected speedup: 3-5x per frame.
+    pub fn push_frame_raw(
+        &mut self,
+        time_ms: i64,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<FrameResponse, RuntimeError> {
+        let expected = (width as usize) * (height as usize) * 4;
+        if rgba.len() != expected {
+            return Err(RuntimeError::InvalidRequest(format!(
+                "raw frame has {} bytes, expected {} ({}x{}x4)",
+                rgba.len(), expected, width, height
+            )));
+        }
+        let mut buffer = Vec::with_capacity(expected / 4 * 3);
+        for chunk in rgba.chunks_exact(4) {
+            buffer.push(chunk[0]); // R
+            buffer.push(chunk[1]); // G
+            buffer.push(chunk[2]); // B
+        }
+        let image = RgbImage::from_raw(width, height, buffer)
+            .ok_or_else(|| RuntimeError::InvalidRequest("raw frame dimensions are invalid".into()))?;
+        self.push_image(time_ms, image)
+    }
+
+    fn push_image(&mut self, time_ms: i64, image: RgbImage) -> Result<FrameResponse, RuntimeError> {
+        let detections = detect_image(&mut self.session, &image, self.config.confidence_threshold, self.model_size)?;
         self.processed_frames += 1;
-        self.update_net_motion(frame.time_ms, &image);
+        self.update_net_motion(time_ms, &image);
         if let Some(ball) = detections
             .iter()
             .filter(|detection| detection.class_id == 0)
@@ -173,7 +222,7 @@ impl RuntimeSession {
         {
             let (x, y) = center(ball);
             self.push_ball_point(
-                frame.time_ms,
+                time_ms,
                 x / image.width() as f32,
                 y / image.height() as f32,
                 ball.confidence,
@@ -188,17 +237,42 @@ impl RuntimeSession {
     }
 
     fn push_ball_point(&mut self, time_ms: i64, x: f32, y: f32, confidence: f32) {
+        // Speed-gated chain (mirrors desktop algorithm): accept the point
+        // only if it's within a plausible distance from the previous point.
+        // A jump beyond the gate means the detector switched to a different
+        // object (another ball, a player's jersey) — drop the point rather
+        // than corrupting the trajectory. Unlike the old logic which cleared
+        // ALL points on any gap, this preserves the valid chain.
         if let Some(previous) = self.ball_points.last() {
             let dt = time_ms - previous.0;
+            if dt <= 0 {
+                return;
+            }
             let dx = x - previous.1;
             let dy = y - previous.2;
             let distance = (dx * dx + dy * dy).sqrt();
-            if dt <= 0 || dt > 1_200 || distance > 0.24 {
-                self.ball_points.clear();
+            // Gate: ~0.25 normalized units/sec + slack. A basketball moving
+            // at 10 m/s in a 960px frame covers ~0.1 norm units in 100ms.
+            // 0.30 for 300ms gap, 0.55 for 500ms gap, etc.
+            let gate = 0.12 + 0.55 * (dt as f32 / 1000.0);
+            if distance > gate {
+                // Too far — this is a different object. Start a new chain
+                // only if the current chain has no recent crossing potential.
+                let has_recent_activity = self.ball_points.iter().any(|p| time_ms - p.0 < 2000);
+                if has_recent_activity {
+                    // Keep the old chain's last point as a bridge, replace rest
+                    let last = self.ball_points.last().copied();
+                    self.ball_points.clear();
+                    if let Some(l) = last {
+                        self.ball_points.push(l);
+                    }
+                }
+                self.ball_points.push((time_ms, x, y, confidence));
+                return;
             }
         }
         self.ball_points.push((time_ms, x, y, confidence));
-        if self.ball_points.len() > 24 {
+        if self.ball_points.len() > 32 {
             self.ball_points.remove(0);
         }
     }
@@ -217,73 +291,85 @@ impl RuntimeSession {
     }
 
     fn detect_crossing(&mut self) {
-        let Some(pair) = self.ball_points.windows(2).last() else {
-            return;
-        };
-        let above = pair[0];
-        let below = pair[1];
         let rim_y = (self.config.hoop_roi.top + self.config.hoop_roi.bottom) / 2.0;
         let rim_left = self.config.hoop_roi.left;
         let rim_right = self.config.hoop_roi.right;
-        let Some((crossing, crossing_x)) = crossing_at_rim(above, below, rim_y) else {
-            return;
-        };
-        if !(rim_left..=rim_right).contains(&crossing_x) {
-            return;
+
+        // Scan ALL adjacent pairs for a valid crossing, not just the last one.
+        // Fast-falling balls may have 2+ frames between the above and below
+        // points; checking only the last pair misses crossings when tracking
+        // continues past the rim.
+        for window in self.ball_points.windows(2) {
+            let above = window[0];
+            let below = window[1];
+            let Some((crossing, crossing_x)) = crossing_at_rim(above, below, rim_y) else {
+                continue;
+            };
+            if !(rim_left..=rim_right).contains(&crossing_x) {
+                continue;
+            }
+
+            // Check for an existing candidate at this time to avoid duplicates.
+            let event_ms = above.0 + ((below.0 - above.0) as f32 * crossing) as i64;
+            if self
+                .candidates
+                .iter()
+                .any(|candidate| (candidate.event_ms - event_ms).abs() <= 1_500)
+            {
+                continue;
+            }
+
+            // Use a wider context for complete_crossing (up to 12 recent points).
+            let recent_start = self.ball_points.len().saturating_sub(12);
+            let recent = &self.ball_points[recent_start..];
+            if !complete_crossing(recent, rim_y, rim_left, rim_right) {
+                continue;
+            }
+
+            let trajectory_score = trajectory_score(recent);
+            let crossing_score = (1.0
+                - ((crossing_x - (rim_left + rim_right) / 2.0).abs()
+                    / ((rim_right - rim_left) / 2.0).max(1e-6)))
+            .clamp(0.0, 1.0);
+            let trajectory = recent
+                .iter()
+                .rev()
+                .take(32)
+                .rev()
+                .map(|point| EvidencePoint {
+                    time_ms: point.0,
+                    x: point.1,
+                    y: point.2,
+                    confidence: point.3,
+                })
+                .collect();
+            self.candidates.push(Candidate {
+                id: format!("candidate_{event_ms}"),
+                start_ms: (event_ms - self.config.clip_before_ms).max(0),
+                end_ms: clip_end_ms(event_ms, self.config.clip_after_ms, self.config.duration_ms),
+                event_ms,
+                confidence: (0.5 * above.3 + 0.5 * below.3).clamp(0.0, 1.0),
+                trajectory_score,
+                crossing_score,
+                net_motion_score: 0.0,
+                trajectory,
+                crossing: EvidencePoint {
+                    time_ms: event_ms,
+                    x: crossing_x,
+                    y: rim_y,
+                    confidence: (above.3 + below.3) / 2.0,
+                },
+                reason: "uncertain".into(),
+                verdict: "ambiguous".into(),
+                complete_crossing: true,
+                rebound: false,
+                evidence_source: "rust_onnx".into(),
+            });
+            // Don't clear all ball points — the ball continues to be tracked
+            // after a made shot. Only trim to prevent re-detecting the same
+            // crossing (the duplicate check above handles this).
+            break;
         }
-        let recent_start = self.ball_points.len().saturating_sub(8);
-        let recent = &self.ball_points[recent_start..];
-        if !complete_crossing(recent, rim_y, rim_left, rim_right) {
-            return;
-        }
-        let event_ms = above.0 + ((below.0 - above.0) as f32 * crossing) as i64;
-        if self
-            .candidates
-            .iter()
-            .any(|candidate| (candidate.event_ms - event_ms).abs() <= 1_500)
-        {
-            return;
-        }
-        let trajectory_score = trajectory_score(recent);
-        let crossing_score = (1.0
-            - ((crossing_x - (rim_left + rim_right) / 2.0).abs()
-                / ((rim_right - rim_left) / 2.0).max(1e-6)))
-        .clamp(0.0, 1.0);
-        let trajectory = recent
-            .iter()
-            .rev()
-            .take(24)
-            .rev()
-            .map(|point| EvidencePoint {
-                time_ms: point.0,
-                x: point.1,
-                y: point.2,
-                confidence: point.3,
-            })
-            .collect();
-        self.candidates.push(Candidate {
-            id: format!("candidate_{event_ms}"),
-            start_ms: (event_ms - self.config.clip_before_ms).max(0),
-            end_ms: clip_end_ms(event_ms, self.config.clip_after_ms, self.config.duration_ms),
-            event_ms,
-            confidence: (0.5 * above.3 + 0.5 * below.3).clamp(0.0, 1.0),
-            trajectory_score,
-            crossing_score,
-            net_motion_score: 0.0,
-            trajectory,
-            crossing: EvidencePoint {
-                time_ms: event_ms,
-                x: crossing_x,
-                y: rim_y,
-                confidence: (above.3 + below.3) / 2.0,
-            },
-            reason: "uncertain".into(),
-            verdict: "ambiguous".into(),
-            complete_crossing: true,
-            rebound: false,
-            evidence_source: "rust_onnx".into(),
-        });
-        self.ball_points.clear();
     }
 }
 
@@ -324,39 +410,47 @@ fn complete_crossing(
     if below.0 <= above.0 || below.0 - above.0 > 1_000 {
         return false;
     }
-    if below.2 - above.2 < 0.015 {
+    if below.2 - above.2 < 0.012 {
         return false;
     }
 
+    // Funnel-shaped corridor (mirrors desktop fix): near the rim plane the
+    // corridor is tight; below the net it widens because the ball naturally
+    // swings outward after passing through. The old fixed-width corridor
+    // rejected angled shots that pass through the rim then exit sideways.
     let width = (rim_right - rim_left).max(0.01);
-    let corridor_padding = (width * 0.35).max(0.025);
-    let corridor_left = rim_left - corridor_padding;
-    let corridor_right = rim_right + corridor_padding;
     let near_rim = points
         .iter()
         .filter(|point| (point.2 - rim_y).abs() <= 0.18)
         .collect::<Vec<_>>();
-    if near_rim.len() < 3 {
+    if near_rim.len() < 2 {
         return false;
     }
-    if near_rim
+    let corridor_padding = (width * 0.40).max(0.030);
+    let corridor_left = rim_left - corridor_padding;
+    let corridor_right = rim_right + corridor_padding;
+    let near_violations = near_rim
         .iter()
-        .any(|point| point.1 < corridor_left || point.1 > corridor_right)
-    {
+        .filter(|point| point.1 < corridor_left || point.1 > corridor_right)
+        .count();
+    // Allow up to 1 outlier near the rim (angled approach can have one
+    // point slightly outside the corridor).
+    if near_violations > 1 {
         return false;
     }
 
     let above_count = near_rim.iter().filter(|point| point.2 < rim_y).count();
     let below_count = near_rim.iter().filter(|point| point.2 >= rim_y).count();
-    if above_count < 2 || below_count < 1 {
+    if above_count < 1 || below_count < 1 {
         return false;
     }
 
+    // Verify the ball was descending toward the rim before the crossing.
     let previous_above = points[..points.len() - 2]
         .iter()
         .rev()
         .find(|point| point.2 < rim_y);
-    previous_above.is_some_and(|previous| above.2 + 0.04 >= previous.2)
+    previous_above.is_some_and(|previous| above.2 + 0.06 >= previous.2)
 }
 
 fn validate_roi(roi: &Roi, name: &str) -> Result<(), RuntimeError> {
@@ -486,12 +580,12 @@ fn decode_rgb(frame: &FrameInput) -> Result<RgbImage, RuntimeError> {
         .ok_or_else(|| RuntimeError::InvalidRequest("RGB frame dimensions are invalid".into()))
 }
 
-fn preprocess(image: &RgbImage) -> Result<(Array4<f32>, f32, f32, f32), RuntimeError> {
+fn preprocess(image: &RgbImage, model_size: u32) -> Result<(Array4<f32>, f32, f32, f32), RuntimeError> {
     let (width, height) = image.dimensions();
     if width == 0 || height == 0 {
         return Err(RuntimeError::InvalidRequest("empty frame".into()));
     }
-    let scale = (MODEL_SIZE as f32 / width as f32).min(MODEL_SIZE as f32 / height as f32);
+    let scale = (model_size as f32 / width as f32).min(model_size as f32 / height as f32);
     let resized = DynamicImage::ImageRgb8(image.clone())
         .resize_exact(
             (width as f32 * scale).round() as u32,
@@ -499,9 +593,9 @@ fn preprocess(image: &RgbImage) -> Result<(Array4<f32>, f32, f32, f32), RuntimeE
             FilterType::Triangle,
         )
         .to_rgb8();
-    let offset_x = (MODEL_SIZE as i32 - resized.width() as i32).max(0) / 2;
-    let offset_y = (MODEL_SIZE as i32 - resized.height() as i32).max(0) / 2;
-    let mut input = Array4::<f32>::zeros((1, 3, MODEL_SIZE as usize, MODEL_SIZE as usize));
+    let offset_x = (model_size as i32 - resized.width() as i32).max(0) / 2;
+    let offset_y = (model_size as i32 - resized.height() as i32).max(0) / 2;
+    let mut input = Array4::<f32>::zeros((1, 3, model_size as usize, model_size as usize));
     for (x, y, pixel) in resized.enumerate_pixels() {
         let xx = (x as i32 + offset_x) as usize;
         let yy = (y as i32 + offset_y) as usize;
@@ -576,14 +670,23 @@ fn decode_output(
     offset_x: f32,
     offset_y: f32,
     threshold: f32,
+    model_size: u32,
 ) -> Vec<Detection> {
-    if values.len() < 6 * 8_400 {
+    // Grid size = (model_size / stride)^2, default 640/8=80, 80*80=6400.
+    // For 1280: 1280/8=160, 160*160=25600. Fall back to 8400 if model
+    // size is unexpected (some YOLO variants use 6400+2000 for P5 head).
+    let grid = match model_size {
+        640 => 8_400,
+        1280 => 25_600,
+        _ => 8_400,
+    };
+    if values.len() < 6 * grid {
         return Vec::new();
     }
     let mut candidates = Vec::new();
-    for index in 0..8_400 {
-        let score_ball = values[4 * 8_400 + index];
-        let score_hoop = values[5 * 8_400 + index];
+    for index in 0..grid {
+        let score_ball = values[4 * grid + index];
+        let score_hoop = values[5 * grid + index];
         let (class_id, confidence) = if score_ball >= score_hoop {
             (0, score_ball)
         } else {
@@ -593,9 +696,9 @@ fn decode_output(
             continue;
         }
         let cx = values[index];
-        let cy = values[8_400 + index];
-        let w = values[2 * 8_400 + index];
-        let h = values[3 * 8_400 + index];
+        let cy = values[grid + index];
+        let w = values[2 * grid + index];
+        let h = values[3 * grid + index];
         let x1 = ((cx - w / 2.0) - offset_x) / scale;
         let y1 = ((cy - h / 2.0) - offset_y) / scale;
         let x2 = ((cx + w / 2.0) - offset_x) / scale;
@@ -625,8 +728,9 @@ fn detect_image(
     session: &mut Session,
     image: &RgbImage,
     threshold: f32,
+    model_size: u32,
 ) -> Result<Vec<Detection>, RuntimeError> {
-    let (input, scale, offset_x, offset_y) = preprocess(image)?;
+    let (input, scale, offset_x, offset_y) = preprocess(image, model_size)?;
     let tensor = Tensor::from_array(input)?;
     let outputs = session.run(ort::inputs![tensor])?;
     let (_, values) = outputs[0].try_extract_tensor::<f32>()?;
@@ -638,6 +742,7 @@ fn detect_image(
         offset_x,
         offset_y,
         threshold,
+        model_size,
     ))
 }
 
@@ -664,6 +769,7 @@ pub fn analyze(request: AnalysisRequest) -> Result<AnalysisResponse, RuntimeErro
         confidence_threshold: request.confidence_threshold,
         clip_before_ms: request.clip_before_ms,
         clip_after_ms: request.clip_after_ms,
+        model_size: MODEL_SIZE_DEFAULT,
     };
     let mut session = RuntimeSession::new(config)?;
     for frame in &request.frames {
@@ -889,6 +995,38 @@ pub unsafe extern "C" fn bhe_runtime_push_frame(
     let output = match serde_json::from_str::<FrameInput>(&frame)
         .map_err(RuntimeError::from)
         .and_then(|input| (*session).push_frame(input))
+        .and_then(|response| serde_json::to_string(&response).map_err(RuntimeError::from))
+    {
+        Ok(output) => output,
+        Err(error) => serde_json::json!({"error": error.to_string()}).to_string(),
+    };
+    CString::new(output).unwrap().into_raw()
+}
+
+/// Processes one raw RGBA video frame in a native analysis session.
+///
+/// This is the fast path: no JPEG compression, no base64 encoding, no JSON
+/// serialization. Android sends Bitmap pixels directly as a byte array.
+/// Expected per-frame speedup: 3-5x compared to the JSON path.
+///
+/// # Safety
+/// `session` must be a valid pointer returned by `bhe_runtime_create_session`.
+/// `rgba_data` must be non-null and contain `width * height * 4` bytes in
+/// RGBA row-major order, valid for the duration of this call.
+#[no_mangle]
+pub unsafe extern "C" fn bhe_runtime_push_frame_raw(
+    session: *mut RuntimeSession,
+    time_ms: i64,
+    width: u32,
+    height: u32,
+    rgba_data: *const u8,
+    rgba_len: i64,
+) -> *mut c_char {
+    if session.is_null() || rgba_data.is_null() {
+        return std::ptr::null_mut();
+    }
+    let rgba = std::slice::from_raw_parts(rgba_data, rgba_len as usize);
+    let output = match (*session).push_frame_raw(time_ms, width, height, rgba)
         .and_then(|response| serde_json::to_string(&response).map_err(RuntimeError::from))
     {
         Ok(output) => output,

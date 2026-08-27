@@ -128,6 +128,7 @@ class MainActivity : FlutterActivity() {
                     .put("confidence_threshold", 0.10)
                     .put("clip_before_ms", beforeMs)
                     .put("clip_after_ms", afterMs)
+                    .put("model_size", 640) // match ONNX export resolution
                 val onnxPath = File(applicationInfo.nativeLibraryDir, "libonnxruntime.so").absolutePath
                 Log.i(tag, "initializeOnnx start path=$onnxPath exists=${File(onnxPath).isFile}")
                 if (!File(onnxPath).isFile || !NativeRuntime.initializeOnnx(onnxPath)) {
@@ -159,11 +160,24 @@ class MainActivity : FlutterActivity() {
                     if (processed == 0) Log.i(tag, "first frame decode start timeMs=$timeMs")
                     val bitmap = frameAt(retriever, timeMs * 1000L)
                     if (bitmap != null) {
-                        val frame = bitmapToFrame(bitmap, timeMs)
+                        // Fast path: extract raw RGBA pixels and send directly
+                        // via JNI. Eliminates JPEG compress + base64 encode
+                        // (+33% size) + JSON serialize + JPEG decode in Rust.
+                        // Old path: bitmap → JPEG(85) → base64 → JSON → C string
+                        //                           → Rust JSON parse → base64 decode
+                        //                           → JPEG decode → RGB
+                        // New path: bitmap → IntArray(pixels) → ByteArray(RGBA)
+                        //                           → JNI → Rust RGBA→RGB directly
+                        val rgba = bitmapToRgba(bitmap)
+                        val width = bitmap.width
+                        val height = bitmap.height
                         bitmap.recycle()
-                        lastResponse = JSONObject(NativeRuntime.pushFrame(session, frame))
+                        val responseJson = NativeRuntime.pushFrameRaw(
+                            session, timeMs, width, height, rgba
+                        )
+                        lastResponse = JSONObject(responseJson)
                         lastResponse.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
-                        if (processed == 0) Log.i(tag, "first frame inference success")
+                        if (processed == 0) Log.i(tag, "first frame inference success (raw path ${width}x${height})")
                     }
                     processed++
                     if (processed % 30 == 0) Log.i(tag, "frame progress=$processed/$totalFrames timeMs=$timeMs")
@@ -192,6 +206,28 @@ class MainActivity : FlutterActivity() {
         }.also { it.start() }
     }
 
+    /**
+     * Extracts raw RGBA pixels from a Bitmap as a ByteArray.
+     * Each pixel is 4 bytes (R, G, B, A) in row-major order.
+     * This avoids the JPEG→base64→JSON→base64→JPEG roundtrip entirely.
+     */
+    private fun bitmapToRgba(bitmap: Bitmap): ByteArray {
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        val rgba = ByteArray(width * height * 4)
+        var index = 0
+        for (pixel in pixels) {
+            rgba[index++] = (pixel shr 16 and 0xFF).toByte() // R
+            rgba[index++] = (pixel shr 8 and 0xFF).toByte()  // G
+            rgba[index++] = (pixel and 0xFF).toByte()         // B
+            rgba[index++] = (pixel shr 24 and 0xFF).toByte()  // A
+        }
+        return rgba
+    }
+
+    // Kept for backward compatibility / fallback path.
     private fun bitmapToFrame(bitmap: Bitmap, timeMs: Long): String {
         val bytes = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, 85, bytes)

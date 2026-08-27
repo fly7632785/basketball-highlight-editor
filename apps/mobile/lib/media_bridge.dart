@@ -23,13 +23,20 @@ class NativeMediaExportEngine implements MobileExportEngine {
     required String outputDirectory,
   }) async* {
     if (candidates.isEmpty) return;
+
+    // Parallel export: MediaExtractor/MediaMuxer on Android runs on
+    // background threads; exporting 4+ clips concurrently reduces total
+    // wall time from sum(N) to ~max(N) + small overhead.
+    // Keep concurrency bounded to avoid thread/memory pressure on
+    // low-end devices.
+    const maxConcurrent = 3;
+    final outputs = <String>[];
     var completed = 0;
-    for (final candidate in candidates) {
+    var failed = false;
+
+    Future<void> exportOne(Candidate candidate) async {
+      if (failed) return;
       final outputPath = '$outputDirectory/${candidate.id}.mp4';
-      yield ExportProgress(
-        progress: completed / candidates.length,
-        message: '正在导出 ${completed + 1}/${candidates.length}',
-      );
       try {
         await _channel.invokeMethod<String>('exportClip', {
           'inputPath': video.path,
@@ -37,17 +44,32 @@ class NativeMediaExportEngine implements MobileExportEngine {
           'startMs': candidate.startMs,
           'endMs': candidate.endMs,
         });
+        outputs.add(outputPath);
       } on MissingPluginException {
+        failed = true;
         throw const MobileExportException('当前平台尚未注册视频导出模块。');
       } on PlatformException catch (error) {
+        failed = true;
         throw MobileExportException(error.message ?? error.code);
       }
-      completed++;
+    }
+
+    // Process in batches of maxConcurrent.
+    for (var i = 0; i < candidates.length; i += maxConcurrent) {
+      final batch = candidates.skip(i).take(maxConcurrent).toList();
       yield ExportProgress(
         progress: completed / candidates.length,
-        message: '已导出 $completed/${candidates.length}',
-        outputPath: outputPath,
+        message: '正在导出 ${completed + 1}-${completed + batch.length}/${candidates.length}',
       );
+      await Future.wait(batch.map(exportOne));
+      completed += batch.length;
+      for (final path in outputs.skip(outputs.length - batch.length)) {
+        yield ExportProgress(
+          progress: completed / candidates.length,
+          message: '已导出 $completed/${candidates.length}',
+          outputPath: path,
+        );
+      }
     }
   }
 
