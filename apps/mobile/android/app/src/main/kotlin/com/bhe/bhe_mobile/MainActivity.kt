@@ -222,13 +222,14 @@ class MainActivity : FlutterActivity() {
                 val inferenceMs = TimeUnit.NANOSECONDS.toMillis(inferenceNanos)
                 val decodeMs = (processingMs - inferenceMs).coerceAtLeast(0)
                 val effectiveFps = processed * 1_000.0 / processingMs.coerceAtLeast(1)
+                val candidateCount = lastResponse.optJSONArray("candidates")?.length() ?: 0
                 Log.i(
                     tag,
                     "analysis metrics: frames=$processed/$totalFrames totalMs=$processingMs " +
                         "decodeMs=$decodeMs inferenceMs=$inferenceMs effectiveFps=${"%.2f".format(java.util.Locale.US, effectiveFps)} " +
-                        "candidates=${lastResponse.optJSONArray(\"candidates\")?.length() ?: 0}",
+                        "candidates=$candidateCount",
                 )
-                Log.i(tag, "analysis completed processed=$processed candidates=${lastResponse.optJSONArray("candidates")?.length() ?: 0}")
+                Log.i(tag, "analysis completed processed=$processed candidates=$candidateCount")
                 mainHandler.post { result.success(response) }
             } catch (_: InterruptedException) {
                 Log.i(tag, "analysis cancelled")
