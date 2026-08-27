@@ -115,6 +115,12 @@ pub struct Candidate {
     pub trajectory_score: f32,
     pub crossing_score: f32,
     pub net_motion_score: f32,
+    /// Prediction score: how well the pre-crossing trajectory predicts
+    /// a landing inside the rim corridor (0-1, higher = more likely).
+    pub prediction_score: f32,
+    /// Composite multi-signal score combining all evidence.
+    /// 0.0 = all signals absent, 1.0 = all signals strong.
+    pub composite_score: f32,
     pub trajectory: Vec<EvidencePoint>,
     pub crossing: EvidencePoint,
     pub reason: String,
@@ -376,6 +382,15 @@ impl RuntimeSession {
             .unwrap_or(0);
 
         for candidate in &mut self.candidates {
+            // Always update composite score with latest evidence.
+            candidate.composite_score = composite_score(
+                candidate.trajectory_score,
+                candidate.crossing_score,
+                candidate.net_motion_score,
+                candidate.prediction_score,
+                candidate.rebound,
+            );
+
             if candidate.verdict != "ambiguous" {
                 continue; // Already resolved.
             }
@@ -384,12 +399,18 @@ impl RuntimeSession {
                 continue;
             }
 
-            let strong_positive = candidate.complete_crossing
-                && candidate.net_motion_score >= 0.35
-                && candidate.trajectory_score >= 0.45;
+            // Use composite score for verdict when available (richer evidence).
+            let strong_positive = if candidate.composite_score > 0.0 {
+                candidate.complete_crossing && candidate.composite_score >= 0.55
+            } else {
+                candidate.complete_crossing
+                    && candidate.net_motion_score >= 0.35
+                    && candidate.trajectory_score >= 0.45
+            };
 
             let strong_negative = candidate.rebound
-                || candidate.crossing_score < 0.15;
+                || candidate.crossing_score < 0.15
+                || candidate.composite_score < 0.15 && candidate.composite_score > 0.0;
 
             if strong_negative {
                 candidate.verdict = "missed".into();
@@ -401,8 +422,10 @@ impl RuntimeSession {
             } else if strong_positive {
                 candidate.verdict = "made".into();
                 candidate.reason = format!(
-                    "complete_crossing+net_motion:{:.2}",
-                    candidate.net_motion_score
+                    "composite:{:.2}+net:{:.2}+traj:{:.2}",
+                    candidate.composite_score,
+                    candidate.net_motion_score,
+                    candidate.trajectory_score
                 );
             }
             // else stays "ambiguous" for human review.
@@ -450,6 +473,9 @@ impl RuntimeSession {
                 - ((crossing_x - (rim_left + rim_right) / 2.0).abs()
                     / ((rim_right - rim_left) / 2.0).max(1e-6)))
             .clamp(0.0, 1.0);
+            let rim_center_x = (rim_left + rim_right) / 2.0;
+            let rim_half_width = (rim_right - rim_left) / 2.0;
+            let prediction = prediction_score(recent, rim_y, rim_center_x, rim_half_width);
             let trajectory = recent
                 .iter()
                 .rev()
@@ -471,6 +497,8 @@ impl RuntimeSession {
                 trajectory_score,
                 crossing_score,
                 net_motion_score: 0.0,
+                prediction_score: prediction,
+                composite_score: composite_score(trajectory_score, crossing_score, 0.0, prediction, false),
                 trajectory,
                 crossing: EvidencePoint {
                     time_ms: event_ms,
@@ -846,6 +874,73 @@ fn net_signature(image: &RgbImage, roi: &Roi) -> Vec<f32> {
         }
     }
     result
+}
+
+/// Predicts whether the ball's pre-crossing trajectory will land inside
+/// the rim corridor. Extrapolates the last N points forward using simple
+/// linear regression on x vs y, then checks if the predicted landing_x
+/// falls within the rim at the rim_y plane.
+///
+/// Returns 0.0-1.0: 1.0 = predicted landing at rim center, 0.0 = far outside.
+fn prediction_score(
+    points: &[(i64, f32, f32, f32)],
+    rim_y: f32,
+    rim_center_x: f32,
+    rim_half_width: f32,
+) -> f32 {
+    if points.len() < 3 {
+        return 0.0;
+    }
+    // Use last 6 points (or fewer) for the extrapolation.
+    let recent = &points[points.len().saturating_sub(6)..];
+    // Find the last point above the rim plane.
+    let above_points: Vec<_> = recent.iter().filter(|(_, _, y, _)| *y < rim_y).collect();
+    if above_points.len() < 2 {
+        return 0.0;
+    }
+    // Linear regression: x = a*y + b
+    let n = above_points.len() as f32;
+    let sum_y: f32 = above_points.iter().map(|(_, _, y, _)| *y).sum();
+    let sum_x: f32 = above_points.iter().map(|(_, x, _, _)| *x).sum();
+    let sum_yy: f32 = above_points.iter().map(|(_, _, y, _)| y * y).sum();
+    let sum_xy: f32 = above_points.iter().map(|(_, x, y, _)| x * y).sum();
+    let denominator = n * sum_yy - sum_y * sum_y;
+    if denominator.abs() < 1e-10 {
+        return 0.0; // Vertical trajectory — can't extrapolate x.
+    }
+    let a = (n * sum_xy - sum_x * sum_y) / denominator;
+    let b = (sum_x - a * sum_y) / n;
+    // Predict x at rim_y.
+    let predicted_x = a * rim_y + b;
+    // Score based on distance from rim center (normalized by half-width).
+    let distance = (predicted_x - rim_center_x).abs();
+    (1.0 - distance / rim_half_width.max(0.01)).clamp(0.0, 1.0)
+}
+
+/// Composite multi-signal score combining all evidence into a single
+/// confidence metric (mirrors desktop algorithm's scoring philosophy).
+///
+/// Weights:
+/// - trajectory_score: 25% (how well the ball descended toward the rim)
+/// - crossing_score:  20% (how centered the crossing was)
+/// - net_motion_score: 30% (net activity = strongest independent evidence)
+/// - prediction_score: 15% (pre-crossing trajectory quality)
+/// - rebound penalty: -20% if detected
+fn composite_score(
+    trajectory: f32,
+    crossing: f32,
+    net_motion: f32,
+    prediction: f32,
+    rebound: bool,
+) -> f32 {
+    let mut score = 0.25 * trajectory
+        + 0.20 * crossing
+        + 0.30 * net_motion
+        + 0.15 * prediction;
+    if rebound {
+        score -= 0.20;
+    }
+    score.clamp(0.0, 1.0)
 }
 
 fn trajectory_score(points: &[(i64, f32, f32, f32)]) -> f32 {
