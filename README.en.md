@@ -4,6 +4,16 @@
 
 [中文](README.md) · **English**
 
+[![Python Tests](https://img.shields.io/github/actions/workflow/status/fly7632785/basketball-highlight-editor/python-tests.yml?branch=main&style=flat-square&label=Python%20tests)](https://github.com/fly7632785/basketball-highlight-editor/actions/workflows/python-tests.yml)
+[![Flutter Checks](https://img.shields.io/github/actions/workflow/status/fly7632785/basketball-highlight-editor/flutter-check.yml?branch=main&style=flat-square&label=Flutter%20checks)](https://github.com/fly7632785/basketball-highlight-editor/actions/workflows/flutter-check.yml)
+[![Latest tag](https://img.shields.io/github/v/tag/fly7632785/basketball-highlight-editor?include_prereleases&style=flat-square&label=latest%20tag)](https://github.com/fly7632785/basketball-highlight-editor/tags)
+[![License](https://img.shields.io/github/license/fly7632785/basketball-highlight-editor?style=flat-square)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-4c6ef5?style=flat-square)
+![Local first](https://img.shields.io/badge/operation-local--first-2ea44f?style=flat-square)
+![Free](https://img.shields.io/badge/cost-free-f97316?style=flat-square)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
+[![Linux DO](https://img.shields.io/badge/Linux%20DO-community-00a67d?style=flat-square)](https://linux.do/)
+
 ## Project status
 
 **Current version: V1 desktop preview.** GitHub Actions builds downloadable packages for Intel macOS, Apple Silicon macOS, Windows x64, and Android `arm64-v8a` whenever a `v*` tag is pushed. The Android APK is `debug-signed` for sideloaded testing, not a Google Play production package. Desktop is the primary product path. Mobile is an independent experimental app: Android has a native analysis path, while iOS local AI analysis still requires the final Rust/ONNX Runtime artifacts to be linked.

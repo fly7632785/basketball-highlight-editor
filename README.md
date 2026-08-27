@@ -4,6 +4,18 @@
 >
 > Basketball Highlight Editor 会先帮你把整场比赛里可能的进球片段找出来，你只需要快速看一遍、删掉误检，再导出自己的集锦。
 
+[English](README.en.md) · **简体中文**
+
+[![Python Tests](https://img.shields.io/github/actions/workflow/status/fly7632785/basketball-highlight-editor/python-tests.yml?branch=main&style=flat-square&label=Python%20tests)](https://github.com/fly7632785/basketball-highlight-editor/actions/workflows/python-tests.yml)
+[![Flutter Checks](https://img.shields.io/github/actions/workflow/status/fly7632785/basketball-highlight-editor/flutter-check.yml?branch=main&style=flat-square&label=Flutter%20checks)](https://github.com/fly7632785/basketball-highlight-editor/actions/workflows/flutter-check.yml)
+[![Latest tag](https://img.shields.io/github/v/tag/fly7632785/basketball-highlight-editor?include_prereleases&style=flat-square&label=latest%20tag)](https://github.com/fly7632785/basketball-highlight-editor/tags)
+[![License](https://img.shields.io/github/license/fly7632785/basketball-highlight-editor?style=flat-square)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-4c6ef5?style=flat-square)
+![Local first](https://img.shields.io/badge/运行方式-完全本地-2ea44f?style=flat-square)
+![Free](https://img.shields.io/badge/费用-免费-f97316?style=flat-square)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
+[![Linux DO](https://img.shields.io/badge/Linux%20DO-社区交流-00a67d?style=flat-square)](https://linux.do/)
+
 **完全本地运行 · 免费使用 · 自动找片段 · 人工可控**
 
 [开始使用](#开始使用) · [功能介绍](#它能帮你省下什么) · [文档](#文档)
