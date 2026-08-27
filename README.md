@@ -99,6 +99,10 @@
 
 点击封面即可打开 OSS 上的操作录屏。仓库不保存大体积演示视频，避免下载项目时额外占用 Git 空间。
 
+下面是一个适合快速了解操作流程的短版演示：
+
+https://github.com/user-attachments/assets/43bfed76-bbc6-42c2-bbaa-ea2bf0604292
+
 排除的候选不会被删除，之后仍然可以恢复或复核：
 
 ![标签和候选管理](capture/screenshot-20260813-150302.png)
