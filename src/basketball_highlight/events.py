@@ -7,6 +7,9 @@ from .trajectory import prediction_score
 from .verdict import resolve_verdict
 
 
+ANALYSIS_CONTRACT_VERSION = "analysis-contract-v1"
+
+
 def _point(record, item):
     return {
         "time": record["time"],
@@ -1140,6 +1143,20 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=2.0):
                 # review queue still keeps ambiguous candidates for a person.
                 if verdict["verdict"] != "made":
                     candidate["gates"]["automatic_goal"] = False
+                candidate.update({
+                    "algorithm_version": ANALYSIS_CONTRACT_VERSION,
+                    "event_ms": round(event_time * 1000),
+                    "net_signal_available": verdict["net_signal_available"],
+                    "net_support": verdict["net_support"],
+                    "net_no_motion": verdict["net_no_motion"],
+                    "net_lower_peak": signals["net_lower_peak"],
+                    "net_below_peak": signals["net_below_peak"],
+                    "ball_persistence": verdict["ball_persistence"],
+                    "rebound": verdict["rebound"],
+                    "lateral_exit": verdict["lateral_exit"],
+                    "auto_export_eligible": candidate["gates"]["automatic_goal"],
+                    "decision_time_ms": round(verdict["decision_time"] * 1000),
+                })
                 candidates.append(candidate)
                 break
 

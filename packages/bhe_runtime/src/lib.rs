@@ -97,7 +97,7 @@ pub struct Detection {
     pub y2: f32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvidencePoint {
     pub time_ms: i64,
     pub x: f32,
@@ -108,6 +108,7 @@ pub struct EvidencePoint {
 #[derive(Clone, Debug, Serialize)]
 pub struct Candidate {
     pub id: String,
+    pub track_id: u64,
     pub start_ms: i64,
     pub end_ms: i64,
     pub event_ms: i64,
@@ -123,12 +124,58 @@ pub struct Candidate {
     /// 0.0 = all signals absent, 1.0 = all signals strong.
     pub composite_score: f32,
     pub trajectory: Vec<EvidencePoint>,
+    pub above: EvidencePoint,
+    pub below: EvidencePoint,
     pub crossing: EvidencePoint,
     pub reason: String,
     pub verdict: String,
     pub complete_crossing: bool,
     pub rebound: bool,
+    pub lateral_exit: bool,
+    pub post_crossing_lateral_recovery: bool,
+    pub ball_persistence: f32,
+    pub net_signal_available: bool,
+    pub net_support: bool,
+    pub net_no_motion: bool,
+    pub net_lower_peak: f32,
+    pub net_below_peak: f32,
+    pub auto_export_eligible: bool,
+    pub decision_time_ms: Option<i64>,
+    pub algorithm_version: String,
     pub evidence_source: String,
+}
+
+type BallPoint = (i64, f32, f32, f32);
+
+#[derive(Clone, Debug)]
+struct BallTrack {
+    id: u64,
+    points: Vec<BallPoint>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct NetEvidence {
+    signal_available: bool,
+    no_motion: bool,
+    inside_score: f32,
+    sequence_score: f32,
+    lower_peak: f32,
+    below_peak: f32,
+    support: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct PostCrossingEvidence {
+    persistence: f32,
+    rebound: bool,
+    lateral_exit: bool,
+    lateral_recovery: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CalibratedGates {
+    high_precision: bool,
+    automatic_goal: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -145,11 +192,50 @@ pub struct FrameResponse {
     pub processed_frames: u64,
 }
 
+/// ONNX-free replay request used to compare the decision layer against the
+/// desktop engine. Coordinates must be normalized to the same 0..1 frame
+/// space as `hoop_roi`.
+#[derive(Clone, Debug, Deserialize)]
+pub struct DecisionReplayRequest {
+    pub hoop_roi: Roi,
+    pub above: EvidencePoint,
+    pub below: EvidencePoint,
+    pub trajectory: Vec<EvidencePoint>,
+    #[serde(default)]
+    pub net_history: Vec<NetReplayPoint>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct NetReplayPoint {
+    pub time_ms: i64,
+    pub upper: f32,
+    pub lower: f32,
+    pub below: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DecisionReplayResult {
+    pub algorithm_version: String,
+    pub complete_crossing: bool,
+    pub ball_persistence: f32,
+    pub rebound: bool,
+    pub lateral_exit: bool,
+    pub post_crossing_lateral_recovery: bool,
+    pub net_signal_available: bool,
+    pub net_support: bool,
+    pub net_no_motion: bool,
+    pub net_motion_score: f32,
+    pub net_sequence_score: f32,
+    pub verdict: String,
+    pub auto_export_eligible: bool,
+}
+
 pub struct RuntimeSession {
     session: Session,
     config: RuntimeConfig,
     model_size: u32,
-    ball_points: Vec<(i64, f32, f32, f32)>,
+    tracks: Vec<BallTrack>,
+    next_track_id: u64,
     candidates: Vec<Candidate>,
     processed_frames: u64,
     previous_net_signature: Option<(i64, [Vec<f32>; 3])>,
@@ -175,7 +261,8 @@ impl RuntimeSession {
             session,
             config,
             model_size,
-            ball_points: Vec::new(),
+            tracks: Vec::new(),
+            next_track_id: 1,
             candidates: Vec::new(),
             processed_frames: 0,
             previous_net_signature: None,
@@ -236,21 +323,28 @@ impl RuntimeSession {
         )?;
         self.processed_frames += 1;
         self.update_net_motion(time_ms, &image);
-        if let Some(ball) = detections
+        let balls = detections
             .iter()
             .filter(|detection| detection.class_id == 0)
-            .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
-        {
-            let (x, y) = center(ball);
-            self.push_ball_point(
-                time_ms,
-                x / image.width() as f32,
-                y / image.height() as f32,
-                ball.confidence,
-            );
-            self.detect_crossing();
+            .map(|ball| {
+                let (x, y) = center(ball);
+                (
+                    x / image.width() as f32,
+                    y / image.height() as f32,
+                    ball.confidence,
+                )
+            })
+            .collect();
+        let updated_tracks = self.push_ball_detections(time_ms, balls);
+        for track_id in updated_tracks {
+            self.detect_crossing(track_id);
         }
-        self.detect_rebound();
+        for (track_id, points) in recover_track_points(&self.tracks, &self.config.hoop_roi) {
+            if let Some(track) = self.tracks.iter_mut().find(|track| track.id == track_id) {
+                track.points = points;
+            }
+            self.detect_crossing(track_id);
+        }
         self.resolve_verdict();
         Ok(FrameResponse {
             detections,
@@ -259,45 +353,191 @@ impl RuntimeSession {
         })
     }
 
-    fn push_ball_point(&mut self, time_ms: i64, x: f32, y: f32, confidence: f32) {
-        // Speed-gated chain (mirrors desktop algorithm): accept the point
-        // only if it's within a plausible distance from the previous point.
-        // A jump beyond the gate means the detector switched to a different
-        // object (another ball, a player's jersey) — drop the point rather
-        // than corrupting the trajectory. Unlike the old logic which cleared
-        // ALL points on any gap, this preserves the valid chain.
-        if let Some(previous) = self.ball_points.last() {
-            let dt = time_ms - previous.0;
-            if dt <= 0 {
-                return;
-            }
-            if dt > 1_200 {
-                self.ball_points.clear();
-                self.ball_points.push((time_ms, x, y, confidence));
-                return;
-            }
-            let dx = x - previous.1;
-            let dy = y - previous.2;
-            let distance = (dx * dx + dy * dy).sqrt();
-            // Gate: ~0.25 normalized units/sec + slack. A basketball moving
-            // at 10 m/s in a 960px frame covers ~0.1 norm units in 100ms.
-            // 0.30 for 300ms gap, 0.55 for 500ms gap, etc.
-            let gate = 0.12 + 0.55 * (dt as f32 / 1000.0);
-            if distance > gate {
-                // A spatial jump is a different detected object. Do not keep
-                // the old tail as a bridge: that fabricates a crossing across
-                // two unrelated ball tracks.
-                self.ball_points.clear();
-                self.ball_points.push((time_ms, x, y, confidence));
-                return;
-            }
+    fn push_ball_detections(&mut self, time_ms: i64, detections: Vec<(f32, f32, f32)>) -> Vec<u64> {
+        associate_ball_tracks(
+            &mut self.tracks,
+            &mut self.next_track_id,
+            time_ms,
+            detections,
+            self.config.hoop_roi.right - self.config.hoop_roi.left,
+        )
+    }
+}
+
+/// Associates all detections in one frame with active ball tracks.
+///
+/// The association is deliberately deterministic: candidate pairs are sorted
+/// by predicted distance, then assigned one-to-one. This keeps a high
+/// confidence distractor from stealing a continuing track merely because it
+/// appears first in the detector output.
+fn associate_ball_tracks(
+    tracks: &mut Vec<BallTrack>,
+    next_track_id: &mut u64,
+    time_ms: i64,
+    detections: Vec<(f32, f32, f32)>,
+    rim_width: f32,
+) -> Vec<u64> {
+    let rim_width = rim_width.max(0.01);
+    let mut pairs = Vec::new();
+    for (track_index, track) in tracks.iter().enumerate() {
+        let Some(last) = track.points.last() else {
+            continue;
+        };
+        let gap_ms = time_ms - last.0;
+        if !(0..=350).contains(&gap_ms) {
+            continue;
         }
-        self.ball_points.push((time_ms, x, y, confidence));
-        if self.ball_points.len() > 32 {
-            self.ball_points.remove(0);
+        let gap_s = gap_ms as f32 / 1_000.0;
+        let (predicted_x, predicted_y) = if track.points.len() >= 2 {
+            let previous = track.points[track.points.len() - 2];
+            let dt = ((last.0 - previous.0) as f32 / 1_000.0).max(0.001);
+            (
+                last.1 + (last.1 - previous.1) / dt * gap_s,
+                last.2 + (last.2 - previous.2) / dt * gap_s,
+            )
+        } else {
+            (last.1, last.2)
+        };
+        let gate = (1.75 * rim_width).max((12.0 * rim_width).min(45.0 * rim_width * gap_s + 0.02));
+        for (detection_index, (x, y, _)) in detections.iter().enumerate() {
+            let distance = ((x - predicted_x).powi(2) + (y - predicted_y).powi(2)).sqrt();
+            if distance <= gate {
+                pairs.push((distance, track_index, detection_index));
+            }
         }
     }
+    pairs.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let mut used_tracks = std::collections::HashSet::new();
+    let mut used_detections = std::collections::HashSet::new();
+    let mut updated = Vec::new();
+    for (_, track_index, detection_index) in pairs {
+        if !used_tracks.insert(track_index) || !used_detections.insert(detection_index) {
+            continue;
+        }
+        let (x, y, confidence) = detections[detection_index];
+        let track = &mut tracks[track_index];
+        track.points.push((time_ms, x, y, confidence));
+        if track.points.len() > 32 {
+            track.points.remove(0);
+        }
+        updated.push(track.id);
+    }
+    for (detection_index, (x, y, confidence)) in detections.into_iter().enumerate() {
+        if used_detections.contains(&detection_index) {
+            continue;
+        }
+        let track_id = *next_track_id;
+        *next_track_id += 1;
+        tracks.push(BallTrack {
+            id: track_id,
+            points: vec![(time_ms, x, y, confidence)],
+        });
+        updated.push(track_id);
+    }
+    updated
+}
 
+/// Stitches a short detector handoff back into the original trajectory.
+///
+/// A ball can disappear at the rim and reappear as a new track below the net.
+/// Only a below-net point whose interpolated crossing is inside the rim and
+/// whose own track already has post-rim persistence is eligible. This keeps a
+/// nearby player's ball from being joined merely because it is visible after
+/// an occlusion.
+fn recover_track_points(tracks: &[BallTrack], rim: &Roi) -> Vec<(u64, Vec<BallPoint>)> {
+    let rim_y = (rim.top + rim.bottom) / 2.0;
+    let rim_height = (rim.bottom - rim.top).max(0.01);
+    let rim_width = (rim.right - rim.left).max(0.01);
+    let above_y = rim_y - 0.6 * rim_height;
+    let below_y = rim_y + 0.9 * rim_height;
+    let below_depth = rim_y + (rim_width * 0.35).max(rim_height * 0.5);
+    let center_x = (rim.left + rim.right) / 2.0;
+    let half_width = rim_width / 2.0;
+    let mut recoveries = Vec::new();
+
+    for source in tracks {
+        let mut best: Option<(f32, i64, Vec<BallPoint>)> = None;
+        for above in source.points.iter().copied() {
+            if above.2 > above_y {
+                continue;
+            }
+            for target in tracks {
+                if target.id == source.id {
+                    continue;
+                }
+                let source_has_intervening_point = source
+                    .points
+                    .iter()
+                    .any(|point| point.0 > above.0 && point.0 <= above.0 + 1_800);
+                if source_has_intervening_point {
+                    continue;
+                }
+                for below in target.points.iter().copied() {
+                    let gap = below.0 - above.0;
+                    if !(0..=1_800).contains(&gap) || below.2 < below_y {
+                        continue;
+                    }
+                    let Some((_, crossing_x)) = crossing_at_rim(above, below, rim_y) else {
+                        continue;
+                    };
+                    if !(rim.left..=rim.right).contains(&crossing_x)
+                        || (below.1 - center_x).abs() > half_width * 1.35
+                    {
+                        continue;
+                    }
+                    let post: Vec<_> = target
+                        .points
+                        .iter()
+                        .copied()
+                        .filter(|point| {
+                            point.0 >= below.0 && point.0 <= below.0 + 800 && point.2 >= below_depth
+                        })
+                        .collect();
+                    if post.len() < 2
+                        || post
+                            .iter()
+                            .any(|point| (point.1 - center_x).abs() > half_width * 2.0)
+                    {
+                        continue;
+                    }
+
+                    let mut stitched: Vec<_> = source
+                        .points
+                        .iter()
+                        .copied()
+                        .filter(|point| point.0 <= above.0)
+                        .chain(
+                            target
+                                .points
+                                .iter()
+                                .copied()
+                                .filter(|point| point.0 >= below.0),
+                        )
+                        .collect();
+                    stitched.sort_by_key(|point| point.0);
+                    stitched.dedup_by(|left, right| left.0 == right.0);
+                    if !complete_rim_crossing(&stitched, above.0, below.0, rim) {
+                        continue;
+                    }
+
+                    let rank = ((crossing_x - center_x).abs(), gap);
+                    if best
+                        .as_ref()
+                        .is_none_or(|(distance, best_gap, _)| rank < (*distance, *best_gap))
+                    {
+                        best = Some((rank.0, rank.1, stitched));
+                    }
+                }
+            }
+        }
+        if let Some((_, _, points)) = best {
+            recoveries.push((source.id, points));
+        }
+    }
+    recoveries
+}
+
+impl RuntimeSession {
     /// Three-zone net motion analysis (mirrors desktop algorithm).
     ///
     /// A made basket should produce activity in the net's lower zone
@@ -331,72 +571,42 @@ impl RuntimeSession {
             self.net_zone_history.drain(..first_relevant);
         }
 
-        // Compute per-candidate net motion score from zone history.
+        // Compute per-candidate net evidence with the same public semantics
+        // as the desktop engine. The underlying measurement is still mobile
+        // specific, but unavailable measurement is never treated as no motion.
         let history = &self.net_zone_history;
         for candidate in &mut self.candidates {
             if time_ms < candidate.event_ms || time_ms > candidate.event_ms + 1_500 {
                 continue;
             }
-            let (inside_score, sequence_score) = net_zone_scores(history, candidate.event_ms);
-            let combined_score = (0.7 * inside_score + 0.3 * sequence_score).clamp(0.0, 1.0);
-            candidate.net_motion_score = candidate.net_motion_score.max(combined_score);
-            candidate.net_sequence_score = candidate.net_sequence_score.max(sequence_score);
-            if sequence_score > 0.5 {
-                candidate.reason = format!("net_sequence:{sequence_score:.2}");
-            }
+            let evidence = net_zone_evidence(history, candidate.event_ms);
+            candidate.net_signal_available |= evidence.signal_available;
+            candidate.net_no_motion = evidence.no_motion;
+            candidate.net_motion_score = candidate.net_motion_score.max(evidence.inside_score);
+            candidate.net_sequence_score =
+                candidate.net_sequence_score.max(evidence.sequence_score);
+            candidate.net_lower_peak = candidate.net_lower_peak.max(evidence.lower_peak);
+            candidate.net_below_peak = candidate.net_below_peak.max(evidence.below_peak);
+            candidate.net_support |= evidence.support;
         }
 
         self.previous_net_signature = Some((time_ms, signatures));
     }
 
-    /// Detect rebound after a crossing: ball rises from deep below the rim
-    /// back up. Depth-bounded (mirrors desktop): only counts as rebound if
-    /// the ball hasn't descended past 2.5x rim height below the rim plane.
-    fn detect_rebound(&mut self) {
-        let rim_y = (self.config.hoop_roi.top + self.config.hoop_roi.bottom) / 2.0;
-        let rim_height = self.config.hoop_roi.bottom - self.config.hoop_roi.top;
-        let rebound_depth = rim_y + rim_height * 2.5;
-
-        for candidate in &mut self.candidates {
-            if candidate.rebound {
-                continue;
-            }
-            // Find post-crossing ball points that descend then rise.
-            let post_points: Vec<_> = self
-                .ball_points
-                .iter()
-                .filter(|(t, _, _, _)| *t > candidate.event_ms)
-                .collect();
-            if post_points.len() < 3 {
-                continue;
-            }
-            let mut max_y = 0.0f32;
-            let mut rebounded = false;
-            for (_, _, y, _) in &post_points {
-                if *y > max_y {
-                    max_y = *y;
-                } else if max_y > rebound_depth && *y < max_y - 0.04 {
-                    // Ball descended past the depth boundary then rose = landing bounce.
-                    rebounded = false; // Landing bounce, not rim rebound.
-                    break;
-                } else if max_y <= rebound_depth && *y < max_y - 0.03 {
-                    // Ball rose while still near the rim = rim rebound.
-                    rebounded = true;
-                    break;
-                }
-            }
-            if rebounded {
-                candidate.rebound = true;
-            }
-        }
-    }
-
-    /// Resolve verdict from accumulated evidence (mirrors desktop).
+    /// Resolve verdict from accumulated evidence using the desktop decision
+    /// semantics. Candidate creation stays optimistic for recall; the delayed
+    /// decision requires the same post-crossing evidence categories as Python.
     fn resolve_verdict(&mut self) {
-        let current_time = self.ball_points.last().map(|(t, _, _, _)| *t).unwrap_or(0);
+        let current_time = self
+            .tracks
+            .iter()
+            .filter_map(|track| track.points.last().map(|point| point.0))
+            .max()
+            .unwrap_or(0);
+        let rim = &self.config.hoop_roi;
+        let tracks = self.tracks.clone();
 
         for candidate in &mut self.candidates {
-            // Always update composite score with latest evidence.
             candidate.composite_score = composite_score(
                 candidate.trajectory_score,
                 candidate.crossing_score,
@@ -405,99 +615,65 @@ impl RuntimeSession {
                 candidate.rebound,
             );
 
-            if candidate.verdict != "ambiguous" {
-                continue; // Already resolved.
-            }
-            // Only resolve after 800ms of post-crossing observation.
-            if current_time < candidate.event_ms + 800 {
+            if candidate.decision_time_ms.is_some() || current_time < candidate.below.time_ms + 800
+            {
                 continue;
             }
-
-            // Use composite score for verdict when available (richer evidence).
-            let strong_positive = if candidate.composite_score > 0.0 {
-                candidate.complete_crossing && candidate.composite_score >= 0.55
-            } else {
-                candidate.complete_crossing
-                    && candidate.net_motion_score >= 0.35
-                    && candidate.trajectory_score >= 0.45
+            let Some(track) = tracks.iter().find(|track| track.id == candidate.track_id) else {
+                continue;
             };
 
+            candidate.complete_crossing = complete_rim_crossing(
+                &track.points,
+                candidate.above.time_ms,
+                candidate.below.time_ms,
+                rim,
+            );
+            let post = post_crossing_evidence(&track.points, candidate.below.time_ms, rim);
+            candidate.ball_persistence = post.persistence;
+            candidate.rebound |= post.rebound;
+            candidate.lateral_exit = post.lateral_exit;
+            candidate.post_crossing_lateral_recovery = post.lateral_recovery;
+
+            let gates = calibrated_gates(
+                &track.points,
+                candidate.above.time_ms,
+                candidate.below.time_ms,
+                rim,
+                &net_zone_evidence(&self.net_zone_history, candidate.event_ms),
+                candidate.complete_crossing,
+            );
+            let positive_gate = if candidate.net_signal_available {
+                candidate.net_support
+            } else {
+                gates.high_precision
+                    || candidate.net_motion_score >= 0.55
+                    || candidate.composite_score >= 0.72
+            };
+            let strong_positive =
+                candidate.ball_persistence >= 0.67 && candidate.complete_crossing && positive_gate;
             let strong_negative = candidate.rebound
-                || candidate.crossing_score < 0.15
-                || candidate.composite_score < 0.15 && candidate.composite_score > 0.0;
+                || (candidate.lateral_exit && !candidate.post_crossing_lateral_recovery);
 
             if strong_negative {
                 candidate.verdict = "missed".into();
                 candidate.reason = if candidate.rebound {
                     "rim_rebound".into()
                 } else {
-                    "crossing_outside_rim".into()
+                    "lateral_exit".into()
                 };
             } else if strong_positive {
                 candidate.verdict = "made".into();
-                candidate.reason = format!(
-                    "composite:{:.2}+net:{:.2}+traj:{:.2}",
-                    candidate.composite_score,
-                    candidate.net_motion_score,
-                    candidate.trajectory_score
-                );
+                candidate.reason = "complete_crossing+net_support".into();
             }
-            // else stays "ambiguous" for human review.
-        }
-    }
-
-    fn detect_crossing(&mut self) {
-        let rim_y = (self.config.hoop_roi.top + self.config.hoop_roi.bottom) / 2.0;
-        let rim_left = self.config.hoop_roi.left;
-        let rim_right = self.config.hoop_roi.right;
-
-        // Scan ALL adjacent pairs for a valid crossing, not just the last one.
-        // Fast-falling balls may have 2+ frames between the above and below
-        // points; checking only the last pair misses crossings when tracking
-        // continues past the rim.
-        for (index, window) in self.ball_points.windows(2).enumerate() {
-            let above = window[0];
-            let below = window[1];
-            let Some((crossing, crossing_x)) = crossing_at_rim(above, below, rim_y) else {
-                continue;
-            };
-            if !(rim_left..=rim_right).contains(&crossing_x) {
-                continue;
-            }
-
-            // Check for an existing candidate at this time to avoid duplicates.
-            let event_ms = above.0 + ((below.0 - above.0) as f32 * crossing) as i64;
-            if self
-                .candidates
+            candidate.auto_export_eligible = candidate.verdict == "made" && gates.automatic_goal;
+            candidate.decision_time_ms = Some(candidate.below.time_ms + 800);
+            candidate.trajectory = track
+                .points
                 .iter()
-                .any(|candidate| (candidate.event_ms - event_ms).abs() <= 1_500)
-            {
-                continue;
-            }
-
-            // Keep the context anchored at this crossing. Looking at the
-            // track tail accidentally rejects an earlier valid crossing as
-            // soon as another post-rim point arrives.
-            let context_end = index + 2;
-            let recent_start = context_end.saturating_sub(12);
-            let recent = &self.ball_points[recent_start..context_end];
-            if !complete_crossing(recent, rim_y, rim_left, rim_right) {
-                continue;
-            }
-
-            let trajectory_score = trajectory_score(recent);
-            let crossing_score = (1.0
-                - ((crossing_x - (rim_left + rim_right) / 2.0).abs()
-                    / ((rim_right - rim_left) / 2.0).max(1e-6)))
-            .clamp(0.0, 1.0);
-            let rim_center_x = (rim_left + rim_right) / 2.0;
-            let rim_half_width = (rim_right - rim_left) / 2.0;
-            let prediction = prediction_score(recent, rim_y, rim_center_x, rim_half_width);
-            let trajectory = recent
-                .iter()
-                .rev()
-                .take(32)
-                .rev()
+                .filter(|point| {
+                    point.0 >= candidate.event_ms - 1_200 && point.0 <= candidate.event_ms + 800
+                })
                 .map(|point| EvidencePoint {
                     time_ms: point.0,
                     x: point.1,
@@ -505,41 +681,157 @@ impl RuntimeSession {
                     confidence: point.3,
                 })
                 .collect();
-            self.candidates.push(Candidate {
-                id: format!("candidate_{event_ms}"),
-                start_ms: (event_ms - self.config.clip_before_ms).max(0),
-                end_ms: clip_end_ms(event_ms, self.config.clip_after_ms, self.config.duration_ms),
-                event_ms,
-                confidence: (0.5 * above.3 + 0.5 * below.3).clamp(0.0, 1.0),
-                trajectory_score,
-                crossing_score,
-                net_motion_score: 0.0,
-                net_sequence_score: 0.0,
-                prediction_score: prediction,
-                composite_score: composite_score(
+        }
+        let active_track_ids: std::collections::HashSet<_> = self
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.decision_time_ms.is_none())
+            .map(|candidate| candidate.track_id)
+            .collect();
+        self.tracks.retain(|track| {
+            active_track_ids.contains(&track.id)
+                || track
+                    .points
+                    .last()
+                    .is_some_and(|point| point.0 >= current_time - 2_000)
+        });
+    }
+
+    fn detect_crossing(&mut self, track_id: u64) {
+        let Some(track) = self.tracks.iter().find(|track| track.id == track_id) else {
+            return;
+        };
+        let points = track.points.clone();
+        let rim_y = (self.config.hoop_roi.top + self.config.hoop_roi.bottom) / 2.0;
+        let rim_left = self.config.hoop_roi.left;
+        let rim_right = self.config.hoop_roi.right;
+        let rim_height = self.config.hoop_roi.bottom - self.config.hoop_roi.top;
+        let above_y = rim_y - 0.6 * rim_height;
+        let below_y = rim_y + 0.9 * rim_height;
+
+        // Python does not require the below point to be adjacent: at a low
+        // sample rate the ball can have an intermediate rim-band point. Keep
+        // the same 1.8s search horizon and select the first valid deep below
+        // point, rather than fabricating a crossing from a shallow sample.
+        for (index, above) in points.iter().copied().enumerate() {
+            if above.2 > above_y {
+                continue;
+            }
+            for (relative_index, below) in points[index + 1..].iter().copied().enumerate() {
+                if below.0 <= above.0 {
+                    continue;
+                }
+                if below.0 - above.0 > 1_800 {
+                    break;
+                }
+                if below.2 < below_y || below.2 <= above.2 {
+                    continue;
+                }
+                let Some((crossing, crossing_x)) = crossing_at_rim(above, below, rim_y) else {
+                    continue;
+                };
+                if !(rim_left..=rim_right).contains(&crossing_x) {
+                    continue;
+                }
+
+                // Check for an existing candidate at this time to avoid duplicates.
+                let event_ms = above.0 + ((below.0 - above.0) as f32 * crossing) as i64;
+                if self
+                    .candidates
+                    .iter()
+                    .any(|candidate| (candidate.event_ms - event_ms).abs() <= 2_000)
+                {
+                    continue;
+                }
+
+                let context_end = index + relative_index + 2;
+                let recent_start = context_end.saturating_sub(12);
+                let recent = &points[recent_start..context_end];
+
+                let trajectory_score = trajectory_score(recent);
+                let crossing_score = (1.0
+                    - ((crossing_x - (rim_left + rim_right) / 2.0).abs()
+                        / ((rim_right - rim_left) / 2.0).max(1e-6)))
+                .clamp(0.0, 1.0);
+                let rim_center_x = (rim_left + rim_right) / 2.0;
+                let rim_half_width = (rim_right - rim_left) / 2.0;
+                let prediction = prediction_score(recent, rim_y, rim_center_x, rim_half_width);
+                let trajectory = recent
+                    .iter()
+                    .rev()
+                    .take(32)
+                    .rev()
+                    .map(|point| EvidencePoint {
+                        time_ms: point.0,
+                        x: point.1,
+                        y: point.2,
+                        confidence: point.3,
+                    })
+                    .collect();
+                self.candidates.push(Candidate {
+                    id: format!("candidate_{event_ms}"),
+                    track_id,
+                    start_ms: (event_ms - self.config.clip_before_ms).max(0),
+                    end_ms: clip_end_ms(
+                        event_ms,
+                        self.config.clip_after_ms,
+                        self.config.duration_ms,
+                    ),
+                    event_ms,
+                    confidence: (0.5 * above.3 + 0.5 * below.3).clamp(0.0, 1.0),
                     trajectory_score,
                     crossing_score,
-                    0.0,
-                    prediction,
-                    false,
-                ),
-                trajectory,
-                crossing: EvidencePoint {
-                    time_ms: event_ms,
-                    x: crossing_x,
-                    y: rim_y,
-                    confidence: (above.3 + below.3) / 2.0,
-                },
-                reason: "uncertain".into(),
-                verdict: "ambiguous".into(),
-                complete_crossing: true,
-                rebound: false,
-                evidence_source: "rust_onnx".into(),
-            });
-            // Don't clear all ball points — the ball continues to be tracked
-            // after a made shot. Only trim to prevent re-detecting the same
-            // crossing (the duplicate check above handles this).
-            break;
+                    net_motion_score: 0.0,
+                    net_sequence_score: 0.0,
+                    prediction_score: prediction,
+                    composite_score: composite_score(
+                        trajectory_score,
+                        crossing_score,
+                        0.0,
+                        prediction,
+                        false,
+                    ),
+                    trajectory,
+                    above: EvidencePoint {
+                        time_ms: above.0,
+                        x: above.1,
+                        y: above.2,
+                        confidence: above.3,
+                    },
+                    below: EvidencePoint {
+                        time_ms: below.0,
+                        x: below.1,
+                        y: below.2,
+                        confidence: below.3,
+                    },
+                    crossing: EvidencePoint {
+                        time_ms: event_ms,
+                        x: crossing_x,
+                        y: rim_y,
+                        confidence: (above.3 + below.3) / 2.0,
+                    },
+                    reason: "uncertain".into(),
+                    verdict: "ambiguous".into(),
+                    complete_crossing: false,
+                    rebound: false,
+                    lateral_exit: false,
+                    post_crossing_lateral_recovery: false,
+                    ball_persistence: 0.0,
+                    net_signal_available: false,
+                    net_support: false,
+                    net_no_motion: false,
+                    net_lower_peak: 0.0,
+                    net_below_peak: 0.0,
+                    auto_export_eligible: false,
+                    decision_time_ms: None,
+                    algorithm_version: "analysis-contract-v1".into(),
+                    evidence_source: "rust_onnx:analysis-contract-v1".into(),
+                });
+                // Don't clear all ball points — the ball continues to be tracked
+                // after a made shot. Only trim to prevent re-detecting the same
+                // crossing (the duplicate check above handles this).
+                break;
+            }
         }
     }
 }
@@ -567,6 +859,7 @@ fn crossing_at_rim(
     Some((crossing, crossing_x))
 }
 
+#[cfg(test)]
 fn complete_crossing(
     points: &[(i64, f32, f32, f32)],
     rim_y: f32,
@@ -627,6 +920,307 @@ fn complete_crossing(
     previous_above.is_some_and(|previous| above.2 + 0.06 >= previous.2)
 }
 
+fn complete_rim_crossing(
+    points: &[(i64, f32, f32, f32)],
+    above_time_ms: i64,
+    below_time_ms: i64,
+    rim: &Roi,
+) -> bool {
+    let rim_y = (rim.top + rim.bottom) / 2.0;
+    let rim_height = (rim.bottom - rim.top).max(0.01);
+    let rim_width = (rim.right - rim.left).max(0.01);
+    let center_x = (rim.left + rim.right) / 2.0;
+    let half_width = rim_width / 2.0;
+    let Some(above) = points
+        .iter()
+        .copied()
+        .find(|point| point.0 == above_time_ms)
+    else {
+        return false;
+    };
+    let Some(below) = points
+        .iter()
+        .copied()
+        .find(|point| point.0 == below_time_ms)
+    else {
+        return false;
+    };
+    let Some((_, crossing_x)) = crossing_at_rim(above, below, rim_y) else {
+        return false;
+    };
+    if !(rim.left..=rim.right).contains(&crossing_x) {
+        return false;
+    }
+
+    let near_above = points.iter().any(|point| {
+        point.0 <= above_time_ms && point.2 >= rim_y - 1.8 * rim_height && point.2 <= rim_y
+    });
+    let transition: Vec<_> = points
+        .iter()
+        .filter(|point| {
+            point.0 >= above_time_ms
+                && point.0 <= below_time_ms
+                && point.2 >= rim_y - 1.5 * rim_height
+                && point.2 <= rim_y + 0.5 * rim_height
+        })
+        .collect();
+    let transition_inside = transition
+        .iter()
+        .filter(|point| point_in_rim_corridor(point, center_x, half_width, 0.15))
+        .count();
+    let below_depth = rim_y + (rim_width * 0.35).max(rim_height * 0.5);
+    let post: Vec<_> = points
+        .iter()
+        .filter(|point| {
+            point.0 >= below_time_ms && point.0 <= below_time_ms + 800 && point.2 >= below_depth
+        })
+        .collect();
+    let post_inside = post
+        .iter()
+        .take(3)
+        .filter(|point| {
+            let fall = (point.2 - below_depth).max(0.0);
+            let allowance = rim_width * 0.35 + fall * 0.35;
+            (point.1 - center_x).abs() <= half_width + allowance
+        })
+        .count();
+
+    near_above
+        && !transition.is_empty()
+        && transition_inside as f32 / transition.len() as f32 >= 0.60
+        && post.len() >= 2
+        && post_inside >= 2
+}
+
+fn point_in_rim_corridor(
+    point: &&(i64, f32, f32, f32),
+    center_x: f32,
+    half_width: f32,
+    tolerance_ratio: f32,
+) -> bool {
+    let tolerance = half_width * tolerance_ratio;
+    point.1 >= center_x - half_width - tolerance && point.1 <= center_x + half_width + tolerance
+}
+
+fn post_crossing_evidence(
+    points: &[(i64, f32, f32, f32)],
+    below_time_ms: i64,
+    rim: &Roi,
+) -> PostCrossingEvidence {
+    let rim_y = (rim.top + rim.bottom) / 2.0;
+    let rim_height = (rim.bottom - rim.top).max(0.01);
+    let rim_width = (rim.right - rim.left).max(0.01);
+    let center_x = (rim.left + rim.right) / 2.0;
+    let half_width = rim_width / 2.0;
+    let later: Vec<_> = points
+        .iter()
+        .copied()
+        .filter(|point| point.0 >= below_time_ms && point.0 <= below_time_ms + 800)
+        .collect();
+    if later.is_empty() {
+        return PostCrossingEvidence::default();
+    }
+    let below_depth = rim_y + (rim_width * 0.35).max(rim_height * 0.5);
+    let persistence_points: Vec<_> = later
+        .iter()
+        .copied()
+        .filter(|point| point.2 >= below_depth)
+        .collect();
+    let rebound_zone_bottom = rim_y + (2.5 * rim_height).max(2.5 * rim_width);
+    let mut previous_y = later[0].2;
+    let mut rebound = false;
+    for point in later.iter().skip(1) {
+        if point.2 >= rebound_zone_bottom {
+            break;
+        }
+        if point.2 < previous_y - (rim_width * 0.25).max(rim_height * 0.18) {
+            rebound = true;
+            break;
+        }
+        previous_y = point.2;
+    }
+    let lateral_exit = later.iter().any(|point| {
+        (point.1 - center_x).abs() > 3.0 * half_width
+            && point.2 <= rim_y + (4.0 * rim_height).max(4.0 * rim_width)
+    });
+    let deep_corridor = persistence_points
+        .iter()
+        .filter(|point| (point.1 - center_x).abs() <= half_width)
+        .count();
+    let lateral_recovery =
+        lateral_exit && persistence_points.len() >= 3 && deep_corridor == 1 && !rebound;
+    PostCrossingEvidence {
+        persistence: (persistence_points.len() as f32 / 3.0).min(1.0),
+        rebound,
+        lateral_exit,
+        lateral_recovery,
+    }
+}
+
+pub fn evaluate_decision_replay(request: DecisionReplayRequest) -> DecisionReplayResult {
+    let mut points: Vec<_> = request
+        .trajectory
+        .iter()
+        .map(|point| (point.time_ms, point.x, point.y, point.confidence))
+        .collect();
+    points.push((
+        request.above.time_ms,
+        request.above.x,
+        request.above.y,
+        request.above.confidence,
+    ));
+    points.push((
+        request.below.time_ms,
+        request.below.x,
+        request.below.y,
+        request.below.confidence,
+    ));
+    points.sort_by_key(|point| point.0);
+    points.dedup_by(|left, right| left.0 == right.0);
+
+    let complete_crossing = complete_rim_crossing(
+        &points,
+        request.above.time_ms,
+        request.below.time_ms,
+        &request.hoop_roi,
+    );
+    let post = post_crossing_evidence(&points, request.below.time_ms, &request.hoop_roi);
+    let history: Vec<_> = request
+        .net_history
+        .iter()
+        .map(|point| (point.time_ms, point.upper, point.lower, point.below))
+        .collect();
+    let rim_y = (request.hoop_roi.top + request.hoop_roi.bottom) / 2.0;
+    let event_ms = crossing_at_rim(
+        (
+            request.above.time_ms,
+            request.above.x,
+            request.above.y,
+            request.above.confidence,
+        ),
+        (
+            request.below.time_ms,
+            request.below.x,
+            request.below.y,
+            request.below.confidence,
+        ),
+        rim_y,
+    )
+    .map(|(ratio, _)| {
+        request.above.time_ms
+            + ((request.below.time_ms - request.above.time_ms) as f32 * ratio) as i64
+    })
+    .unwrap_or(request.below.time_ms);
+    let net = net_zone_evidence(&history, event_ms);
+    let gates = calibrated_gates(
+        &points,
+        request.above.time_ms,
+        request.below.time_ms,
+        &request.hoop_roi,
+        &net,
+        complete_crossing,
+    );
+    let positive_gate = if net.signal_available {
+        net.support
+    } else {
+        gates.high_precision
+    };
+    let verdict = if post.rebound || (post.lateral_exit && !post.lateral_recovery) {
+        "missed"
+    } else if post.persistence >= 0.67 && complete_crossing && positive_gate {
+        "made"
+    } else {
+        "ambiguous"
+    };
+    DecisionReplayResult {
+        algorithm_version: "analysis-contract-v1".into(),
+        complete_crossing,
+        ball_persistence: post.persistence,
+        rebound: post.rebound,
+        lateral_exit: post.lateral_exit,
+        post_crossing_lateral_recovery: post.lateral_recovery,
+        net_signal_available: net.signal_available,
+        net_support: net.support,
+        net_no_motion: net.no_motion,
+        net_motion_score: net.inside_score,
+        net_sequence_score: net.sequence_score,
+        verdict: verdict.into(),
+        auto_export_eligible: verdict == "made" && gates.automatic_goal,
+    }
+}
+
+fn calibrated_gates(
+    points: &[(i64, f32, f32, f32)],
+    above_time_ms: i64,
+    below_time_ms: i64,
+    rim: &Roi,
+    net: &NetEvidence,
+    complete_crossing: bool,
+) -> CalibratedGates {
+    let Some(above) = points
+        .iter()
+        .copied()
+        .find(|point| point.0 == above_time_ms)
+    else {
+        return CalibratedGates::default();
+    };
+    let Some(below) = points
+        .iter()
+        .copied()
+        .find(|point| point.0 == below_time_ms)
+    else {
+        return CalibratedGates::default();
+    };
+    let rim_y = (rim.top + rim.bottom) / 2.0;
+    let rim_width = (rim.right - rim.left).max(0.01);
+    let gap_s = ((below.0 - above.0) as f32 / 1_000.0).max(0.001);
+    let speed = ((below.2 - above.2) / gap_s) / rim_width * 30.54;
+    let approach: Vec<_> = points
+        .iter()
+        .copied()
+        .filter(|point| {
+            point.0 >= above_time_ms - 800
+                && point.0 <= above_time_ms
+                && point.2 <= rim_y - 0.25 * rim_width
+        })
+        .collect();
+    let span = if approach.is_empty() {
+        0.0
+    } else {
+        let min_x = approach
+            .iter()
+            .map(|point| point.1)
+            .fold(f32::INFINITY, f32::min);
+        let max_x = approach
+            .iter()
+            .map(|point| point.1)
+            .fold(f32::NEG_INFINITY, f32::max);
+        (max_x - min_x) / rim_width * 30.54
+    };
+    let horizontal_ratio = (below.1 - above.1).abs() / (below.2 - above.2).max(0.001);
+    let net_gate = if net.signal_available {
+        net.support
+    } else {
+        net.inside_score >= 0.90
+    };
+    let high_speed_net = (150.0..=260.0).contains(&speed) && horizontal_ratio >= 0.50 && net_gate;
+    let high_speed_drop = (150.0..=220.0).contains(&speed)
+        && span <= 130.0
+        && (!net.signal_available || net.support)
+        && horizontal_ratio >= 0.55;
+    let strict_low_speed = speed <= 95.0 && span <= 100.0;
+    let high_precision = complete_crossing
+        && (strict_low_speed || high_speed_net || high_speed_drop)
+        && !net.no_motion;
+    let automatic_goal = complete_crossing
+        && !net.no_motion
+        && (speed <= 102.0 || strict_low_speed || high_speed_net || high_speed_drop);
+    CalibratedGates {
+        high_precision,
+        automatic_goal,
+    }
+}
+
 fn validate_roi(roi: &Roi, name: &str) -> Result<(), RuntimeError> {
     if !(0.0..=1.0).contains(&roi.left)
         || !(0.0..=1.0).contains(&roi.top)
@@ -660,7 +1254,7 @@ fn validate_config(config: &RuntimeConfig) -> Result<(), RuntimeError> {
             "video duration must not be negative".into(),
         ));
     }
-    if config.model_size < 320 || config.model_size % 32 != 0 {
+    if config.model_size < 320 || !config.model_size.is_multiple_of(32) {
         return Err(RuntimeError::InvalidRequest(
             "model size must be a multiple of 32 and at least 320".into(),
         ));
@@ -698,6 +1292,7 @@ fn net_zone_signatures(image: &RgbImage, roi: &Roi) -> [Vec<f32>; 3] {
 /// the event window (ball pushing through the net).
 /// sequence_score: whether lower activated before below (correct order
 /// for a made basket: ball enters net, then drops below).
+#[cfg(test)]
 fn net_zone_scores(history: &[(i64, f32, f32, f32)], event_ms: i64) -> (f32, f32) {
     let baseline: Vec<_> = history
         .iter()
@@ -745,6 +1340,73 @@ fn net_zone_scores(history: &[(i64, f32, f32, f32)], event_ms: i64) -> (f32, f32
     };
 
     (inside_score, sequence_score)
+}
+
+fn net_zone_evidence(history: &[(i64, f32, f32, f32)], event_ms: i64) -> NetEvidence {
+    let baseline: Vec<_> = history
+        .iter()
+        .filter(|(time_ms, _, _, _)| *time_ms < event_ms - 100 && *time_ms >= event_ms - 800)
+        .collect();
+    let active: Vec<_> = history
+        .iter()
+        .filter(|(time_ms, _, _, _)| *time_ms >= event_ms - 100 && *time_ms <= event_ms + 800)
+        .collect();
+    if active.len() < 2 || baseline.is_empty() {
+        return NetEvidence::default();
+    }
+
+    let baseline_lower =
+        baseline.iter().map(|(_, _, lower, _)| *lower).sum::<f32>() / baseline.len() as f32;
+    let baseline_below =
+        baseline.iter().map(|(_, _, _, below)| *below).sum::<f32>() / baseline.len() as f32;
+    let lower_peak = active
+        .iter()
+        .map(|(_, _, lower, _)| (*lower - baseline_lower).abs())
+        .fold(0.0_f32, f32::max);
+    let below_peak = active
+        .iter()
+        .map(|(_, _, _, below)| (*below - baseline_below).abs())
+        .fold(0.0_f32, f32::max);
+    let threshold = 0.25;
+    let lower_first = active
+        .iter()
+        .find(|(_, _, lower, _)| (*lower - baseline_lower).abs() >= threshold)
+        .map(|(time_ms, _, _, _)| *time_ms);
+    let below_first = active
+        .iter()
+        .find(|(_, _, _, below)| (*below - baseline_below).abs() >= threshold)
+        .map(|(time_ms, _, _, _)| *time_ms);
+    let sequence_score = match (lower_first, below_first) {
+        (Some(lower), Some(below)) if below - lower >= 50 => 1.0,
+        (Some(_), Some(_)) if lower_peak >= 0.4 && below_peak >= 0.4 => 0.8,
+        (Some(lower), Some(below)) if below >= lower => 0.45,
+        (Some(_), Some(_)) => 0.15,
+        (Some(_), None) => 0.45,
+        (None, Some(_)) => 0.15,
+        (None, None) => 0.0,
+    };
+    let active_count = active
+        .iter()
+        .filter(|(_, _, lower, below)| {
+            (*lower - baseline_lower).abs() >= threshold
+                || (*below - baseline_below).abs() >= threshold
+        })
+        .count();
+    let persistence = (active_count as f32 / 3.0).min(1.0);
+    let inside_score =
+        (0.55 * lower_peak + 0.25 * below_peak + 0.12 * sequence_score + 0.08 * persistence)
+            .min(1.0);
+    let baseline_quiet = baseline_lower < 0.35 && baseline_below < 0.35;
+    let no_motion = baseline_quiet && lower_peak < 0.12 && below_peak < 0.12 && inside_score < 0.12;
+    NetEvidence {
+        signal_available: true,
+        no_motion,
+        inside_score,
+        sequence_score,
+        lower_peak,
+        below_peak,
+        support: inside_score >= 0.35 && sequence_score >= 0.80 && below_peak >= 0.25,
+    }
 }
 
 fn net_motion_score(current: &[f32], previous: &[f32]) -> f32 {
@@ -1066,8 +1728,10 @@ fn solve_3x3(mut matrix: [[f32; 3]; 3], mut vector: [f32; 3]) -> Option<(f32, f3
         matrix.swap(pivot, row);
         vector.swap(pivot, row);
         let divisor = matrix[pivot][pivot];
-        for column in pivot..3 {
+        let mut column = pivot;
+        while column < 3 {
             matrix[pivot][column] /= divisor;
+            column += 1;
         }
         vector[pivot] /= divisor;
         for other in 0..3 {
@@ -1075,8 +1739,10 @@ fn solve_3x3(mut matrix: [[f32; 3]; 3], mut vector: [f32; 3]) -> Option<(f32, f3
                 continue;
             }
             let factor = matrix[other][pivot];
-            for column in pivot..3 {
+            let mut column = pivot;
+            while column < 3 {
                 matrix[other][column] -= factor * matrix[pivot][column];
+                column += 1;
             }
             vector[other] -= factor * vector[pivot];
         }
@@ -1133,6 +1799,7 @@ fn iou(a: &Detection, b: &Detection) -> f32 {
     intersection / (area_a + area_b - intersection).max(1e-6)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_output(
     values: &[f32],
     width: u32,
@@ -1268,6 +1935,80 @@ mod tests {
         }
     }
 
+    #[test]
+    fn association_prefers_nearest_prediction_over_detection_order() {
+        let mut tracks = vec![BallTrack {
+            id: 1,
+            points: vec![(0, 0.45, 0.45, 0.8), (100, 0.50, 0.50, 0.8)],
+        }];
+        let mut next_track_id = 2;
+
+        let updated = associate_ball_tracks(
+            &mut tracks,
+            &mut next_track_id,
+            200,
+            vec![(0.58, 0.58, 0.99), (0.55, 0.55, 0.4)],
+            0.20,
+        );
+
+        assert!(updated.contains(&1));
+        assert_eq!(tracks[0].points.last().unwrap().1, 0.55);
+        assert_eq!(tracks[0].points.last().unwrap().2, 0.55);
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(next_track_id, 3);
+    }
+
+    #[test]
+    fn association_recovers_short_gaps_but_starts_a_new_track_after_expiry() {
+        let mut tracks = vec![BallTrack {
+            id: 7,
+            points: vec![(0, 0.50, 0.50, 0.8)],
+        }];
+        let mut next_track_id = 8;
+
+        let recovered = associate_ball_tracks(
+            &mut tracks,
+            &mut next_track_id,
+            300,
+            vec![(0.54, 0.54, 0.8)],
+            0.20,
+        );
+        assert_eq!(recovered, vec![7]);
+        assert_eq!(tracks[0].points.len(), 2);
+
+        let restarted = associate_ball_tracks(
+            &mut tracks,
+            &mut next_track_id,
+            700,
+            vec![(0.58, 0.58, 0.8)],
+            0.20,
+        );
+        assert_eq!(restarted, vec![8]);
+        assert_eq!(tracks.len(), 2);
+    }
+
+    #[test]
+    fn recovery_stitches_a_rim_occlusion_between_two_tracks() {
+        let tracks = vec![
+            BallTrack {
+                id: 1,
+                points: vec![(0, 0.50, 0.25, 0.8), (100, 0.50, 0.34, 0.8)],
+            },
+            BallTrack {
+                id: 2,
+                points: vec![(300, 0.50, 0.82, 0.7), (400, 0.50, 0.88, 0.7)],
+            },
+        ];
+
+        let recoveries = recover_track_points(&tracks, &roi());
+
+        assert_eq!(recoveries.len(), 1);
+        assert_eq!(recoveries[0].0, 1);
+        assert_eq!(recoveries[0].1.first().unwrap().0, 0);
+        assert_eq!(recoveries[0].1.last().unwrap().0, 400);
+        assert!(complete_rim_crossing(&recoveries[0].1, 100, 300, &roi()));
+    }
+
     fn roi_json() -> serde_json::Value {
         serde_json::json!({"left": 0.4, "top": 0.4, "right": 0.6, "bottom": 0.7})
     }
@@ -1384,6 +2125,29 @@ mod tests {
     }
 
     #[test]
+    fn complete_rim_crossing_requires_post_rim_persistence() {
+        let points = [
+            (0, 0.50, 0.34, 0.9),
+            (200, 0.50, 0.84, 0.9),
+            (400, 0.51, 0.90, 0.9),
+        ];
+        assert!(complete_rim_crossing(&points, 0, 200, &roi()));
+        assert!(!complete_rim_crossing(&points[..2], 0, 200, &roi()));
+    }
+
+    #[test]
+    fn post_crossing_evidence_marks_lateral_exit_as_negative_evidence() {
+        let points = [
+            (0, 0.50, 0.34, 0.9),
+            (200, 0.50, 0.84, 0.9),
+            (400, 0.10, 0.90, 0.9),
+        ];
+        let evidence = post_crossing_evidence(&points, 200, &roi());
+        assert!(evidence.lateral_exit);
+        assert!(!evidence.lateral_recovery);
+    }
+
+    #[test]
     fn net_motion_score_is_normalized_and_handles_shape_mismatch() {
         assert_eq!(net_motion_score(&[0.2, 0.2], &[0.2]), 0.0);
         assert_eq!(net_motion_score(&[0.2, 0.2], &[0.2, 0.2]), 0.0);
@@ -1425,6 +2189,104 @@ mod tests {
         let (inside, sequence) = net_zone_scores(&history, 0);
         assert!(inside > 0.9);
         assert_eq!(sequence, 1.0);
+    }
+
+    #[test]
+    fn net_evidence_keeps_missing_measurement_distinct_from_no_motion() {
+        assert!(!net_zone_evidence(&[(0, 0.0, 0.0, 0.0)], 0).signal_available);
+
+        let history = [
+            (-800, 0.0, 0.0, 0.0),
+            (-400, 0.0, 0.0, 0.0),
+            (0, 0.0, 0.0, 0.0),
+            (100, 0.0, 0.0, 0.0),
+        ];
+        let no_motion = net_zone_evidence(&history, 0);
+        assert!(no_motion.signal_available);
+        assert!(no_motion.no_motion);
+
+        let supported = [
+            (-800, 0.0, 0.0, 0.0),
+            (-400, 0.0, 0.0, 0.0),
+            (0, 0.0, 0.50, 0.0),
+            (100, 0.0, 0.60, 0.50),
+        ];
+        assert!(net_zone_evidence(&supported, 0).support);
+    }
+
+    #[test]
+    fn decision_replay_matches_the_contract_verdict_fields() {
+        let result = evaluate_decision_replay(DecisionReplayRequest {
+            hoop_roi: roi(),
+            above: EvidencePoint {
+                time_ms: 0,
+                x: 0.50,
+                y: 0.34,
+                confidence: 0.9,
+            },
+            below: EvidencePoint {
+                time_ms: 200,
+                x: 0.50,
+                y: 0.84,
+                confidence: 0.9,
+            },
+            trajectory: vec![
+                EvidencePoint {
+                    time_ms: 400,
+                    x: 0.51,
+                    y: 0.90,
+                    confidence: 0.9,
+                },
+                EvidencePoint {
+                    time_ms: 600,
+                    x: 0.51,
+                    y: 0.95,
+                    confidence: 0.9,
+                },
+            ],
+            net_history: vec![
+                NetReplayPoint {
+                    time_ms: -800,
+                    upper: 0.0,
+                    lower: 0.0,
+                    below: 0.0,
+                },
+                NetReplayPoint {
+                    time_ms: -400,
+                    upper: 0.0,
+                    lower: 0.0,
+                    below: 0.0,
+                },
+                NetReplayPoint {
+                    time_ms: 0,
+                    upper: 0.0,
+                    lower: 0.50,
+                    below: 0.0,
+                },
+                NetReplayPoint {
+                    time_ms: 100,
+                    upper: 0.0,
+                    lower: 0.60,
+                    below: 0.50,
+                },
+            ],
+        });
+        assert_eq!(result.algorithm_version, "analysis-contract-v1");
+        assert!(result.complete_crossing);
+        assert!(result.net_signal_available);
+        assert!(result.net_support);
+        assert_eq!(result.verdict, "made");
+    }
+
+    #[test]
+    fn calibrated_gates_keep_a_safe_low_speed_crossing_exportable() {
+        let points = [
+            (0, 0.50, 0.45, 0.9),
+            (600, 0.50, 0.85, 0.9),
+            (700, 0.51, 0.90, 0.9),
+        ];
+        let gates = calibrated_gates(&points, 0, 600, &roi(), &NetEvidence::default(), true);
+        assert!(gates.automatic_goal);
     }
 
     #[test]
@@ -1516,6 +2378,11 @@ mod tests {
 pub fn analyze_json(input: &str) -> Result<String, RuntimeError> {
     let request: AnalysisRequest = serde_json::from_str(input)?;
     Ok(serde_json::to_string(&analyze(request)?)?)
+}
+
+pub fn evaluate_decision_replay_json(input: &str) -> Result<String, RuntimeError> {
+    let request: DecisionReplayRequest = serde_json::from_str(input)?;
+    Ok(serde_json::to_string(&evaluate_decision_replay(request))?)
 }
 
 pub fn create_session_json(input: &str) -> Result<RuntimeSession, RuntimeError> {

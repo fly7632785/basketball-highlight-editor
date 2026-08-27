@@ -1,6 +1,7 @@
 import unittest
 
 from basketball_highlight.events import (
+    ANALYSIS_CONTRACT_VERSION,
     _net_inside_motion_features,
     calibrated_gates,
     find_candidate_crossings,
@@ -379,6 +380,10 @@ class EventsTest(unittest.TestCase):
         self.assertIn("score", candidates[0])
         self.assertIn("signals", candidates[0])
         self.assertGreaterEqual(candidates[0]["signals"]["net_lower"], 0.8)
+        self.assertEqual(candidates[0]["algorithm_version"], ANALYSIS_CONTRACT_VERSION)
+        self.assertIn("event_ms", candidates[0])
+        self.assertIn("net_signal_available", candidates[0])
+        self.assertIn("auto_export_eligible", candidates[0])
 
     def test_net_motion_requires_lower_to_below_sequence_for_support(self):
         records = [

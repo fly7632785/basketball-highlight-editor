@@ -12,14 +12,22 @@ void main() {
       trajectoryScore: .76,
       crossingScore: .94,
       netMotionScore: .41,
+      trackId: 3,
       trajectory: [
         EvidencePoint(timeMs: 900, x: .42, y: .31, confidence: .66),
         EvidencePoint(timeMs: 1200, x: .48, y: .5, confidence: .82),
       ],
+      abovePoint: EvidencePoint(timeMs: 1000, x: .47, y: .42),
+      belowPoint: EvidencePoint(timeMs: 1300, x: .49, y: .56),
       crossingPoint: EvidencePoint(timeMs: 1200, x: .48, y: .5),
       reason: 'uncertain',
       verdict: 'ambiguous',
       completeCrossing: true,
+      netSignalAvailable: true,
+      netSupport: true,
+      netLowerPeak: .72,
+      netBelowPeak: .64,
+      algorithmVersion: 'analysis-contract-v1',
       evidenceSource: 'rust_onnx',
     );
 
@@ -27,10 +35,15 @@ void main() {
 
     expect(restored.id, candidate.id);
     expect(restored.confidence, candidate.confidence);
+    expect(restored.trackId, 3);
     expect(restored.trajectory, hasLength(2));
     expect(restored.trajectory.first.timeMs, 900);
     expect(restored.crossingPoint?.x, .48);
     expect(restored.completeCrossing, isTrue);
+    expect(restored.abovePoint?.timeMs, 1000);
+    expect(restored.belowPoint?.timeMs, 1300);
+    expect(restored.netLowerPeak, .72);
+    expect(restored.algorithmVersion, 'analysis-contract-v1');
     expect(restored.evidenceSource, 'rust_onnx');
   });
 

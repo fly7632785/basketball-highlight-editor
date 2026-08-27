@@ -30,6 +30,8 @@ flutter analyze
 flutter test
 ```
 
+涉及候选生成、轨迹、穿框、篮网、反弹、评分、判决或自动导出门槛的改动，还必须阅读并遵守 [`docs/architecture/CROSS_PLATFORM_ANALYSIS_CONTRACT_V1.md`](docs/architecture/CROSS_PLATFORM_ANALYSIS_CONTRACT_V1.md)。这类改动必须同时检查 Python Engine 与 Rust Runtime；尚未完成跨端回放前，不得宣称结果一致。
+
 视频、模型、FFmpeg、Android NDK、ONNX Runtime 和 iOS 工具链是本地运行依赖，请自行准备，不要把个人环境文件加入 PR。
 
 ## 提交规范
@@ -49,3 +51,4 @@ flutter test
 - [ ] 文档命令与当前目录和脚本参数一致；
 - [ ] 已说明许可证、第三方依赖或发布影响；
 - [ ] 已在描述中记录未验证的部分。
+- [ ] 算法改动已按跨端分析一致性契约检查 Python 与 Rust，并附跨端回放结果或明确缺口。

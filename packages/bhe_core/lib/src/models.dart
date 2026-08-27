@@ -145,16 +145,31 @@ class Candidate {
     this.predictionScore,
     this.compositeScore,
     this.trajectory = const [],
+    this.trackId,
+    this.abovePoint,
+    this.belowPoint,
     this.crossingPoint,
     this.predictedLandingPoint,
     this.reason,
     this.verdict,
     this.completeCrossing,
     this.rebound,
+    this.lateralExit,
+    this.postCrossingLateralRecovery,
+    this.ballPersistence,
+    this.netSignalAvailable,
+    this.netSupport,
+    this.netNoMotion,
+    this.netLowerPeak,
+    this.netBelowPeak,
+    this.autoExportEligible,
+    this.decisionTimeMs,
+    this.algorithmVersion,
     this.evidenceSource,
   });
 
   final String id;
+  final int? trackId;
   final int startMs;
   final int endMs;
   final int eventMs;
@@ -172,12 +187,25 @@ class Candidate {
   final double? predictionScore;
   final double? compositeScore;
   final List<EvidencePoint> trajectory;
+  final EvidencePoint? abovePoint;
+  final EvidencePoint? belowPoint;
   final EvidencePoint? crossingPoint;
   final EvidencePoint? predictedLandingPoint;
   final String? reason;
   final String? verdict;
   final bool? completeCrossing;
   final bool? rebound;
+  final bool? lateralExit;
+  final bool? postCrossingLateralRecovery;
+  final double? ballPersistence;
+  final bool? netSignalAvailable;
+  final bool? netSupport;
+  final bool? netNoMotion;
+  final double? netLowerPeak;
+  final double? netBelowPeak;
+  final bool? autoExportEligible;
+  final int? decisionTimeMs;
+  final String? algorithmVersion;
   final String? evidenceSource;
 
   Candidate copyWith({
@@ -212,12 +240,26 @@ class Candidate {
     predictionScore: predictionScore,
     compositeScore: compositeScore,
     trajectory: trajectory,
+    trackId: trackId,
+    abovePoint: abovePoint,
+    belowPoint: belowPoint,
     crossingPoint: crossingPoint,
     predictedLandingPoint: predictedLandingPoint,
     reason: reason,
     verdict: verdict,
     completeCrossing: completeCrossing,
     rebound: rebound,
+    lateralExit: lateralExit,
+    postCrossingLateralRecovery: postCrossingLateralRecovery,
+    ballPersistence: ballPersistence,
+    netSignalAvailable: netSignalAvailable,
+    netSupport: netSupport,
+    netNoMotion: netNoMotion,
+    netLowerPeak: netLowerPeak,
+    netBelowPeak: netBelowPeak,
+    autoExportEligible: autoExportEligible,
+    decisionTimeMs: decisionTimeMs,
+    algorithmVersion: algorithmVersion,
     evidenceSource: evidenceSource,
   );
 
@@ -230,6 +272,7 @@ class Candidate {
 
   Map<String, dynamic> toJson() => {
     'id': id,
+    if (trackId != null) 'track_id': trackId,
     'start_ms': startMs,
     'end_ms': endMs,
     'event_ms': eventMs,
@@ -248,6 +291,8 @@ class Candidate {
     if (compositeScore != null) 'composite_score': compositeScore,
     if (trajectory.isNotEmpty)
       'trajectory': trajectory.map((point) => point.toJson()).toList(),
+    if (abovePoint != null) 'above': abovePoint!.toJson(),
+    if (belowPoint != null) 'below': belowPoint!.toJson(),
     if (crossingPoint != null) 'crossing': crossingPoint!.toJson(),
     if (predictedLandingPoint != null)
       'prediction': predictedLandingPoint!.toJson(),
@@ -255,6 +300,19 @@ class Candidate {
     if (verdict != null) 'verdict': verdict,
     if (completeCrossing != null) 'complete_crossing': completeCrossing,
     if (rebound != null) 'rebound': rebound,
+    if (lateralExit != null) 'lateral_exit': lateralExit,
+    if (postCrossingLateralRecovery != null)
+      'post_crossing_lateral_recovery': postCrossingLateralRecovery,
+    if (ballPersistence != null) 'ball_persistence': ballPersistence,
+    if (netSignalAvailable != null) 'net_signal_available': netSignalAvailable,
+    if (netSupport != null) 'net_support': netSupport,
+    if (netNoMotion != null) 'net_no_motion': netNoMotion,
+    if (netLowerPeak != null) 'net_lower_peak': netLowerPeak,
+    if (netBelowPeak != null) 'net_below_peak': netBelowPeak,
+    if (autoExportEligible != null)
+      'auto_export_eligible': autoExportEligible,
+    if (decisionTimeMs != null) 'decision_time_ms': decisionTimeMs,
+    if (algorithmVersion != null) 'algorithm_version': algorithmVersion,
     if (evidenceSource != null) 'evidence_source': evidenceSource,
   };
 
@@ -286,6 +344,7 @@ class Candidate {
         : endMs;
     return Candidate(
       id: json['id'] as String? ?? 'candidate',
+      trackId: json['track_id'] is num ? _intValue(json['track_id']) : null,
       startMs: startMs,
       endMs: endMs,
       eventMs: _intValue(json['event_ms'] ?? json['event_time_ms']),
@@ -324,6 +383,8 @@ class Candidate {
       predictionScore: _scoreValueOrNull(json['prediction_score']),
       compositeScore: _scoreValueOrNull(json['composite_score']),
       trajectory: _pointList(trajectoryValue),
+      abovePoint: _pointValue(json['above'] ?? overlay['above'] ?? evidence['above']),
+      belowPoint: _pointValue(json['below'] ?? overlay['below'] ?? evidence['below']),
       crossingPoint: _pointValue(crossingValue),
       predictedLandingPoint: _pointValue(predictionValue),
       reason: reasonValue as String? ?? evidence['reason'] as String?,
@@ -332,6 +393,33 @@ class Candidate {
         json['complete_crossing'] ?? evidence['complete_crossing'],
       ),
       rebound: _boolValue(json['rebound'] ?? evidence['rebound']),
+      lateralExit: _boolValue(json['lateral_exit'] ?? evidence['lateral_exit']),
+      postCrossingLateralRecovery: _boolValue(
+        json['post_crossing_lateral_recovery'] ??
+            evidence['post_crossing_lateral_recovery'],
+      ),
+      ballPersistence: _scoreValueOrNull(
+        json['ball_persistence'] ?? evidence['ball_persistence'],
+      ),
+      netSignalAvailable: _boolValue(
+        json['net_signal_available'] ?? evidence['net_signal_available'],
+      ),
+      netSupport: _boolValue(json['net_support'] ?? evidence['net_support']),
+      netNoMotion: _boolValue(json['net_no_motion'] ?? evidence['net_no_motion']),
+      netLowerPeak: _scoreValueOrNull(
+        json['net_lower_peak'] ?? evidence['net_lower_peak'],
+      ),
+      netBelowPeak: _scoreValueOrNull(
+        json['net_below_peak'] ?? evidence['net_below_peak'],
+      ),
+      autoExportEligible: _boolValue(
+        json['auto_export_eligible'] ?? evidence['auto_export_eligible'],
+      ),
+      decisionTimeMs: json['decision_time_ms'] is num
+          ? _intValue(json['decision_time_ms'])
+          : null,
+      algorithmVersion: json['algorithm_version'] as String? ??
+          evidence['algorithm_version'] as String?,
       evidenceSource:
           json['evidence_source'] as String? ??
           evidence['analysis_source'] as String?,
