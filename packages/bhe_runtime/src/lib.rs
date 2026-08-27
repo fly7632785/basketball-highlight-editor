@@ -115,6 +115,7 @@ pub struct Candidate {
     pub trajectory_score: f32,
     pub crossing_score: f32,
     pub net_motion_score: f32,
+    pub net_sequence_score: f32,
     /// Prediction score: how well the pre-crossing trajectory predicts
     /// a landing inside the rim corridor (0-1, higher = more likely).
     pub prediction_score: f32,
@@ -141,7 +142,7 @@ pub struct AnalysisResponse {
 pub struct FrameResponse {
     pub detections: Vec<Detection>,
     pub candidates: Vec<Candidate>,
-    pub processed_frames: usize,
+    pub processed_frames: u64,
 }
 
 pub struct RuntimeSession {
@@ -151,7 +152,7 @@ pub struct RuntimeSession {
     ball_points: Vec<(i64, f32, f32, f32)>,
     candidates: Vec<Candidate>,
     processed_frames: u64,
-    previous_net_signature: Option<(i64, Vec<f32>)>,
+    previous_net_signature: Option<(i64, [Vec<f32>; 3])>,
     /// Three-zone net motion history: (time_ms, upper, lower, below).
     /// Mirrors the desktop algorithm: a made basket activates the net's
     /// lower zone first, then the zone below it (ball hits net then drops).
@@ -208,7 +209,10 @@ impl RuntimeSession {
         if rgba.len() != expected {
             return Err(RuntimeError::InvalidRequest(format!(
                 "raw frame has {} bytes, expected {} ({}x{}x4)",
-                rgba.len(), expected, width, height
+                rgba.len(),
+                expected,
+                width,
+                height
             )));
         }
         let mut buffer = Vec::with_capacity(expected / 4 * 3);
@@ -217,13 +221,19 @@ impl RuntimeSession {
             buffer.push(chunk[1]); // G
             buffer.push(chunk[2]); // B
         }
-        let image = RgbImage::from_raw(width, height, buffer)
-            .ok_or_else(|| RuntimeError::InvalidRequest("raw frame dimensions are invalid".into()))?;
+        let image = RgbImage::from_raw(width, height, buffer).ok_or_else(|| {
+            RuntimeError::InvalidRequest("raw frame dimensions are invalid".into())
+        })?;
         self.push_image(time_ms, image)
     }
 
     fn push_image(&mut self, time_ms: i64, image: RgbImage) -> Result<FrameResponse, RuntimeError> {
-        let detections = detect_image(&mut self.session, &image, self.config.confidence_threshold, self.model_size)?;
+        let detections = detect_image(
+            &mut self.session,
+            &image,
+            self.config.confidence_threshold,
+            self.model_size,
+        )?;
         self.processed_frames += 1;
         self.update_net_motion(time_ms, &image);
         if let Some(ball) = detections
@@ -261,6 +271,11 @@ impl RuntimeSession {
             if dt <= 0 {
                 return;
             }
+            if dt > 1_200 {
+                self.ball_points.clear();
+                self.ball_points.push((time_ms, x, y, confidence));
+                return;
+            }
             let dx = x - previous.1;
             let dy = y - previous.2;
             let distance = (dx * dx + dy * dy).sqrt();
@@ -269,17 +284,10 @@ impl RuntimeSession {
             // 0.30 for 300ms gap, 0.55 for 500ms gap, etc.
             let gate = 0.12 + 0.55 * (dt as f32 / 1000.0);
             if distance > gate {
-                // Too far — this is a different object. Start a new chain
-                // only if the current chain has no recent crossing potential.
-                let has_recent_activity = self.ball_points.iter().any(|p| time_ms - p.0 < 2000);
-                if has_recent_activity {
-                    // Keep the old chain's last point as a bridge, replace rest
-                    let last = self.ball_points.last().copied();
-                    self.ball_points.clear();
-                    if let Some(l) = last {
-                        self.ball_points.push(l);
-                    }
-                }
+                // A spatial jump is a different detected object. Do not keep
+                // the old tail as a bridge: that fabricates a crossing across
+                // two unrelated ball tracks.
+                self.ball_points.clear();
                 self.ball_points.push((time_ms, x, y, confidence));
                 return;
             }
@@ -297,8 +305,19 @@ impl RuntimeSession {
     /// pushes through, drops below). Simultaneous activation suggests
     /// camera shake; reversed order (below before lower) is suspicious.
     fn update_net_motion(&mut self, time_ms: i64, image: &RgbImage) {
-        let roi = &self.config.net_roi;
-        let (upper, lower, below) = net_zone_motion(image, roi);
+        let signatures = net_zone_signatures(image, &self.config.net_roi);
+        let (upper, lower, below) = self
+            .previous_net_signature
+            .as_ref()
+            .map(|(_, previous)| {
+                (
+                    net_motion_score(&signatures[0], &previous[0]),
+                    net_motion_score(&signatures[1], &previous[1]),
+                    net_motion_score(&signatures[2], &previous[2]),
+                )
+            })
+            .unwrap_or((0.0, 0.0, 0.0));
+        let (upper, lower, below) = suppress_synchronized_net_motion(upper, lower, below);
         self.net_zone_history.push((time_ms, upper, lower, below));
 
         // Trim history to ±2s around the newest event.
@@ -319,16 +338,15 @@ impl RuntimeSession {
                 continue;
             }
             let (inside_score, sequence_score) = net_zone_scores(history, candidate.event_ms);
-            candidate.net_motion_score = candidate.net_motion_score.max(inside_score);
-            // Store sequence score in crossing_score if it's better evidence.
-            if sequence_score > 0.5 && candidate.crossing_score < 0.5 {
+            let combined_score = (0.7 * inside_score + 0.3 * sequence_score).clamp(0.0, 1.0);
+            candidate.net_motion_score = candidate.net_motion_score.max(combined_score);
+            candidate.net_sequence_score = candidate.net_sequence_score.max(sequence_score);
+            if sequence_score > 0.5 {
                 candidate.reason = format!("net_sequence:{sequence_score:.2}");
             }
         }
 
-        // Legacy whole-ROI signature for backward compat.
-        let signature = net_signature(image, roi);
-        self.previous_net_signature = Some((time_ms, signature));
+        self.previous_net_signature = Some((time_ms, signatures));
     }
 
     /// Detect rebound after a crossing: ball rises from deep below the rim
@@ -375,11 +393,7 @@ impl RuntimeSession {
 
     /// Resolve verdict from accumulated evidence (mirrors desktop).
     fn resolve_verdict(&mut self) {
-        let current_time = self
-            .ball_points
-            .last()
-            .map(|(t, _, _, _)| *t)
-            .unwrap_or(0);
+        let current_time = self.ball_points.last().map(|(t, _, _, _)| *t).unwrap_or(0);
 
         for candidate in &mut self.candidates {
             // Always update composite score with latest evidence.
@@ -441,7 +455,7 @@ impl RuntimeSession {
         // Fast-falling balls may have 2+ frames between the above and below
         // points; checking only the last pair misses crossings when tracking
         // continues past the rim.
-        for window in self.ball_points.windows(2) {
+        for (index, window) in self.ball_points.windows(2).enumerate() {
             let above = window[0];
             let below = window[1];
             let Some((crossing, crossing_x)) = crossing_at_rim(above, below, rim_y) else {
@@ -461,9 +475,12 @@ impl RuntimeSession {
                 continue;
             }
 
-            // Use a wider context for complete_crossing (up to 12 recent points).
-            let recent_start = self.ball_points.len().saturating_sub(12);
-            let recent = &self.ball_points[recent_start..];
+            // Keep the context anchored at this crossing. Looking at the
+            // track tail accidentally rejects an earlier valid crossing as
+            // soon as another post-rim point arrives.
+            let context_end = index + 2;
+            let recent_start = context_end.saturating_sub(12);
+            let recent = &self.ball_points[recent_start..context_end];
             if !complete_crossing(recent, rim_y, rim_left, rim_right) {
                 continue;
             }
@@ -497,8 +514,15 @@ impl RuntimeSession {
                 trajectory_score,
                 crossing_score,
                 net_motion_score: 0.0,
+                net_sequence_score: 0.0,
                 prediction_score: prediction,
-                composite_score: composite_score(trajectory_score, crossing_score, 0.0, prediction, false),
+                composite_score: composite_score(
+                    trajectory_score,
+                    crossing_score,
+                    0.0,
+                    prediction,
+                    false,
+                ),
                 trajectory,
                 crossing: EvidencePoint {
                     time_ms: event_ms,
@@ -555,6 +579,9 @@ fn complete_crossing(
     let above = points[points.len() - 2];
     let below = points[points.len() - 1];
     if below.0 <= above.0 || below.0 - above.0 > 1_000 {
+        return false;
+    }
+    if above.2 >= rim_y || below.2 < rim_y {
         return false;
     }
     if below.2 - above.2 < 0.012 {
@@ -633,6 +660,11 @@ fn validate_config(config: &RuntimeConfig) -> Result<(), RuntimeError> {
             "video duration must not be negative".into(),
         ));
     }
+    if config.model_size < 320 || config.model_size % 32 != 0 {
+        return Err(RuntimeError::InvalidRequest(
+            "model size must be a multiple of 32 and at least 320".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -642,44 +674,22 @@ fn clip_end_ms(event_ms: i64, after_ms: i64, duration_ms: Option<i64>) -> i64 {
         .unwrap_or(event_ms + after_ms)
 }
 
-/// Computes motion in the net's three zones (upper, lower, below).
-///
-/// The net ROI is divided vertically: top 1/3 = upper (rim area),
-/// middle 1/3 = lower (net body), bottom 1/3 = below (under the net).
-/// Returns motion deltas vs the previous frame for each zone.
-fn net_zone_motion(image: &RgbImage, roi: &Roi) -> (f32, f32, f32) {
-    let width = image.width() as f32;
-    let height = image.height() as f32;
-    let left = (roi.left.clamp(0.0, 1.0) * width).floor() as u32;
-    let top = (roi.top.clamp(0.0, 1.0) * height).floor() as u32;
-    let right = (roi.right.clamp(0.0, 1.0) * width).ceil().max(left + 1) as u32;
-    let bottom = (roi.bottom.clamp(0.0, 1.0) * height).ceil().max(top + 1) as u32;
-    let zone_height = (bottom.saturating_sub(top) / 3).max(1);
-
-    let zone_motion = |zone_top: u32, zone_bottom: u32| -> f32 {
-        let mut sum = 0.0f32;
-        let mut count = 0u32;
-        let step_x = (right.saturating_sub(left) / 4).max(1);
-        let step_y = (zone_bottom.saturating_sub(zone_top) / 3).max(1);
-        let mut y = zone_top;
-        while y < zone_bottom.min(image.height()) {
-            let mut x = left;
-            while x < right.min(image.width()) {
-                let pixel = image.get_pixel(x.min(image.width() - 1), y.min(image.height() - 1));
-                let luminance = (0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32) / 255.0;
-                sum += luminance;
-                count += 1;
-                x += step_x;
-            }
-            y += step_y;
-        }
-        if count == 0 { 0.0 } else { sum / count as f32 }
+/// Samples the upper, middle and lower thirds of the net separately. Motion
+/// is calculated against the previous frame's local contrast signature rather
+/// than the zone's absolute brightness.
+fn net_zone_signatures(image: &RgbImage, roi: &Roi) -> [Vec<f32>; 3] {
+    let height = roi.bottom - roi.top;
+    let zone = |index: f32| Roi {
+        left: roi.left,
+        right: roi.right,
+        top: roi.top + height * index / 3.0,
+        bottom: roi.top + height * (index + 1.0) / 3.0,
     };
-
-    let upper = zone_motion(top, top + zone_height);
-    let lower = zone_motion(top + zone_height, top + 2 * zone_height);
-    let below = zone_motion(top + 2 * zone_height, bottom);
-    (upper, lower, below)
+    [
+        net_signature(image, &zone(0.0)),
+        net_signature(image, &zone(1.0)),
+        net_signature(image, &zone(2.0)),
+    ]
 }
 
 /// Computes inside-motion score and sequence score from zone history.
@@ -702,8 +712,10 @@ fn net_zone_scores(history: &[(i64, f32, f32, f32)], event_ms: i64) -> (f32, f32
         return (0.0, 0.0);
     }
 
-    let baseline_lower = baseline.iter().map(|(_, _, l, _)| *l).sum::<f32>() / baseline.len() as f32;
-    let baseline_below = baseline.iter().map(|(_, _, _, b)| *b).sum::<f32>() / baseline.len() as f32;
+    let baseline_lower =
+        baseline.iter().map(|(_, _, l, _)| *l).sum::<f32>() / baseline.len() as f32;
+    let baseline_below =
+        baseline.iter().map(|(_, _, _, b)| *b).sum::<f32>() / baseline.len() as f32;
 
     // Inside motion: how much the lower zone exceeded baseline.
     let max_lower_delta = active
@@ -727,9 +739,9 @@ fn net_zone_scores(history: &[(i64, f32, f32, f32)], event_ms: i64) -> (f32, f32
             // Correct order: lower first, then below.
             1.0
         }
-        (Some(_), None) => 0.8, // Only lower activated, no below yet.
+        (Some(_), None) => 0.8,    // Only lower activated, no below yet.
         (Some(_), Some(_)) => 0.4, // Wrong order (below before lower).
-        (None, _) => 0.0, // No lower zone activation.
+        (None, _) => 0.0,          // No lower zone activation.
     };
 
     (inside_score, sequence_score)
@@ -746,6 +758,15 @@ fn net_motion_score(current: &[f32], previous: &[f32]) -> f32 {
         .sum::<f32>()
         / current.len() as f32;
     (difference / 0.15).clamp(0.0, 1.0)
+}
+
+fn suppress_synchronized_net_motion(upper: f32, lower: f32, below: f32) -> (f32, f32, f32) {
+    let minimum = upper.min(lower).min(below);
+    let maximum = upper.max(lower).max(below);
+    if minimum >= 0.18 && maximum - minimum <= 0.10 {
+        return (0.0, 0.0, 0.0);
+    }
+    (upper, lower, below)
 }
 
 fn init_onnx() -> Result<(), RuntimeError> {
@@ -820,7 +841,10 @@ fn decode_rgb(frame: &FrameInput) -> Result<RgbImage, RuntimeError> {
         .ok_or_else(|| RuntimeError::InvalidRequest("RGB frame dimensions are invalid".into()))
 }
 
-fn preprocess(image: &RgbImage, model_size: u32) -> Result<(Array4<f32>, f32, f32, f32), RuntimeError> {
+fn preprocess(
+    image: &RgbImage,
+    model_size: u32,
+) -> Result<(Array4<f32>, f32, f32, f32), RuntimeError> {
     let (width, height) = image.dimensions();
     if width == 0 || height == 0 {
         return Err(RuntimeError::InvalidRequest("empty frame".into()));
@@ -873,48 +897,191 @@ fn net_signature(image: &RgbImage, roi: &Roi) -> Vec<f32> {
             );
         }
     }
+    // Remove a uniform luminance shift before comparing frames. A camera's
+    // auto-exposure adjustment changes an entire zone at once, whereas net
+    // movement changes the sampled spatial pattern within that zone.
+    let mean = result.iter().sum::<f32>() / result.len().max(1) as f32;
+    for value in &mut result {
+        *value -= mean;
+    }
     result
 }
 
-/// Predicts whether the ball's pre-crossing trajectory will land inside
-/// the rim corridor. Extrapolates the last N points forward using simple
-/// linear regression on x vs y, then checks if the predicted landing_x
-/// falls within the rim at the rim_y plane.
-///
-/// Returns 0.0-1.0: 1.0 = predicted landing at rim center, 0.0 = far outside.
+/// Predicts the landing point from the clear, above-rim descent segment.
+/// Screen-space y is fit as a quadratic over time and x as a linear function
+/// of time, matching the desktop prediction model. A weak fit never becomes
+/// positive evidence for a candidate.
 fn prediction_score(
     points: &[(i64, f32, f32, f32)],
     rim_y: f32,
     rim_center_x: f32,
     rim_half_width: f32,
 ) -> f32 {
-    if points.len() < 3 {
+    let above: Vec<_> = points
+        .iter()
+        .copied()
+        .filter(|(_, _, y, _)| *y < rim_y - 0.01)
+        .collect();
+    if above.len() < 5 {
         return 0.0;
     }
-    // Use last 6 points (or fewer) for the extrapolation.
-    let recent = &points[points.len().saturating_sub(6)..];
-    // Find the last point above the rim plane.
-    let above_points: Vec<_> = recent.iter().filter(|(_, _, y, _)| *y < rim_y).collect();
-    if above_points.len() < 2 {
+    let apex = above
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| left.2.total_cmp(&right.2))
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    let descent = &above[apex..];
+    if descent.len() < 5 {
         return 0.0;
     }
-    // Linear regression: x = a*y + b
-    let n = above_points.len() as f32;
-    let sum_y: f32 = above_points.iter().map(|(_, _, y, _)| *y).sum();
-    let sum_x: f32 = above_points.iter().map(|(_, x, _, _)| *x).sum();
-    let sum_yy: f32 = above_points.iter().map(|(_, _, y, _)| y * y).sum();
-    let sum_xy: f32 = above_points.iter().map(|(_, x, y, _)| x * y).sum();
-    let denominator = n * sum_yy - sum_y * sum_y;
-    if denominator.abs() < 1e-10 {
-        return 0.0; // Vertical trajectory — can't extrapolate x.
+    let descent = &descent[descent.len().saturating_sub(8)..];
+    if descent
+        .last()
+        .is_none_or(|last| last.2 <= descent[0].2 + 0.004)
+        || descent.last().unwrap().0 - descent[0].0 < 120
+    {
+        return 0.0;
     }
-    let a = (n * sum_xy - sum_x * sum_y) / denominator;
-    let b = (sum_x - a * sum_y) / n;
-    // Predict x at rim_y.
-    let predicted_x = a * rim_y + b;
-    // Score based on distance from rim center (normalized by half-width).
+
+    let origin = descent.last().unwrap().0;
+    let samples: Vec<_> = descent
+        .iter()
+        .enumerate()
+        .map(|(index, point)| {
+            let progress = index as f32 / (descent.len() - 1) as f32;
+            (
+                (point.0 - origin) as f32 / 1_000.0,
+                point.1,
+                point.2,
+                (-0.7 + 0.7 * progress).exp(),
+            )
+        })
+        .collect();
+    let Some((a, b, c)) = fit_weighted_quadratic(&samples) else {
+        return 0.0;
+    };
+    let Some((x_slope, x_intercept)) = fit_weighted_linear(&samples) else {
+        return 0.0;
+    };
+    let mean_y = samples.iter().map(|(_, _, y, _)| *y).sum::<f32>() / samples.len() as f32;
+    let residual = samples
+        .iter()
+        .map(|(time, _, y, _)| {
+            let error = y - (a * time * time + b * time + c);
+            error * error
+        })
+        .sum::<f32>();
+    let total = samples
+        .iter()
+        .map(|(_, _, y, _)| {
+            let delta = y - mean_y;
+            delta * delta
+        })
+        .sum::<f32>();
+    let r2 = if total <= 1e-9 {
+        if residual <= 1e-9 {
+            1.0
+        } else {
+            0.0
+        }
+    } else {
+        (1.0 - residual / total).clamp(0.0, 1.0)
+    };
+    if r2 < 0.85 {
+        return 0.0;
+    }
+    let roots = if a.abs() < 1e-8 {
+        if b.abs() < 1e-8 {
+            return 0.0;
+        }
+        vec![(rim_y - c) / b]
+    } else {
+        let discriminant = b * b - 4.0 * a * (c - rim_y);
+        if discriminant < 0.0 {
+            return 0.0;
+        }
+        let root = discriminant.sqrt();
+        vec![(-b - root) / (2.0 * a), (-b + root) / (2.0 * a)]
+    };
+    let Some(time_to_rim) = roots
+        .into_iter()
+        .filter(|root| *root > 0.0)
+        .min_by(|left, right| left.total_cmp(right))
+    else {
+        return 0.0;
+    };
+    let predicted_x = x_slope * time_to_rim + x_intercept;
     let distance = (predicted_x - rim_center_x).abs();
-    (1.0 - distance / rim_half_width.max(0.01)).clamp(0.0, 1.0)
+    let landing_center = (1.0 - distance / rim_half_width.max(0.01)).clamp(0.0, 1.0);
+    (0.6 * r2 + 0.4 * landing_center).clamp(0.0, 1.0)
+}
+
+fn fit_weighted_linear(samples: &[(f32, f32, f32, f32)]) -> Option<(f32, f32)> {
+    let (mut sw, mut st, mut stt, mut sx, mut stx) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (time, x, _, weight) in samples {
+        sw += weight;
+        st += weight * time;
+        stt += weight * time * time;
+        sx += weight * x;
+        stx += weight * time * x;
+    }
+    let denominator = sw * stt - st * st;
+    if denominator.abs() < 1e-9 {
+        return None;
+    }
+    Some((
+        (sw * stx - st * sx) / denominator,
+        (sx * stt - st * stx) / denominator,
+    ))
+}
+
+fn fit_weighted_quadratic(samples: &[(f32, f32, f32, f32)]) -> Option<(f32, f32, f32)> {
+    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut sy0, mut sy1, mut sy2) =
+        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    for (time, _, y, weight) in samples {
+        let t2 = time * time;
+        s0 += weight;
+        s1 += weight * time;
+        s2 += weight * t2;
+        s3 += weight * t2 * time;
+        s4 += weight * t2 * t2;
+        sy0 += weight * y;
+        sy1 += weight * time * y;
+        sy2 += weight * t2 * y;
+    }
+    solve_3x3([[s4, s3, s2], [s3, s2, s1], [s2, s1, s0]], [sy2, sy1, sy0])
+}
+
+fn solve_3x3(mut matrix: [[f32; 3]; 3], mut vector: [f32; 3]) -> Option<(f32, f32, f32)> {
+    for pivot in 0..3 {
+        let row = (pivot..3).max_by(|left, right| {
+            matrix[*left][pivot]
+                .abs()
+                .total_cmp(&matrix[*right][pivot].abs())
+        })?;
+        if matrix[row][pivot].abs() < 1e-9 {
+            return None;
+        }
+        matrix.swap(pivot, row);
+        vector.swap(pivot, row);
+        let divisor = matrix[pivot][pivot];
+        for column in pivot..3 {
+            matrix[pivot][column] /= divisor;
+        }
+        vector[pivot] /= divisor;
+        for other in 0..3 {
+            if other == pivot {
+                continue;
+            }
+            let factor = matrix[other][pivot];
+            for column in pivot..3 {
+                matrix[other][column] -= factor * matrix[pivot][column];
+            }
+            vector[other] -= factor * vector[pivot];
+        }
+    }
+    Some((vector[0], vector[1], vector[2]))
 }
 
 /// Composite multi-signal score combining all evidence into a single
@@ -933,10 +1100,7 @@ fn composite_score(
     prediction: f32,
     rebound: bool,
 ) -> f32 {
-    let mut score = 0.25 * trajectory
-        + 0.20 * crossing
-        + 0.30 * net_motion
-        + 0.15 * prediction;
+    let mut score = 0.25 * trajectory + 0.20 * crossing + 0.30 * net_motion + 0.15 * prediction;
     if rebound {
         score -= 0.20;
     }
@@ -979,14 +1143,15 @@ fn decode_output(
     threshold: f32,
     model_size: u32,
 ) -> Vec<Detection> {
-    // Grid size = (model_size / stride)^2, default 640/8=80, 80*80=6400.
-    // For 1280: 1280/8=160, 160*160=25600. Fall back to 8400 if model
-    // size is unexpected (some YOLO variants use 6400+2000 for P5 head).
-    let grid = match model_size {
-        640 => 8_400,
-        1280 => 25_600,
-        _ => 8_400,
-    };
+    // YOLO's P3/P4/P5 heads use strides 8, 16 and 32. A 640 model has
+    // 80² + 40² + 20² = 8400 anchors; a 1280 model has 33600.
+    let grid = [8_u32, 16, 32]
+        .into_iter()
+        .map(|stride| {
+            let side = model_size / stride;
+            (side * side) as usize
+        })
+        .sum::<usize>();
     if values.len() < 6 * grid {
         return Vec::new();
     }
@@ -1226,6 +1391,122 @@ mod tests {
     }
 
     #[test]
+    fn net_motion_ignores_uniform_exposure_and_detects_local_pattern_change() {
+        let roi = Roi {
+            left: 0.0,
+            top: 0.0,
+            right: 1.0,
+            bottom: 1.0,
+        };
+        let dark = RgbImage::from_pixel(24, 24, image::Rgb([20, 20, 20]));
+        let bright = RgbImage::from_pixel(24, 24, image::Rgb([220, 220, 220]));
+        let dark_signature = net_zone_signatures(&dark, &roi);
+        let bright_signature = net_zone_signatures(&bright, &roi);
+        assert!(net_motion_score(&dark_signature[1], &bright_signature[1]) < 0.0001);
+
+        let mut changed = dark.clone();
+        for y in 8..16 {
+            for x in 0..12 {
+                changed.put_pixel(x, y, image::Rgb([240, 240, 240]));
+            }
+        }
+        let changed_signature = net_zone_signatures(&changed, &roi);
+        assert!(net_motion_score(&dark_signature[1], &changed_signature[1]) > 0.9);
+    }
+
+    #[test]
+    fn net_sequence_contributes_only_after_lower_zone_activation() {
+        let history = [
+            (-800, 0.0, 0.0, 0.0),
+            (-400, 0.0, 0.0, 0.0),
+            (0, 0.0, 0.10, 0.0),
+            (200, 0.0, 0.12, 0.10),
+        ];
+        let (inside, sequence) = net_zone_scores(&history, 0);
+        assert!(inside > 0.9);
+        assert_eq!(sequence, 1.0);
+    }
+
+    #[test]
+    fn synchronized_net_motion_is_suppressed_as_camera_shake() {
+        assert_eq!(
+            suppress_synchronized_net_motion(0.50, 0.47, 0.52),
+            (0.0, 0.0, 0.0),
+        );
+        assert_eq!(
+            suppress_synchronized_net_motion(0.04, 0.50, 0.08),
+            (0.04, 0.50, 0.08),
+        );
+    }
+
+    #[test]
+    fn prediction_accepts_clean_above_rim_descent() {
+        let points = [
+            (0, 0.50, 0.292, 0.9),
+            (100, 0.50, 0.338, 0.9),
+            (200, 0.50, 0.388, 0.9),
+            (300, 0.50, 0.442, 0.9),
+            (400, 0.50, 0.500, 0.9),
+        ];
+        assert!(prediction_score(&points, 0.60, 0.50, 0.10) > 0.9);
+    }
+
+    #[test]
+    fn prediction_rejects_non_descending_or_sparse_tracks() {
+        let flat = [
+            (0, 0.50, 0.30, 0.9),
+            (100, 0.50, 0.30, 0.9),
+            (200, 0.50, 0.30, 0.9),
+            (300, 0.50, 0.30, 0.9),
+            (400, 0.50, 0.30, 0.9),
+        ];
+        assert_eq!(prediction_score(&flat, 0.60, 0.50, 0.10), 0.0);
+        assert_eq!(prediction_score(&flat[..4], 0.60, 0.50, 0.10), 0.0);
+    }
+
+    #[test]
+    fn crossing_context_stays_at_the_crossing_pair_not_the_track_tail() {
+        let points = [
+            (0, 0.50, 0.30, 0.9),
+            (100, 0.50, 0.44, 0.9),
+            (200, 0.50, 0.56, 0.9),
+            (300, 0.70, 0.74, 0.9),
+        ];
+        assert!(complete_crossing(&points[..3], 0.50, 0.42, 0.58));
+        assert!(!complete_crossing(&points, 0.50, 0.42, 0.58));
+    }
+
+    #[test]
+    fn model_size_is_validated_before_model_loading() {
+        let result = create_session_json(
+            &serde_json::json!({
+                "model_path": "missing.onnx",
+                "hoop_roi": roi_json(),
+                "net_roi": roi_json(),
+                "model_size": 319,
+            })
+            .to_string(),
+        );
+        assert!(
+            matches!(result, Err(RuntimeError::InvalidRequest(message)) if message == "model size must be a multiple of 32 and at least 320")
+        );
+    }
+
+    #[test]
+    fn decode_output_uses_the_correct_1280_grid_size() {
+        const GRID: usize = 33_600;
+        let mut output = vec![0.0; 6 * GRID];
+        output[4 * GRID] = 0.9;
+        output[0] = 640.0;
+        output[GRID] = 640.0;
+        output[2 * GRID] = 100.0;
+        output[3 * GRID] = 100.0;
+        let detections = decode_output(&output, 1280, 1280, 1.0, 0.0, 0.0, 0.5, 1280);
+        assert_eq!(detections.len(), 1);
+        assert_eq!(detections[0].class_id, 0);
+    }
+
+    #[test]
     fn clip_end_is_bounded_by_video_duration() {
         assert_eq!(clip_end_ms(9_500, 3_000, Some(10_000)), 10_000);
         assert_eq!(clip_end_ms(9_500, 3_000, None), 12_500);
@@ -1329,11 +1610,12 @@ pub unsafe extern "C" fn bhe_runtime_push_frame_raw(
     rgba_data: *const u8,
     rgba_len: i64,
 ) -> *mut c_char {
-    if session.is_null() || rgba_data.is_null() {
+    if session.is_null() || rgba_data.is_null() || rgba_len < 0 {
         return std::ptr::null_mut();
     }
     let rgba = std::slice::from_raw_parts(rgba_data, rgba_len as usize);
-    let output = match (*session).push_frame_raw(time_ms, width, height, rgba)
+    let output = match (*session)
+        .push_frame_raw(time_ms, width, height, rgba)
         .and_then(|response| serde_json::to_string(&response).map_err(RuntimeError::from))
     {
         Ok(output) => output,

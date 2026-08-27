@@ -1646,6 +1646,28 @@ class ProjectNotifier extends Notifier<ProjectState> {
     }, successMessage: '片段范围已更新');
   }
 
+  Future<JsonMap?> updateClipRanges({
+    required List<String> candidateIds,
+    required int beforeMs,
+    required int afterMs,
+    bool overwriteManual = false,
+  }) async {
+    if (candidateIds.isEmpty) return null;
+    JsonMap? result;
+    await _runBusy(() async {
+      result = await ref
+          .read(projectSessionProvider)
+          .updateClipRanges(
+            candidateIds: candidateIds,
+            beforeMs: beforeMs,
+            afterMs: afterMs,
+            overwriteManual: overwriteManual,
+          );
+      await refreshCandidates();
+    }, successMessage: '已更新片段时长');
+    return result;
+  }
+
   Future<JsonMap?> createManualCandidate({
     required int startMs,
     required int endMs,

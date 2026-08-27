@@ -16,6 +16,19 @@ permissions:
   contents: read
 
 jobs:
+  runtime:
+    name: Rust runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust format check
+        run: cargo fmt --manifest-path packages/bhe_runtime/Cargo.toml --check
+      - name: Rust unit tests
+        run: cargo test --manifest-path packages/bhe_runtime/Cargo.toml --features dynamic-onnx
+      - name: Rust dynamic runtime compile check
+        run: cargo check --manifest-path packages/bhe_runtime/Cargo.toml --features dynamic-onnx
+
   desktop:
     runs-on: macos-latest
     steps:

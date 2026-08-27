@@ -708,6 +708,40 @@ class MobileAppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Applies an event-centered clip range to all or selected candidates.
+  /// Manually edited ranges are preserved unless explicitly overwritten.
+  int applyBatchClipRange({
+    required int beforeSeconds,
+    required int afterSeconds,
+    Iterable<String>? candidateIds,
+    bool overwriteManual = false,
+  }) {
+    final video = project.video;
+    if (video == null) return 0;
+    final ids = candidateIds?.toSet();
+    var updated = 0;
+    final beforeMs = beforeSeconds.clamp(0, 3600) * 1000;
+    final afterMs = afterSeconds.clamp(0, 3600) * 1000;
+    final candidates = project.candidates.map((candidate) {
+      if (ids != null && !ids.contains(candidate.id)) return candidate;
+      if (candidate.rangeEdited && !overwriteManual) return candidate;
+      final start = (candidate.eventMs - beforeMs)
+          .clamp(0, video.durationMs)
+          .toInt();
+      final end = (candidate.eventMs + afterMs)
+          .clamp(0, video.durationMs)
+          .toInt();
+      if (end <= start) return candidate;
+      updated++;
+      return candidate.copyWith(startMs: start, endMs: end, rangeEdited: false);
+    }).toList();
+    if (updated == 0) return 0;
+    project = project.copyWith(candidates: candidates);
+    unawaited(_queueSave());
+    notifyListeners();
+    return updated;
+  }
+
   void updateCandidateNote(String id, String? note) {
     project = project.copyWith(
       candidates: project.candidates

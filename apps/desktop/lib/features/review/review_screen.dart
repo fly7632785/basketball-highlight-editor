@@ -174,6 +174,139 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     if (mounted) setState(() => _selectedForBatch.clear());
   }
 
+  Future<void> _showBatchRangeDialog(
+    BuildContext context,
+    ProjectNotifier notifier,
+    List<Map<String, dynamic>> allCandidates,
+  ) async {
+    if (allCandidates.isEmpty) return;
+    final beforeController = TextEditingController(text: '6');
+    final afterController = TextEditingController(text: '3');
+    var overwriteManual = false;
+    var applyToSelected = _selectedForBatch.isNotEmpty;
+    final result =
+        await showDialog<
+          ({int before, int after, bool overwrite, bool selected})
+        >(
+          context: context,
+          builder: (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: const Text('批量设置片段时长'),
+              content: SizedBox(
+                width: 380,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('进球前后时间会以每个候选的进球时刻为中心计算。'),
+                    const SizedBox(height: 16),
+                    if (_selectedForBatch.isNotEmpty)
+                      DropdownButtonFormField<bool>(
+                        key: ValueKey(applyToSelected),
+                        initialValue: applyToSelected,
+                        decoration: const InputDecoration(labelText: '应用范围'),
+                        items: [
+                          DropdownMenuItem(
+                            value: false,
+                            child: Text('全部候选 · ${allCandidates.length} 个'),
+                          ),
+                          DropdownMenuItem(
+                            value: true,
+                            child: Text(
+                              '已勾选候选 · ${_selectedForBatch.length} 个',
+                            ),
+                          ),
+                        ],
+                        onChanged: (value) => setDialogState(
+                          () => applyToSelected = value ?? false,
+                        ),
+                      ),
+                    if (_selectedForBatch.isNotEmpty) const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const SizedBox(width: 72, child: Text('进球前')),
+                        Expanded(
+                          child: TextField(
+                            controller: beforeController,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(suffixText: '秒'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        const SizedBox(width: 72, child: Text('进球后')),
+                        Expanded(
+                          child: TextField(
+                            controller: afterController,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(suffixText: '秒'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: overwriteManual,
+                      onChanged: (value) => setDialogState(
+                        () => overwriteManual = value ?? false,
+                      ),
+                      title: const Text('覆盖手动调整过的片段'),
+                      subtitle: const Text('关闭时自动保留手动调整的范围'),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final before = int.tryParse(beforeController.text.trim());
+                    final after = int.tryParse(afterController.text.trim());
+                    if (before == null ||
+                        after == null ||
+                        before < 0 ||
+                        after < 0) {
+                      return;
+                    }
+                    Navigator.pop(dialogContext, (
+                      before: before,
+                      after: after,
+                      overwrite: overwriteManual,
+                      selected: applyToSelected,
+                    ));
+                  },
+                  child: Text(
+                    '应用到 ${applyToSelected ? _selectedForBatch.length : allCandidates.length} 个片段',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+    beforeController.dispose();
+    afterController.dispose();
+    if (result == null || !mounted) return;
+    final ids =
+        (result.selected
+                ? _selectedForBatch
+                : allCandidates.map(
+                    (candidate) => candidate['id']?.toString() ?? '',
+                  ))
+            .where((id) => id.isNotEmpty)
+            .toList();
+    await notifier.updateClipRanges(
+      candidateIds: ids,
+      beforeMs: result.before * 1000,
+      afterMs: result.after * 1000,
+      overwriteManual: result.overwrite,
+    );
+  }
+
   Future<void> _createPlayerForBatch(ProjectNotifier notifier) async {
     if (_selectedForBatch.isEmpty) return;
     final name = await _promptPlayerName();
@@ -572,6 +705,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     onCreatePlayerForBatch: () =>
                         _createPlayerForBatch(notifier),
                     onDeletePlayer: _deletePlayer,
+                    onBatchRange: () =>
+                        _showBatchRangeDialog(context, notifier, allCandidates),
                     onSetStatus: (id, status) =>
                         _setCandidateStatus(id, status),
                     onLoadCover: state.video == null
@@ -2928,7 +3063,10 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
       _playingSubscription = player.stream.playing.listen((playing) {
         // 防自动播放闸:未经用户请求的播放立即暂停,避免"界面没在
         // 播放却有声音"。
-        if (playing && !_playbackRequested && mounted && identical(player, _player)) {
+        if (playing &&
+            !_playbackRequested &&
+            mounted &&
+            identical(player, _player)) {
           unawaited(player.pause());
         }
       });
@@ -3413,6 +3551,7 @@ class _CandidatePanel extends StatelessWidget {
     required this.onSetPlayerForBatch,
     required this.onCreatePlayerForBatch,
     required this.onDeletePlayer,
+    required this.onBatchRange,
     required this.onSetStatus,
     required this.onLoadCover,
     required this.onFilterChanged,
@@ -3451,6 +3590,7 @@ class _CandidatePanel extends StatelessWidget {
   final ValueChanged<String?> onSetPlayerForBatch;
   final VoidCallback onCreatePlayerForBatch;
   final Future<void> Function(String, String) onDeletePlayer;
+  final VoidCallback onBatchRange;
   final Future<void> Function(String, String) onSetStatus;
   final Future<String?> Function(String, int)? onLoadCover;
   final ValueChanged<String> onFilterChanged;
@@ -3559,6 +3699,12 @@ class _CandidatePanel extends StatelessWidget {
                       visualDensity: VisualDensity.compact,
                     ),
                   ],
+                  IconButton(
+                    tooltip: '批量设置片段时长',
+                    onPressed: busy ? null : onBatchRange,
+                    icon: const Icon(Icons.schedule_outlined, size: 18),
+                    visualDensity: VisualDensity.compact,
+                  ),
                   IconButton(
                     tooltip: batchMode ? '退出批量选择' : '批量选择候选',
                     onPressed: busy ? null : onToggleBatch,

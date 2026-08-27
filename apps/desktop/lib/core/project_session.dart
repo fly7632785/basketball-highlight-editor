@@ -114,6 +114,21 @@ class ProjectSessionScope {
     );
   }
 
+  Future<JsonMap> updateClipRanges({
+    required List<String> candidateIds,
+    required int beforeMs,
+    required int afterMs,
+    bool overwriteManual = false,
+  }) {
+    return engine.updateClipRanges(
+      projectRoot: projectRoot,
+      candidateIds: candidateIds,
+      beforeMs: beforeMs,
+      afterMs: afterMs,
+      overwriteManual: overwriteManual,
+    );
+  }
+
   Future<List<JsonMap>> getActiveJobs({String jobType = 'analysis'}) async {
     final payload = await engine.getActiveJobs(
       projectRoot: projectRoot,
@@ -526,6 +541,21 @@ class ProjectSession {
       projectRoot: _requireProjectRoot(),
       candidateIds: candidateIds,
       playerId: playerId,
+    );
+  }
+
+  Future<JsonMap> updateClipRanges({
+    required List<String> candidateIds,
+    required int beforeMs,
+    required int afterMs,
+    bool overwriteManual = false,
+  }) {
+    return engine.updateClipRanges(
+      projectRoot: _requireProjectRoot(),
+      candidateIds: candidateIds,
+      beforeMs: beforeMs,
+      afterMs: afterMs,
+      overwriteManual: overwriteManual,
     );
   }
 

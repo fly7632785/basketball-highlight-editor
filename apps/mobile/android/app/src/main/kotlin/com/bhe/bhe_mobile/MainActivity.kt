@@ -16,7 +16,6 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -24,7 +23,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
-import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -106,6 +104,7 @@ class MainActivity : FlutterActivity() {
         analysisCancelled.set(false)
         analysisThread = Thread {
             var session = 0L
+            var framePipeline: FramePipeline? = null
             val retriever = MediaMetadataRetriever()
             try {
                 Log.i(tag, "analysis thread started video=$videoPath model=$modelPath range=${startMs}..${endMs}ms fps=$fps")
@@ -136,59 +135,99 @@ class MainActivity : FlutterActivity() {
                 }
                 Log.i(tag, "initializeOnnx success")
                 Log.i(tag, "createSession start modelExists=${File(modelPath).isFile} modelBytes=${File(modelPath).length()}")
-                emitProgress("prepareProxy", 0.06, 0, totalFrames, "正在加载本地模型（最多 60 秒）")
+                emitProgress("prepareProxy", 0.06, 0, totalFrames, "正在加载本地模型")
                 val runtimeExecutor = Executors.newSingleThreadExecutor()
                 val runtimeFuture = runtimeExecutor.submit<Long> {
                     NativeRuntime.createSession(config.toString())
                 }
-                session = try {
-                    runtimeFuture.get(60, TimeUnit.SECONDS)
-                } catch (_: TimeoutException) {
-                    runtimeFuture.cancel(true)
-                    throw IllegalStateException("本地模型加载超过 60 秒，请检查 ONNX Runtime 或重新安装应用")
+                var waitedSeconds = 0
+                try {
+                    while (true) {
+                        try {
+                            session = runtimeFuture.get(1, TimeUnit.SECONDS)
+                            break
+                        } catch (_: TimeoutException) {
+                            waitedSeconds++
+                            if (waitedSeconds % 5 == 0) {
+                                emitProgress(
+                                    "prepareProxy",
+                                    0.06,
+                                    0,
+                                    totalFrames,
+                                    if (analysisCancelled.get()) "正在停止模型加载" else "正在加载本地模型（已等待 ${waitedSeconds} 秒）",
+                                )
+                            }
+                        }
+                    }
                 } finally {
-                    runtimeExecutor.shutdownNow()
+                    runtimeExecutor.shutdown()
+                }
+                if (analysisCancelled.get()) {
+                    if (session != 0L) {
+                        NativeRuntime.freeSession(session)
+                        session = 0L
+                    }
+                    throw InterruptedException("分析已取消")
                 }
                 Log.i(tag, "createSession returned session=$session")
                 if (session == 0L) throw IllegalStateException("Rust Runtime 无法加载模型或 ONNX Runtime")
                 emitProgress("prepareProxy", 0.05, 0, totalFrames, "正在准备本地分析")
 
-                var processed = 0
                 var lastResponse = JSONObject().put("candidates", JSONArray())
-                var timeMs = startMs.toLong()
-                while (timeMs < actualEndMs && !analysisCancelled.get()) {
-                    if (processed == 0) Log.i(tag, "first frame decode start timeMs=$timeMs")
-                    val bitmap = frameAt(retriever, timeMs * 1000L)
-                    if (bitmap != null) {
-                        // Fast path: extract raw RGBA pixels and send directly
-                        // via JNI. Eliminates JPEG compress + base64 encode
-                        // (+33% size) + JSON serialize + JPEG decode in Rust.
-                        // Old path: bitmap → JPEG(85) → base64 → JSON → C string
-                        //                           → Rust JSON parse → base64 decode
-                        //                           → JPEG decode → RGB
-                        // New path: bitmap → IntArray(pixels) → ByteArray(RGBA)
-                        //                           → JNI → Rust RGBA→RGB directly
+                val timestampsUs = ArrayList<Long>(totalFrames)
+                var targetMs = startMs.toLong()
+                while (targetMs < actualEndMs) {
+                    timestampsUs.add(targetMs * 1000L)
+                    targetMs += intervalMs
+                }
+                var processed = 0
+                var inferenceNanos = 0L
+                val frameProcessingStartedAt = System.nanoTime()
+                val pipeline = FramePipeline(videoPath).also {
+                    it.prepare(timestampsUs.first())
+                }
+                framePipeline = pipeline
+                pipeline.decodeFrames(
+                    timestampsUs = timestampsUs,
+                    shouldCancel = { analysisCancelled.get() },
+                ) { bitmap, timestampUs ->
+                    val timeMs = timestampUs / 1000L
+                    val width = bitmap.width
+                    val height = bitmap.height
+                    try {
                         val rgba = bitmapToRgba(bitmap)
-                        val width = bitmap.width
-                        val height = bitmap.height
-                        bitmap.recycle()
+                        val inferenceStartedAt = System.nanoTime()
                         val responseJson = NativeRuntime.pushFrameRaw(
                             session, timeMs, width, height, rgba
                         )
+                        inferenceNanos += System.nanoTime() - inferenceStartedAt
                         lastResponse = JSONObject(responseJson)
                         lastResponse.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
-                        if (processed == 0) Log.i(tag, "first frame inference success (raw path ${width}x${height})")
+                    } finally {
+                        bitmap.recycle()
                     }
                     processed++
+                    if (processed == 1) Log.i(tag, "first frame inference success (raw path ${width}x${height})")
                     if (processed % 30 == 0) Log.i(tag, "frame progress=$processed/$totalFrames timeMs=$timeMs")
                     if (processed == 1 || processed % 3 == 0) {
                         emitProgress("refineCandidates", 0.05 + (processed.toDouble() / totalFrames * 0.90), processed, totalFrames, "正在分析视频帧")
                     }
-                    timeMs += intervalMs
                 }
                 if (analysisCancelled.get()) throw InterruptedException("分析已取消")
+                if (processed == 0) throw IllegalStateException("无法从视频解码分析帧")
                 emitProgress("persistCandidates", 0.98, processed, totalFrames, "正在写入分析结果")
                 val response = jsonObjectToMap(lastResponse)
+                val processingNanos = System.nanoTime() - frameProcessingStartedAt
+                val processingMs = TimeUnit.NANOSECONDS.toMillis(processingNanos)
+                val inferenceMs = TimeUnit.NANOSECONDS.toMillis(inferenceNanos)
+                val decodeMs = (processingMs - inferenceMs).coerceAtLeast(0)
+                val effectiveFps = processed * 1_000.0 / processingMs.coerceAtLeast(1)
+                Log.i(
+                    tag,
+                    "analysis metrics: frames=$processed/$totalFrames totalMs=$processingMs " +
+                        "decodeMs=$decodeMs inferenceMs=$inferenceMs effectiveFps=${"%.2f".format(java.util.Locale.US, effectiveFps)} " +
+                        "candidates=${lastResponse.optJSONArray(\"candidates\")?.length() ?: 0}",
+                )
                 Log.i(tag, "analysis completed processed=$processed candidates=${lastResponse.optJSONArray("candidates")?.length() ?: 0}")
                 mainHandler.post { result.success(response) }
             } catch (_: InterruptedException) {
@@ -199,6 +238,7 @@ class MainActivity : FlutterActivity() {
                 mainHandler.post { result.error("ANALYSIS_FAILED", error.message ?: "移动端分析失败", null) }
             } finally {
                 if (session != 0L) NativeRuntime.freeSession(session)
+                framePipeline?.release()
                 retriever.release()
                 Log.i(tag, "analysis thread finished")
                 analysisThread = null
@@ -226,25 +266,6 @@ class MainActivity : FlutterActivity() {
         }
         return rgba
     }
-
-    // Kept for backward compatibility / fallback path.
-    private fun bitmapToFrame(bitmap: Bitmap, timeMs: Long): String {
-        val bytes = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, bytes)
-        return JSONObject()
-            .put("time_ms", timeMs)
-            .put("width", bitmap.width)
-            .put("height", bitmap.height)
-            .put("image_base64", Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP))
-            .toString()
-    }
-
-    private fun frameAt(retriever: MediaMetadataRetriever, timeUs: Long): Bitmap? =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST, 960, 960)
-        } else {
-            retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
-        }
 
     private fun emitProgress(stage: String, progress: Double, processed: Int, total: Int, message: String) {
         mainHandler.post {

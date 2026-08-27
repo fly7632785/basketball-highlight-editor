@@ -147,7 +147,7 @@ import ImageIO
       data: nil, width: width, height: height,
       bitsPerComponent: 8, bytesPerRow: bytesPerRow,
       space: colorSpace,
-      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue // RGBA
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
     )
     guard let context else {
       throw NSError(domain: "BHERuntime", code: 4, userInfo: [NSLocalizedDescriptionKey: "无法创建图像上下文"])

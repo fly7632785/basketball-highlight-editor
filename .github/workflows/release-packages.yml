@@ -300,6 +300,10 @@ jobs:
           flutter build apk --release \
             --build-name="$version" \
             --build-number="${GITHUB_RUN_NUMBER}"
+          unzip -p build/app/outputs/flutter-apk/app-release.apk \
+            lib/arm64-v8a/libbhe_runtime_jni.so > "$RUNNER_TEMP/libbhe_runtime_jni.so"
+          readelf --dyn-syms --wide "$RUNNER_TEMP/libbhe_runtime_jni.so" \
+            | grep -q 'Java_com_bhe_bhe_1mobile_NativeRuntime_pushFrameRaw'
           mkdir -p "$GITHUB_WORKSPACE/dist"
           cp build/app/outputs/flutter-apk/app-release.apk \
             "$GITHUB_WORKSPACE/dist/BHE-android-arm64-v8a-v${version}-debug-signed.apk"

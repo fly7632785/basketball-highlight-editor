@@ -1011,6 +1011,57 @@ class ProjectStore:
                 (start_ms, end_ms, now_iso(), candidate_id),
             )
 
+    def update_clip_ranges(
+        self,
+        candidate_ids: list[str],
+        before_ms: int,
+        after_ms: int,
+        overwrite_manual: bool = False,
+    ) -> Dict[str, int]:
+        """Apply an event-centered range to candidates in one transaction."""
+        if before_ms < 0 or after_ms < 0:
+            raise ValueError("INVALID_CLIP_RANGE")
+        ids = list(dict.fromkeys(str(item) for item in candidate_ids if str(item)))
+        if not ids:
+            return {"updated": 0, "skipped_manual": 0, "total": 0}
+        placeholders = ",".join("?" for _ in ids)
+        now = now_iso()
+        updated = 0
+        skipped_manual = 0
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT c.id, c.event_time_ms, c.default_start_ms, c.default_end_ms,
+                       c.review_start_ms, c.review_end_ms, v.duration_ms
+                FROM candidates c
+                JOIN videos v ON v.id = c.video_id
+                WHERE c.id IN ({placeholders})
+                """,
+                ids,
+            ).fetchall()
+            if len(rows) != len(ids):
+                raise LookupError("CANDIDATE_NOT_FOUND")
+            for row in rows:
+                manually_edited = (
+                    int(row["review_start_ms"]) != int(row["default_start_ms"])
+                    or int(row["review_end_ms"]) != int(row["default_end_ms"])
+                )
+                if manually_edited and not overwrite_manual:
+                    skipped_manual += 1
+                    continue
+                start = max(0, int(row["event_time_ms"]) - before_ms)
+                end = int(row["event_time_ms"]) + after_ms
+                if row["duration_ms"] is not None:
+                    end = min(end, int(row["duration_ms"]))
+                if end <= start:
+                    raise ValueError("INVALID_CLIP_RANGE")
+                connection.execute(
+                    "UPDATE candidates SET review_start_ms = ?, review_end_ms = ?, updated_at = ? WHERE id = ?",
+                    (start, end, now, row["id"]),
+                )
+                updated += 1
+        return {"updated": updated, "skipped_manual": skipped_manual, "total": len(rows)}
+
     def create_job(self, project_id: str, video_id: str | None, job_type: str, checkpoint: Dict[str, Any] | None = None) -> Dict[str, Any]:
         job_id = new_id("job")
         timestamp = now_iso()

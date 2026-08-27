@@ -80,6 +80,7 @@
 | `review_candidate` | 写入确认 / 排除 / 暂缓状态、原因和备注，并结算审核耗时 |
 | `list_review_history` | 查询候选的审核操作历史 |
 | `update_clip_range` | 修改片段起止时间 |
+| `update_clip_ranges` | 按进球前后秒数批量修改候选片段范围，可保留或覆盖手动调整 |
 | `start_export` | 异步导出所有未排除的候选，返回可由 `get_job` 查询的任务 |
 | `retry_export` | 使用上次导出参数重新启动失败或取消的导出任务 |
 | `list_exports` | 查询项目最近的导出记录和耗时统计 |
@@ -254,6 +255,8 @@ JOB_CANCELLED
 
 `create_manual_candidate` 请求 payload 为 `{ "project_root": "...", "video_id": "...", "start_ms": 12000, "end_ms": 21000, "event_time_ms": 16000 }`。`event_time_ms` 可省略，省略时取片段中点；手动候选直接写入当前候选列表，默认保留。重新分析时会保留手动候选，不被新批次替换。
 
+`update_clip_ranges` 请求 payload 为 `{ "project_root": "...", "candidate_ids": ["candidate-1"], "before_ms": 6000, "after_ms": 3000, "overwrite_manual": false }`。服务端按每个候选的 `event_time_ms` 计算范围并裁剪到视频边界；默认保留已手动调整的候选，响应返回 `updated`、`skipped_manual` 和 `total`。
+
 `get_statistics` 的 `statistics` 对象包含候选数、待审核数、已审核数、确认数、排除数、
 `confirmation_rate`、`avg_review_duration_ms`、`reason_distribution` 和
 `conflict_count`；统计字段缺失时客户端应按 0 或空集合降级。
@@ -284,4 +287,4 @@ JOB_CANCELLED
 
 安全边界：`roots` 必须由调用方显式提供；Engine 只检查每个 root 自身及其一级子目录中的 `project.db`，不递归扫描用户目录，也不跟随一级子目录中的符号链接。结果按项目数据库最近修改时间倒序排列。
 
-当前已可运行的最小闭环命令：`hello`、`create_project`、`update_project_settings`、`open_project`、`delete_project`、`list_recent_projects`、`inspect_video`、`link_video`、`relink_video`、`extract_preview`、`save_roi`、`start_analysis`、`retry_analysis`、`cancel_job`、`get_job`、`get_active_jobs`、`get_latest_job`、`list_candidates`、`create_manual_candidate`、`delete_player`、`start_review`、`review_candidate`、`list_review_history`、`update_clip_range`、`start_export`、`retry_export`、`get_statistics`、`set_telemetry_consent`、`cleanup_artifacts`。
+当前已可运行的最小闭环命令：`hello`、`create_project`、`update_project_settings`、`open_project`、`delete_project`、`list_recent_projects`、`inspect_video`、`link_video`、`relink_video`、`extract_preview`、`save_roi`、`start_analysis`、`retry_analysis`、`cancel_job`、`get_job`、`get_active_jobs`、`get_latest_job`、`list_candidates`、`create_manual_candidate`、`delete_player`、`start_review`、`review_candidate`、`list_review_history`、`update_clip_range`、`update_clip_ranges`、`start_export`、`retry_export`、`get_statistics`、`set_telemetry_consent`、`cleanup_artifacts`。

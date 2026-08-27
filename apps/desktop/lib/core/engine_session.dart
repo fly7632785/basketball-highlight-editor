@@ -466,6 +466,22 @@ class EngineSession {
     });
   }
 
+  Future<JsonMap> updateClipRanges({
+    required String projectRoot,
+    required List<String> candidateIds,
+    required int beforeMs,
+    required int afterMs,
+    bool overwriteManual = false,
+  }) {
+    return client.request('update_clip_ranges', <String, dynamic>{
+      'project_root': projectRoot,
+      'candidate_ids': candidateIds,
+      'before_ms': beforeMs,
+      'after_ms': afterMs,
+      'overwrite_manual': overwriteManual,
+    });
+  }
+
   Future<JsonMap> startExport({
     required String projectRoot,
     required String videoId,

@@ -124,6 +124,7 @@ class EngineService:
             "review_candidate": self.review_candidate,
             "list_review_history": self.list_review_history,
             "update_clip_range": self.update_clip_range,
+            "update_clip_ranges": self.update_clip_ranges,
             "start_export": self.start_export,
             "list_exports": self.list_exports,
             "get_statistics": self.get_statistics,
@@ -1875,6 +1876,23 @@ class EngineService:
         except (ValueError, LookupError) as exc:
             raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
         return {"updated": True}
+
+    def update_clip_ranges(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            candidate_ids = payload["candidate_ids"]
+            if not isinstance(candidate_ids, list):
+                raise ValueError("INVALID_CANDIDATE_IDS")
+            result = self._require_store(payload).update_clip_ranges(
+                [str(item) for item in candidate_ids],
+                int(payload["before_ms"]),
+                int(payload["after_ms"]),
+                bool(payload.get("overwrite_manual", False)),
+            )
+        except KeyError as exc:
+            raise ProtocolError("INVALID_REQUEST", f"缺少字段: {exc.args[0]}") from exc
+        except (TypeError, ValueError, LookupError) as exc:
+            raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
+        return result
 
     def _execute_export(
         self,

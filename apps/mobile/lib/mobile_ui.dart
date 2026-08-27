@@ -1322,6 +1322,74 @@ class _ReviewViewState extends State<_ReviewView> {
     });
   }
 
+  Future<void> _showBatchRangeSheet(BuildContext context) async {
+    if (candidates.isEmpty) return;
+    final current = state.project.settings.clip;
+    var before = current.beforeSeconds.toDouble();
+    var after = current.afterSeconds.toDouble();
+    var overwriteManual = false;
+    final manualCount = candidates
+        .where((candidate) => candidate.rangeEdited)
+        .length;
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => _SheetFrame(
+          title: '批量设置片段时长',
+          child: Column(
+            children: [
+              Text('全部 ${candidates.length} 个候选片段'),
+              const SizedBox(height: 8),
+              _BatchSecondsSlider(
+                label: '进球前',
+                value: before,
+                onChanged: (value) => setSheetState(() => before = value),
+              ),
+              _BatchSecondsSlider(
+                label: '进球后',
+                value: after,
+                onChanged: (value) => setSheetState(() => after = value),
+              ),
+              Text(
+                overwriteManual
+                    ? '将覆盖全部 ${candidates.length} 个片段，其中 $manualCount 个曾手动调整。'
+                    : '将更新 ${candidates.length - manualCount} 个片段，保留 $manualCount 个手动调整片段。',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 4),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: overwriteManual,
+                onChanged: (value) =>
+                    setSheetState(() => overwriteManual = value ?? false),
+                title: const Text('覆盖手动调整过的片段'),
+                subtitle: const Text('关闭时会保留手动调整的范围'),
+              ),
+              FilledButton(
+                onPressed: before.round() == 0 && after.round() == 0
+                    ? null
+                    : () => Navigator.pop(context, true),
+                child: Text(
+                  '应用到 ${overwriteManual ? candidates.length : candidates.length - manualCount} 个片段',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (result == true && mounted) {
+      final updated = state.applyBatchClipRange(
+        beforeSeconds: before.round(),
+        afterSeconds: after.round(),
+        overwriteManual: overwriteManual,
+      );
+      if (updated > 0) setState(() {});
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final candidate = selected;
@@ -1356,6 +1424,7 @@ class _ReviewViewState extends State<_ReviewView> {
                     onSelect: _select,
                     onAdd: () => _addManualCandidate(context),
                     onShortcuts: () => _showShortcuts(context),
+                    onBatchRange: () => _showBatchRangeSheet(context),
                   ),
                 ),
                 Expanded(
@@ -2085,6 +2154,7 @@ class _CandidateRail extends StatelessWidget {
     required this.onSelect,
     required this.onAdd,
     required this.onShortcuts,
+    required this.onBatchRange,
   });
   final ScrollController controller;
   final List<GlobalKey> itemKeys;
@@ -2093,6 +2163,7 @@ class _CandidateRail extends StatelessWidget {
   final ValueChanged<int> onSelect;
   final VoidCallback onAdd;
   final VoidCallback onShortcuts;
+  final VoidCallback onBatchRange;
 
   @override
   Widget build(BuildContext context) => ColoredBox(
@@ -2119,6 +2190,15 @@ class _CandidateRail extends StatelessWidget {
                 padding: EdgeInsets.zero,
               ),
               const Spacer(),
+              TextButton.icon(
+                onPressed: onBatchRange,
+                icon: const Icon(LucideIcons.clock3, size: 16),
+                label: const Text('时长'),
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(44, 34),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+              ),
               TextButton.icon(
                 onPressed: onAdd,
                 icon: const Icon(LucideIcons.plus, size: 16),
@@ -2215,6 +2295,35 @@ class _CandidateRail extends StatelessWidget {
         ),
       ],
     ),
+  );
+}
+
+class _BatchSecondsSlider extends StatelessWidget {
+  const _BatchSecondsSlider({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      SizedBox(width: 56, child: Text(label)),
+      Expanded(
+        child: Slider(
+          min: 0,
+          max: 15,
+          divisions: 15,
+          value: value,
+          onChanged: onChanged,
+        ),
+      ),
+      SizedBox(width: 44, child: Text('${value.round()} 秒')),
+    ],
   );
 }
 

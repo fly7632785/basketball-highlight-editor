@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <cstdlib>
 #include <android/log.h>
+#include <cstdint>
 
 #define BHE_LOGI(...) __android_log_print(ANDROID_LOG_INFO, "BHE-NativeRuntime", __VA_ARGS__)
 #define BHE_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "BHE-NativeRuntime", __VA_ARGS__)
@@ -9,6 +10,14 @@ extern "C" {
 void* bhe_runtime_create_session(const char* config);
 bool bhe_runtime_initialize_onnx(const char* library_path);
 char* bhe_runtime_push_frame(void* session, const char* frame);
+char* bhe_runtime_push_frame_raw(
+    void* session,
+    int64_t time_ms,
+    uint32_t width,
+    uint32_t height,
+    const uint8_t* rgba_data,
+    int64_t rgba_len
+);
 void bhe_runtime_free_session(void* session);
 void bhe_runtime_free_string(char* value);
 }
@@ -49,6 +58,48 @@ Java_com_bhe_bhe_1mobile_NativeRuntime_pushFrame(JNIEnv* env, jclass, jlong sess
     env->ReleaseStringUTFChars(frame, value);
     if (output == nullptr) {
         BHE_LOGE("pushFrame native returned null");
+        return env->NewStringUTF("{\"error\":\"runtime returned no response\"}");
+    }
+    jstring result = env->NewStringUTF(output);
+    bhe_runtime_free_string(output);
+    return result;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_bhe_bhe_1mobile_NativeRuntime_pushFrameRaw(
+    JNIEnv* env,
+    jclass,
+    jlong session,
+    jlong timeMs,
+    jint width,
+    jint height,
+    jbyteArray rgba
+) {
+    if (session == 0 || rgba == nullptr || width <= 0 || height <= 0) {
+        BHE_LOGE("pushFrameRaw invalid session, dimensions, or pixel buffer");
+        return env->NewStringUTF("{\"error\":\"invalid raw frame\"}");
+    }
+    const jsize length = env->GetArrayLength(rgba);
+    const int64_t expected = static_cast<int64_t>(width) * height * 4;
+    if (length != expected) {
+        BHE_LOGE("pushFrameRaw invalid buffer length=%d expected=%lld", length, static_cast<long long>(expected));
+        return env->NewStringUTF("{\"error\":\"invalid raw frame length\"}");
+    }
+    jbyte* bytes = env->GetByteArrayElements(rgba, nullptr);
+    if (bytes == nullptr) {
+        return env->NewStringUTF("{\"error\":\"unable to read raw frame\"}");
+    }
+    char* output = bhe_runtime_push_frame_raw(
+        reinterpret_cast<void*>(session),
+        static_cast<int64_t>(timeMs),
+        static_cast<uint32_t>(width),
+        static_cast<uint32_t>(height),
+        reinterpret_cast<const uint8_t*>(bytes),
+        static_cast<int64_t>(length)
+    );
+    env->ReleaseByteArrayElements(rgba, bytes, JNI_ABORT);
+    if (output == nullptr) {
+        BHE_LOGE("pushFrameRaw native returned null");
         return env->NewStringUTF("{\"error\":\"runtime returned no response\"}");
     }
     jstring result = env->NewStringUTF(output);
