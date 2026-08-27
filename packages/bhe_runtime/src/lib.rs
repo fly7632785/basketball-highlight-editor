@@ -146,6 +146,10 @@ pub struct RuntimeSession {
     candidates: Vec<Candidate>,
     processed_frames: u64,
     previous_net_signature: Option<(i64, Vec<f32>)>,
+    /// Three-zone net motion history: (time_ms, upper, lower, below).
+    /// Mirrors the desktop algorithm: a made basket activates the net's
+    /// lower zone first, then the zone below it (ball hits net then drops).
+    net_zone_history: Vec<(i64, f32, f32, f32)>,
 }
 
 impl RuntimeSession {
@@ -168,6 +172,7 @@ impl RuntimeSession {
             candidates: Vec::new(),
             processed_frames: 0,
             previous_net_signature: None,
+            net_zone_history: Vec::new(),
         })
     }
 
@@ -229,6 +234,8 @@ impl RuntimeSession {
             );
             self.detect_crossing();
         }
+        self.detect_rebound();
+        self.resolve_verdict();
         Ok(FrameResponse {
             detections,
             candidates: self.candidates.clone(),
@@ -277,17 +284,129 @@ impl RuntimeSession {
         }
     }
 
+    /// Three-zone net motion analysis (mirrors desktop algorithm).
+    ///
+    /// A made basket should produce activity in the net's lower zone
+    /// followed by activity in the zone below it (ball enters net top,
+    /// pushes through, drops below). Simultaneous activation suggests
+    /// camera shake; reversed order (below before lower) is suspicious.
     fn update_net_motion(&mut self, time_ms: i64, image: &RgbImage) {
-        let signature = net_signature(image, &self.config.net_roi);
-        if let Some((_, previous)) = &self.previous_net_signature {
-            let motion_score = net_motion_score(&signature, previous);
-            for candidate in &mut self.candidates {
-                if time_ms >= candidate.event_ms && time_ms <= candidate.event_ms + 1_500 {
-                    candidate.net_motion_score = candidate.net_motion_score.max(motion_score);
-                }
+        let roi = &self.config.net_roi;
+        let (upper, lower, below) = net_zone_motion(image, roi);
+        self.net_zone_history.push((time_ms, upper, lower, below));
+
+        // Trim history to ±2s around the newest event.
+        let cutoff = time_ms - 3000;
+        let first_relevant = self
+            .net_zone_history
+            .iter()
+            .position(|(t, _, _, _)| *t >= cutoff)
+            .unwrap_or(self.net_zone_history.len());
+        if first_relevant > 0 {
+            self.net_zone_history.drain(..first_relevant);
+        }
+
+        // Compute per-candidate net motion score from zone history.
+        let history = &self.net_zone_history;
+        for candidate in &mut self.candidates {
+            if time_ms < candidate.event_ms || time_ms > candidate.event_ms + 1_500 {
+                continue;
+            }
+            let (inside_score, sequence_score) = net_zone_scores(history, candidate.event_ms);
+            candidate.net_motion_score = candidate.net_motion_score.max(inside_score);
+            // Store sequence score in crossing_score if it's better evidence.
+            if sequence_score > 0.5 && candidate.crossing_score < 0.5 {
+                candidate.reason = format!("net_sequence:{sequence_score:.2}");
             }
         }
+
+        // Legacy whole-ROI signature for backward compat.
+        let signature = net_signature(image, roi);
         self.previous_net_signature = Some((time_ms, signature));
+    }
+
+    /// Detect rebound after a crossing: ball rises from deep below the rim
+    /// back up. Depth-bounded (mirrors desktop): only counts as rebound if
+    /// the ball hasn't descended past 2.5x rim height below the rim plane.
+    fn detect_rebound(&mut self) {
+        let rim_y = (self.config.hoop_roi.top + self.config.hoop_roi.bottom) / 2.0;
+        let rim_height = self.config.hoop_roi.bottom - self.config.hoop_roi.top;
+        let rebound_depth = rim_y + rim_height * 2.5;
+
+        for candidate in &mut self.candidates {
+            if candidate.rebound {
+                continue;
+            }
+            // Find post-crossing ball points that descend then rise.
+            let post_points: Vec<_> = self
+                .ball_points
+                .iter()
+                .filter(|(t, _, _, _)| *t > candidate.event_ms)
+                .collect();
+            if post_points.len() < 3 {
+                continue;
+            }
+            let mut max_y = 0.0f32;
+            let mut rebounded = false;
+            for (_, _, y, _) in &post_points {
+                if *y > max_y {
+                    max_y = *y;
+                } else if max_y > rebound_depth && *y < max_y - 0.04 {
+                    // Ball descended past the depth boundary then rose = landing bounce.
+                    rebounded = false; // Landing bounce, not rim rebound.
+                    break;
+                } else if max_y <= rebound_depth && *y < max_y - 0.03 {
+                    // Ball rose while still near the rim = rim rebound.
+                    rebounded = true;
+                    break;
+                }
+            }
+            if rebounded {
+                candidate.rebound = true;
+            }
+        }
+    }
+
+    /// Resolve verdict from accumulated evidence (mirrors desktop).
+    fn resolve_verdict(&mut self) {
+        let current_time = self
+            .ball_points
+            .last()
+            .map(|(t, _, _, _)| *t)
+            .unwrap_or(0);
+
+        for candidate in &mut self.candidates {
+            if candidate.verdict != "ambiguous" {
+                continue; // Already resolved.
+            }
+            // Only resolve after 800ms of post-crossing observation.
+            if current_time < candidate.event_ms + 800 {
+                continue;
+            }
+
+            let strong_positive = candidate.complete_crossing
+                && candidate.net_motion_score >= 0.35
+                && candidate.trajectory_score >= 0.45;
+
+            let strong_negative = candidate.rebound
+                || candidate.crossing_score < 0.15;
+
+            if strong_negative {
+                candidate.verdict = "missed".into();
+                candidate.reason = if candidate.rebound {
+                    "rim_rebound".into()
+                } else {
+                    "crossing_outside_rim".into()
+                };
+            } else if strong_positive {
+                candidate.verdict = "made".into();
+                candidate.reason = format!(
+                    "complete_crossing+net_motion:{:.2}",
+                    candidate.net_motion_score
+                );
+            }
+            // else stays "ambiguous" for human review.
+        }
     }
 
     fn detect_crossing(&mut self) {
@@ -493,6 +612,99 @@ fn clip_end_ms(event_ms: i64, after_ms: i64, duration_ms: Option<i64>) -> i64 {
     duration_ms
         .map(|duration| (event_ms + after_ms).min(duration))
         .unwrap_or(event_ms + after_ms)
+}
+
+/// Computes motion in the net's three zones (upper, lower, below).
+///
+/// The net ROI is divided vertically: top 1/3 = upper (rim area),
+/// middle 1/3 = lower (net body), bottom 1/3 = below (under the net).
+/// Returns motion deltas vs the previous frame for each zone.
+fn net_zone_motion(image: &RgbImage, roi: &Roi) -> (f32, f32, f32) {
+    let width = image.width() as f32;
+    let height = image.height() as f32;
+    let left = (roi.left.clamp(0.0, 1.0) * width).floor() as u32;
+    let top = (roi.top.clamp(0.0, 1.0) * height).floor() as u32;
+    let right = (roi.right.clamp(0.0, 1.0) * width).ceil().max(left + 1) as u32;
+    let bottom = (roi.bottom.clamp(0.0, 1.0) * height).ceil().max(top + 1) as u32;
+    let zone_height = (bottom.saturating_sub(top) / 3).max(1);
+
+    let zone_motion = |zone_top: u32, zone_bottom: u32| -> f32 {
+        let mut sum = 0.0f32;
+        let mut count = 0u32;
+        let step_x = (right.saturating_sub(left) / 4).max(1);
+        let step_y = (zone_bottom.saturating_sub(zone_top) / 3).max(1);
+        let mut y = zone_top;
+        while y < zone_bottom.min(image.height()) {
+            let mut x = left;
+            while x < right.min(image.width()) {
+                let pixel = image.get_pixel(x.min(image.width() - 1), y.min(image.height() - 1));
+                let luminance = (0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32) / 255.0;
+                sum += luminance;
+                count += 1;
+                x += step_x;
+            }
+            y += step_y;
+        }
+        if count == 0 { 0.0 } else { sum / count as f32 }
+    };
+
+    let upper = zone_motion(top, top + zone_height);
+    let lower = zone_motion(top + zone_height, top + 2 * zone_height);
+    let below = zone_motion(top + 2 * zone_height, bottom);
+    (upper, lower, below)
+}
+
+/// Computes inside-motion score and sequence score from zone history.
+///
+/// inside_score: how much the lower zone activated above baseline during
+/// the event window (ball pushing through the net).
+/// sequence_score: whether lower activated before below (correct order
+/// for a made basket: ball enters net, then drops below).
+fn net_zone_scores(history: &[(i64, f32, f32, f32)], event_ms: i64) -> (f32, f32) {
+    let baseline: Vec<_> = history
+        .iter()
+        .filter(|(t, _, _, _)| *t < event_ms - 100 && *t >= event_ms - 800)
+        .collect();
+    let active: Vec<_> = history
+        .iter()
+        .filter(|(t, _, _, _)| *t >= event_ms - 100 && *t <= event_ms + 800)
+        .collect();
+
+    if active.len() < 2 || baseline.is_empty() {
+        return (0.0, 0.0);
+    }
+
+    let baseline_lower = baseline.iter().map(|(_, _, l, _)| *l).sum::<f32>() / baseline.len() as f32;
+    let baseline_below = baseline.iter().map(|(_, _, _, b)| *b).sum::<f32>() / baseline.len() as f32;
+
+    // Inside motion: how much the lower zone exceeded baseline.
+    let max_lower_delta = active
+        .iter()
+        .map(|(_, _, l, _)| (*l - baseline_lower).abs())
+        .fold(0.0f32, f32::max);
+    let inside_score = (max_lower_delta / 0.08).clamp(0.0, 1.0);
+
+    // Sequence: did lower activate before below?
+    let lower_first = active
+        .iter()
+        .find(|(_, _, l, _)| (*l - baseline_lower).abs() > 0.03)
+        .map(|(t, _, _, _)| *t);
+    let below_first = active
+        .iter()
+        .find(|(_, _, _, b)| (*b - baseline_below).abs() > 0.03)
+        .map(|(t, _, _, _)| *t);
+
+    let sequence_score = match (lower_first, below_first) {
+        (Some(lt), Some(bt)) if bt > lt => {
+            // Correct order: lower first, then below.
+            1.0
+        }
+        (Some(_), None) => 0.8, // Only lower activated, no below yet.
+        (Some(_), Some(_)) => 0.4, // Wrong order (below before lower).
+        (None, _) => 0.0, // No lower zone activation.
+    };
+
+    (inside_score, sequence_score)
 }
 
 fn net_motion_score(current: &[f32], previous: &[f32]) -> f32 {

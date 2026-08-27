@@ -110,8 +110,9 @@ import ImageIO
         while timeMs < actualEndMs {
           if self.analysisCancelled { throw CancellationError() }
           let image = try generator.copyCGImage(at: CMTime(value: CMTimeValue(timeMs), timescale: 1000), actualTime: nil)
-          let frame = try self.frameJSON(image: image, timeMs: timeMs)
-          let responseString = frame.withCString { bhe_runtime_push_frame(session, $0) }
+          // Fast path: extract raw RGBA pixels and send directly to Rust.
+          // Eliminates JPEG compress + base64 encode + JSON serialize overhead.
+          let responseString = try self.pushRawFrame(session: session, image: image, timeMs: timeMs)
           guard let responseString else { throw NSError(domain: "BHERuntime", code: 2, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 未返回结果"]) }
           let responseData = Data(bytes: responseString, count: strlen(responseString))
           bhe_runtime_free_string(responseString)
@@ -133,22 +134,46 @@ import ImageIO
     }
   }
 
-  private func frameJSON(image: CGImage, timeMs: Int) throws -> String {
-    let data = NSMutableData()
-    guard let destination = CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil) else {
-      throw NSError(domain: "BHERuntime", code: 4, userInfo: [NSLocalizedDescriptionKey: "无法编码视频帧"])
+  /// Extracts raw RGBA pixels from a CGImage and pushes directly to Rust.
+  /// This avoids JPEG compression → base64 encoding → JSON serialization.
+  private func pushRawFrame(session: OpaquePointer?, image: CGImage, timeMs: Int) throws -> UnsafeMutablePointer<CChar>? {
+    let width = image.width
+    let height = image.height
+    let bytesPerRow = width * 4
+    var rgbaData = Data(capacity: bytesPerRow * height)
+
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let context = CGContext(
+      data: nil, width: width, height: height,
+      bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+      space: colorSpace,
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue // RGBA
+    )
+    guard let context else {
+      throw NSError(domain: "BHERuntime", code: 4, userInfo: [NSLocalizedDescriptionKey: "无法创建图像上下文"])
     }
-    CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
-    guard CGImageDestinationFinalize(destination) else {
-      throw NSError(domain: "BHERuntime", code: 5, userInfo: [NSLocalizedDescriptionKey: "无法完成视频帧编码"])
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    guard let pixelBuffer = context.data else {
+      throw NSError(domain: "BHERuntime", code: 5, userInfo: [NSLocalizedDescriptionKey: "无法读取像素数据"])
     }
-    let frame: [String: Any] = [
-      "time_ms": timeMs,
-      "width": image.width,
-      "height": image.height,
-      "image_base64": data.base64EncodedString(),
-    ]
-    return String(decoding: try JSONSerialization.data(withJSONObject: frame), as: UTF8.self)
+
+    let buffer = pixelBuffer.bindMemory(to: UInt8.self, capacity: bytesPerRow * height)
+    rgbaData.append(buffer, count: bytesPerRow * height)
+
+    let result = rgbaData.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> UnsafeMutablePointer<CChar>? in
+      guard let base = raw.baseAddress else { return nil }
+      return base.assumingMemoryBound(to: UInt8.self).withMemoryRebound(to: Int8.self, capacity: raw.count) { bytes in
+        bhe_runtime_push_frame_raw(
+          session,
+          Int64(timeMs),
+          UInt32(width),
+          UInt32(height),
+          unsafeBitCast(bytes, to: UnsafePointer<UInt8>.self),
+          Int64(raw.count)
+        )
+      }
+    }
+    return result
   }
 
   private func emitProgress(stage: String, progress: Double, processed: Int, total: Int, message: String) {
