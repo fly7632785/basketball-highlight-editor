@@ -375,7 +375,7 @@ jobs:
           go install "github.com/aliyun/ossutil@${OSSUTIL_VERSION}"
           export PATH="$go_bin:$PATH"
           echo "$go_bin" >> "$GITHUB_PATH"
-          ossutil version
+          ossutil help >/dev/null
 
       - name: Download GitHub Release assets
         shell: bash

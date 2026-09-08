@@ -1,0 +1,119 @@
+name: Upload existing release assets to OSS
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing GitHub Release tag, for example v0.1.0-alpha.6"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  OSS_ENDPOINT: oss-cn-beijing.aliyuncs.com
+  OSS_BUCKET: oss://shengshengniannian
+  OSS_PREFIX: shengshengniannian/basketball-highlight-editor/releases
+  OSSUTIL_VERSION: v1.7.19
+
+jobs:
+  upload:
+    name: Upload release assets to OSS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure Alibaba Cloud credentials
+        uses: aliyun/configure-aliyun-credentials-action@v1
+        with:
+          role-to-assume: ${{ vars.ALIYUN_RAM_ROLE_ARN }}
+          oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          role-session-name: bhe-manual-oss-${{ github.run_id }}
+          role-session-expiration: 1800
+          audience: sts.aliyuncs.com
+
+      - name: Install ossutil
+        shell: bash
+        run: |
+          set -euo pipefail
+          go_bin="$(go env GOPATH)/bin"
+          go install "github.com/aliyun/ossutil@${OSSUTIL_VERSION}"
+          echo "$go_bin" >> "$GITHUB_PATH"
+          "$go_bin/ossutil" help >/dev/null
+
+      - name: Download GitHub Release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bhe-release-assets"
+          gh release download "$TAG_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$RUNNER_TEMP/bhe-release-assets"
+          test -n "$(find "$RUNNER_TEMP/bhe-release-assets" -type f -print -quit)"
+
+      - name: Configure temporary ossutil credentials
+        shell: bash
+        env:
+          OSSUTIL_CONFIG: ${{ runner.temp }}/ossutilconfig
+        run: |
+          set -euo pipefail
+          umask 077
+          ossutil config \
+            --config-file "$OSSUTIL_CONFIG" \
+            --endpoint "$OSS_ENDPOINT" \
+            --access-key-id "$ALIBABA_CLOUD_ACCESS_KEY_ID" \
+            --access-key-secret "$ALIBABA_CLOUD_ACCESS_KEY_SECRET" \
+            --sts-token "$ALIBABA_CLOUD_SECURITY_TOKEN"
+
+      - name: Upload assets to OSS
+        shell: bash
+        env:
+          OSSUTIL_CONFIG: ${{ runner.temp }}/ossutilconfig
+        run: |
+          set -euo pipefail
+          ossutil \
+            --config-file "$OSSUTIL_CONFIG" \
+            cp -r -f --update \
+            "$RUNNER_TEMP/bhe-release-assets/" \
+            "$OSS_BUCKET/$OSS_PREFIX/"
+
+      - name: Publish stable download aliases
+        shell: bash
+        env:
+          OSSUTIL_CONFIG: ${{ runner.temp }}/ossutilconfig
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          alias_dir="$RUNNER_TEMP/bhe-latest-aliases"
+          mkdir -p "$alias_dir"
+
+          publish_alias() {
+            local source="$1"
+            local alias="$2"
+            local digest
+            local checksum="$alias_dir/$alias.sha256"
+
+            ossutil \
+              --config-file "$OSSUTIL_CONFIG" \
+              cp -f --meta "Cache-Control:no-cache" \
+              "$source" "$OSS_BUCKET/$OSS_PREFIX/$alias"
+            digest="$(sha256sum "$source" | awk '{print $1}')"
+            printf '%s  %s\n' "$digest" "$alias" > "$checksum"
+            ossutil \
+              --config-file "$OSSUTIL_CONFIG" \
+              cp -f --meta "Cache-Control:no-cache" \
+              "$checksum" "$OSS_BUCKET/$OSS_PREFIX/$alias.sha256"
+          }
+
+          for source in "$RUNNER_TEMP/bhe-release-assets"/BHE-macos-arm64-v*.dmg; do
+            publish_alias "$source" "BHE-macos-arm64-latest.dmg"
+          done
+          for source in "$RUNNER_TEMP/bhe-release-assets"/BHE-macos-x86_64-v*.dmg; do
+            publish_alias "$source" "BHE-macos-x86_64-latest.dmg"
+          done
+          for source in "$RUNNER_TEMP/bhe-release-assets"/BHE-windows-x64-v*.zip; do
+            publish_alias "$source" "BHE-windows-x64-latest.zip"
+          done
