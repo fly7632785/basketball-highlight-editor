@@ -33,7 +33,7 @@ function renderDownloads() {
     });
     const gh = document.createElement("a");
     gh.className = "dl-link-gh";
-    gh.href = `${DOWNLOADS.ghBase}/${DOWNLOADS.version}`;
+    gh.href = DOWNLOADS.ghBase;
     gh.target = "_blank";
     gh.rel = "noopener";
     gh.textContent = "GitHub 备用下载";

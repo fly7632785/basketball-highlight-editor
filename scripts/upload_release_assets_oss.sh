@@ -41,10 +41,10 @@ publish_alias() {
   local digest
   local checksum="$alias_dir/$alias.sha256"
 
-  ossutil cp -f "$source" "$BUCKET/$PREFIX/$alias"
+  ossutil cp -f --meta "Cache-Control:no-cache" "$source" "$BUCKET/$PREFIX/$alias"
   digest="$(shasum -a 256 "$source" | awk '{print $1}')"
   printf '%s  %s\n' "$digest" "$alias" > "$checksum"
-  ossutil cp -f "$checksum" "$BUCKET/$PREFIX/$alias.sha256"
+  ossutil cp -f --meta "Cache-Control:no-cache" "$checksum" "$BUCKET/$PREFIX/$alias.sha256"
 }
 
 for source in "$STAGE"/BHE-macos-arm64-v*.dmg; do

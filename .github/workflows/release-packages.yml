@@ -433,12 +433,14 @@ jobs:
 
             ossutil \
               --config-file "$OSSUTIL_CONFIG" \
-              cp -f "$source" "$OSS_BUCKET/$OSS_PREFIX/$alias"
+              cp -f --meta "Cache-Control:no-cache" \
+              "$source" "$OSS_BUCKET/$OSS_PREFIX/$alias"
             digest="$(sha256sum "$source" | awk '{print $1}')"
             printf '%s  %s\n' "$digest" "$alias" > "$checksum"
             ossutil \
               --config-file "$OSSUTIL_CONFIG" \
-              cp -f "$checksum" "$OSS_BUCKET/$OSS_PREFIX/$alias.sha256"
+              cp -f --meta "Cache-Control:no-cache" \
+              "$checksum" "$OSS_BUCKET/$OSS_PREFIX/$alias.sha256"
           }
 
           for source in "$RUNNER_TEMP/bhe-release-assets"/BHE-macos-arm64-v*.dmg; do
