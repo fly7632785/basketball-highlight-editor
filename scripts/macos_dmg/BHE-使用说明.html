@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BHE macOS 使用说明</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { max-width: 720px; margin: 48px auto; padding: 0 24px; color: #17202a; line-height: 1.7; }
+    h1 { margin-bottom: 8px; }
+    .lead { color: #52606d; }
+    .step { margin: 24px 0; padding: 18px 20px; background: #f3f6f8; border-radius: 14px; }
+    code { padding: 2px 6px; background: #e5eaee; border-radius: 5px; }
+    .note { color: #8a4b08; }
+  </style>
+</head>
+<body>
+  <h1>BHE macOS 使用说明</h1>
+  <p class="lead">当前版本是用于测试的 Ad Hoc 签名版本，首次打开时可能被 macOS 拦截。</p>
+
+  <div class="step"><strong>1. 安装</strong><br>将 <code>BHE.app</code> 拖到旁边的“Applications”图标中。</div>
+  <div class="step"><strong>2. 修复并验证</strong><br>打开“应用程序”文件夹，然后双击 <code>BHE-首次打开修复.command</code>。它会清除 BHE 的下载隔离属性，验证应用签名完整性，并自动启动 BHE。</div>
+  <div class="step"><strong>3. 如果系统提示确认</strong><br>首次双击脚本时，如果 macOS 要求确认，请点击“打开”。脚本只处理 BHE.app，不会上传视频或访问外部分析服务。</div>
+
+  <p class="note">如果验证失败，请删除旧的 BHE.app，重新下载完整 DMG，并再次安装。Ad Hoc 签名适合本机和测试使用，正式公开发布仍需 Developer ID 签名和 Apple 公证。</p>
+</body>
+</html>

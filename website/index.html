@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Basketball Highlight Editor — 打完球，别再剪到半夜</title>
+<meta name="description" content="本地运行的篮球集锦剪辑工具：自动找出整场比赛的疑似进球片段，你只需快速审核、排除误检、导出集锦。视频不上传，完全免费开源。">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css?v=3">
+</head>
+<body>
+
+<header class="nav">
+  <a class="nav-brand" href="#top">
+    <svg class="nav-ball" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1a11 11 0 1 0 0 22 11 11 0 0 0 0-22Zm0 2.2 4.1 3-1.6 4.9h-5L7.9 6.2 12 3.2ZM4.3 9.4l3.4.2 1.6 4.9-2.5 3.4A8.8 8.8 0 0 1 4.3 9.4Zm5.9 11.2 2.5-3h-3.9l-1.1 1.6a8.7 8.7 0 0 0 2.5 1.4Zm8.7-5.9-2.5-3.2 1.6-4.9 3.4-.2a8.8 8.8 0 0 1-2.5 8.3Zm-3.5 4.5-1.1-1.6h-3.9l2.5 3a8.7 8.7 0 0 0 2.5-1.4Z" fill="currentColor"/></svg>
+    <span class="nav-name">BHE<em>篮球集锦剪辑器</em></span>
+  </a>
+  <nav class="nav-links" aria-label="页面导航">
+    <a href="#workflow">它是怎么工作的</a>
+    <a href="#features">功能</a>
+    <a href="#demo">演示</a>
+    <a href="#faq">常见问题</a>
+    <a class="nav-gh" href="https://github.com/fly7632785/basketball-highlight-editor" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+  <a class="btn btn-ball btn-nav" href="#download">下载</a>
+</header>
+
+<main id="top">
+
+<!-- ============ HERO ============ -->
+<section class="hero">
+  <div class="hero-copy">
+    <p class="eyebrow"><span class="dot"></span>完全本地运行 · 免费开源 · 桌面端可下载</p>
+    <h1>打完球，<br><span class="hl">别再剪到半夜</span>。</h1>
+    <p class="hero-sub">
+      整场比赛交给它扫，疑似进球自动排好队。你只要快速过一遍、删掉误检，
+      剩下的就是集锦——视频不出电脑，不用订阅。
+    </p>
+    <div class="hero-cta">
+      <a class="btn btn-ball" href="#download">下载桌面版</a>
+      <a class="btn btn-ghost" href="#demo">先看演示</a>
+    </div>
+  </div>
+
+  <!-- 签名元素：候选时间轴（与审核工作台同构） -->
+  <figure class="timeline" aria-hidden="true">
+    <div class="timeline-track">
+      <span class="clip" style="--left:8%;  --w:6%; --d:.9s"></span>
+      <span class="clip clip-out" style="--left:17%; --w:4%"></span>
+      <span class="clip" style="--left:27%; --w:7%; --d:3s"></span>
+      <span class="clip" style="--left:44%; --w:5%; --d:4.8s"></span>
+      <span class="clip clip-out" style="--left:53%; --w:3%"></span>
+      <span class="clip" style="--left:62%; --w:6%; --d:6.8s"></span>
+      <span class="clip" style="--left:76%; --w:5%; --d:8.4s"></span>
+      <span class="clip" style="--left:86%; --w:6%; --d:9.5s"></span>
+      <span class="playhead"></span>
+    </div>
+    <figcaption class="timeline-cap">
+      <span class="mono">一场 47 分钟的比赛</span>
+      <span class="mono">12 个候选片段</span>
+      <span class="mono">10 个保留 · 2 个排除</span>
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ============ 价值条 ============ -->
+<section class="strip">
+  <ul class="strip-grid">
+    <li><strong>视频不出电脑</strong><span>分析、审核、导出全部本地完成</span></li>
+    <li><strong>不收订阅费</strong><span>开源免费，不按时长收费</span></li>
+    <li><strong>候选默认保留</strong><span>只排除误检，不用逐条确认</span></li>
+    <li><strong>结果你把关</strong><span>改时间、补漏、标球员，随你</span></li>
+  </ul>
+</section>
+
+<!-- ============ 工作流 ============ -->
+<section class="section section-paper" id="workflow">
+  <p class="kicker mono">WORKFLOW</p>
+  <h2>五步，从整场视频到集锦</h2>
+  <ol class="steps">
+    <li><span class="step-no mono">01</span><strong>导入比赛视频</strong><p>一场比赛一个文件，先选好要分析的范围。</p></li>
+    <li><span class="step-no mono">02</span><strong>框住篮筐区域</strong><p>自动识别为主，识别失败就手动框选、微调。</p></li>
+    <li><span class="step-no mono">03</span><strong>等待自动分析</strong><p>快速模式先看一版，重要比赛用标准模式细扫。</p></li>
+    <li><span class="step-no mono">04</span><strong>过一遍候选</strong><p>边播放边看，排除误检，前后秒数随手调。</p></li>
+    <li><span class="step-no mono">05</span><strong>导出集锦</strong><p>合并成一条，或按球员、标签分别导出。</p></li>
+  </ol>
+</section>
+
+<!-- ============ 工作台截图 ============ -->
+<section class="section section-paper section-tight">
+  <figure class="shot reveal">
+    <img src="assets/workbench.jpg" alt="审核工作台：左侧视频预览，右侧候选列表，每个候选带保留/排除开关" loading="lazy" width="1680" height="1050">
+    <figcaption>
+      审核工作台：视频区域优先，候选按时间排好队。
+      <span class="mono">橙色 = 候选片段，和上面的时间轴一个意思。</span>
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ============ 功能 ============ -->
+<section class="section section-paper" id="features">
+  <p class="kicker mono">FEATURES</p>
+  <h2>功能不多，但都在主路径上</h2>
+  <div class="feature-grid">
+    <article class="feature reveal"><h3>自动扫描疑似进球</h3><p>针对固定机位、单篮筐的比赛视频生成候选；置信度不高的一律标出来等你看，不替你做主。</p></article>
+    <article class="feature reveal"><h3>快速 / 标准两种模式</h3><p>快速模式先出一版粗结果，标准模式筛得更完整。审核和导出的流程完全一样。</p></article>
+    <article class="feature reveal"><h3>标签不只标球员</h3><p>张三、李四、三分、扣篮、犯规——标签自己定，批量标记，按标签导出个人集锦或整场集锦。</p></article>
+    <article class="feature reveal"><h3>两种导出方式</h3><p>合并成一条集锦，或每个候选单独成片；导出完直接打开输出目录。</p></article>
+    <article class="feature reveal"><h3>手动补漏</h3><p>自动检测漏掉的片段，从原视频当前时间一键加入候选，不会丢。</p></article>
+    <article class="feature reveal"><h3>隐私默认</h3><p>不需要账号，不依赖在线接口，模型和推理都在本机跑，比赛视频留在本地。</p></article>
+  </div>
+</section>
+
+<!-- ============ 演示 ============ -->
+<section class="section section-paper" id="demo">
+  <p class="kicker mono">DEMO</p>
+  <h2>从导入到导出，完整走一遍</h2>
+  <div class="demo-card reveal">
+    <video controls preload="metadata" poster="assets/demo-cover.jpg">
+      <source src="https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4" type="video/mp4">
+      你的浏览器不支持内嵌视频，可<a href="https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4" target="_blank" rel="noopener">直接打开录屏文件</a>。
+    </video>
+    <p class="demo-note mono">约 3 分钟 · 存放在国内 OSS，页内直接播放</p>
+  </div>
+</section>
+
+<!-- ============ 下载 ============ -->
+<section class="section section-ink" id="download">
+  <p class="kicker kicker-ink mono">DOWNLOAD</p>
+  <h2 class="h-ink">下载安装</h2>
+  <p class="dl-note">
+    安装包同步存放在阿里云 OSS，国内直连下载，不需要访问 GitHub。
+    <span class="mono" id="dl-version">v0.1.0-alpha.5</span> ·
+    桌面端（macOS / Windows）已经过日常使用验证；
+    Android 端开发中，暂未开放下载。
+  </p>
+
+  <div class="dl-grid">
+    <article class="dl-card">
+      <h3>macOS · Apple Silicon</h3>
+      <p class="dl-meta mono">M1 / M2 / M3 / M4 · .dmg</p>
+      <div class="dl-actions" data-os="mac-arm64"></div>
+    </article>
+    <article class="dl-card">
+      <h3>macOS · Intel</h3>
+      <p class="dl-meta mono">2016 年后的 Intel Mac · .dmg</p>
+      <div class="dl-actions" data-os="mac-x64"></div>
+    </article>
+    <article class="dl-card">
+      <h3>Windows · x64</h3>
+      <p class="dl-meta mono">Windows 10 / 11 · .zip 解压即用</p>
+      <div class="dl-actions" data-os="win-x64"></div>
+    </article>
+    <article class="dl-card dl-card-soon">
+      <h3>Android</h3>
+      <p class="dl-meta mono">arm64-v8a · 开发中</p>
+      <p class="dl-soon">手机端本地分析正在收尾，先去 GitHub 关注进度。</p>
+      <a class="btn btn-ghost" href="https://github.com/fly7632785/basketball-highlight-editor/releases" target="_blank" rel="noopener">GitHub Releases</a>
+    </article>
+  </div>
+
+  <p class="dl-fine mono">
+    每个包在 GitHub Release 附带 .sha256 校验文件 · 备用下载：
+    <a href="https://github.com/fly7632785/basketball-highlight-editor/releases" target="_blank" rel="noopener">github.com/fly7632785/basketball-highlight-editor</a>
+  </p>
+</section>
+
+<!-- ============ 边界 ============ -->
+<section class="section section-paper">
+  <p class="kicker mono">HONEST SCOPE</p>
+  <h2>它现在最适合什么</h2>
+  <div class="scope">
+    <div class="scope-yes">
+      <h3>这些情况，用起来最顺</h3>
+      <ul>
+        <li>固定机位（三脚架 / 看台固定点）</li>
+        <li>单场比赛、画面里一个篮筐</li>
+        <li>校队、业余联赛、训练赛的集锦整理</li>
+      </ul>
+    </div>
+    <div class="scope-not">
+      <h3>这些情况，请认真审核结果</h3>
+      <ul>
+        <li>机位频繁变化或手持跟拍</li>
+        <li>篮筐被长时间遮挡</li>
+        <li>同框出现多个篮筐</li>
+      </ul>
+    </div>
+  </div>
+  <p class="scope-note">候选是"疑似事件"，不是模型盖章的最终答案——这也是为什么审核台是整个产品的核心。</p>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section class="section section-paper section-tight" id="faq">
+  <p class="kicker mono">FAQ</p>
+  <h2>常见问题</h2>
+  <div class="faq">
+    <details><summary>需要联网吗？会上传我的视频吗？</summary><p>分析、预览、审核、导出全部在本机完成，不需要账号，也不上传视频。下载安装包和查看文档需要网络。</p></details>
+    <details><summary>真的免费？靠什么收费？</summary><p>开源项目，MIT 协议，不按时长、不限次数收费。模型和素材请遵守各自的授权条件。</p></details>
+    <details><summary>识别不准怎么办？</summary><p>候选默认全部保留，误检由你排除；时间边界可以拖动微调，漏掉的片段可以手动补。机器给的只是初稿。</p></details>
+    <details><summary>Android / iOS 版什么时候有？</summary><p>Android 端已在开发中（本地推理，无需联网），完成前后会在 GitHub Releases 和本页同步。iOS 暂无时间表。</p></details>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <p class="footer-brand mono">BHE / basketball-highlight-editor</p>
+    <nav aria-label="页脚">
+      <a href="https://github.com/fly7632785/basketball-highlight-editor" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/fly7632785/basketball-highlight-editor/tree/main/docs" target="_blank" rel="noopener">文档</a>
+      <a href="https://linux.do/" target="_blank" rel="noopener">Linux DO 社区</a>
+    </nav>
+    <p class="footer-fine">开源免费 · 视频只在本地处理 · <span class="mono">MIT License</span></p>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

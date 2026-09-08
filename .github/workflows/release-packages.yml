@@ -118,14 +118,12 @@ jobs:
         run: |
           set -euo pipefail
           version="${TAG_NAME#v}"
-          package="$GITHUB_WORKSPACE/dist/BHE-macos-${ARCH}-v${version}-adhoc.zip"
           dmg="$GITHUB_WORKSPACE/dist/BHE-macos-${ARCH}-v${version}-adhoc.dmg"
           BHE_PYTHON_RUNTIME="$PYTHON_ROOT" \
           BHE_FFMPEG="$FFMPEG_PATH" \
           BHE_FFPROBE="$FFPROBE_PATH" \
           BHE_BUILD_NAME="$version" \
           BHE_BUILD_NUMBER="${GITHUB_RUN_NUMBER}" \
-          BHE_PACKAGE_OUT="$package" \
           BHE_DMG_OUT="$dmg" \
           FLUTTER_BIN="$(command -v flutter)" \
           scripts/build_macos_release.sh
@@ -137,8 +135,6 @@ jobs:
         with:
           name: BHE-macos-${{ matrix.arch }}
           path: |
-            dist/BHE-macos-${{ matrix.arch }}-v*-adhoc.zip
-            dist/BHE-macos-${{ matrix.arch }}-v*-adhoc.zip.sha256
             dist/BHE-macos-${{ matrix.arch }}-v*-adhoc.dmg
             dist/BHE-macos-${{ matrix.arch }}-v*-adhoc.dmg.sha256
           if-no-files-found: error
@@ -346,3 +342,111 @@ jobs:
           prerelease: ${{ contains(env.TAG_NAME, '-') }}
           fail_on_unmatched_files: true
           files: dist/*
+
+  oss-upload:
+    name: Upload release assets to OSS
+    needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      OSS_ENDPOINT: oss-cn-beijing.aliyuncs.com
+      OSS_BUCKET: oss://shengshengniannian
+      OSS_PREFIX: shengshengniannian/basketball-highlight-editor/releases
+      OSSUTIL_VERSION: v1.7.19
+
+    steps:
+      - name: Configure Alibaba Cloud credentials
+        uses: aliyun/configure-aliyun-credentials-action@v1
+        with:
+          role-to-assume: ${{ vars.ALIYUN_RAM_ROLE_ARN }}
+          oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          role-session-name: bhe-release-${{ github.run_id }}
+          role-session-expiration: 1800
+          audience: sts.aliyuncs.com
+
+      - name: Install ossutil
+        shell: bash
+        run: |
+          set -euo pipefail
+          go_bin="$(go env GOPATH)/bin"
+          go install "github.com/aliyun/ossutil@${OSSUTIL_VERSION}"
+          export PATH="$go_bin:$PATH"
+          echo "$go_bin" >> "$GITHUB_PATH"
+          ossutil version
+
+      - name: Download GitHub Release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bhe-release-assets"
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$RUNNER_TEMP/bhe-release-assets"
+          test -n "$(find "$RUNNER_TEMP/bhe-release-assets" -type f -print -quit)"
+
+      - name: Configure temporary ossutil credentials
+        shell: bash
+        env:
+          OSSUTIL_CONFIG: ${{ runner.temp }}/ossutilconfig
+        run: |
+          set -euo pipefail
+          umask 077
+          ossutil config \
+            --config-file "$OSSUTIL_CONFIG" \
+            --endpoint "$OSS_ENDPOINT" \
+            --access-key-id "$ALIBABA_CLOUD_ACCESS_KEY_ID" \
+            --access-key-secret "$ALIBABA_CLOUD_ACCESS_KEY_SECRET" \
+            --sts-token "$ALIBABA_CLOUD_SECURITY_TOKEN"
+
+      - name: Upload assets to OSS
+        shell: bash
+        env:
+          OSSUTIL_CONFIG: ${{ runner.temp }}/ossutilconfig
+        run: |
+          set -euo pipefail
+          ossutil \
+            --config-file "$OSSUTIL_CONFIG" \
+            cp -r -f --update \
+            "$RUNNER_TEMP/bhe-release-assets/" \
+            "$OSS_BUCKET/$OSS_PREFIX/"
+
+      - name: Publish stable download aliases
+        shell: bash
+        env:
+          OSSUTIL_CONFIG: ${{ runner.temp }}/ossutilconfig
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          alias_dir="$RUNNER_TEMP/bhe-latest-aliases"
+          mkdir -p "$alias_dir"
+
+          publish_alias() {
+            local source="$1"
+            local alias="$2"
+            local digest
+            local checksum="$alias_dir/$alias.sha256"
+
+            ossutil \
+              --config-file "$OSSUTIL_CONFIG" \
+              cp -f "$source" "$OSS_BUCKET/$OSS_PREFIX/$alias"
+            digest="$(sha256sum "$source" | awk '{print $1}')"
+            printf '%s  %s\n' "$digest" "$alias" > "$checksum"
+            ossutil \
+              --config-file "$OSSUTIL_CONFIG" \
+              cp -f "$checksum" "$OSS_BUCKET/$OSS_PREFIX/$alias.sha256"
+          }
+
+          for source in "$RUNNER_TEMP/bhe-release-assets"/BHE-macos-arm64-v*.dmg; do
+            publish_alias "$source" "BHE-macos-arm64-latest.dmg"
+          done
+          for source in "$RUNNER_TEMP/bhe-release-assets"/BHE-macos-x86_64-v*.dmg; do
+            publish_alias "$source" "BHE-macos-x86_64-latest.dmg"
+          done
+          for source in "$RUNNER_TEMP/bhe-release-assets"/BHE-windows-x64-v*.zip; do
+            publish_alias "$source" "BHE-windows-x64-latest.zip"
+          done

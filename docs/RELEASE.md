@@ -117,7 +117,7 @@ FLUTTER_BIN="$(command -v flutter)" \
 scripts/build_macos_release.sh
 ```
 
-脚本默认会同时生成 `.app`、zip 包和可拖动安装的 `.dmg` 镜像，并为 zip、dmg 分别生成 SHA-256 校验文件。打开 dmg 后，把 `BHE.app` 拖到 `Applications` 即可。发布版本可显式传入版本号：
+脚本默认生成可拖动安装的 `.dmg` 镜像和对应的 SHA-256 校验文件。DMG 内包含 `BHE.app`、`Applications` 快捷方式、使用说明和“一键修复与验证”脚本。打开 dmg 后，把 `BHE.app` 拖到 `Applications`，再双击 `BHE-首次打开修复.command` 即可。发布版本可显式传入版本号：
 
 ```bash
 BHE_BUILD_NAME=0.1.0-alpha.2 \

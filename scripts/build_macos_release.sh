@@ -10,7 +10,6 @@ APP="$APP_DIR/$APP_NAME.app"
 BUILD_NAME="${BHE_BUILD_NAME:-}"
 BUILD_NUMBER="${BHE_BUILD_NUMBER:-}"
 ARCH="${BHE_ARCH:-$(uname -m)}"
-PACKAGE_OUT="${BHE_PACKAGE_OUT:-}"
 DMG_OUT="${BHE_DMG_OUT:-}"
 
 if [[ ! -x "$FLUTTER" ]]; then
@@ -77,15 +76,6 @@ if [[ "${BHE_SKIP_PACKAGE:-0}" != "1" ]]; then
   if [[ -n "${BHE_CODESIGN_IDENTITY:-}" ]]; then
     package_kind="signed"
   fi
-  if [[ -z "$PACKAGE_OUT" ]]; then
-    PACKAGE_OUT="$ROOT/dist/BHE-macos-${ARCH}-v${package_version}-${package_kind}.zip"
-  fi
-  mkdir -p "$(dirname "$PACKAGE_OUT")"
-  rm -f "$PACKAGE_OUT"
-  ditto -c -k --norsrc --keepParent "$APP" "$PACKAGE_OUT"
-  write_sha256 "$PACKAGE_OUT"
-  echo "Packaged macOS app: $PACKAGE_OUT"
-
   if [[ "${BHE_SKIP_DMG:-0}" != "1" ]]; then
     if [[ -z "$DMG_OUT" ]]; then
       DMG_OUT="$ROOT/dist/BHE-macos-${ARCH}-v${package_version}-${package_kind}.dmg"
@@ -93,6 +83,9 @@ if [[ "${BHE_SKIP_PACKAGE:-0}" != "1" ]]; then
     dmg_staging="$(mktemp -d "${TMPDIR:-/tmp}/bhe-dmg.XXXXXX")"
     trap 'rm -rf "$dmg_staging"' EXIT
     ditto "$APP" "$dmg_staging/$APP_NAME.app"
+    cp "$ROOT/scripts/macos_dmg/BHE-首次打开修复.command" "$dmg_staging/"
+    cp "$ROOT/scripts/macos_dmg/BHE-使用说明.html" "$dmg_staging/"
+    chmod +x "$dmg_staging/BHE-首次打开修复.command"
     ln -s /Applications "$dmg_staging/Applications"
     rm -f "$DMG_OUT"
     hdiutil create -volname "BHE" -srcfolder "$dmg_staging" \

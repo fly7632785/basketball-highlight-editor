@@ -117,7 +117,7 @@ FLUTTER_BIN="$(command -v flutter)" \
 scripts/build_macos_release.sh
 ```
 
-The script now produces the `.app`, a zip archive, and a drag-to-Applications `.dmg` image by default. It also writes separate SHA-256 checksum files for the zip and DMG. Open the DMG and drag `BHE.app` to `Applications`. Pass an explicit version when preparing a release build:
+The script produces a drag-to-Applications `.dmg` image and its SHA-256 checksum by default. The DMG includes `BHE.app`, an `Applications` shortcut, usage instructions, and a one-click repair and verification script. Open the DMG, drag `BHE.app` to `Applications`, then double-click `BHE-首次打开修复.command`. Pass an explicit version when preparing a release build:
 
 ```bash
 BHE_BUILD_NAME=0.1.0-alpha.2 \
