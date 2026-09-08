@@ -18,7 +18,7 @@
 
 **完全本地运行 · 免费使用 · 自动找片段 · 人工可控**
 
-[🏠 官网 bhe.jafir.top](https://bhe.jafir.top) · [⬇ 下载最新版](https://github.com/fly7632785/basketball-highlight-editor/releases) · [开始使用](#开始使用) · [功能介绍](#它能帮你省下什么) · [文档](#文档)
+[🏠 官网 bhe.jafir.top](https://bhe.jafir.top) · [⬇ 下载最新版](https://bhe.jafir.top/#download) · [开始使用](#开始使用) · [功能介绍](#它能帮你省下什么) · [文档](#文档)
 
 ## 先说它解决什么问题
 
@@ -137,7 +137,7 @@ https://github.com/user-attachments/assets/43bfed76-bbc6-42c2-bbaa-ea2bf0604292
 
 ## 开始使用
 
-你可以直接从 GitHub Releases 下载桌面包或 Android `arm64-v8a` 测试包；每次推送 `v*` tag 后，GitHub Actions 会自动生成 macOS Intel、macOS Apple Silicon、Windows x64 和 Android `arm64-v8a` 版本。Android 包为 `debug-signed` 侧载测试包，不是 Google Play 正式签名包。想参与开发或自己构建时，再按下面的源码部署步骤准备环境。
+你可以从[官网下载安装包](https://bhe.jafir.top/#download)，GitHub Releases 作为备用下载入口；每次推送 `v*` tag 后，GitHub Actions 会自动生成 macOS Intel、macOS Apple Silicon、Windows x64 和 Android `arm64-v8a` 版本。Android 包为 `debug-signed` 侧载测试包，不是 Google Play 正式签名包。想参与开发或自己构建时，再按下面的源码部署步骤准备环境。
 
 ### macOS
 
