@@ -86,6 +86,9 @@ if [[ "${BHE_SKIP_PACKAGE:-0}" != "1" ]]; then
     cp "$ROOT/scripts/macos_dmg/BHE-首次打开修复.command" "$dmg_staging/"
     cp "$ROOT/scripts/macos_dmg/BHE-使用说明.html" "$dmg_staging/"
     chmod +x "$dmg_staging/BHE-首次打开修复.command"
+    # Ad Hoc 签名修复脚本：Gatekeeper 仍会提示"无法验证"，但可避免部分
+    # macOS 配置直接判定脚本"已损坏"，并让"右键 → 打开"路径保持可用。
+    codesign --sign - "$dmg_staging/BHE-首次打开修复.command" >/dev/null 2>&1 || true
     ln -s /Applications "$dmg_staging/Applications"
     rm -f "$DMG_OUT"
     hdiutil create -volname "BHE" -srcfolder "$dmg_staging" \

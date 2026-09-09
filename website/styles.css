@@ -285,3 +285,9 @@ a { color: inherit; }
   .footer-inner { flex-direction: column; align-items: flex-start; }
   .footer-fine { margin-left: 0; }
 }
+
+.dl-tip {
+  font-size: .78rem; color: var(--t-ink-dim); line-height: 1.6;
+  border-top: 1px solid var(--line-ink); padding-top: .7rem;
+}
+.dl-tip strong { color: var(--t-ink); }
