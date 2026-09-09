@@ -10,6 +10,8 @@ website/
   styles.css          样式（深色首尾 + 浅色中段）
   app.js              下载链接渲染 + 滚动进场
   favicon.svg
+  robots.txt          搜索引擎抓取规则
+  sitemap.xml         网站地图
   assets/             截图与演示封面（已压缩）
   nginx/              服务器 nginx 站点配置
 ```
@@ -53,6 +55,12 @@ https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basket
 1. 推 `v*` tag，等 GitHub Actions 构建 GitHub Release；
 2. 发布流程自动把版本文件和 `latest` 固定别名同步到 OSS；
 3. 官网始终使用固定的 `latest` 地址，不需要修改 `website/app.js` 或重新部署官网。
+
+## SEO
+
+`index.html` 已包含中文产品标题与描述、Canonical、Open Graph 分享信息、JSON-LD
+结构化数据和中英文搜索关键词；`robots.txt` 与 `sitemap.xml` 用于帮助百度和 Google
+发现官网。搜索引擎收录需要站点上线并由站长平台抓取，不能仅靠页面标签保证排名。
 
 手动补传时可以运行 `scripts/upload_release_assets_oss.sh <tag>`，脚本也会同时更新固定下载别名。
 

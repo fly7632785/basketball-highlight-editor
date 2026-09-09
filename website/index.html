@@ -3,10 +3,113 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Basketball Highlight Editor — 打完球，别再剪到半夜</title>
-<meta name="description" content="本地运行的篮球集锦剪辑工具：自动找出整场比赛的疑似进球片段，你只需快速审核、排除误检、导出集锦。视频不上传，完全免费开源。">
+<title>篮球集锦剪辑器 BHE｜自动找进球，本地免费剪辑</title>
+<meta name="description" content="Basketball Highlight Editor（BHE）是一款免费开源的本地篮球视频剪辑工具，自动找出整场比赛的疑似进球片段，支持快速审核、标签整理和集锦导出，视频不上传。">
+<meta name="keywords" content="篮球集锦剪辑器,篮球视频自动剪辑,篮球进球检测,篮球比赛集锦,自动找进球,视频集锦制作,BHE,Basketball Highlight Editor,本地视频剪辑,macOS,Windows">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+<meta name="author" content="Basketball Highlight Editor contributors">
+<meta name="application-name" content="Basketball Highlight Editor">
+<meta name="theme-color" content="#15120f">
+<link rel="canonical" href="https://bhe.jafir.top/">
+<link rel="alternate" hreflang="zh-CN" href="https://bhe.jafir.top/">
+<link rel="alternate" hreflang="x-default" href="https://bhe.jafir.top/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Basketball Highlight Editor">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:title" content="篮球集锦剪辑器 BHE｜自动找进球，本地免费剪辑">
+<meta property="og:description" content="整场比赛交给 BHE 扫，疑似进球自动排好队。快速审核、按标签整理并导出集锦，视频始终留在自己的电脑上。">
+<meta property="og:url" content="https://bhe.jafir.top/">
+<meta property="og:image" content="https://bhe.jafir.top/assets/demo-cover.jpg">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="798">
+<meta property="og:image:alt" content="Basketball Highlight Editor 篮球集锦审核工作台">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="篮球集锦剪辑器 BHE｜自动找进球，本地免费剪辑">
+<meta name="twitter:description" content="免费开源、本地运行的篮球集锦剪辑工具，自动找进球，快速审核后导出集锦。">
+<meta name="twitter:image" content="https://bhe.jafir.top/assets/demo-cover.jpg">
+<meta name="twitter:image:alt" content="Basketball Highlight Editor 篮球集锦审核工作台">
+<link rel="sitemap" type="application/xml" href="/sitemap.xml">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="styles.css?v=5">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://bhe.jafir.top/#website",
+      "url": "https://bhe.jafir.top/",
+      "name": "Basketball Highlight Editor",
+      "alternateName": "BHE 篮球集锦剪辑器",
+      "inLanguage": "zh-CN",
+      "publisher": { "@id": "https://bhe.jafir.top/#organization" }
+    },
+    {
+      "@type": "Organization",
+      "@id": "https://bhe.jafir.top/#organization",
+      "name": "Basketball Highlight Editor contributors",
+      "url": "https://bhe.jafir.top/",
+      "sameAs": ["https://github.com/fly7632785/basketball-highlight-editor"]
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://bhe.jafir.top/#application",
+      "name": "Basketball Highlight Editor",
+      "alternateName": "BHE 篮球集锦剪辑器",
+      "url": "https://bhe.jafir.top/",
+      "description": "免费开源、完全本地运行的篮球视频集锦剪辑工具，自动找出疑似进球片段并支持人工审核和导出。",
+      "applicationCategory": "MultimediaApplication",
+      "applicationSubCategory": "Sports video editing",
+      "operatingSystem": "macOS, Windows",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" },
+      "license": "https://github.com/fly7632785/basketball-highlight-editor/blob/main/LICENSE",
+      "downloadUrl": "https://bhe.jafir.top/#download",
+      "image": "https://bhe.jafir.top/assets/demo-cover.jpg",
+      "isPartOf": { "@id": "https://bhe.jafir.top/#website" }
+    },
+    {
+      "@type": "VideoObject",
+      "@id": "https://bhe.jafir.top/#demo-video",
+      "name": "Basketball Highlight Editor 操作演示",
+      "description": "展示如何导入篮球比赛视频、自动分析疑似进球、审核候选片段并导出集锦。",
+      "thumbnailUrl": "https://bhe.jafir.top/assets/demo-cover.jpg",
+      "contentUrl": "https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4",
+      "embedUrl": "https://bhe.jafir.top/#demo",
+      "uploadDate": "2026-08-26",
+      "inLanguage": "zh-CN",
+      "isPartOf": { "@id": "https://bhe.jafir.top/#website" }
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://bhe.jafir.top/#faq",
+      "url": "https://bhe.jafir.top/#faq",
+      "inLanguage": "zh-CN",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "需要联网吗？会上传我的视频吗？",
+          "acceptedAnswer": { "@type": "Answer", "text": "分析、预览、审核、导出全部在本机完成，不需要账号，也不上传视频。下载安装包和查看文档需要网络。" }
+        },
+        {
+          "@type": "Question",
+          "name": "篮球集锦剪辑器真的免费吗？",
+          "acceptedAnswer": { "@type": "Answer", "text": "Basketball Highlight Editor 是开源项目，采用 MIT 协议，不按视频时长、不限次数收费。模型和素材请遵守各自的授权条件。" }
+        },
+        {
+          "@type": "Question",
+          "name": "识别不准怎么办？",
+          "acceptedAnswer": { "@type": "Answer", "text": "候选默认全部保留，误检由用户排除；时间边界可以拖动微调，漏掉的片段可以手动补。机器给的是初稿，最终结果由用户审核。" }
+        },
+        {
+          "@type": "Question",
+          "name": "支持哪些系统？",
+          "acceptedAnswer": { "@type": "Answer", "text": "当前官网提供 macOS 和 Windows 桌面版下载，Android 端仍在开发中，iOS 暂无时间表。" }
+        }
+      ]
+    }
+  ]
+}
+</script>
 </head>
 <body>
 
@@ -120,7 +223,7 @@
       <source src="https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4" type="video/mp4">
       你的浏览器不支持内嵌视频，可<a href="https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4" target="_blank" rel="noopener">直接打开录屏文件</a>。
     </video>
-    <p class="demo-note mono">约 3 分钟 · 存放在国内 OSS，页内直接播放</p>
+    <p class="demo-note mono">约 34 秒 · 存放在国内 OSS，页内直接播放</p>
   </div>
 </section>
 
@@ -160,6 +263,11 @@
       <a class="btn btn-ghost" href="https://github.com/fly7632785/basketball-highlight-editor/releases" target="_blank" rel="noopener">GitHub Releases</a>
     </article>
   </div>
+
+  <noscript>
+    <p class="dl-fine">请启用 JavaScript 查看最新下载按钮，或前往
+      <a href="https://github.com/fly7632785/basketball-highlight-editor/releases">GitHub Releases</a> 手动下载。</p>
+  </noscript>
 
   <p class="dl-fine mono">
     每个包在 GitHub Release 附带 .sha256 校验文件 · 备用下载：
