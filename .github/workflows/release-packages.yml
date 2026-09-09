@@ -452,3 +452,6 @@ jobs:
           for source in "$RUNNER_TEMP/bhe-release-assets"/BHE-windows-x64-v*.zip; do
             publish_alias "$source" "BHE-windows-x64-latest.zip"
           done
+          for source in "$RUNNER_TEMP/bhe-release-assets"/BHE-android-arm64-v8a-v*-debug-signed.apk; do
+            publish_alias "$source" "BHE-android-arm64-v8a-latest.apk"
+          done

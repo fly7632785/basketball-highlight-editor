@@ -8,11 +8,13 @@ const DOWNLOADS = {
     "mac-arm64": ["BHE-macos-arm64-latest.dmg"],
     "mac-x64": ["BHE-macos-x86_64-latest.dmg"],
     "win-x64": ["BHE-windows-x64-latest.zip"],
+    "android-arm64": ["BHE-android-arm64-v8a-latest.apk"],
   },
 };
 
 function fileNameMeta(name) {
   if (name.endsWith(".dmg")) return { label: "下载 .dmg", sub: "安装包" };
+  if (name.endsWith(".apk")) return { label: "下载 .apk", sub: "手机安装包" };
   return { label: "下载 .zip", sub: "解压即用" };
 }
 

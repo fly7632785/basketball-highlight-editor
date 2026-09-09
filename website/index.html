@@ -61,7 +61,7 @@
       "description": "免费开源、完全本地运行的篮球视频集锦剪辑工具，自动找出疑似进球片段并支持人工审核和导出。",
       "applicationCategory": "MultimediaApplication",
       "applicationSubCategory": "Sports video editing",
-      "operatingSystem": "macOS, Windows",
+      "operatingSystem": "macOS, Windows, Android",
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" },
       "license": "https://github.com/fly7632785/basketball-highlight-editor/blob/main/LICENSE",
       "downloadUrl": "https://bhe.jafir.top/#download",
@@ -104,7 +104,7 @@
         {
           "@type": "Question",
           "name": "支持哪些系统？",
-          "acceptedAnswer": { "@type": "Answer", "text": "当前官网提供 macOS 和 Windows 桌面版下载，Android 端仍在开发中，iOS 暂无时间表。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "当前官网提供 macOS、Windows 桌面版和 Android arm64-v8a 侧载测试包，iOS 暂无可下载版本。" }
         }
       ]
     }
@@ -236,7 +236,7 @@
     安装包同步存放在阿里云 OSS，国内直连下载，不需要访问 GitHub。
     <span class="mono" id="dl-version">最新版本</span> ·
     桌面端（macOS / Windows）已经过日常使用验证；
-    Android 端开发中，暂未开放下载。
+    Android 端提供 arm64-v8a 侧载测试包。
   </p>
 
   <div class="dl-grid">
@@ -257,11 +257,11 @@
       <p class="dl-meta mono">Windows 10 / 11 · .zip 解压即用</p>
       <div class="dl-actions" data-os="win-x64"></div>
     </article>
-    <article class="dl-card dl-card-soon">
+    <article class="dl-card">
       <h3>Android</h3>
-      <p class="dl-meta mono">arm64-v8a · 开发中</p>
-      <p class="dl-soon">手机端本地分析正在收尾，先去 GitHub 关注进度。</p>
-      <a class="btn btn-ghost" href="https://github.com/fly7632785/basketball-highlight-editor/releases" target="_blank" rel="noopener">GitHub Releases</a>
+      <p class="dl-meta mono">arm64-v8a · Android 侧载测试包</p>
+      <div class="dl-actions" data-os="android-arm64"></div>
+      <p class="dl-tip">需要 Android 设备允许安装未知来源应用；当前为 debug-signed 测试包，不是 Google Play 正式版。</p>
     </article>
   </div>
 
@@ -309,7 +309,7 @@
     <details><summary>需要联网吗？会上传我的视频吗？</summary><p>分析、预览、审核、导出全部在本机完成，不需要账号，也不上传视频。下载安装包和查看文档需要网络。</p></details>
     <details><summary>真的免费？靠什么收费？</summary><p>开源项目，MIT 协议，不按时长、不限次数收费。模型和素材请遵守各自的授权条件。</p></details>
     <details><summary>识别不准怎么办？</summary><p>候选默认全部保留，误检由你排除；时间边界可以拖动微调，漏掉的片段可以手动补。机器给的只是初稿。</p></details>
-    <details><summary>Android / iOS 版什么时候有？</summary><p>Android 端已在开发中（本地推理，无需联网），完成前后会在 GitHub Releases 和本页同步。iOS 暂无时间表。</p></details>
+    <details><summary>Android / iOS 版什么时候有？</summary><p>Android 端已提供 arm64-v8a 侧载测试包（本地推理，无需联网），每次发布会同步到 GitHub Releases 和本页。iOS 暂无可下载版本。</p></details>
   </div>
 </section>
 
