@@ -58,12 +58,18 @@ echo "构建 Rust Android Runtime: $TARGET"
 RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-soname,libbhe_runtime.so" \
 CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CLANG" \
 RUSTC="$RUSTC_BIN" \
-  "$CARGO_BIN" build --manifest-path "$PACKAGE/Cargo.toml" --release --target "$TARGET" --features dynamic-onnx
+  "$CARGO_BIN" build --manifest-path "$PACKAGE/Cargo.toml" --release --target "$TARGET" --features dynamic-onnx,android-ep
 
 DEST="$OUT/$ABI"
 mkdir -p "$DEST"
-cp "$PACKAGE/target/$TARGET/release/libbhe_runtime.so" "$DEST/libbhe_runtime.so"
-cp "$ORT_DIR/$ABI/libonnxruntime.so" "$DEST/libonnxruntime.so"
+RUNTIME_SOURCE="$PACKAGE/target/$TARGET/release/libbhe_runtime.so"
+ORT_SOURCE="$ORT_DIR/$ABI/libonnxruntime.so"
+if ! cmp -s "$RUNTIME_SOURCE" "$DEST/libbhe_runtime.so" 2>/dev/null; then
+  cp "$RUNTIME_SOURCE" "$DEST/libbhe_runtime.so"
+fi
+if ! cmp -s "$ORT_SOURCE" "$DEST/libonnxruntime.so" 2>/dev/null; then
+  cp "$ORT_SOURCE" "$DEST/libonnxruntime.so"
+fi
 
 echo "Android Runtime 已生成：$DEST"
 echo "下一步：cd apps/mobile && flutter build apk --release"

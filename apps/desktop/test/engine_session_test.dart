@@ -198,6 +198,7 @@ void main() {
     final result = await session.suggestRoi(
       projectRoot: '/tmp/project',
       videoId: 'video-1',
+      startMs: 5000,
       sampleFps: 1,
       duration: 20,
       maxSamples: 12,
@@ -209,6 +210,7 @@ void main() {
     expect(transport.payloads.single, {
       'project_root': '/tmp/project',
       'video_id': 'video-1',
+      'start_ms': 5000,
       'sample_fps': 1.0,
       'duration': 20.0,
       'max_samples': 12,

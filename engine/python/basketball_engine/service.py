@@ -555,8 +555,8 @@ class EngineService:
 
         try:
             sample_fps = float(payload.get("sample_fps", 1.0))
-            duration = float(payload.get("duration", 20.0))
-            max_samples = int(payload.get("max_samples", 12))
+            duration = min(float(payload.get("duration", 20.0)), 20.0)
+            max_samples = min(int(payload.get("max_samples", 12)), 12)
             confidence = float(payload.get("confidence", 0.05))
             start_ms = max(0.0, float(payload.get("start_ms", 0.0)))
         except (TypeError, ValueError) as exc:

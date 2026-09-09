@@ -9,4 +9,5 @@ set_target_properties(bhe_runtime PROPERTIES
 
 add_library(bhe_runtime_jni SHARED bhe_runtime_jni.cpp)
 find_library(log-lib log)
-target_link_libraries(bhe_runtime_jni bhe_runtime ${log-lib})
+find_library(jnigraphics-lib jnigraphics)
+target_link_libraries(bhe_runtime_jni bhe_runtime ${log-lib} ${jnigraphics-lib})

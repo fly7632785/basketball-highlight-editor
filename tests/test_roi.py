@@ -1,4 +1,8 @@
-from basketball_highlight.roi import expand_hoop_bbox_to_roi, select_stable_hoop
+from basketball_highlight.roi import (
+    expand_hoop_bbox_to_roi,
+    hoop_bbox_to_rim_roi,
+    select_stable_hoop,
+)
 
 
 def test_expand_hoop_bbox_includes_trajectory_context():
@@ -36,3 +40,12 @@ def test_select_stable_hoop_uses_highest_confidence_frame_for_preview():
 
     assert result is not None
     assert result["preview_time_ms"] == 4000
+
+
+def test_hoop_bbox_to_rim_roi_matches_refiner_plane_calibration():
+    rim = hoop_bbox_to_rim_roi([480, 310, 500, 330], 960, 720)
+
+    assert rim["left"] == 0.5
+    assert rim["right"] == 500 / 960
+    assert rim["top"] == (320 - 20 * 0.28 - 20 * 0.45 / 2) / 720
+    assert rim["bottom"] == (320 - 20 * 0.28 + 20 * 0.45 / 2) / 720

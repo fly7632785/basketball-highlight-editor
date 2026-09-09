@@ -14,6 +14,7 @@ from ultralytics import YOLO
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from basketball_highlight.events import find_refined_crossings
+from basketball_highlight.sampling import canonical_sample_times, first_frame_index
 
 
 def parse_args():
@@ -27,6 +28,7 @@ def parse_args():
     parser.add_argument("--scale", type=int, default=4)
     parser.add_argument("--conf", type=float, default=0.2)
     parser.add_argument("--batch", type=int, default=8)
+    parser.add_argument("--net-roi", nargs=4, type=int, metavar=("X1", "Y1", "X2", "Y2"))
     parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda"))
     parser.add_argument("--output", required=True)
     return parser.parse_args()
@@ -110,7 +112,7 @@ def _net_zones(rim, frame_width, frame_height, net_roi=None):
     }
 
 
-def _zone_signal(gray, hsv, background_gray, previous_gray=None):
+def _zone_signal(gray, hsv, background_gray):
     if gray.size == 0 or hsv.size == 0:
         return 0.0, 0.0, 0.0, 0.0, 0.0
     orange = cv2.inRange(hsv, (0, 45, 35), (25, 255, 255)) > 0
@@ -122,21 +124,11 @@ def _zone_signal(gray, hsv, background_gray, previous_gray=None):
     orange_motion = _clamp01(float((orange & (diff > 25)).mean()) / 0.035)
     white = cv2.inRange(hsv, (0, 0, 145), (180, 90, 255)) > 0
     white_motion = _clamp01(float((white & (diff > 18)).mean()) / 0.020)
-    downward_motion = 0.0
-    if previous_gray is not None and previous_gray.shape == gray.shape:
-        flow = cv2.calcOpticalFlowFarneback(
-            previous_gray, gray, None, 0.5, 2, 15, 2, 5, 1.2, 0,
-        )
-        magnitude = cv2.magnitude(flow[..., 0], flow[..., 1])
-        moving_white = white & (magnitude > 0.35)
-        white_motion = max(
-            white_motion,
-            _clamp01(float(moving_white.mean()) / 0.015),
-        )
-        downward_motion = _clamp01(
-            float((moving_white & (flow[..., 1] > 0.12)).mean()) / 0.012,
-        )
-    return gray_motion, changed_ratio, orange_motion, white_motion, downward_motion
+    # Keep the desktop signal contract identical to the mobile runtime. The
+    # previous implementation added OpenCV Farneback flow only on desktop;
+    # Android/iOS intentionally do not carry OpenCV, so that extra component
+    # made the same video produce different net scores across platforms.
+    return gray_motion, changed_ratio, orange_motion, white_motion, 0.0
 
 
 def scan_window(
@@ -152,11 +144,13 @@ def scan_window(
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     start_time = max(0.0, center_time - window) if start_time_override is None else max(0.0, start_time_override)
     end_time = min(total_frames / fps, center_time + window) if end_time_override is None else min(total_frames / fps, end_time_override)
-    start_frame = int(start_time * fps)
-    stride = max(1, round(fps / sample_fps))
+    sample_times = canonical_sample_times(start_time, end_time, sample_fps)
+    target_frames = [min(total_frames - 1, first_frame_index(time, fps)) for time in sample_times]
+    start_frame = target_frames[0]
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     records = []
     frame_index = start_frame
+    sample_index = 0
     previous_net = None
     zones = _net_zones(
         rim,
@@ -165,7 +159,6 @@ def scan_window(
         net_roi=net_roi,
     ) if rim else {}
     zone_history = {name: deque(maxlen=15) for name in zones}
-    previous_zone_gray = {name: None for name in zones}
     if net_roi:
         net_x1, net_y1, net_x2, net_y2 = [int(value) for value in net_roi]
         net_x1 = max(x1, net_x1)
@@ -200,7 +193,12 @@ def scan_window(
             pending_crops,
             device=device,
             conf=conf,
+            iou=0.7,
+            agnostic_nms=False,
+            max_det=300,
             imgsz=640,
+            # Match the static 640x640 ONNX input used by mobile.
+            rect=False,
             batch=batch,
             verbose=False,
         )
@@ -231,13 +229,17 @@ def scan_window(
         pending_crops.clear()
         pending_meta.clear()
 
-    while frame_index / fps <= end_time:
+    while sample_index < len(target_frames):
         ok = cap.grab()
         if not ok:
             break
-        if (frame_index - start_frame) % stride:
+        if frame_index < target_frames[sample_index]:
             frame_index += 1
             continue
+        while sample_index < len(target_frames) and target_frames[sample_index] < frame_index:
+            sample_index += 1
+        if sample_index >= len(target_frames):
+            break
         ok, frame = cap.retrieve()
         if not ok:
             break
@@ -290,7 +292,7 @@ def scan_window(
                 else:
                     zone_measurements_valid = False
                 gray_motion, changed_ratio, orange_motion, white_motion, downward_motion = _zone_signal(
-                    current_gray, current_hsv, background, previous_zone_gray[zone_name],
+                    current_gray, current_hsv, background,
                 )
                 if current_gray.size > 0:
                     history.append(current_gray)
@@ -299,7 +301,6 @@ def scan_window(
                 zone_values[f"net_{zone_name}_orange_score"] = round(orange_motion, 4)
                 zone_values[f"net_{zone_name}_white_motion_score"] = round(white_motion, 4)
                 zone_values[f"net_{zone_name}_downward_motion_score"] = round(downward_motion, 4)
-                previous_zone_gray[zone_name] = current_gray.copy()
                 signals.append(max(gray_motion, white_motion, downward_motion))
                 signals.append(orange_motion)
             zone_values["net_measurement_valid"] = zone_measurements_valid
@@ -311,13 +312,14 @@ def scan_window(
         pending_crops.append(crop)
         pending_meta.append({
             "frame": frame_index,
-            "time": round(frame_index / fps, 4),
+            "time": sample_times[sample_index],
             "net_motion_score": round(net_motion_score, 3),
             "net_changed_ratio": round(net_changed_ratio, 4),
             **zone_values,
         })
         if len(pending_crops) >= batch:
             flush_batch()
+        sample_index += 1
         frame_index += 1
     flush_batch()
     cap.release()
@@ -337,6 +339,7 @@ def main(args):
         records = scan_window(
             model, video, roi, float(coarse["time"]), args.window,
             args.sample_fps, args.scale, args.conf, device, coarse_data["rim"], args.batch,
+            net_roi=args.net_roi,
         )
         matches = find_refined_crossings(records, coarse_data["rim"])
         refined.append({

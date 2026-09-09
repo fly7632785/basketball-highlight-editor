@@ -8,6 +8,7 @@ typedef struct RuntimeSession RuntimeSession;
 
 bool bhe_runtime_initialize_onnx(const char *library_path);
 RuntimeSession *bhe_runtime_create_session(const char *config);
+char *bhe_runtime_session_info(RuntimeSession *session);
 char *bhe_runtime_push_frame(RuntimeSession *session, const char *frame);
 /*
  * Processes one raw RGBA video frame (no JPEG/base64/JSON overhead).

@@ -324,7 +324,9 @@ class _ProjectView extends StatelessWidget {
                   ? '本地完成分析、审核和导出。'
                   : '配置好分析区域后即可开始识别。',
             ),
-            if (state.project.video == null)
+            if (state.preparingVideo)
+              _VideoPreparationCard(message: state.preparingVideoMessage)
+            else if (state.project.video == null)
               _EmptyProject(
                 onPick: () => unawaited(state.createNewProjectAndPickVideo()),
               )
@@ -415,6 +417,42 @@ class _EmptyProject extends StatelessWidget {
   );
 }
 
+class _VideoPreparationCard extends StatelessWidget {
+  const _VideoPreparationCard({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2.5),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('正在准备视频', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  '$message，大文件可能需要几秒。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _ProjectSetup extends StatelessWidget {
   const _ProjectSetup({required this.state, required this.onOpenReview});
   final MobileAppState state;
@@ -430,6 +468,7 @@ class _ProjectSetup extends StatelessWidget {
         _VideoPreview(
           path: video.path,
           aspectRatio: video.width / video.height,
+          seekStepMs: 1500,
         ),
         const SizedBox(height: 12),
         Text(
@@ -446,8 +485,8 @@ class _ProjectSetup extends StatelessWidget {
                 icon: LucideIcons.scanLine,
                 title: '分析质量',
                 value: settings.mode == AnalysisMode.standard
-                    ? '标准 · 640×480 / 3fps'
-                    : '高质量 · 960×720 / 5fps',
+                    ? '标准 · ${settings.modelInputSize} 输入 / ${settings.analysisFpsLabel}fps'
+                    : '高质量 · ${settings.modelInputSize} 输入 / ${settings.analysisFpsLabel}fps',
                 onTap: () => _showQualitySheet(context, state),
               ),
               const Divider(height: 1),
@@ -461,8 +500,8 @@ class _ProjectSetup extends StatelessWidget {
               const Divider(height: 1),
               _SettingRow(
                 icon: LucideIcons.crosshair,
-                title: '篮筐与篮网区域',
-                value: state.project.hoopRoi == null ? '尚未设置' : '已设置，可微调',
+                title: '投篮分析区与篮网区',
+                value: state.project.hoopRoi == null ? '尚未设置' : '已设置，篮筐标定独立保存',
                 onTap: () => _showRoiEditor(context, state),
                 accent: state.project.hoopRoi == null
                     ? BhePalette.warning
@@ -530,6 +569,7 @@ class _VideoPreview extends StatefulWidget {
   const _VideoPreview({
     required this.path,
     required this.aspectRatio,
+    this.seekStepMs = 1500,
     this.initialPositionMs,
     this.requestedPositionMs,
     this.stopAtMs,
@@ -537,6 +577,7 @@ class _VideoPreview extends StatefulWidget {
   });
   final String path;
   final double aspectRatio;
+  final int seekStepMs;
   final int? initialPositionMs;
   final int? requestedPositionMs;
   final int? stopAtMs;
@@ -745,9 +786,9 @@ class _VideoPreviewState extends State<_VideoPreview> {
                     ),
                     const Spacer(),
                     IconButton(
-                      onPressed: () => _seek(-1500),
+                      onPressed: () => _seek(-widget.seekStepMs),
                       icon: const Icon(LucideIcons.rotateCcw, size: 17),
-                      tooltip: '后退 1.5 秒',
+                      tooltip: '后退 ${_formatSeekStep(widget.seekStepMs)}',
                     ),
                     IconButton.filledTonal(
                       onPressed: _toggle,
@@ -760,9 +801,9 @@ class _VideoPreviewState extends State<_VideoPreview> {
                       tooltip: '播放/暂停',
                     ),
                     IconButton(
-                      onPressed: () => _seek(1500),
+                      onPressed: () => _seek(widget.seekStepMs),
                       icon: const Icon(LucideIcons.rotateCw, size: 17),
-                      tooltip: '前进 1.5 秒',
+                      tooltip: '前进 ${_formatSeekStep(widget.seekStepMs)}',
                     ),
                     IconButton(
                       onPressed: _replay,
@@ -1149,8 +1190,10 @@ class _ReviewViewState extends State<_ReviewView> {
   int selectedIndex = 0;
   bool annotations = true;
   bool autoReplay = true;
+  bool clipOnly = true;
   double speed = 1;
   bool _stoppingAtCandidateEnd = false;
+  bool _seeking = false;
   bool _completionPromptShown = false;
   DateTime _lastVideoPaint = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -1197,10 +1240,12 @@ class _ReviewViewState extends State<_ReviewView> {
     final candidate = selected;
     final value = controller?.value;
     if (candidate != null &&
+        clipOnly &&
         value != null &&
         value.isPlaying &&
         value.position.inMilliseconds >= candidate.endMs &&
-        !_stoppingAtCandidateEnd) {
+        !_stoppingAtCandidateEnd &&
+        !_seeking) {
       _stoppingAtCandidateEnd = true;
       unawaited(
         _enqueuePlayer((player) async {
@@ -1259,20 +1304,54 @@ class _ReviewViewState extends State<_ReviewView> {
   Future<void> _seek(int milliseconds) async {
     await _enqueuePlayer((player) async {
       final value = player.value;
+      final candidate = selected;
+      final lower = clipOnly && candidate != null
+          ? Duration(milliseconds: candidate.startMs)
+          : Duration.zero;
+      final upper = clipOnly && candidate != null
+          ? Duration(
+              milliseconds: math.max(candidate.startMs, candidate.endMs - 1),
+            )
+          : value.duration;
       final next = value.position + Duration(milliseconds: milliseconds);
-      final bounded = next < Duration.zero
-          ? Duration.zero
-          : next > value.duration
-          ? value.duration
+      final bounded = next < lower
+          ? lower
+          : next > upper
+          ? upper
           : next;
-      await player.seekTo(bounded);
+      _seeking = true;
+      try {
+        await player.seekTo(bounded);
+      } finally {
+        _seeking = false;
+      }
     });
   }
 
   Future<void> _seekTo(int milliseconds) async {
-    await _enqueuePlayer(
-      (player) => player.seekTo(Duration(milliseconds: milliseconds)),
-    );
+    final candidate = selected;
+    final lower = clipOnly && candidate != null ? candidate.startMs : 0;
+    final upper = clipOnly && candidate != null
+        ? math.max(candidate.startMs, candidate.endMs - 1)
+        : (controller?.value.duration.inMilliseconds ?? milliseconds);
+    final bounded = milliseconds.clamp(lower, upper).toInt();
+    await _enqueuePlayer((player) async {
+      _seeking = true;
+      try {
+        await player.seekTo(Duration(milliseconds: bounded));
+      } finally {
+        _seeking = false;
+      }
+    });
+  }
+
+  Future<void> _toggleSource() async {
+    final next = !clipOnly;
+    setState(() {
+      clipOnly = next;
+      _stoppingAtCandidateEnd = false;
+    });
+    if (next && selected != null) await _replay(selected!);
   }
 
   Future<void> _togglePlay() async {
@@ -1285,6 +1364,12 @@ class _ReviewViewState extends State<_ReviewView> {
       }
     });
     if (mounted) setState(() {});
+  }
+
+  Future<void> _pausePlayback() async {
+    await _enqueuePlayer((player) async {
+      if (player.value.isPlaying) await player.pause();
+    });
   }
 
   Future<void> _resumePlayback() async {
@@ -1325,8 +1410,8 @@ class _ReviewViewState extends State<_ReviewView> {
   Future<void> _showBatchRangeSheet(BuildContext context) async {
     if (candidates.isEmpty) return;
     final current = state.project.settings.clip;
-    var before = current.beforeSeconds.toDouble();
-    var after = current.afterSeconds.toDouble();
+    var before = math.min(current.beforeSeconds, 10).toDouble();
+    var after = math.min(current.afterSeconds, 10).toDouble();
     var overwriteManual = false;
     final manualCount = candidates
         .where((candidate) => candidate.rangeEdited)
@@ -1423,7 +1508,6 @@ class _ReviewViewState extends State<_ReviewView> {
                     selectedIndex: selectedIndex,
                     onSelect: _select,
                     onAdd: () => _addManualCandidate(context),
-                    onShortcuts: () => _showShortcuts(context),
                     onBatchRange: () => _showBatchRangeSheet(context),
                   ),
                 ),
@@ -1433,8 +1517,10 @@ class _ReviewViewState extends State<_ReviewView> {
                     controller: controller,
                     candidate: candidate,
                     annotations: annotations,
+                    clipOnly: clipOnly,
                     aspectRatio: video.width / video.height,
                     onToggle: () => _togglePlay(),
+                    onPause: _pausePlayback,
                     onScrubTo: _seekTo,
                     onResume: _resumePlayback,
                     onSwipeVertical: (velocity) => _select(
@@ -1450,6 +1536,7 @@ class _ReviewViewState extends State<_ReviewView> {
             controller: controller,
             annotations: annotations,
             autoReplay: autoReplay,
+            clipOnly: clipOnly,
             speed: speed,
             onToggle: _togglePlay,
             onReplay: () => _replay(candidate),
@@ -1459,6 +1546,7 @@ class _ReviewViewState extends State<_ReviewView> {
             onToggleAnnotations: () =>
                 setState(() => annotations = !annotations),
             onToggleAutoReplay: () => setState(() => autoReplay = !autoReplay),
+            onToggleSource: _toggleSource,
             onSpeed: (value) async {
               setState(() => speed = value);
               await _enqueuePlayer((player) => player.setPlaybackSpeed(value));
@@ -1547,6 +1635,7 @@ class _ReviewViewState extends State<_ReviewView> {
               _VideoPreview(
                 path: video.path,
                 aspectRatio: video.width / video.height,
+                seekStepMs: 1500,
                 initialPositionMs: start.round(),
                 requestedPositionMs: requestedPosition,
                 stopAtMs: end.round(),
@@ -1674,6 +1763,7 @@ class _ReviewViewState extends State<_ReviewView> {
               _VideoPreview(
                 path: video.path,
                 aspectRatio: video.width / video.height,
+                seekStepMs: 1500,
                 initialPositionMs: start.round(),
                 requestedPositionMs: requestedPosition,
                 stopAtMs: end.round(),
@@ -1746,8 +1836,10 @@ class _ReviewVideoStage extends StatefulWidget {
     required this.controller,
     required this.candidate,
     required this.annotations,
+    required this.clipOnly,
     required this.aspectRatio,
     required this.onToggle,
+    required this.onPause,
     required this.onScrubTo,
     required this.onResume,
     required this.onSwipeVertical,
@@ -1755,8 +1847,10 @@ class _ReviewVideoStage extends StatefulWidget {
   final VideoPlayerController? controller;
   final Candidate candidate;
   final bool annotations;
+  final bool clipOnly;
   final double aspectRatio;
   final VoidCallback onToggle;
+  final Future<void> Function() onPause;
   final Future<void> Function(int) onScrubTo;
   final Future<void> Function() onResume;
   final ValueChanged<double> onSwipeVertical;
@@ -1810,18 +1904,25 @@ class _ReviewVideoStageState extends State<_ReviewVideoStage> {
       _scrubPosition = _dragStartPosition;
       _resumeAfterScrub = player?.value.isPlaying == true;
     });
-    if (_resumeAfterScrub) unawaited(player?.pause());
+    if (_resumeAfterScrub) unawaited(widget.onPause());
   }
 
   void _updateScrub(DragUpdateDetails details, double width) {
     if (!_scrubbing || width <= 0) return;
-    final travel = math.max(widget.candidate.duration.inMilliseconds, 6000);
+    final fullDuration =
+        widget.controller?.value.duration.inMilliseconds ?? 6000;
+    final travel = math.max(
+      widget.clipOnly ? widget.candidate.duration.inMilliseconds : fullDuration,
+      6000,
+    );
     final delta = ((details.globalPosition.dx - _dragStartX) / width * travel)
         .round();
-    final next = (_dragStartPosition + delta).clamp(
-      widget.candidate.startMs,
-      widget.candidate.endMs,
-    );
+    final playerDuration =
+        widget.controller?.value.duration.inMilliseconds ??
+        widget.candidate.endMs;
+    final start = widget.clipOnly ? widget.candidate.startMs : 0;
+    final end = widget.clipOnly ? widget.candidate.endMs : playerDuration;
+    final next = (_dragStartPosition + delta).clamp(start, end);
     if (next == _scrubPosition) return;
     setState(() => _scrubPosition = next);
   }
@@ -1888,15 +1989,18 @@ class _ReviewVideoStageState extends State<_ReviewVideoStage> {
                   )
                 else
                   const Center(child: CircularProgressIndicator()),
-                if (widget.annotations)
-                  Positioned(
-                    top: 12,
-                    right: 12,
-                    child: _AnnotationBadge(candidate: widget.candidate),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: _PlaybackTimeBadge(
+                    positionMs:
+                        player?.value.position.inMilliseconds ??
+                        widget.candidate.startMs,
                   ),
+                ),
                 Positioned(
                   left: 10,
-                  bottom: 10,
+                  bottom: 22,
                   child: _CompactEvidence(candidate: widget.candidate),
                 ),
                 if (_scrubbing)
@@ -1970,9 +2074,9 @@ class _ReviewVideoStageState extends State<_ReviewVideoStage> {
   }
 }
 
-class _AnnotationBadge extends StatelessWidget {
-  const _AnnotationBadge({required this.candidate});
-  final Candidate candidate;
+class _PlaybackTimeBadge extends StatelessWidget {
+  const _PlaybackTimeBadge({required this.positionMs});
+  final int positionMs;
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
@@ -1988,13 +2092,13 @@ class _AnnotationBadge extends StatelessWidget {
             width: 7,
             height: 7,
             decoration: const BoxDecoration(
-              color: BhePalette.green,
+              color: BhePalette.orange,
               shape: BoxShape.circle,
             ),
           ),
           const SizedBox(width: 6),
           Text(
-            '候选 ${candidate.displayTime}',
+            '当前 ${_formatMs(positionMs)}',
             style: const TextStyle(color: Colors.white, fontSize: 12),
           ),
         ],
@@ -2153,7 +2257,6 @@ class _CandidateRail extends StatelessWidget {
     required this.selectedIndex,
     required this.onSelect,
     required this.onAdd,
-    required this.onShortcuts,
     required this.onBatchRange,
   });
   final ScrollController controller;
@@ -2162,7 +2265,6 @@ class _CandidateRail extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelect;
   final VoidCallback onAdd;
-  final VoidCallback onShortcuts;
   final VoidCallback onBatchRange;
 
   @override
@@ -2177,17 +2279,6 @@ class _CandidateRail extends StatelessWidget {
               Text(
                 '候选 ${candidates.length}',
                 style: Theme.of(context).textTheme.labelMedium,
-              ),
-              IconButton(
-                onPressed: onShortcuts,
-                icon: const Icon(LucideIcons.info, size: 17),
-                tooltip: '查看审核操作提示',
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(
-                  width: 34,
-                  height: 34,
-                ),
-                padding: EdgeInsets.zero,
               ),
               const Spacer(),
               TextButton.icon(
@@ -2316,8 +2407,8 @@ class _BatchSecondsSlider extends StatelessWidget {
       Expanded(
         child: Slider(
           min: 0,
-          max: 15,
-          divisions: 15,
+          max: 10,
+          divisions: 10,
           value: value,
           onChanged: onChanged,
         ),
@@ -2352,6 +2443,7 @@ class _ReviewActionBar extends StatelessWidget {
     required this.controller,
     required this.annotations,
     required this.autoReplay,
+    required this.clipOnly,
     required this.speed,
     required this.onToggle,
     required this.onReplay,
@@ -2360,6 +2452,7 @@ class _ReviewActionBar extends StatelessWidget {
     required this.onSeekTo,
     required this.onToggleAnnotations,
     required this.onToggleAutoReplay,
+    required this.onToggleSource,
     required this.onSpeed,
     required this.onInclude,
     required this.onExclude,
@@ -2373,6 +2466,7 @@ class _ReviewActionBar extends StatelessWidget {
   final VideoPlayerController? controller;
   final bool annotations;
   final bool autoReplay;
+  final bool clipOnly;
   final double speed;
   final VoidCallback onToggle;
   final VoidCallback onReplay;
@@ -2381,6 +2475,7 @@ class _ReviewActionBar extends StatelessWidget {
   final ValueChanged<int> onSeekTo;
   final VoidCallback onToggleAnnotations;
   final VoidCallback onToggleAutoReplay;
+  final VoidCallback onToggleSource;
   final ValueChanged<double> onSpeed;
   final VoidCallback onInclude;
   final VoidCallback onExclude;
@@ -2393,9 +2488,11 @@ class _ReviewActionBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final value = controller?.value;
-    final duration = value?.duration.inMilliseconds.toDouble() ?? 1;
-    final position = (value?.position.inMilliseconds.toDouble() ?? 0)
-        .clamp(0, duration)
+    final fullDuration = value?.duration.inMilliseconds.toDouble() ?? 1;
+    final minPosition = clipOnly ? candidate.startMs.toDouble() : 0.0;
+    final duration = clipOnly ? candidate.endMs.toDouble() : fullDuration;
+    final position = (value?.position.inMilliseconds.toDouble() ?? minPosition)
+        .clamp(minPosition, duration)
         .toDouble();
     return Material(
       color: Theme.of(context).cardTheme.color,
@@ -2404,6 +2501,7 @@ class _ReviewActionBar extends StatelessWidget {
         child: Column(
           children: [
             Slider(
+              min: minPosition,
               value: position,
               max: duration,
               onChanged: controller == null
@@ -2411,119 +2509,246 @@ class _ReviewActionBar extends StatelessWidget {
                   : (value) => onSeekTo(value.round()),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              child: Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 2,
-                runSpacing: 2,
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+              child: Row(
+                children: [
+                  Text(
+                    '当前 ${_formatMs(position.round())}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const Spacer(),
+                  Text(
+                    clipOnly
+                        ? '片段 ${_formatMs(candidate.startMs)} — ${_formatMs(candidate.endMs)}'
+                        : '全片 ${_formatMs(fullDuration.round())}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 132,
+                    child: SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(value: true, label: Text('审核')),
+                        ButtonSegment(value: false, label: Text('原视频')),
+                      ],
+                      selected: {clipOnly},
+                      onSelectionChanged: (selection) {
+                        if (selection.single != clipOnly) onToggleSource();
+                      },
+                      showSelectedIcon: false,
+                      style: ButtonStyle(
+                        side: const WidgetStatePropertyAll(BorderSide.none),
+                        shape: WidgetStatePropertyAll(
+                          RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                        ),
+                        backgroundColor: WidgetStateProperty.resolveWith(
+                          (states) => states.contains(WidgetState.selected)
+                              ? Theme.of(
+                                  context,
+                                ).colorScheme.primary.withValues(alpha: .12)
+                              : Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withValues(alpha: .04),
+                        ),
+                        foregroundColor: WidgetStateProperty.resolveWith(
+                          (states) => states.contains(WidgetState.selected)
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                        textStyle: const WidgetStatePropertyAll(
+                          TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+                        ),
+                        padding: const WidgetStatePropertyAll(
+                          EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: onToggleAnnotations,
+                    isSelected: annotations,
+                    icon: const Icon(LucideIcons.scanLine, size: 19),
+                    tooltip: annotations ? '隐藏轨迹' : '显示轨迹',
+                    style: IconButton.styleFrom(
+                      foregroundColor: annotations
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.onSurfaceVariant,
+                      backgroundColor: annotations
+                          ? Theme.of(
+                              context,
+                            ).colorScheme.primary.withValues(alpha: .10)
+                          : Colors.transparent,
+                      minimumSize: const Size(40, 40),
+                      padding: EdgeInsets.zero,
+                      side: BorderSide(
+                        color: Theme.of(context).colorScheme.primary.withValues(
+                          alpha: annotations ? .35 : .18,
+                        ),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    onPressed: onShortcuts,
+                    icon: const Icon(LucideIcons.info, size: 19),
+                    tooltip: '操作提示',
+                    style: IconButton.styleFrom(
+                      foregroundColor: Theme.of(
+                        context,
+                      ).colorScheme.onSurfaceVariant,
+                      backgroundColor: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: .04),
+                      minimumSize: const Size(40, 40),
+                      padding: EdgeInsets.zero,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  SizedBox(
+                    width: 44,
+                    child: PopupMenuButton<String>(
+                      tooltip: '更多审核操作',
+                      onSelected: _handleMore,
+                      color: Theme.of(context).cardTheme.color,
+                      elevation: 8,
+                      menuPadding: const EdgeInsets.symmetric(vertical: 6),
+                      constraints: const BoxConstraints(minWidth: 220),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        side: const BorderSide(color: BhePalette.borderStrong),
+                      ),
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(
+                          value: 'range',
+                          child: Text('调整片段范围'),
+                        ),
+                        const PopupMenuDivider(),
+                        const PopupMenuItem(
+                          value: 'evidence',
+                          child: Text('查看判断依据'),
+                        ),
+                        PopupMenuItem(
+                          value: 'export',
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 7,
+                            ),
+                            decoration: BoxDecoration(
+                              color: BhePalette.orange.withValues(alpha: .13),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(
+                                  LucideIcons.download,
+                                  size: 17,
+                                  color: BhePalette.orange,
+                                ),
+                                SizedBox(width: 9),
+                                Text('导出保留片段'),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                      icon: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withValues(alpha: .04),
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: const Padding(
+                          padding: EdgeInsets.all(10),
+                          child: Icon(LucideIcons.ellipsis, size: 19),
+                        ),
+                      ),
+                      padding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   IconButton(
+                    onPressed: onReplay,
+                    icon: const Icon(LucideIcons.refreshCw, size: 19),
+                    tooltip: '重播',
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    onPressed: onToggleAutoReplay,
+                    icon: Icon(
+                      autoReplay ? LucideIcons.repeat2 : LucideIcons.repeatOff,
+                      size: 19,
+                      color: autoReplay
+                          ? Theme.of(context).colorScheme.primary
+                          : null,
+                    ),
+                    tooltip: autoReplay ? '关闭自动重播' : '打开自动重播',
+                  ),
+                  PopupMenuButton<double>(
+                    tooltip: '播放速度',
+                    initialValue: speed,
+                    onSelected: onSpeed,
+                    itemBuilder: (_) => [
+                      for (final rate in [.5, .75, 1.0, 1.5, 2.0])
+                        CheckedPopupMenuItem(
+                          value: rate,
+                          checked: rate == speed,
+                          child: Text(_formatSpeed(rate)),
+                        ),
+                    ],
+                    child: SizedBox(
+                      width: 58,
+                      height: 48,
+                      child: Center(child: Text(_formatSpeed(speed))),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  IconButton(
                     onPressed: onSeekBack,
-                    icon: const Icon(LucideIcons.rotateCcw, size: 18),
+                    icon: const Icon(LucideIcons.rotateCcw, size: 19),
                     tooltip: '后退 1.5 秒',
                   ),
+                  const SizedBox(width: 4),
                   IconButton.filled(
                     onPressed: onToggle,
                     icon: Icon(
                       value?.isPlaying == true
                           ? LucideIcons.pause
                           : LucideIcons.play,
-                      size: 18,
+                      size: 20,
                     ),
-                    tooltip: '播放/暂停',
+                    tooltip: value?.isPlaying == true ? '暂停' : '播放',
                   ),
+                  const SizedBox(width: 4),
                   IconButton(
                     onPressed: onSeekForward,
-                    icon: const Icon(LucideIcons.rotateCw, size: 18),
+                    icon: const Icon(LucideIcons.rotateCw, size: 19),
                     tooltip: '前进 1.5 秒',
-                  ),
-                  IconButton(
-                    onPressed: onReplay,
-                    icon: const Icon(LucideIcons.refreshCw, size: 18),
-                    tooltip: '重播',
-                  ),
-                  IconButton(
-                    onPressed: onToggleAutoReplay,
-                    icon: Icon(
-                      autoReplay ? LucideIcons.repeat2 : LucideIcons.repeatOff,
-                      size: 18,
-                      color: autoReplay ? BhePalette.orange : null,
-                    ),
-                    tooltip: autoReplay ? '关闭自动重播' : '打开自动重播',
-                  ),
-                  PopupMenuButton<String>(
-                    tooltip: '更多审核操作',
-                    onSelected: _handleMore,
-                    color: Theme.of(context).cardTheme.color,
-                    elevation: 8,
-                    menuPadding: const EdgeInsets.symmetric(vertical: 6),
-                    constraints: const BoxConstraints(minWidth: 220),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      side: const BorderSide(color: BhePalette.borderStrong),
-                    ),
-                    itemBuilder: (_) => [
-                      PopupMenuItem(
-                        value: 'annotations',
-                        child: Text(annotations ? '关闭标注' : '打开标注'),
-                      ),
-                      const PopupMenuItem(
-                        value: 'range',
-                        child: Text('调整片段范围'),
-                      ),
-                      const PopupMenuItem(
-                        value: 'shortcuts',
-                        child: Text('查看操作提示'),
-                      ),
-                      const PopupMenuDivider(),
-                      PopupMenuItem(
-                        value: 'speed_0.5',
-                        child: Text('播放速度 0.5x${speed == .5 ? ' ✓' : ''}'),
-                      ),
-                      PopupMenuItem(
-                        value: 'speed_1.0',
-                        child: Text('播放速度 1.0x${speed == 1 ? ' ✓' : ''}'),
-                      ),
-                      PopupMenuItem(
-                        value: 'speed_1.5',
-                        child: Text('播放速度 1.5x${speed == 1.5 ? ' ✓' : ''}'),
-                      ),
-                      PopupMenuItem(
-                        value: 'speed_2.0',
-                        child: Text('播放速度 2.0x${speed == 2 ? ' ✓' : ''}'),
-                      ),
-                      const PopupMenuDivider(),
-                      const PopupMenuItem(
-                        value: 'evidence',
-                        child: Text('查看判断依据'),
-                      ),
-                      PopupMenuItem(
-                        value: 'export',
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 7,
-                          ),
-                          decoration: BoxDecoration(
-                            color: BhePalette.orange.withValues(alpha: .13),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Row(
-                            children: [
-                              Icon(
-                                LucideIcons.download,
-                                size: 17,
-                                color: BhePalette.orange,
-                              ),
-                              SizedBox(width: 9),
-                              Text('导出保留片段'),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                    icon: const Icon(LucideIcons.ellipsis, size: 20),
                   ),
                 ],
               ),
@@ -2572,20 +2797,8 @@ class _ReviewActionBar extends StatelessWidget {
 
   void _handleMore(String value) {
     switch (value) {
-      case 'annotations':
-        onToggleAnnotations();
       case 'range':
         onEditRange();
-      case 'shortcuts':
-        onShortcuts();
-      case 'speed_0.5':
-        onSpeed(.5);
-      case 'speed_1.0':
-        onSpeed(1);
-      case 'speed_1.5':
-        onSpeed(1.5);
-      case 'speed_2.0':
-        onSpeed(2);
       case 'evidence':
         onDetails();
       case 'export':
@@ -3109,7 +3322,7 @@ class _ExportViewState extends State<_ExportView> {
             const _PageIntro(
               eyebrow: 'EXPORT',
               title: '导出集锦',
-              subtitle: '只导出当前选中的候选片段。',
+              subtitle: '按审核结果导出保留片段，可分别导出或合并为一条视频。',
             ),
             Card(
               child: Padding(
@@ -3203,9 +3416,17 @@ class _ExportViewState extends State<_ExportView> {
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: null,
+                        onPressed: state.exporting
+                            ? null
+                            : () => unawaited(
+                                state.mergeClipsForPlayer(selectedPlayer),
+                              ),
                         icon: const Icon(LucideIcons.merge, size: 18),
-                        label: const Text('合并导出（即将支持）'),
+                        label: Text(
+                          selectedPlayer == null
+                              ? '合并导出全部保留片段'
+                              : '合并导出 $selectedPlayer 的片段',
+                        ),
                       ),
                     ),
                   ],
@@ -3220,9 +3441,19 @@ class _ExportViewState extends State<_ExportView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        state.progressMessage,
-                        style: Theme.of(context).textTheme.bodyMedium,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              state.progressMessage,
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => unawaited(state.cancelExport()),
+                            child: const Text('取消'),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 10),
                       LinearProgressIndicator(
@@ -3360,13 +3591,13 @@ Future<void> _showQualitySheet(
         children: [
           _ChoiceRow(
             title: '标准',
-            subtitle: '640×480 / 3fps，速度和质量平衡',
+            subtitle: '640 输入 / 10fps，候选窗口精筛',
             selected: current.mode == AnalysisMode.standard,
             onTap: () => Navigator.pop(context, AnalysisMode.standard),
           ),
           _ChoiceRow(
             title: '高质量',
-            subtitle: '960×720 / 5fps，更慢且更耗电',
+            subtitle: '640 输入 / 10fps，更高质量代理',
             selected: current.mode == AnalysisMode.highQuality,
             onTap: () => Navigator.pop(context, AnalysisMode.highQuality),
           ),
@@ -3375,21 +3606,14 @@ Future<void> _showQualitySheet(
     ),
   );
   if (value != null) {
-    state.updateSettings(
-      AnalysisSettings(
-        mode: value,
-        clip: current.clip,
-        startMs: current.startMs,
-        endMs: current.endMs,
-      ),
-    );
+    state.updateSettings(current.copyWith(mode: value, sampleFps: 10));
   }
 }
 
 Future<void> _showClipSheet(BuildContext context, MobileAppState state) async {
   final current = state.project.settings;
-  var before = current.clip.beforeSeconds.toDouble();
-  var after = current.clip.afterSeconds.toDouble();
+  var before = math.min(current.clip.beforeSeconds, 10).toDouble();
+  var after = math.min(current.clip.afterSeconds, 10).toDouble();
   final value = await showModalBottomSheet<ClipSettings>(
     context: context,
     isScrollControlled: true,
@@ -3411,8 +3635,8 @@ Future<void> _showClipSheet(BuildContext context, MobileAppState state) async {
                     data: SliderTheme.of(context).copyWith(trackHeight: 5),
                     child: Slider(
                       min: 0,
-                      max: 15,
-                      divisions: 15,
+                      max: 10,
+                      divisions: 10,
                       value: before,
                       onChanged: (value) => setSheetState(() => before = value),
                     ),
@@ -3429,8 +3653,8 @@ Future<void> _showClipSheet(BuildContext context, MobileAppState state) async {
                     data: SliderTheme.of(context).copyWith(trackHeight: 5),
                     child: Slider(
                       min: 0,
-                      max: 15,
-                      divisions: 15,
+                      max: 10,
+                      divisions: 10,
                       value: after,
                       onChanged: (value) => setSheetState(() => after = value),
                     ),
@@ -3456,14 +3680,7 @@ Future<void> _showClipSheet(BuildContext context, MobileAppState state) async {
     ),
   );
   if (value != null) {
-    state.updateSettings(
-      AnalysisSettings(
-        mode: current.mode,
-        clip: value,
-        startMs: current.startMs,
-        endMs: current.endMs,
-      ),
-    );
+    state.updateSettings(current.copyWith(clip: value));
   }
 }
 
@@ -3488,6 +3705,7 @@ Future<void> _showRangeSheet(BuildContext context, MobileAppState state) async {
               child: _VideoPreview(
                 path: video.path,
                 aspectRatio: video.width / video.height,
+                seekStepMs: 1500,
                 initialPositionMs: start.round(),
                 requestedPositionMs: requestedPosition,
                 stopAtMs: end.round(),
@@ -3556,12 +3774,7 @@ Future<void> _showRangeSheet(BuildContext context, MobileAppState state) async {
   );
   if (value != null) {
     state.updateSettings(
-      AnalysisSettings(
-        mode: current.mode,
-        clip: current.clip,
-        startMs: value.start,
-        endMs: value.end,
-      ),
+      current.copyWith(startMs: value.start, endMs: value.end),
     );
   }
 }
@@ -3603,14 +3816,21 @@ Future<void> _showRoiEditor(BuildContext context, MobileAppState state) async {
       video: video,
       hoop: state.project.hoopRoi,
       net: state.project.netRoi,
+      initialPositionMs: state.project.settings.startMs,
     ),
   );
   if (result != null) state.updateRois(hoop: result.hoop, net: result.net);
 }
 
 class _RoiEditorSheet extends StatefulWidget {
-  const _RoiEditorSheet({required this.video, this.hoop, this.net});
+  const _RoiEditorSheet({
+    required this.video,
+    required this.initialPositionMs,
+    this.hoop,
+    this.net,
+  });
   final VideoInfo video;
+  final int initialPositionMs;
   final Roi? hoop;
   final Roi? net;
 
@@ -3625,6 +3845,8 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
   String selected = 'hoop';
   double viewZoom = 1;
   double _gestureStartZoom = 1;
+  int previewPositionMs = 0;
+  int _lastPreviewPositionMs = -1;
   bool _redrawMode = false;
   Offset? _drawStart;
   Offset? _drawEnd;
@@ -3635,16 +3857,73 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
     hoop =
         widget.hoop ?? const Roi(left: .34, top: .25, right: .66, bottom: .48);
     net = widget.net ?? const Roi(left: .37, top: .42, right: .63, bottom: .72);
-    controller = VideoPlayerController.file(File(widget.video.path))
-      ..initialize().then((_) {
+    previewPositionMs = widget.initialPositionMs
+        .clamp(0, widget.video.durationMs)
+        .toInt();
+    final player = VideoPlayerController.file(File(widget.video.path));
+    controller = player;
+    player.addListener(_onPreviewChanged);
+    unawaited(
+      player.initialize().then((_) async {
+        await player.seekTo(
+          Duration(
+            milliseconds: widget.initialPositionMs
+                .clamp(0, player.value.duration.inMilliseconds)
+                .toInt(),
+          ),
+        );
         if (mounted) setState(() {});
-      });
+      }),
+    );
   }
 
   @override
   void dispose() {
+    controller?.removeListener(_onPreviewChanged);
     controller?.dispose();
     super.dispose();
+  }
+
+  void _onPreviewChanged() {
+    final position = controller?.value.position.inMilliseconds;
+    if (position != null &&
+        mounted &&
+        (position - _lastPreviewPositionMs).abs() >= 100) {
+      _lastPreviewPositionMs = position;
+      setState(() => previewPositionMs = position);
+    }
+  }
+
+  Future<void> _togglePreview() async {
+    final player = controller;
+    if (player?.value.isInitialized != true) return;
+    if (player!.value.isPlaying) {
+      await player.pause();
+    } else {
+      await player.play();
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _seekPreview(int offsetMs) async {
+    final player = controller;
+    if (player?.value.isInitialized != true) return;
+    final duration = player!.value.duration;
+    final next = player.value.position + Duration(milliseconds: offsetMs);
+    await player.seekTo(
+      next < Duration.zero
+          ? Duration.zero
+          : next > duration
+          ? duration
+          : next,
+    );
+  }
+
+  Future<void> _replayPreview() async {
+    final player = controller;
+    if (player?.value.isInitialized != true) return;
+    await player!.seekTo(Duration(milliseconds: widget.initialPositionMs));
+    await player.play();
   }
 
   @override
@@ -3674,7 +3953,7 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      selected == 'hoop' ? '篮筐框住篮圈' : '篮网框住白色网面',
+                      selected == 'hoop' ? '覆盖投篮发生区域' : '覆盖白色篮网区域',
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -3691,8 +3970,8 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
                 segments: const [
                   ButtonSegment(
                     value: 'hoop',
-                    label: Text('篮筐区域'),
-                    icon: Icon(LucideIcons.circle),
+                    label: Text('投篮分析区'),
+                    icon: Icon(LucideIcons.scan),
                   ),
                   ButtonSegment(
                     value: 'net',
@@ -3821,6 +4100,41 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
                 ),
               ),
               const SizedBox(height: 8),
+              Row(
+                children: [
+                  Text(
+                    '${_formatMs(previewPositionMs)} / ${_formatMs(widget.video.durationMs)}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => _seekPreview(-5000),
+                    icon: const Icon(LucideIcons.rotateCcw, size: 18),
+                    tooltip: '后退 5 秒',
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: _togglePreview,
+                    icon: Icon(
+                      controller?.value.isPlaying == true
+                          ? LucideIcons.pause
+                          : LucideIcons.play,
+                      size: 18,
+                    ),
+                    tooltip: '播放/暂停',
+                  ),
+                  IconButton(
+                    onPressed: () => _seekPreview(5000),
+                    icon: const Icon(LucideIcons.rotateCw, size: 18),
+                    tooltip: '前进 5 秒',
+                  ),
+                  IconButton(
+                    onPressed: _replayPreview,
+                    icon: const Icon(LucideIcons.refreshCw, size: 18),
+                    tooltip: '从分析范围起点重播',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
               Wrap(
                 alignment: WrapAlignment.center,
                 spacing: 4,
@@ -4122,7 +4436,7 @@ class _RoiPainter extends CustomPainter {
       );
     }
 
-    draw(hoop, BhePalette.orange, '篮筐', selected == 'hoop');
+    draw(hoop, BhePalette.orange, '投篮区', selected == 'hoop');
     draw(net, BhePalette.gold, '篮网', selected == 'net');
     if (redrawStart != null && redrawEnd != null) {
       canvas.drawRect(
@@ -4158,3 +4472,12 @@ String _formatBytes(int bytes) {
   }
   return '${(bytes / (1024 * 1024)).toStringAsFixed(0)} MB';
 }
+
+String _formatSeekStep(int milliseconds) {
+  final seconds = milliseconds / 1000;
+  return seconds == seconds.roundToDouble()
+      ? '${seconds.round()} 秒'
+      : '$seconds 秒';
+}
+
+String _formatSpeed(double value) => '${value.toString()}x';

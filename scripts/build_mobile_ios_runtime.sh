@@ -31,7 +31,7 @@ build_ios_target() {
   local minimum_flag="$2"
   RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=${minimum_flag} -C link-arg=-framework -C link-arg=UIKit -C link-arg=-framework -C link-arg=Network -C link-arg=-framework -C link-arg=Security -C link-arg=-framework -C link-arg=SystemConfiguration -C link-arg=-framework -C link-arg=CoreFoundation" \
     RUSTC="$RUSTC_BIN" \
-    "$CARGO_BIN" build --manifest-path "$PACKAGE/Cargo.toml" --release --target "$target"
+    "$CARGO_BIN" build --manifest-path "$PACKAGE/Cargo.toml" --release --target "$target" --features ios-ep
 }
 
 for target in aarch64-apple-ios aarch64-apple-ios-sim; do

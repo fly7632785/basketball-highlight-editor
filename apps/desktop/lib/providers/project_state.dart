@@ -348,9 +348,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
         double? roiConfidence;
         try {
           final suggestion = await session.suggestRoi(
-            duration: 12,
+            startMs: (linkedVideo?['analysis_start_ms'] as num?)?.toInt() ?? 0,
+            duration: 20,
             sampleFps: 1,
-            maxSamples: 8,
+            maxSamples: 12,
             confidence: 0.05,
           );
           final roi = (suggestion['roi'] as Map?)?.cast<String, dynamic>();

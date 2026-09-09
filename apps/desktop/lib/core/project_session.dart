@@ -366,6 +366,7 @@ class ProjectSession {
 
   Future<JsonMap> suggestRoi({
     String? modelPath,
+    int? startMs,
     double? sampleFps,
     double? duration,
     int? maxSamples,
@@ -375,6 +376,7 @@ class ProjectSession {
       projectRoot: _requireProjectRoot(),
       videoId: _requireVideoId(),
       modelPath: modelPath,
+      startMs: startMs,
       sampleFps: sampleFps,
       duration: duration,
       maxSamples: maxSamples,

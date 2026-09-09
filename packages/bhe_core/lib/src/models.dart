@@ -94,18 +94,24 @@ class EvidencePoint {
     required this.x,
     required this.y,
     this.confidence,
+    this.width,
+    this.height,
   });
 
   final int timeMs;
   final double x;
   final double y;
   final double? confidence;
+  final double? width;
+  final double? height;
 
   Map<String, dynamic> toJson() => {
     'time_ms': timeMs,
     'x': x,
     'y': y,
     if (confidence != null) 'confidence': confidence,
+    if (width != null) 'width': width,
+    if (height != null) 'height': height,
   };
 
   factory EvidencePoint.fromJson(Map<String, dynamic> json) {
@@ -117,9 +123,15 @@ class EvidencePoint {
           : timeSeconds is num
           ? (timeSeconds * 1000).round()
           : 0,
-      x: (json['x'] as num?)?.toDouble() ?? 0,
-      y: (json['y'] as num?)?.toDouble() ?? 0,
+      x: (json['x'] as num?)?.toDouble() ??
+          (json['landing_x'] as num?)?.toDouble() ??
+          0,
+      y: (json['y'] as num?)?.toDouble() ??
+          (json['landing_y'] as num?)?.toDouble() ??
+          0,
       confidence: (json['confidence'] as num?)?.toDouble(),
+      width: (json['width'] as num?)?.toDouble(),
+      height: (json['height'] as num?)?.toDouble(),
     );
   }
 }
@@ -140,9 +152,15 @@ class Candidate {
     this.note,
     this.trajectoryScore,
     this.crossingScore,
+    this.netScore,
     this.netMotionScore,
+    this.netInsideMotionScore,
     this.netSequenceScore,
     this.predictionScore,
+    this.predictionFitR2,
+    this.predictionLandingCenter,
+    this.predictionPointCount,
+    this.predictionReview = false,
     this.compositeScore,
     this.trajectory = const [],
     this.trackId,
@@ -156,6 +174,7 @@ class Candidate {
     this.rebound,
     this.lateralExit,
     this.postCrossingLateralRecovery,
+    this.postCrossingPoints,
     this.ballPersistence,
     this.netSignalAvailable,
     this.netSupport,
@@ -166,6 +185,9 @@ class Candidate {
     this.decisionTimeMs,
     this.algorithmVersion,
     this.evidenceSource,
+    this.signals,
+    this.gates,
+    this.verification,
   });
 
   final String id;
@@ -182,9 +204,15 @@ class Candidate {
   final String? note;
   final double? trajectoryScore;
   final double? crossingScore;
+  final double? netScore;
   final double? netMotionScore;
+  final double? netInsideMotionScore;
   final double? netSequenceScore;
   final double? predictionScore;
+  final double? predictionFitR2;
+  final double? predictionLandingCenter;
+  final int? predictionPointCount;
+  final bool predictionReview;
   final double? compositeScore;
   final List<EvidencePoint> trajectory;
   final EvidencePoint? abovePoint;
@@ -197,6 +225,7 @@ class Candidate {
   final bool? rebound;
   final bool? lateralExit;
   final bool? postCrossingLateralRecovery;
+  final int? postCrossingPoints;
   final double? ballPersistence;
   final bool? netSignalAvailable;
   final bool? netSupport;
@@ -207,6 +236,9 @@ class Candidate {
   final int? decisionTimeMs;
   final String? algorithmVersion;
   final String? evidenceSource;
+  final Map<String, dynamic>? signals;
+  final Map<String, dynamic>? gates;
+  final Map<String, dynamic>? verification;
 
   Candidate copyWith({
     int? startMs,
@@ -235,9 +267,15 @@ class Candidate {
     note: clearNote ? null : (note ?? this.note),
     trajectoryScore: trajectoryScore,
     crossingScore: crossingScore,
+    netScore: netScore,
     netMotionScore: netMotionScore,
+    netInsideMotionScore: netInsideMotionScore,
     netSequenceScore: netSequenceScore,
     predictionScore: predictionScore,
+    predictionFitR2: predictionFitR2,
+    predictionLandingCenter: predictionLandingCenter,
+    predictionPointCount: predictionPointCount,
+    predictionReview: predictionReview,
     compositeScore: compositeScore,
     trajectory: trajectory,
     trackId: trackId,
@@ -251,6 +289,7 @@ class Candidate {
     rebound: rebound,
     lateralExit: lateralExit,
     postCrossingLateralRecovery: postCrossingLateralRecovery,
+    postCrossingPoints: postCrossingPoints,
     ballPersistence: ballPersistence,
     netSignalAvailable: netSignalAvailable,
     netSupport: netSupport,
@@ -261,6 +300,9 @@ class Candidate {
     decisionTimeMs: decisionTimeMs,
     algorithmVersion: algorithmVersion,
     evidenceSource: evidenceSource,
+    signals: signals,
+    gates: gates,
+    verification: verification,
   );
 
   Duration get duration => Duration(milliseconds: endMs - startMs);
@@ -285,9 +327,18 @@ class Candidate {
     if (note != null) 'note': note,
     if (trajectoryScore != null) 'trajectory_score': trajectoryScore,
     if (crossingScore != null) 'crossing_score': crossingScore,
+    if (netScore != null) 'net_score': netScore,
     if (netMotionScore != null) 'net_motion_score': netMotionScore,
+    if (netInsideMotionScore != null)
+      'net_inside_motion_score': netInsideMotionScore,
     if (netSequenceScore != null) 'net_sequence_score': netSequenceScore,
     if (predictionScore != null) 'prediction_score': predictionScore,
+    if (predictionFitR2 != null) 'prediction_fit_r2': predictionFitR2,
+    if (predictionLandingCenter != null)
+      'prediction_landing_center': predictionLandingCenter,
+    if (predictionPointCount != null)
+      'prediction_point_count': predictionPointCount,
+    if (predictionReview) 'prediction_review': true,
     if (compositeScore != null) 'composite_score': compositeScore,
     if (trajectory.isNotEmpty)
       'trajectory': trajectory.map((point) => point.toJson()).toList(),
@@ -295,7 +346,17 @@ class Candidate {
     if (belowPoint != null) 'below': belowPoint!.toJson(),
     if (crossingPoint != null) 'crossing': crossingPoint!.toJson(),
     if (predictedLandingPoint != null)
-      'prediction': predictedLandingPoint!.toJson(),
+      'prediction': {
+        'landing_x': predictedLandingPoint!.x,
+        'landing_y': predictedLandingPoint!.y,
+        'x': predictedLandingPoint!.x,
+        'y': predictedLandingPoint!.y,
+        if (predictionScore != null) 'predict_score': predictionScore,
+        if (predictionFitR2 != null) 'fit_r2': predictionFitR2,
+        if (predictionLandingCenter != null)
+          'landing_center': predictionLandingCenter,
+        if (predictionPointCount != null) 'point_count': predictionPointCount,
+      },
     if (reason != null) 'reason': reason,
     if (verdict != null) 'verdict': verdict,
     if (completeCrossing != null) 'complete_crossing': completeCrossing,
@@ -303,17 +364,21 @@ class Candidate {
     if (lateralExit != null) 'lateral_exit': lateralExit,
     if (postCrossingLateralRecovery != null)
       'post_crossing_lateral_recovery': postCrossingLateralRecovery,
+    if (postCrossingPoints != null)
+      'post_crossing_points': postCrossingPoints,
     if (ballPersistence != null) 'ball_persistence': ballPersistence,
     if (netSignalAvailable != null) 'net_signal_available': netSignalAvailable,
     if (netSupport != null) 'net_support': netSupport,
     if (netNoMotion != null) 'net_no_motion': netNoMotion,
     if (netLowerPeak != null) 'net_lower_peak': netLowerPeak,
     if (netBelowPeak != null) 'net_below_peak': netBelowPeak,
-    if (autoExportEligible != null)
-      'auto_export_eligible': autoExportEligible,
+    if (autoExportEligible != null) 'auto_export_eligible': autoExportEligible,
     if (decisionTimeMs != null) 'decision_time_ms': decisionTimeMs,
     if (algorithmVersion != null) 'algorithm_version': algorithmVersion,
     if (evidenceSource != null) 'evidence_source': evidenceSource,
+    if (signals != null) 'signals': signals,
+    if (gates != null) 'gates': gates,
+    if (verification != null) 'verification': verification,
   };
 
   factory Candidate.fromJson(Map<String, dynamic> json) {
@@ -329,8 +394,13 @@ class Candidate {
         json['trajectory'] ?? overlay['trajectory'] ?? evidence['trajectory'];
     final crossingValue =
         json['crossing'] ?? overlay['crossing'] ?? evidence['crossing'];
-    final predictionValue =
-        json['prediction'] ?? overlay['prediction'] ?? evidence['prediction'];
+    final rawPrediction = json['prediction'];
+    final predictionValue = rawPrediction is Map &&
+            (rawPrediction['landing_x'] != null ||
+                rawPrediction['x'] != null ||
+                rawPrediction['landing_y'] != null)
+        ? rawPrediction
+        : overlay['prediction'] ?? evidence['prediction'];
     final suggestion = evidence['review_reason_suggestion'];
     final reasonValue =
         json['reason'] ?? (suggestion is Map ? suggestion['primary'] : null);
@@ -368,10 +438,22 @@ class Candidate {
                 : null),
       ),
       crossingScore: _scoreValueOrNull(json['crossing_score']),
+      netScore: _scoreValueOrNull(
+        json['net_score'] ??
+            (json['signals'] is Map
+                ? (json['signals'] as Map)['net_score']
+                : null),
+      ),
       netMotionScore: _scoreValueOrNull(
         json['net_motion_score'] ??
             (json['signals'] is Map
-                ? (json['signals'] as Map)['net_score']
+                ? (json['signals'] as Map)['net_motion_score']
+                : null),
+      ),
+      netInsideMotionScore: _scoreValueOrNull(
+        json['net_inside_motion_score'] ??
+            (json['signals'] is Map
+                ? (json['signals'] as Map)['net_inside_motion_score']
                 : null),
       ),
       netSequenceScore: _scoreValueOrNull(
@@ -380,11 +462,38 @@ class Candidate {
                 ? (json['signals'] as Map)['net_sequence_score']
                 : null),
       ),
-      predictionScore: _scoreValueOrNull(json['prediction_score']),
+      predictionScore: _scoreValueOrNull(
+        json['prediction_score'] ??
+            (rawPrediction is Map ? rawPrediction['predict_score'] : null) ??
+            (predictionValue is Map ? predictionValue['predict_score'] : null),
+      ),
+      predictionFitR2: _scoreValueOrNull(
+        json['prediction_fit_r2'] ??
+            (rawPrediction is Map ? rawPrediction['fit_r2'] : null) ??
+            (predictionValue is Map ? predictionValue['fit_r2'] : null),
+      ),
+      predictionLandingCenter: _scoreValueOrNull(
+        json['prediction_landing_center'] ??
+            (rawPrediction is Map ? rawPrediction['landing_center'] : null) ??
+            (predictionValue is Map ? predictionValue['landing_center'] : null),
+      ),
+      predictionPointCount: predictionValue is Map &&
+              predictionValue['point_count'] is num
+          ? _intValue(predictionValue['point_count'])
+          : json['prediction_point_count'] is num
+          ? _intValue(json['prediction_point_count'])
+          : null,
+      predictionReview: json['prediction_review'] == true ||
+          (json['gates'] is Map &&
+              (json['gates'] as Map)['prediction_review'] == true),
       compositeScore: _scoreValueOrNull(json['composite_score']),
       trajectory: _pointList(trajectoryValue),
-      abovePoint: _pointValue(json['above'] ?? overlay['above'] ?? evidence['above']),
-      belowPoint: _pointValue(json['below'] ?? overlay['below'] ?? evidence['below']),
+      abovePoint: _pointValue(
+        json['above'] ?? overlay['above'] ?? evidence['above'],
+      ),
+      belowPoint: _pointValue(
+        json['below'] ?? overlay['below'] ?? evidence['below'],
+      ),
       crossingPoint: _pointValue(crossingValue),
       predictedLandingPoint: _pointValue(predictionValue),
       reason: reasonValue as String? ?? evidence['reason'] as String?,
@@ -398,6 +507,11 @@ class Candidate {
         json['post_crossing_lateral_recovery'] ??
             evidence['post_crossing_lateral_recovery'],
       ),
+      postCrossingPoints: json['post_crossing_points'] is num
+          ? _intValue(json['post_crossing_points'])
+          : evidence['post_crossing_points'] is num
+          ? _intValue(evidence['post_crossing_points'])
+          : null,
       ballPersistence: _scoreValueOrNull(
         json['ball_persistence'] ?? evidence['ball_persistence'],
       ),
@@ -405,7 +519,9 @@ class Candidate {
         json['net_signal_available'] ?? evidence['net_signal_available'],
       ),
       netSupport: _boolValue(json['net_support'] ?? evidence['net_support']),
-      netNoMotion: _boolValue(json['net_no_motion'] ?? evidence['net_no_motion']),
+      netNoMotion: _boolValue(
+        json['net_no_motion'] ?? evidence['net_no_motion'],
+      ),
       netLowerPeak: _scoreValueOrNull(
         json['net_lower_peak'] ?? evidence['net_lower_peak'],
       ),
@@ -418,11 +534,15 @@ class Candidate {
       decisionTimeMs: json['decision_time_ms'] is num
           ? _intValue(json['decision_time_ms'])
           : null,
-      algorithmVersion: json['algorithm_version'] as String? ??
+      algorithmVersion:
+          json['algorithm_version'] as String? ??
           evidence['algorithm_version'] as String?,
       evidenceSource:
           json['evidence_source'] as String? ??
           evidence['analysis_source'] as String?,
+      signals: _dynamicMap(json['signals']),
+      gates: _dynamicMap(json['gates']),
+      verification: _dynamicMap(json['verification']),
     );
   }
 }
@@ -492,22 +612,65 @@ class AnalysisSettings {
     this.clip = const ClipSettings(),
     this.startMs = 0,
     this.endMs,
+    this.sampleFps,
+    this.confidenceThreshold = 0.10,
+    this.modelSize,
+    this.inferenceBatchSize = 4,
   });
 
   final AnalysisMode mode;
   final ClipSettings clip;
   final int startMs;
   final int? endMs;
+  /// Sampling rate used by the mobile runtime. When omitted, it follows the
+  /// selected mode so old project files keep their previous behavior.
+  final double? sampleFps;
+  final double confidenceThreshold;
+  /// ONNX input size. The bundled mobile model is 640; keep this explicit in
+  /// the project schema so a future model cannot silently change results.
+  final int? modelSize;
+  final int inferenceBatchSize;
 
   int get proxyWidth => mode == AnalysisMode.highQuality ? 960 : 640;
   int get proxyHeight => mode == AnalysisMode.highQuality ? 720 : 480;
-  double get proxyFps => mode == AnalysisMode.highQuality ? 5 : 3;
+  // This is the candidate-window refinement rate. Keep the user's value so a
+  // mobile project can trade sampling cost for speed explicitly.
+  double get proxyFps => sampleFps ?? 10;
+  double get analysisFps => proxyFps;
+  int get modelInputSize => modelSize ?? 640;
+  String get analysisFpsLabel => analysisFps == analysisFps.roundToDouble()
+      ? analysisFps.toInt().toString()
+      : analysisFps.toStringAsFixed(1);
+
+  AnalysisSettings copyWith({
+    AnalysisMode? mode,
+    ClipSettings? clip,
+    int? startMs,
+    int? endMs,
+    double? sampleFps,
+    double? confidenceThreshold,
+    int? modelSize,
+    int? inferenceBatchSize,
+  }) => AnalysisSettings(
+    mode: mode ?? this.mode,
+    clip: clip ?? this.clip,
+    startMs: startMs ?? this.startMs,
+    endMs: endMs ?? this.endMs,
+    sampleFps: sampleFps ?? this.sampleFps,
+    confidenceThreshold: confidenceThreshold ?? this.confidenceThreshold,
+    modelSize: modelSize ?? this.modelSize,
+    inferenceBatchSize: inferenceBatchSize ?? this.inferenceBatchSize,
+  );
 
   Map<String, dynamic> toJson() => {
     'mode': mode.name,
     'clip': clip.toJson(),
     'start_ms': startMs,
     if (endMs != null) 'end_ms': endMs,
+    'sample_fps': analysisFps,
+    'confidence_threshold': confidenceThreshold,
+    'model_size': modelInputSize,
+    'inference_batch_size': inferenceBatchSize,
   };
 
   factory AnalysisSettings.fromJson(Map<String, dynamic> json) =>
@@ -521,6 +684,12 @@ class AnalysisSettings {
         ),
         startMs: (json['start_ms'] as num?)?.toInt() ?? 0,
         endMs: (json['end_ms'] as num?)?.toInt(),
+        sampleFps: (json['sample_fps'] as num?)?.toDouble(),
+        confidenceThreshold:
+            (json['confidence_threshold'] as num?)?.toDouble() ?? 0.10,
+        modelSize: (json['model_size'] as num?)?.toInt(),
+        inferenceBatchSize:
+            (json['inference_batch_size'] as num?)?.toInt() ?? 4,
       );
 }
 
@@ -531,6 +700,7 @@ class ProjectSnapshot {
     required this.name,
     required this.video,
     this.hoopRoi,
+    this.rimRoi,
     this.netRoi,
     this.settings = const AnalysisSettings(),
     this.candidates = const [],
@@ -547,6 +717,9 @@ class ProjectSnapshot {
   final String name;
   final VideoInfo? video;
   final Roi? hoopRoi;
+
+  /// Tight physical rim geometry; `hoopRoi` is the larger ball-search area.
+  final Roi? rimRoi;
   final Roi? netRoi;
   final AnalysisSettings settings;
   final List<Candidate> candidates;
@@ -571,8 +744,10 @@ class ProjectSnapshot {
     VideoInfo? video,
     bool clearVideo = false,
     Roi? hoopRoi,
+    Roi? rimRoi,
     Roi? netRoi,
     bool clearHoopRoi = false,
+    bool clearRimRoi = false,
     bool clearNetRoi = false,
     AnalysisSettings? settings,
     List<Candidate>? candidates,
@@ -589,6 +764,7 @@ class ProjectSnapshot {
     name: name ?? this.name,
     video: clearVideo ? null : (video ?? this.video),
     hoopRoi: clearHoopRoi ? null : (hoopRoi ?? this.hoopRoi),
+    rimRoi: clearRimRoi ? null : (rimRoi ?? this.rimRoi),
     netRoi: clearNetRoi ? null : (netRoi ?? this.netRoi),
     settings: settings ?? this.settings,
     candidates: candidates ?? this.candidates,
@@ -616,6 +792,7 @@ class ProjectSnapshot {
     'name': name,
     if (video != null) 'video': video!.toJson(),
     if (hoopRoi != null) 'hoop_roi': hoopRoi!.toJson(),
+    if (rimRoi != null) 'rim_roi': rimRoi!.toJson(),
     if (netRoi != null) 'net_roi': netRoi!.toJson(),
     'settings': settings.toJson(),
     'candidates': candidates.map((candidate) => candidate.toJson()).toList(),
@@ -639,6 +816,7 @@ class ProjectSnapshot {
         name: json['name'] as String? ?? '未命名项目',
         video: _mapValue(json['video'], VideoInfo.fromJson),
         hoopRoi: _mapValue(json['hoop_roi'], Roi.fromJson),
+        rimRoi: _mapValue(json['rim_roi'], Roi.fromJson),
         netRoi: _mapValue(json['net_roi'], Roi.fromJson),
         settings: AnalysisSettings.fromJson(
           (json['settings'] as Map?)?.cast<String, dynamic>() ?? {},
@@ -670,4 +848,9 @@ TResult? _mapValue<TResult>(
 ) {
   if (value is! Map) return null;
   return transform(value.cast<String, dynamic>());
+}
+
+Map<String, dynamic>? _dynamicMap(Object? value) {
+  if (value is! Map) return null;
+  return value.map((key, value) => MapEntry(key.toString(), value));
 }

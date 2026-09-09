@@ -9,8 +9,10 @@ import android.media.MediaMuxer
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.content.Intent
 import android.provider.MediaStore
 import android.util.Log
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -19,22 +21,44 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
+import kotlin.math.max
+import kotlin.math.min
 import org.json.JSONArray
 import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
+    private data class HoopObservation(
+        val bbox: FloatArray,
+        val confidence: Float,
+        val timeMs: Long,
+    )
+
+    private data class StableHoop(
+        val bbox: FloatArray,
+        val confidence: Float,
+        val previewTimeMs: Long,
+        val samples: Int,
+        val stability: Double,
+    )
+
     private val tag = "BHE-Analysis"
     private val mediaChannelName = "com.bhe.bhe/mobile_media"
     private val analysisChannelName = "com.bhe.bhe/mobile_analysis"
     private val progressChannelName = "com.bhe.bhe/mobile_analysis_progress"
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val analysisCancelled = AtomicBoolean(false)
-    private var analysisThread: Thread? = null
+    private val exportCancelled = ConcurrentHashMap<String, AtomicBoolean>()
     private var progressSink: EventChannel.EventSink? = null
+    private var analysisTaskListener: AnalysisTaskManager.Listener? = null
+
+    override fun onDestroy() {
+        setAnalysisScreenOn(false)
+        analysisTaskListener?.let(AnalysisTaskManager::detach)
+        analysisTaskListener = null
+        exportCancelled.values.forEach { it.set(true) }
+        super.onDestroy()
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -43,6 +67,8 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "isAvailable" -> result.success(true)
                     "exportClip" -> exportClip(call, result)
+                    "mergeClips" -> mergeClips(call, result)
+                    "cancelExport" -> cancelExport(call, result)
                     "saveToLibrary" -> saveToLibrary(call, result)
                     else -> result.notImplemented()
                 }
@@ -51,8 +77,10 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "analyzeVideo" -> analyzeVideo(call, result)
+                    "suggestRoi" -> suggestRoi(call, result)
+                    "getAnalysisState" -> getAnalysisState(result)
                     "cancelAnalysis" -> {
-                        analysisCancelled.set(true)
+                        AnalysisTaskManager.cancel()
                         result.success(null)
                     }
                     else -> result.notImplemented()
@@ -67,205 +95,359 @@ class MainActivity : FlutterActivity() {
                 override fun onCancel(arguments: Any?) {
                     progressSink = null
                 }
-            })
+        })
     }
 
-    private fun analyzeVideo(call: MethodCall, result: MethodChannel.Result) {
-        Log.i(tag, "analyzeVideo request received")
-        if (analysisThread?.isAlive == true) {
-            Log.w(tag, "analysis rejected: another task is still running")
-            result.error("ANALYSIS_BUSY", "已有分析任务正在运行", null)
-            return
+    private fun getAnalysisState(result: MethodChannel.Result) {
+        val listener = object : AnalysisTaskManager.Listener {
+            override fun onProgress(event: Map<String, Any?>) = emitProgress(event)
+
+            override fun onComplete(result: Map<String, Any?>) {
+                emitAnalysisCompletion(result)
+                setAnalysisScreenOn(false)
+                analysisTaskListener = null
+            }
+
+            override fun onError(code: String, message: String) {
+                emitAnalysisError(code, message)
+                setAnalysisScreenOn(false)
+                analysisTaskListener = null
+            }
         }
+        analysisTaskListener?.let(AnalysisTaskManager::detach)
+        analysisTaskListener = listener
+        val snapshot = AnalysisTaskManager.attach(listener, applicationContext)
+        if (snapshot["status"] == "running" && !AnalysisTaskManager.hasWorkerThread()) {
+            val intent = Intent(applicationContext, AnalysisForegroundService::class.java).apply {
+                action = AnalysisForegroundService.ACTION_START
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        }
+        setAnalysisScreenOn(snapshot["status"] == "running")
+        result.success(snapshot)
+    }
+
+    private fun setAnalysisScreenOn(enabled: Boolean) {
+        runOnUiThread {
+            if (enabled) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+    }
+
+    private fun suggestRoi(call: MethodCall, result: MethodChannel.Result) {
         if (!NativeRuntime.available) {
-            Log.e(tag, "native runtime unavailable: ${NativeRuntime.loadError}")
-            result.error(
-                "NATIVE_RUNTIME_UNAVAILABLE",
-                "当前 Android 原生 Runtime 加载失败：${NativeRuntime.loadError ?: "未知错误"}",
-                null
-            )
+            result.error("NATIVE_RUNTIME_UNAVAILABLE", NativeRuntime.loadError, null)
             return
         }
         val videoPath = call.argument<String>("videoPath")
         val modelPath = call.argument<String>("modelPath")
+        val modelSize = ((call.argument<Int>("modelSize") ?: 640) / 32 * 32).coerceAtLeast(320)
         val startMs = call.argument<Int>("startMs") ?: 0
-        val endMs = call.argument<Int>("endMs") ?: 0
-        val beforeMs = call.argument<Int>("beforeMs") ?: 6000
-        val afterMs = call.argument<Int>("afterMs") ?: 3000
-        val fps = (call.argument<Double>("fps") ?: 3.0).coerceIn(1.0, 10.0)
-        val hoopRoi = call.argument<Map<String, Any>>("hoopRoi")
-        val netRoi = call.argument<Map<String, Any>>("netRoi")
-        if (videoPath == null || modelPath == null || hoopRoi == null || netRoi == null || endMs <= startMs) {
-            Log.e(tag, "invalid arguments: videoPath=$videoPath modelPath=$modelPath startMs=$startMs endMs=$endMs")
-            result.error("INVALID_ARGUMENT", "分析参数无效", null)
+        val durationMs = call.argument<Int>("durationMs") ?: 0
+        val sampleFps = (call.argument<Double>("sampleFps") ?: 1.0).coerceIn(0.5, 2.0)
+        val maxSamples = (call.argument<Int>("maxSamples") ?: 12).coerceIn(2, 12)
+        if (videoPath == null || modelPath == null) {
+            result.error("INVALID_ARGUMENT", "自动识别参数无效", null)
             return
         }
-
-        analysisCancelled.set(false)
-        analysisThread = Thread {
+        Thread {
             var session = 0L
-            var framePipeline: FramePipeline? = null
+            var pipeline: FramePipeline? = null
             val retriever = MediaMetadataRetriever()
             try {
-                Log.i(tag, "analysis thread started video=$videoPath model=$modelPath range=${startMs}..${endMs}ms fps=$fps")
-                emitProgress("validateInput", 0.03, 0, 0, "正在读取视频信息")
-                Log.i(tag, "setDataSource start")
                 retriever.setDataSource(videoPath)
-                Log.i(tag, "setDataSource success")
-                val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: endMs.toLong()
-                val actualEndMs = endMs.toLong().coerceAtMost(duration)
-                val intervalMs = (1000.0 / fps).toLong().coerceAtLeast(1L)
-                val frameWindowMs = (actualEndMs - startMs).coerceAtLeast(1L)
-                val totalFrames = ((frameWindowMs + intervalMs - 1L) / intervalMs).toInt().coerceAtLeast(1)
-                Log.i(tag, "video metadata duration=${duration}ms actualEnd=${actualEndMs}ms totalFrames=$totalFrames interval=${intervalMs}ms")
-                emitProgress("prepareProxy", 0.05, 0, totalFrames, "正在加载本地模型")
+                val duration = retriever
+                    .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull() ?: durationMs.toLong()
+                val safeStartMs = startMs.toLong().coerceIn(0L, duration)
+                val scanDurationMs = if (durationMs > 0) {
+                    durationMs.toLong().coerceAtMost(20_000L)
+                } else {
+                    20_000L.coerceAtMost((duration - safeStartMs).coerceAtLeast(0L))
+                }
+                val requestedEndMs = (safeStartMs + scanDurationMs).coerceAtMost(duration)
+                val timestamps = generateSequence(0) { it + 1 }
+                    .map { index ->
+                        safeStartMs + kotlin.math.floor(index * 1000.0 / sampleFps + 0.5).toLong()
+                    }
+                    .take(maxSamples)
+                    .takeWhile { it < requestedEndMs }
+                    .toList()
+                if (timestamps.isEmpty()) throw IllegalStateException("视频没有可采样帧")
                 val config = JSONObject()
                     .put("model_path", modelPath)
-                    .put("hoop_roi", JSONObject(hoopRoi))
-                    .put("net_roi", JSONObject(netRoi))
+                    .put("hoop_roi", fullRoi())
+                    .put("analysis_roi", fullRoi())
+                    .put("net_roi", fullRoi())
                     .put("duration_ms", duration)
-                    .put("confidence_threshold", 0.10)
-                    .put("clip_before_ms", beforeMs)
-                    .put("clip_after_ms", afterMs)
-                    .put("model_size", 640) // match ONNX export resolution
+                    .put("confidence_threshold", 0.05)
+                    .put("model_size", modelSize - modelSize % 32)
+                    // Auto ROI scans the full frame, matching Python
+                    // detect_auto_roi.py. The 4x crop scale belongs only to
+                    // the later ball-analysis path.
+                    .put("crop_scale", 1.0)
                 val onnxPath = File(applicationInfo.nativeLibraryDir, "libonnxruntime.so").absolutePath
-                Log.i(tag, "initializeOnnx start path=$onnxPath exists=${File(onnxPath).isFile}")
-                if (!File(onnxPath).isFile || !NativeRuntime.initializeOnnx(onnxPath)) {
-                    throw IllegalStateException("ONNX Runtime 初始化失败：Android 原生推理库未正确安装或无法加载")
+                if (!NativeRuntime.ensureOnnxLoaded(onnxPath) || !NativeRuntime.initializeOnnx(onnxPath)) {
+                    throw IllegalStateException("ONNX Runtime 初始化失败：${NativeRuntime.loadError ?: "Android 原生推理库无法加载"}")
                 }
-                Log.i(tag, "initializeOnnx success")
-                Log.i(tag, "createSession start modelExists=${File(modelPath).isFile} modelBytes=${File(modelPath).length()}")
-                emitProgress("prepareProxy", 0.06, 0, totalFrames, "正在加载本地模型")
-                val runtimeExecutor = Executors.newSingleThreadExecutor()
-                val runtimeFuture = runtimeExecutor.submit<Long> {
-                    NativeRuntime.createSession(config.toString())
+                session = NativeRuntime.createSession(config.toString())
+                if (session == 0L) throw IllegalStateException("无法创建自动识别会话")
+                val observations = mutableListOf<HoopObservation>()
+                var decodedWidth = 0f
+                var decodedHeight = 0f
+                val decoderPipeline = FramePipeline(videoPath).also {
+                    it.prepare(timestamps.first() * 1000L)
                 }
-                var waitedSeconds = 0
-                try {
-                    while (true) {
-                        try {
-                            session = runtimeFuture.get(1, TimeUnit.SECONDS)
-                            break
-                        } catch (_: TimeoutException) {
-                            waitedSeconds++
-                            if (waitedSeconds % 5 == 0) {
-                                emitProgress(
-                                    "prepareProxy",
-                                    0.06,
-                                    0,
-                                    totalFrames,
-                                    if (analysisCancelled.get()) "正在停止模型加载" else "正在加载本地模型（已等待 ${waitedSeconds} 秒）",
-                                )
-                            }
-                        }
-                    }
-                } finally {
-                    runtimeExecutor.shutdown()
-                }
-                if (analysisCancelled.get()) {
-                    if (session != 0L) {
-                        NativeRuntime.freeSession(session)
-                        session = 0L
-                    }
-                    throw InterruptedException("分析已取消")
-                }
-                Log.i(tag, "createSession returned session=$session")
-                if (session == 0L) throw IllegalStateException("Rust Runtime 无法加载模型或 ONNX Runtime")
-                emitProgress("prepareProxy", 0.05, 0, totalFrames, "正在准备本地分析")
-
-                var lastResponse = JSONObject().put("candidates", JSONArray())
-                val timestampsUs = ArrayList<Long>(totalFrames)
-                var targetMs = startMs.toLong()
-                while (targetMs < actualEndMs) {
-                    timestampsUs.add(targetMs * 1000L)
-                    targetMs += intervalMs
-                }
-                var processed = 0
-                var inferenceNanos = 0L
-                val frameProcessingStartedAt = System.nanoTime()
-                val pipeline = FramePipeline(videoPath).also {
-                    it.prepare(timestampsUs.first())
-                }
-                framePipeline = pipeline
-                pipeline.decodeFrames(
-                    timestampsUs = timestampsUs,
-                    shouldCancel = { analysisCancelled.get() },
-                ) { bitmap, timestampUs ->
-                    val timeMs = timestampUs / 1000L
-                    val width = bitmap.width
-                    val height = bitmap.height
+                pipeline = decoderPipeline
+                decoderPipeline.decodeFrames(timestamps.map { it * 1000L }, { false }) { bitmap, _, targetTimestampUs ->
                     try {
-                        val rgba = bitmapToRgba(bitmap)
-                        val inferenceStartedAt = System.nanoTime()
-                        val responseJson = NativeRuntime.pushFrameRaw(
-                            session, timeMs, width, height, rgba
+                        // Detection coordinates are expressed in the decoded
+                        // (rotation-normalized, max-960) bitmap coordinate
+                        // space. Do not normalize them with the source
+                        // metadata dimensions, or the returned ROI is scaled
+                        // incorrectly on high-resolution videos.
+                        decodedWidth = bitmap.width.toFloat()
+                        decodedHeight = bitmap.height.toFloat()
+                        val response = JSONObject(
+                            NativeRuntime.pushFrameBitmap(
+                                session,
+                                targetTimestampUs / 1000L,
+                                bitmap,
+                            ),
                         )
-                        inferenceNanos += System.nanoTime() - inferenceStartedAt
-                        lastResponse = JSONObject(responseJson)
-                        lastResponse.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
+                        val detections = response.optJSONArray("detections") ?: return@decodeFrames
+                        for (index in 0 until detections.length()) {
+                            val detection = detections.optJSONObject(index) ?: continue
+                            if (detection.optInt("class_id", -1) != 1) continue
+                            observations += HoopObservation(
+                                bbox = floatArrayOf(
+                                    detection.optDouble("x1").toFloat(),
+                                    detection.optDouble("y1").toFloat(),
+                                    detection.optDouble("x2").toFloat(),
+                                    detection.optDouble("y2").toFloat(),
+                                ),
+                                confidence = detection.optDouble("confidence").toFloat(),
+                                timeMs = targetTimestampUs / 1000L,
+                            )
+                        }
+                        if (observations.size >= 5) return@decodeFrames
                     } finally {
                         bitmap.recycle()
                     }
-                    processed++
-                    if (processed == 1) Log.i(tag, "first frame inference success (raw path ${width}x${height})")
-                    if (processed % 30 == 0) Log.i(tag, "frame progress=$processed/$totalFrames timeMs=$timeMs")
-                    if (processed == 1 || processed % 3 == 0) {
-                        emitProgress("refineCandidates", 0.05 + (processed.toDouble() / totalFrames * 0.90), processed, totalFrames, "正在分析视频帧")
-                    }
                 }
-                if (analysisCancelled.get()) throw InterruptedException("分析已取消")
-                if (processed == 0) throw IllegalStateException("无法从视频解码分析帧")
-                emitProgress("persistCandidates", 0.98, processed, totalFrames, "正在写入分析结果")
-                val response = jsonObjectToMap(lastResponse)
-                val processingNanos = System.nanoTime() - frameProcessingStartedAt
-                val processingMs = TimeUnit.NANOSECONDS.toMillis(processingNanos)
-                val inferenceMs = TimeUnit.NANOSECONDS.toMillis(inferenceNanos)
-                val framePipelineMs = (processingMs - inferenceMs).coerceAtLeast(0)
-                val effectiveFps = processed * 1_000.0 / processingMs.coerceAtLeast(1)
-                val candidateCount = lastResponse.optJSONArray("candidates")?.length() ?: 0
-                Log.i(
-                    tag,
-                    "analysis metrics: frames=$processed/$totalFrames totalMs=$processingMs " +
-                        "framePipelineMs=$framePipelineMs inferenceMs=$inferenceMs effectiveFps=${"%.2f".format(java.util.Locale.US, effectiveFps)} " +
-                        "candidates=$candidateCount",
-                )
-                Log.i(tag, "analysis completed processed=$processed candidates=$candidateCount")
-                mainHandler.post { result.success(response) }
-            } catch (_: InterruptedException) {
-                Log.i(tag, "analysis cancelled")
-                mainHandler.post { result.error("ANALYSIS_CANCELLED", "分析已取消", null) }
+                val stable = selectStableHoop(observations, decodedWidth, decodedHeight)
+                    ?: throw IllegalStateException("未识别到稳定的篮筐")
+                val bbox = stable.bbox
+                val width = decodedWidth.coerceAtLeast(1f)
+                val height = decodedHeight.coerceAtLeast(1f)
+                val roi = expandedRoi(bbox, width, height)
+                val rimRoi = physicalRimRoi(bbox, width, height)
+                mainHandler.post {
+                    result.success(
+                        mapOf(
+                            "success" to true,
+                            "roi" to roi,
+                            "rim_roi" to rimRoi,
+                            "hoop_bbox" to bbox.toList(),
+                            "samples" to stable.samples,
+                            "stability" to stable.stability,
+                            "preview_time_ms" to stable.previewTimeMs,
+                            "model_input_size" to modelSize,
+                            "source" to "android_onnx_hoop_model",
+                        ),
+                    )
+                }
             } catch (error: Exception) {
-                Log.e(tag, "analysis failed: ${error.stackTraceToString()}")
-                mainHandler.post { result.error("ANALYSIS_FAILED", error.message ?: "移动端分析失败", null) }
+                Log.w(tag, "automatic ROI suggestion failed", error)
+                mainHandler.post { result.error("AUTO_ROI_FAILED", error.message ?: "自动识别篮筐失败", null) }
             } finally {
                 if (session != 0L) NativeRuntime.freeSession(session)
-                framePipeline?.release()
+                pipeline?.release()
                 retriever.release()
-                Log.i(tag, "analysis thread finished")
-                analysisThread = null
             }
-        }.also { it.start() }
+        }.start()
     }
 
-    /**
-     * Extracts raw RGBA pixels from a Bitmap as a ByteArray.
-     * Each pixel is 4 bytes (R, G, B, A) in row-major order.
-     * This avoids the JPEG→base64→JSON→base64→JPEG roundtrip entirely.
-     */
-    private fun bitmapToRgba(bitmap: Bitmap): ByteArray {
-        val width = bitmap.width
-        val height = bitmap.height
-        val pixels = IntArray(width * height)
-        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-        val rgba = ByteArray(width * height * 4)
-        var index = 0
-        for (pixel in pixels) {
-            rgba[index++] = (pixel shr 16 and 0xFF).toByte() // R
-            rgba[index++] = (pixel shr 8 and 0xFF).toByte()  // G
-            rgba[index++] = (pixel and 0xFF).toByte()         // B
-            rgba[index++] = (pixel shr 24 and 0xFF).toByte()  // A
+    private fun fullRoi() = JSONObject()
+        .put("left", 0.0)
+        .put("top", 0.0)
+        .put("right", 1.0)
+        .put("bottom", 1.0)
+
+    private fun median(values: List<Float>): Float {
+        val sorted = values.sorted()
+        return if (sorted.size % 2 == 0) {
+            (sorted[sorted.size / 2 - 1] + sorted[sorted.size / 2]) / 2f
+        } else sorted[sorted.size / 2]
+    }
+
+    private fun selectStableHoop(
+        observations: List<HoopObservation>,
+        frameWidth: Float,
+        frameHeight: Float,
+    ): StableHoop? {
+        if (observations.size < 2 || frameWidth <= 0f || frameHeight <= 0f) return null
+        val radius = max(60f, frameWidth * .10f)
+        val clusters = mutableListOf<MutableList<HoopObservation>>()
+        for (observation in observations) {
+            val centerX = (observation.bbox[0] + observation.bbox[2]) / 2f
+            val centerY = (observation.bbox[1] + observation.bbox[3]) / 2f
+            var best: MutableList<HoopObservation>? = null
+            var bestDistance = Float.MAX_VALUE
+            for (cluster in clusters) {
+                val clusterX = median(cluster.map { (it.bbox[0] + it.bbox[2]) / 2f })
+                val clusterY = median(cluster.map { (it.bbox[1] + it.bbox[3]) / 2f })
+                val distance = kotlin.math.hypot(centerX - clusterX, centerY - clusterY)
+                if (distance <= radius && distance < bestDistance) {
+                    best = cluster
+                    bestDistance = distance
+                }
+            }
+            (best ?: mutableListOf<HoopObservation>().also(clusters::add)).add(observation)
         }
-        return rgba
+        val stableClusters = clusters.filter { it.size >= 2 }
+        if (stableClusters.isEmpty()) return null
+        val selected = stableClusters.maxWithOrNull(
+            compareBy<MutableList<HoopObservation>> { it.size }
+                .thenBy { median(it.map(HoopObservation::confidence)) }
+                .thenBy { median(it.map { item -> (item.bbox[2] - item.bbox[0]) * (item.bbox[3] - item.bbox[1]) }) },
+        ) ?: return null
+        val bbox = FloatArray(4) { index -> median(selected.map { it.bbox[index] }) }
+        val bestConfidence = selected.maxBy { it.confidence }
+        return StableHoop(
+            bbox = bbox,
+            confidence = median(selected.map(HoopObservation::confidence)),
+            previewTimeMs = bestConfidence.timeMs,
+            samples = selected.size,
+            stability = min(1.0, selected.size.toDouble() / observations.size.toDouble()),
+        )
+    }
+
+    private fun expandedRoi(bbox: FloatArray, frameWidth: Float, frameHeight: Float): Map<String, Double> {
+        val boxWidth = max(4f, bbox[2] - bbox[0])
+        val boxHeight = max(4f, bbox[3] - bbox[1])
+        val centerX = (bbox[0] + bbox[2]) / 2f
+        val centerY = (bbox[1] + bbox[3]) / 2f
+        val roiWidth = min(max(boxWidth * 12f, frameWidth * .14f), frameWidth * .65f)
+        val roiHeight = min(max(boxHeight * 20f, frameHeight * .28f), frameHeight * .75f)
+        var topExtent = max(boxHeight * 8f, roiHeight * .44f)
+        var bottomExtent = max(boxHeight * 12f, roiHeight * .56f)
+        val totalHeight = topExtent + bottomExtent
+        if (totalHeight > frameHeight * .75f) {
+            val scale = frameHeight * .75f / totalHeight
+            topExtent *= scale
+            bottomExtent *= scale
+        }
+        return mapOf(
+            "left" to ((centerX - roiWidth / 2f) / frameWidth).coerceIn(0f, 1f).toDouble(),
+            "top" to ((centerY - topExtent) / frameHeight).coerceIn(0f, 1f).toDouble(),
+            "right" to ((centerX + roiWidth / 2f) / frameWidth).coerceIn(0f, 1f).toDouble(),
+            "bottom" to ((centerY + bottomExtent) / frameHeight).coerceIn(0f, 1f).toDouble(),
+        )
+    }
+
+    private fun physicalRimRoi(bbox: FloatArray, frameWidth: Float, frameHeight: Float): Map<String, Double> {
+        val boxWidth = max(1f, bbox[2] - bbox[0])
+        val boxHeight = max(1f, bbox[3] - bbox[1])
+        val centerX = (bbox[0] + bbox[2]) / 2f
+        val centerY = (bbox[1] + bbox[3]) / 2f
+        val rimY = centerY - boxHeight * .28f
+        // Match Python refine's `scale_rim`: the plane is shifted by 28% and
+        // the corrected rim ROI keeps 45% of the detector-box height.
+        val rimHeight = boxHeight * .45f
+        return mapOf(
+            "left" to ((centerX - boxWidth / 2f) / frameWidth).coerceIn(0f, 1f).toDouble(),
+            "top" to ((rimY - rimHeight / 2f) / frameHeight).coerceIn(0f, 1f).toDouble(),
+            "right" to ((centerX + boxWidth / 2f) / frameWidth).coerceIn(0f, 1f).toDouble(),
+            "bottom" to ((rimY + rimHeight / 2f) / frameHeight).coerceIn(0f, 1f).toDouble(),
+        )
+    }
+
+    private fun analyzeVideo(call: MethodCall, result: MethodChannel.Result) {
+        if (AnalysisTaskManager.isRunning()) {
+            result.error("ANALYSIS_BUSY", "已有分析任务正在运行", null)
+            return
+        }
+        val videoPath = call.argument<String>("videoPath")
+        val modelPath = call.argument<String>("modelPath")
+        val hoopRoi = call.argument<Map<String, Any>>("hoopRoi")
+        val rimRoi = call.argument<Map<String, Any>>("rimRoi")
+        val netRoi = call.argument<Map<String, Any>>("netRoi")
+        val startMs = call.argument<Int>("startMs") ?: 0
+        val endMs = call.argument<Int>("endMs") ?: 0
+        if (videoPath == null || modelPath == null || hoopRoi == null || netRoi == null || endMs <= startMs) {
+            result.error("INVALID_ARGUMENT", "分析参数无效", null)
+            return
+        }
+        val request = JSONObject()
+            .put("videoPath", videoPath)
+            .put("modelPath", modelPath)
+            .put("hoopRoi", JSONObject(hoopRoi))
+            .put("netRoi", JSONObject(netRoi))
+            .put("startMs", startMs)
+            .put("endMs", endMs)
+            .put("beforeMs", call.argument<Int>("beforeMs") ?: 6000)
+            .put("afterMs", call.argument<Int>("afterMs") ?: 3000)
+            .put("fps", (call.argument<Double>("fps") ?: 3.0).coerceIn(1.0, 10.0))
+            .put("confidenceThreshold", (call.argument<Double>("confidenceThreshold") ?: 0.10).coerceIn(0.0, 1.0))
+            .put("modelSize", ((call.argument<Int>("modelSize") ?: 640) / 32 * 32).coerceAtLeast(320))
+            .put("cropScale", (call.argument<Double>("cropScale") ?: 2.0).coerceIn(1.0, 8.0))
+            .put("maxCrossGapMs", (call.argument<Int>("maxCrossGapMs") ?: 1800).coerceAtLeast(1))
+            .put("dedupeMs", (call.argument<Int>("dedupeMs") ?: 2000).coerceAtLeast(0))
+            .put("executionProvider", call.argument<String>("executionProvider") ?: "auto")
+            .put("inferenceBatchSize", (call.argument<Int>("inferenceBatchSize") ?: 4).coerceIn(1, 8))
+            .put("optimizedModelPath", call.argument<String>("optimizedModelPath") ?: "")
+        if (rimRoi != null) request.put("rimRoi", JSONObject(rimRoi))
+        val listener = object : AnalysisTaskManager.Listener {
+            override fun onProgress(event: Map<String, Any?>) = emitProgress(
+                event["stage"] as? String ?: "refineCandidates",
+                (event["progress"] as? Number)?.toDouble() ?: 0.0,
+                (event["processedFrames"] as? Number)?.toInt() ?: 0,
+                (event["totalFrames"] as? Number)?.toInt() ?: 0,
+                event["message"] as? String ?: "正在分析视频",
+            )
+
+            override fun onComplete(result: Map<String, Any?>) {
+                setAnalysisScreenOn(false)
+                analysisTaskListener = null
+            }
+
+            override fun onError(code: String, message: String) {
+                setAnalysisScreenOn(false)
+                analysisTaskListener = null
+            }
+        }
+        analysisTaskListener = listener
+        setAnalysisScreenOn(true)
+        AnalysisTaskManager.attach(listener, applicationContext)
+        AnalysisTaskManager.prepare(applicationContext, request.toString(), object : AnalysisTaskManager.MethodResult {
+            override fun success(value: Map<String, Any?>) {
+                mainHandler.post { result.success(value) }
+            }
+            override fun error(code: String, message: String) {
+                mainHandler.post { result.error(code, message, null) }
+            }
+        })
+        startAnalysisForegroundService()
+    }
+
+    private fun startAnalysisForegroundService() {
+        val intent = Intent(this, AnalysisForegroundService::class.java).apply {
+            action = AnalysisForegroundService.ACTION_START
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+        Log.i(tag, "analysis foreground service started")
     }
 
     private fun emitProgress(stage: String, progress: Double, processed: Int, total: Int, message: String) {
@@ -280,7 +462,43 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun emitProgress(event: Map<String, Any?>) {
+        emitProgress(
+            event["stage"] as? String ?: "refineCandidates",
+            (event["progress"] as? Number)?.toDouble() ?: 0.0,
+            (event["processedFrames"] as? Number)?.toInt() ?: 0,
+            (event["totalFrames"] as? Number)?.toInt() ?: 0,
+            event["message"] as? String ?: "正在分析视频",
+        )
+    }
+
+    private fun emitAnalysisCompletion(result: Map<String, Any?>) {
+        mainHandler.post {
+            progressSink?.success(mapOf(
+                "status" to "completed",
+                "stage" to "completed",
+                "progress" to 1.0,
+                "message" to "分析完成",
+                "processedFrames" to result["processed_frames"],
+                "totalFrames" to result["total_frames"],
+                "candidates" to result["candidates"],
+            ))
+        }
+    }
+
+    private fun emitAnalysisError(code: String, message: String) {
+        mainHandler.post {
+            progressSink?.success(mapOf(
+                "status" to if (code == "ANALYSIS_CANCELLED") "cancelled" else "failed",
+                "stage" to if (code == "ANALYSIS_CANCELLED") "cancelled" else "failed",
+                "progress" to 0.0,
+                "message" to message,
+            ))
+        }
+    }
+
     private fun exportClip(call: MethodCall, result: MethodChannel.Result) {
+        val exportId = call.argument<String>("exportId") ?: outputPathId(call)
         val inputPath = call.argument<String>("inputPath")
         val outputPath = call.argument<String>("outputPath")
         val startMs = call.argument<Int>("startMs")
@@ -289,54 +507,204 @@ class MainActivity : FlutterActivity() {
             result.error("INVALID_ARGUMENT", "视频片段参数无效", null)
             return
         }
+        val cancelled = AtomicBoolean(false)
+        exportCancelled[exportId] = cancelled
         Thread {
+            var extractor: MediaExtractor? = null
+            var muxer: MediaMuxer? = null
+            var muxerStarted = false
             try {
                 File(outputPath).parentFile?.mkdirs()
                 File(outputPath).delete()
-                val extractor = MediaExtractor()
-                extractor.setDataSource(inputPath)
+                val currentExtractor = MediaExtractor()
+                extractor = currentExtractor
+                currentExtractor.setDataSource(inputPath)
                 val trackMap = mutableMapOf<Int, Int>()
-                val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-                for (index in 0 until extractor.trackCount) {
-                    val format = extractor.getTrackFormat(index)
+                val currentMuxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                muxer = currentMuxer
+                for (index in 0 until currentExtractor.trackCount) {
+                    val format = currentExtractor.getTrackFormat(index)
                     val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
                     if (mime.startsWith("video/") || mime.startsWith("audio/")) {
-                        trackMap[index] = muxer.addTrack(format)
-                        extractor.selectTrack(index)
+                        trackMap[index] = currentMuxer.addTrack(format)
+                        currentExtractor.selectTrack(index)
                     }
                 }
                 if (trackMap.isEmpty()) throw IllegalStateException("视频没有可导出的音视频轨道")
-                muxer.start()
+                currentMuxer.start()
+                muxerStarted = true
                 val endUs = endMs.toLong() * 1000L
-                extractor.seekTo(startMs.toLong() * 1000L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-                val clipStartUs = extractor.sampleTime
+                currentExtractor.seekTo(startMs.toLong() * 1000L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                val clipStartUs = currentExtractor.sampleTime
                 if (clipStartUs < 0L) throw IllegalStateException("无法定位视频片段起点")
-                val buffer = ByteBuffer.allocate(16 * 1024 * 1024)
+                var buffer = ByteBuffer.allocate(16 * 1024 * 1024)
                 val info = android.media.MediaCodec.BufferInfo()
                 while (true) {
-                    val sourceTrack = extractor.sampleTrackIndex
-                    if (sourceTrack < 0 || extractor.sampleTime >= endUs) break
+                    if (cancelled.get()) throw InterruptedException("导出已取消")
+                    val sourceTrack = currentExtractor.sampleTrackIndex
+                    if (sourceTrack < 0 || currentExtractor.sampleTime >= endUs) break
                     val muxTrack = trackMap[sourceTrack]
                     if (muxTrack != null) {
+                        val sampleSize = currentExtractor.sampleSize
+                        if (sampleSize > Int.MAX_VALUE) throw IllegalStateException("视频样本过大，无法导出")
+                        if (sampleSize > buffer.capacity()) buffer = ByteBuffer.allocate(sampleSize.toInt())
                         buffer.clear()
-                        val size = extractor.readSampleData(buffer, 0)
+                        val size = currentExtractor.readSampleData(buffer, 0)
                         if (size <= 0) break
                         info.offset = 0
                         info.size = size
-                        info.presentationTimeUs = (extractor.sampleTime - clipStartUs).coerceAtLeast(0L)
-                        info.flags = extractor.sampleFlags
-                        muxer.writeSampleData(muxTrack, buffer, info)
+                        info.presentationTimeUs = (currentExtractor.sampleTime - clipStartUs).coerceAtLeast(0L)
+                        info.flags = currentExtractor.sampleFlags
+                        currentMuxer.writeSampleData(muxTrack, buffer, info)
                     }
-                    extractor.advance()
+                    currentExtractor.advance()
                 }
-                muxer.stop()
-                muxer.release()
-                extractor.release()
+                if (muxerStarted) {
+                    currentMuxer.stop()
+                    muxerStarted = false
+                }
                 mainHandler.post { result.success(outputPath) }
+            } catch (_: InterruptedException) {
+                File(outputPath).delete()
+                mainHandler.post { result.error("EXPORT_CANCELLED", "导出已取消", null) }
             } catch (error: Exception) {
+                File(outputPath).delete()
                 mainHandler.post { result.error("EXPORT_FAILED", error.message, null) }
+            } finally {
+                if (muxerStarted) {
+                    try {
+                        muxer?.stop()
+                    } catch (_: Exception) {
+                    }
+                }
+                muxer?.release()
+                extractor?.release()
+                exportCancelled.remove(exportId)
             }
         }.start()
+    }
+
+    private fun mergeClips(call: MethodCall, result: MethodChannel.Result) {
+        val exportId = call.argument<String>("exportId") ?: "merge-${System.nanoTime()}"
+        val inputPath = call.argument<String>("inputPath")
+        val outputPath = call.argument<String>("outputPath")
+        val rawClips = call.argument<List<*>>("clips")
+        val sortedClips = rawClips?.mapNotNull { item ->
+            val values = item as? Map<*, *> ?: return@mapNotNull null
+            val start = (values["startMs"] as? Number)?.toLong()
+            val end = (values["endMs"] as? Number)?.toLong()
+            if (start == null || end == null || end <= start) null else start to end
+        }?.sortedBy { it.first } ?: emptyList()
+        val clips = mutableListOf<Pair<Long, Long>>()
+        for (clip in sortedClips) {
+            val previous = clips.lastOrNull()
+            if (previous != null && clip.first <= previous.second) {
+                clips[clips.lastIndex] = previous.first to maxOf(previous.second, clip.second)
+            } else {
+                clips += clip
+            }
+        }
+        if (inputPath == null || outputPath == null || clips.isEmpty()) {
+            result.error("INVALID_ARGUMENT", "合并导出参数无效", null)
+            return
+        }
+        val cancelled = AtomicBoolean(false)
+        exportCancelled[exportId] = cancelled
+        Thread {
+            var muxer: MediaMuxer? = null
+            var muxerStarted = false
+            try {
+                File(outputPath).parentFile?.mkdirs()
+                File(outputPath).delete()
+                val firstExtractor = MediaExtractor()
+                firstExtractor.setDataSource(inputPath)
+                val trackMap = mutableMapOf<Int, Int>()
+                val currentMuxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                muxer = currentMuxer
+                for (index in 0 until firstExtractor.trackCount) {
+                    val format = firstExtractor.getTrackFormat(index)
+                    val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                    if (mime.startsWith("video/") || mime.startsWith("audio/")) {
+                        trackMap[index] = currentMuxer.addTrack(format)
+                    }
+                }
+                firstExtractor.release()
+                if (trackMap.isEmpty()) throw IllegalStateException("视频没有可合并的音视频轨道")
+                currentMuxer.start()
+                muxerStarted = true
+                var buffer = ByteBuffer.allocate(16 * 1024 * 1024)
+                val info = android.media.MediaCodec.BufferInfo()
+                var outputBaseUs = 0L
+                for ((startMs, endMs) in clips) {
+                    if (cancelled.get()) throw InterruptedException("合并导出已取消")
+                    val extractor = MediaExtractor()
+                    try {
+                        extractor.setDataSource(inputPath)
+                        trackMap.keys.forEach(extractor::selectTrack)
+                        val endUs = endMs * 1000L
+                        extractor.seekTo(startMs * 1000L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                        val clipStartUs = extractor.sampleTime
+                        if (clipStartUs < 0L) continue
+                        while (true) {
+                            if (cancelled.get()) throw InterruptedException("合并导出已取消")
+                            val sourceTrack = extractor.sampleTrackIndex
+                            val sampleTime = extractor.sampleTime
+                            if (sourceTrack < 0 || sampleTime < 0L || sampleTime >= endUs) break
+                            val muxTrack = trackMap[sourceTrack]
+                            if (muxTrack != null) {
+                                val sampleSizeBytes = extractor.sampleSize
+                                if (sampleSizeBytes > Int.MAX_VALUE) throw IllegalStateException("视频样本过大，无法合并导出")
+                                if (sampleSizeBytes > buffer.capacity()) buffer = ByteBuffer.allocate(sampleSizeBytes.toInt())
+                                buffer.clear()
+                                val size = extractor.readSampleData(buffer, 0)
+                                if (size <= 0) break
+                                info.offset = 0
+                                info.size = size
+                                info.presentationTimeUs = outputBaseUs +
+                                    (sampleTime - clipStartUs).coerceAtLeast(0L)
+                                info.flags = extractor.sampleFlags
+                                currentMuxer.writeSampleData(muxTrack, buffer, info)
+                            }
+                            extractor.advance()
+                        }
+                        outputBaseUs += (endUs - clipStartUs).coerceAtLeast(1L)
+                    } finally {
+                        extractor.release()
+                    }
+                }
+                currentMuxer.stop()
+                muxerStarted = false
+                mainHandler.post { result.success(outputPath) }
+            } catch (_: InterruptedException) {
+                File(outputPath).delete()
+                mainHandler.post { result.error("EXPORT_CANCELLED", "合并导出已取消", null) }
+            } catch (error: Exception) {
+                File(outputPath).delete()
+                mainHandler.post { result.error("EXPORT_FAILED", error.message, null) }
+            } finally {
+                if (muxerStarted) {
+                    try {
+                        muxer?.stop()
+                    } catch (_: Exception) {
+                    }
+                }
+                muxer?.release()
+                exportCancelled.remove(exportId)
+            }
+        }.start()
+    }
+
+    private fun outputPathId(call: MethodCall): String =
+        call.argument<String>("outputPath") ?: "export-${System.nanoTime()}"
+
+    private fun cancelExport(call: MethodCall, result: MethodChannel.Result) {
+        val exportId = call.argument<String>("exportId")
+        if (exportId != null) {
+            exportCancelled[exportId]?.set(true)
+        } else {
+            exportCancelled.values.forEach { it.set(true) }
+        }
+        result.success(null)
     }
 
     private fun saveToLibrary(call: MethodCall, result: MethodChannel.Result) {

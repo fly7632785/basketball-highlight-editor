@@ -2,10 +2,14 @@ import argparse
 import hashlib
 import json
 import math
+import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 from cache_io import read_json_cache, write_json_cache
+from basketball_highlight.sampling import canonical_sample_times, first_frame_index
 
 
 def parse_args():
@@ -125,16 +129,20 @@ def scan_video(args):
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    max_frames = None if args.duration is None else max(0, int(args.duration * fps))
-    stride = max(1, round(fps / args.sample_fps))
+    scan_duration = (
+        frame_count / fps if args.duration is None else min(args.duration, frame_count / fps)
+    )
+    sample_times = canonical_sample_times(0.0, scan_duration, args.sample_fps)
+    target_frames = [min(frame_count - 1, first_frame_index(time, fps)) for time in sample_times]
     records = []
     frame_index = 0
+    sample_index = 0
     started = time.perf_counter()
 
     pending_crops = []
     pending_meta = []
     last_progress_report = started
-    progress_total = max_frames or frame_count
+    progress_total = max(1, target_frames[-1] + 1 if target_frames else frame_count)
 
     def flush_batch():
         if not pending_crops:
@@ -143,7 +151,15 @@ def scan_video(args):
             pending_crops,
             device=device,
             conf=args.conf,
+            iou=0.7,
+            agnostic_nms=False,
+            max_det=300,
             imgsz=640,
+            # Keep the detector input square.  The mobile ONNX model has a
+            # static 640x640 input; Ultralytics' default ``rect=True`` uses
+            # stride-minimal padding for a single image/batch and therefore
+            # feeds a different tensor to PyTorch.
+            rect=False,
             batch=args.batch,
             verbose=False,
         )
@@ -173,14 +189,18 @@ def scan_video(args):
         pending_meta.clear()
 
     while True:
-        if max_frames is not None and frame_index >= max_frames:
+        if sample_index >= len(target_frames):
             break
         ok = cap.grab()
         if not ok:
             break
-        if frame_index % stride:
+        if frame_index < target_frames[sample_index]:
             frame_index += 1
             continue
+        while sample_index < len(target_frames) and target_frames[sample_index] < frame_index:
+            sample_index += 1
+        if sample_index >= len(target_frames):
+            break
         ok, frame = cap.retrieve()
         if not ok:
             break
@@ -194,8 +214,9 @@ def scan_video(args):
         pending_crops.append(crop)
         pending_meta.append({
             "frame": frame_index,
-                    "time": round(frame_index / fps + args.time_offset, 4),
+            "time": round(sample_times[sample_index] + args.time_offset, 6),
         })
+        sample_index += 1
         if len(pending_crops) >= args.batch:
             flush_batch()
         now = time.perf_counter()

@@ -3,6 +3,7 @@ from statistics import median
 from .features import normalize_geometry
 from .geometry import crossing_x_at_y, is_rim_crossing
 from .ranking import dedupe_candidates
+from .sampling import round_time_ms
 from .trajectory import prediction_score
 from .verdict import resolve_verdict
 
@@ -911,6 +912,8 @@ def _overlay_data(
                 "x": round(float(point["x"]), 3),
                 "y": round(float(point["y"]), 3),
                 "confidence": round(float(point.get("confidence", 0.0)), 4),
+                "width": round(float(point.get("width", 0.0)), 3),
+                "height": round(float(point.get("height", 0.0)), 3),
             }
             for point in points
         ],
@@ -929,7 +932,13 @@ def _overlay_data(
     }
 
 
-def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=2.0):
+def find_refined_crossings(
+    records,
+    rim,
+    max_cross_gap_sec=1.8,
+    dedupe_sec=2.0,
+    include_replay_trajectory=False,
+):
     """Find and score rim crossings using geometry, tracking and net zones.
 
     The result intentionally keeps ambiguous crossings as ``low`` or
@@ -1135,6 +1144,12 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=2.0):
                     "above": above,
                     "below": below,
                 }
+                if include_replay_trajectory:
+                    candidate["replay_trajectory"] = [
+                        point
+                        for point in track
+                        if above["time"] - 1.2 <= point["time"] <= below["time"] + 0.8
+                    ]
                 verdict = resolve_verdict(candidate, track, rim)
                 candidate["verdict"] = verdict["verdict"]
                 candidate["decision_time"] = verdict["decision_time"]
@@ -1145,7 +1160,7 @@ def find_refined_crossings(records, rim, max_cross_gap_sec=1.8, dedupe_sec=2.0):
                     candidate["gates"]["automatic_goal"] = False
                 candidate.update({
                     "algorithm_version": ANALYSIS_CONTRACT_VERSION,
-                    "event_ms": round(event_time * 1000),
+                    "event_ms": round_time_ms(event_time * 1000.0),
                     "net_signal_available": verdict["net_signal_available"],
                     "net_support": verdict["net_support"],
                     "net_no_motion": verdict["net_no_motion"],

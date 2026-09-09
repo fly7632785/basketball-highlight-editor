@@ -19,6 +19,12 @@ abstract interface class MobileExportEngine {
     required String outputDirectory,
   });
 
+  Stream<ExportProgress> mergeClips({
+    required VideoInfo video,
+    required List<Candidate> candidates,
+    required String outputPath,
+  });
+
   Future<void> cancel();
 
   Future<void> saveToLibrary(String path);
@@ -33,8 +39,17 @@ class MobileExportEngineUnavailable implements MobileExportEngine {
     required List<Candidate> candidates,
     required String outputDirectory,
   }) => Stream<ExportProgress>.error(
-        const MobileExportException('移动端视频剪辑引擎尚未接入。'),
-      );
+    const MobileExportException('移动端视频剪辑引擎尚未接入。'),
+  );
+
+  @override
+  Stream<ExportProgress> mergeClips({
+    required VideoInfo video,
+    required List<Candidate> candidates,
+    required String outputPath,
+  }) => Stream<ExportProgress>.error(
+    const MobileExportException('移动端视频剪辑引擎尚未接入。'),
+  );
 
   @override
   Future<void> cancel() async {}

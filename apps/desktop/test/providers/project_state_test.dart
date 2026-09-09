@@ -824,6 +824,7 @@ class _FakeProjectSession extends ProjectSession {
   @override
   Future<JsonMap> suggestRoi({
     String? modelPath,
+    int? startMs,
     double? sampleFps,
     double? duration,
     int? maxSamples,

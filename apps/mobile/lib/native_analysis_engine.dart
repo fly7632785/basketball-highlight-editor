@@ -9,6 +9,11 @@ import 'package:path_provider/path_provider.dart';
 class NativeAnalysisEngine implements MobileAnalysisEngine {
   NativeAnalysisEngine();
 
+  static const _autoRoiDurationMs = 20 * 1000;
+  static const _autoRoiMaxSamples = 12;
+  // Must match desktop's refine_scale in build_pipeline_commands.
+  static const _analysisCropScale = 2.0;
+
   static const _channel = MethodChannel('com.bhe.bhe/mobile_analysis');
   static const _progressChannel = EventChannel(
     'com.bhe.bhe/mobile_analysis_progress',
@@ -16,9 +21,112 @@ class NativeAnalysisEngine implements MobileAnalysisEngine {
   bool _cancelled = false;
 
   @override
+  Future<Map<String, dynamic>?> suggestRoi({
+    required VideoInfo video,
+    required int startMs,
+    required int modelSize,
+  }) async {
+    final modelPath = await _materializeModelWithProgress();
+    final remainingMs = (video.durationMs - startMs).clamp(
+      1,
+      _autoRoiDurationMs,
+    );
+    try {
+      final value = await _channel.invokeMethod<Map<Object?, Object?>>(
+        'suggestRoi',
+        {
+          'videoPath': video.path,
+          'modelPath': modelPath,
+          'startMs': startMs,
+          // Keep the mobile scan on the same short-range contract as the
+          // desktop detect_auto_roi.py command.
+          'durationMs': remainingMs > _autoRoiDurationMs
+              ? _autoRoiDurationMs
+              : remainingMs,
+          'sampleFps': 1.0,
+          'maxSamples': _autoRoiMaxSamples,
+          'modelSize': modelSize,
+        },
+      );
+      return value?.map((key, value) => MapEntry(key.toString(), value));
+    } on MissingPluginException {
+      return null;
+    } on PlatformException catch (error) {
+      developer.log(
+        'automatic ROI suggestion failed: ${error.message}',
+        name: 'BHE-Analysis',
+      );
+      return null;
+    }
+  }
+
+  @override
+  Stream<AnalysisProgress> recoverAnalysis() async* {
+    final controller = StreamController<AnalysisProgress>();
+    final subscription = _progressChannel.receiveBroadcastStream().listen((
+      event,
+    ) {
+      if (event is Map) controller.add(_progressFromNative(event));
+    }, onError: controller.addError);
+    try {
+      final state = await _channel.invokeMethod<Map<Object?, Object?>>(
+        'getAnalysisState',
+      );
+      final status = state?['status']?.toString();
+      if (status == 'running') {
+        controller.add(_progressFromNative(state!));
+      } else if (status == 'completed') {
+        controller.add(
+          _progressFromNative({
+            ...(state ?? const <Object?, Object?>{}),
+            'stage': AnalysisStage.completed.name,
+            'progress': 1.0,
+            'message': '分析完成',
+            'candidates':
+                ((state?['result'] as Map?)?['candidates'] ??
+                const <Object?>[]),
+          }),
+        );
+      } else if (status == 'failed' || status == 'cancelled') {
+        controller.add(
+          _progressFromNative({
+            ...(state ?? const <Object?, Object?>{}),
+            'stage': status == 'cancelled'
+                ? AnalysisStage.cancelled.name
+                : AnalysisStage.failed.name,
+            'progress': status == 'cancelled' ? 0.0 : 1.0,
+            'message': state?['errorMessage']?.toString() ?? '移动端分析失败',
+          }),
+        );
+      } else {
+        return;
+      }
+      await for (final update in controller.stream) {
+        yield update;
+        if (update.stage == AnalysisStage.completed ||
+            update.stage == AnalysisStage.failed ||
+            update.stage == AnalysisStage.cancelled) {
+          break;
+        }
+      }
+    } on MissingPluginException {
+      return;
+    } on PlatformException catch (error) {
+      developer.log(
+        'analysis recovery failed: ${error.message}',
+        name: 'BHE-Analysis',
+      );
+    } finally {
+      await subscription.cancel();
+      await controller.close();
+    }
+  }
+
+  @override
   Stream<AnalysisProgress> analyze({
     required VideoInfo video,
     required Roi hoopRoi,
+    Roi? rimRoi,
     required Roi netRoi,
     required AnalysisSettings settings,
   }) async* {
@@ -51,23 +159,34 @@ class NativeAnalysisEngine implements MobileAnalysisEngine {
         }, onError: (_) {});
     final iterator = StreamIterator(progressController.stream);
     developer.log('invoking native analyzeVideo', name: 'BHE-Analysis');
-    final resultFuture = _channel
-        .invokeMethod<Map<Object?, Object?>>('analyzeVideo', {
-          'videoPath': video.path,
-          'modelPath': modelPath,
-          'hoopRoi': hoopRoi.toJson(),
-          'netRoi': netRoi.toJson(),
-          'startMs': settings.startMs,
-          'endMs': settings.endMs ?? video.durationMs,
-          'beforeMs': settings.clip.beforeSeconds * 1000,
-          'afterMs': settings.clip.afterSeconds * 1000,
-          'fps': settings.proxyFps,
-        })
-        .timeout(
-          const Duration(minutes: 15),
-          onTimeout: () =>
-              throw const MobileAnalysisException('本地分析超过 15 分钟没有响应，已停止等待。'),
-        );
+    final resultFuture = _channel.invokeMethod<Map<Object?, Object?>>(
+      'analyzeVideo',
+      {
+        'videoPath': video.path,
+        'modelPath': modelPath,
+        'hoopRoi': hoopRoi.toJson(),
+        if (rimRoi != null) 'rimRoi': rimRoi.toJson(),
+        'netRoi': netRoi.toJson(),
+        'startMs': settings.startMs,
+        'endMs': settings.endMs ?? video.durationMs,
+        'beforeMs': settings.clip.beforeSeconds * 1000,
+        'afterMs': settings.clip.afterSeconds * 1000,
+        'fps': settings.analysisFps,
+        'confidenceThreshold': settings.confidenceThreshold,
+        'modelSize': settings.modelInputSize,
+        'cropScale': _analysisCropScale,
+        'executionProvider': Platform.isAndroid
+            ? 'auto'
+            : Platform.isIOS
+            ? 'coreml'
+            : 'cpu',
+        'inferenceBatchSize': settings.inferenceBatchSize,
+        // Keep the crossing and deduplication windows explicit at the
+        // platform boundary instead of relying on a native default.
+        'maxCrossGapMs': 1800,
+        'dedupeMs': 2000,
+      },
+    );
     try {
       Map<Object?, Object?>? result;
       while (true) {
@@ -113,36 +232,49 @@ class NativeAnalysisEngine implements MobileAnalysisEngine {
       (value) => value.name == event['stage'],
       orElse: () => AnalysisStage.refineCandidates,
     );
+    final rawCandidates =
+        event['candidates'] ??
+        (event['result'] is Map
+            ? (event['result'] as Map)['candidates']
+            : null);
+    final candidates = (rawCandidates as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Candidate.fromJson(item.cast<String, dynamic>()))
+        .toList();
     return AnalysisProgress(
       stage: stage,
       progress: ((event['progress'] as num?)?.toDouble() ?? 0).clamp(0, 1),
       message: event['message'] as String? ?? '正在分析视频',
-      processedFrames: (event['processedFrames'] as num?)?.toInt(),
-      totalFrames: (event['totalFrames'] as num?)?.toInt(),
+      processedFrames:
+          ((event['processedFrames'] ?? event['processed']) as num?)?.toInt(),
+      totalFrames: ((event['totalFrames'] ?? event['total']) as num?)?.toInt(),
+      candidates: candidates,
     );
   }
 
   Future<String> _materializeModelWithProgress() async {
     final directory = await getApplicationSupportDirectory();
     final file = File('${directory.path}/models/bball_model.onnx');
-    const expectedBytes = 12 * 1024 * 1024;
-    if (await file.exists() && await file.length() >= expectedBytes) {
+    final data = await rootBundle.load('assets/models/bball_model.onnx');
+    final bytes = data.buffer.asUint8List(
+      data.offsetInBytes,
+      data.lengthInBytes,
+    );
+    if (await file.exists() && await file.length() == bytes.length) {
       developer.log(
         'model already materialized: ${await file.length()} bytes',
         name: 'BHE-Analysis',
       );
       return file.path;
     }
-    final data = await rootBundle.load('assets/models/bball_model.onnx');
     await file.parent.create(recursive: true);
-    final output = file.openWrite();
-    final bytes = data.buffer.asUint8List(
-      data.offsetInBytes,
-      data.lengthInBytes,
-    );
+    final temporary = File('${file.path}.tmp');
     const chunkSize = 1024 * 1024;
     final stopwatch = Stopwatch()..start();
+    IOSink? output;
     try {
+      if (await temporary.exists()) await temporary.delete();
+      output = temporary.openWrite();
       for (var offset = 0; offset < bytes.length; offset += chunkSize) {
         if (_cancelled) throw const MobileAnalysisException('分析已取消');
         final end = (offset + chunkSize).clamp(0, bytes.length);
@@ -153,8 +285,17 @@ class NativeAnalysisEngine implements MobileAnalysisEngine {
           throw const MobileAnalysisException('本地模型准备超时，请检查设备存储空间后重试。');
         }
       }
-    } finally {
+      await output.flush();
       await output.close();
+      output = null;
+      if (await temporary.length() != bytes.length) {
+        throw const MobileAnalysisException('本地模型复制不完整，请重试。');
+      }
+      if (await file.exists()) await file.delete();
+      await temporary.rename(file.path);
+    } finally {
+      await output?.close();
+      if (await temporary.exists()) await temporary.delete();
     }
     return file.path;
   }

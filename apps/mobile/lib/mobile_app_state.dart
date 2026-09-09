@@ -22,7 +22,7 @@ class MobileAppState extends ChangeNotifier {
   }
 
   final MobileAnalysisEngine analysisEngine;
-  final MobileExportEngine exportEngine = const NativeMediaExportEngine();
+  final MobileExportEngine exportEngine = NativeMediaExportEngine();
 
   ProjectSnapshot project = ProjectSnapshot(
     id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -38,6 +38,8 @@ class MobileAppState extends ChangeNotifier {
   Duration? eta;
   String? errorMessage;
   bool loading = true;
+  bool preparingVideo = false;
+  String preparingVideoMessage = '';
   bool analysing = false;
   bool exporting = false;
   List<String> exportedPaths = const [];
@@ -162,16 +164,79 @@ class MobileAppState extends ChangeNotifier {
         await _persistProjects();
       }
       if (project.lastAnalysisStatus == 'running') {
-        project = project.copyWith(
-          lastAnalysisStatus: 'interrupted',
-          lastAnalysisMessage: '应用上次退出时分析未完成，可重新分析。',
-        );
-        await _queueSave();
+        unawaited(_recoverRunningAnalysis());
       }
     } on Object catch (error) {
       errorMessage = '读取本地项目失败：$error';
     } finally {
       loading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _recoverRunningAnalysis() async {
+    var receivedState = false;
+    try {
+      await for (final update in analysisEngine.recoverAnalysis()) {
+        receivedState = true;
+        stage = update.stage;
+        progress = update.progress.clamp(0, 1);
+        progressMessage = update.message;
+        processedFrames = update.processedFrames;
+        totalFrames = update.totalFrames;
+        analysing =
+            update.stage != AnalysisStage.completed &&
+            update.stage != AnalysisStage.cancelled &&
+            update.stage != AnalysisStage.failed;
+        analysisStartedAt ??= DateTime.now();
+        if (update.stage == AnalysisStage.completed) {
+          project = project.copyWith(
+            candidates: update.candidates,
+            lastAnalysisStatus: 'completed',
+            lastAnalysisProgressPercent: 100,
+            lastAnalysisMessage: '分析完成',
+            lastAnalysisAt: DateTime.now(),
+          );
+          analysing = false;
+          analysisStartedAt = null;
+          await _queueSave();
+        } else if (update.stage == AnalysisStage.cancelled ||
+            update.stage == AnalysisStage.failed) {
+          project = project.copyWith(
+            lastAnalysisStatus: update.stage == AnalysisStage.cancelled
+                ? 'cancelled'
+                : 'failed',
+            lastAnalysisMessage: update.message,
+          );
+          analysing = false;
+          analysisStartedAt = null;
+          await _queueSave();
+        } else {
+          project = project.copyWith(
+            lastAnalysisStatus: 'running',
+            lastAnalysisProgressPercent: (progress * 100).round(),
+            lastAnalysisMessage: update.message,
+          );
+          unawaited(_queueSave());
+        }
+        notifyListeners();
+      }
+      if (!receivedState && project.lastAnalysisStatus == 'running') {
+        project = project.copyWith(
+          lastAnalysisStatus: 'interrupted',
+          lastAnalysisMessage: '未找到仍在运行的原生分析任务，可重新分析。',
+        );
+        await _queueSave();
+        notifyListeners();
+      }
+    } on Object catch (error) {
+      project = project.copyWith(
+        lastAnalysisStatus: 'interrupted',
+        lastAnalysisMessage: '无法恢复原生分析任务：$error',
+      );
+      analysing = false;
+      analysisStartedAt = null;
+      unawaited(_queueSave());
       notifyListeners();
     }
   }
@@ -243,11 +308,17 @@ class MobileAppState extends ChangeNotifier {
     final path = result?.files.single.path;
     if (path == null) return;
     final file = File(path);
+    preparingVideo = true;
+    preparingVideoMessage = '正在读取视频信息';
+    errorMessage = null;
+    notifyListeners();
     final controller = VideoPlayerController.file(file);
     try {
       await controller.initialize();
       final value = controller.value;
       final name = path.split(Platform.pathSeparator).last;
+      preparingVideoMessage = '正在读取文件大小';
+      notifyListeners();
       final sizeBytes = await file.length();
       project = project.copyWith(
         name: name.replaceFirst(RegExp(r'\.[^.]+$'), ''),
@@ -260,15 +331,75 @@ class MobileAppState extends ChangeNotifier {
           height: value.size.height.round(),
         ),
         clearHoopRoi: true,
+        clearRimRoi: true,
         clearNetRoi: true,
         candidates: const [],
         clearLastAnalysis: true,
       );
       errorMessage = null;
-      await _queueSave();
+      preparingVideoMessage = '正在保存项目';
       notifyListeners();
+      await _queueSave();
+      preparingVideoMessage = '正在识别篮筐区域';
+      notifyListeners();
+      try {
+        final suggestion = await analysisEngine.suggestRoi(
+          video: project.video!,
+          startMs: project.settings.startMs,
+          modelSize: project.settings.modelInputSize,
+        );
+        final rawRoi = suggestion?['roi'];
+        if (rawRoi is Map) {
+          final analysisRoi = Roi.fromJson(
+            rawRoi.map((key, value) => MapEntry(key.toString(), value)),
+          );
+          final rawNet = suggestion?['net_roi'];
+          final rawRim = suggestion?['rim_roi'];
+          final rimRoi = rawRim is Map
+              ? Roi.fromJson(
+                  rawRim.map((key, value) => MapEntry(key.toString(), value)),
+                )
+              : null;
+          final netRoi = rawNet is Map
+              ? Roi.fromJson(
+                  rawNet.map((key, value) => MapEntry(key.toString(), value)),
+                )
+              : rimRoi != null
+              ? _netRoiFromRim(analysisRoi, rimRoi)
+              : Roi(
+                  left: analysisRoi.left,
+                  top: (analysisRoi.top + .06).clamp(0, 1),
+                  right: analysisRoi.right,
+                  bottom: (analysisRoi.bottom + .18).clamp(0, 1),
+                );
+          project = project.copyWith(
+            hoopRoi: analysisRoi,
+            rimRoi: rimRoi,
+            netRoi: netRoi,
+          );
+          await _queueSave();
+        }
+      } on Object catch (error, stack) {
+        developer.log(
+          'automatic ROI suggestion failed: $error',
+          name: 'BHE-Project',
+          error: error,
+          stackTrace: stack,
+        );
+      }
       unawaited(_finishVideoHash(path, sizeBytes, value));
+    } on Object catch (error, stack) {
+      developer.log(
+        'video preparation failed: $error',
+        name: 'BHE-Project',
+        error: error,
+        stackTrace: stack,
+      );
+      errorMessage = '无法读取该视频，请换一个视频重试。';
     } finally {
+      preparingVideo = false;
+      preparingVideoMessage = '';
+      notifyListeners();
       await controller.dispose();
     }
   }
@@ -384,7 +515,12 @@ class MobileAppState extends ChangeNotifier {
   }
 
   void updateRois({required Roi hoop, required Roi net}) {
-    project = project.copyWith(hoopRoi: hoop, netRoi: net);
+    project = project.copyWith(
+      hoopRoi: hoop,
+      // `hoopRoi` is the large ball-search/analysis area. Keep the separately
+      // calibrated physical rim when that broad area is adjusted.
+      netRoi: net,
+    );
     unawaited(_queueSave());
     notifyListeners();
   }
@@ -516,6 +652,10 @@ class MobileAppState extends ChangeNotifier {
     await exportClipsForPlayer(null);
   }
 
+  Future<void> mergeClips() async {
+    await mergeClipsForPlayer(null);
+  }
+
   Future<void> exportClipsForPlayer(String? player) async {
     if (exporting) return;
     if (!await _matchesProjectVideo()) {
@@ -566,6 +706,71 @@ class MobileAppState extends ChangeNotifier {
     }
   }
 
+  Future<void> mergeClipsForPlayer(String? player) async {
+    if (exporting) return;
+    if (!await _matchesProjectVideo()) {
+      errorMessage = '请先重新选择原视频。';
+      notifyListeners();
+      return;
+    }
+    final candidates =
+        project.candidates
+            .where(
+              (candidate) => candidate.selection == CandidateSelection.included,
+            )
+            .where((candidate) => player == null || candidate.player == player)
+            .toList()
+          ..sort((a, b) => a.startMs.compareTo(b.startMs));
+    if (candidates.isEmpty) {
+      errorMessage = '没有符合条件的保留片段。';
+      notifyListeners();
+      return;
+    }
+    exporting = true;
+    exportedPaths = const [];
+    final stopwatch = Stopwatch()..start();
+    errorMessage = null;
+    try {
+      final directory = await _dataDirectory();
+      final outputPath =
+          '${directory.path}/exports/${project.id}/${project.id}_merged.mp4';
+      await for (final update in exportEngine.mergeClips(
+        video: project.video!,
+        candidates: candidates,
+        outputPath: outputPath,
+      )) {
+        progress = update.progress;
+        progressMessage = update.message;
+        if (update.outputPath != null) {
+          exportedPaths = [update.outputPath!];
+        }
+        notifyListeners();
+      }
+      project = project.copyWith(
+        lastExportDurationMs: stopwatch.elapsedMilliseconds,
+      );
+      await _queueSave();
+    } on Object catch (error) {
+      errorMessage = error.toString();
+      notifyListeners();
+    } finally {
+      stopwatch.stop();
+      exporting = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> cancelExport() async {
+    if (!exporting) return;
+    try {
+      await exportEngine.cancel();
+      progressMessage = '导出已取消';
+    } on Object catch (error) {
+      errorMessage = error.toString();
+    }
+    notifyListeners();
+  }
+
   Future<void> shareExportedFiles() async {
     if (exportedPaths.isEmpty) return;
     await SharePlus.instance.share(
@@ -597,7 +802,7 @@ class MobileAppState extends ChangeNotifier {
   Future<void> startAnalysis() async {
     if (analysing) return;
     if (!hasVideo || project.hoopRoi == null || project.netRoi == null) {
-      errorMessage = '请先选择视频并设置篮筐、篮网检测区域。';
+      errorMessage = '请先选择视频并设置投篮分析区、篮网检测区。';
       notifyListeners();
       return;
     }
@@ -632,6 +837,7 @@ class MobileAppState extends ChangeNotifier {
       await for (final update in analysisEngine.analyze(
         video: project.video!,
         hoopRoi: project.hoopRoi!,
+        rimRoi: project.rimRoi,
         netRoi: project.netRoi!,
         settings: project.settings,
       )) {
@@ -758,6 +964,29 @@ class MobileAppState extends ChangeNotifier {
     unawaited(_queueSave());
     notifyListeners();
   }
+}
+
+Roi _netRoiFromRim(Roi analysisRoi, Roi rimRoi) {
+  final centerX = (rimRoi.left + rimRoi.right) / 2;
+  final rimWidth = (rimRoi.right - rimRoi.left).clamp(0.004, 1.0).toDouble();
+  final rimY = (rimRoi.top + rimRoi.bottom) / 2;
+  final rimHeight = (rimRoi.bottom - rimRoi.top).clamp(0.008, 1.0).toDouble();
+  final left = analysisRoi.left > centerX - 2 * rimWidth
+      ? analysisRoi.left
+      : centerX - 2 * rimWidth;
+  final right = analysisRoi.right < centerX + 2 * rimWidth
+      ? analysisRoi.right
+      : centerX + 2 * rimWidth;
+  final top = analysisRoi.top > rimY ? analysisRoi.top : rimY;
+  final bottom = analysisRoi.bottom < rimY + 3.5 * rimHeight
+      ? analysisRoi.bottom
+      : rimY + 3.5 * rimHeight;
+  return Roi(
+    left: left.clamp(0.0, 1.0).toDouble(),
+    top: top.clamp(0.0, 1.0).toDouble(),
+    right: right.clamp(0.0, 1.0).toDouble(),
+    bottom: bottom.clamp(0.0, 1.0).toDouble(),
+  );
 }
 
 String _readProjectFromArchive(List<int> bytes) {

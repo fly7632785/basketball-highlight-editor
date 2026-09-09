@@ -65,6 +65,36 @@ def expand_hoop_bbox_to_roi(
     }
 
 
+def hoop_bbox_to_rim_roi(
+    bbox: Iterable[float],
+    frame_width: int,
+    frame_height: int,
+) -> dict[str, float]:
+    """Convert a detector hoop box to the normalized rim-plane ROI.
+
+    This is the same calibration used by the desktop refiner's
+    ``scale_rim(..., correct_plane=True)``. Mobile auto-ROI consumers use this
+    value directly so they do not invent a second rim geometry formula.
+    """
+    values = [float(value) for value in bbox]
+    if len(values) != 4 or frame_width <= 0 or frame_height <= 0:
+        raise ValueError("ROI_INPUT_INVALID")
+    x1, y1, x2, y2 = values
+    if x2 <= x1 or y2 <= y1:
+        raise ValueError("ROI_INPUT_INVALID")
+    box_width = max(1.0, x2 - x1)
+    box_height = max(1.0, y2 - y1)
+    center_x = (x1 + x2) / 2.0
+    rim_y = (y1 + y2) / 2.0 - box_height * 0.28
+    rim_height = box_height * 0.45
+    return {
+        "left": max(0.0, min(1.0, (center_x - box_width / 2.0) / frame_width)),
+        "top": max(0.0, min(1.0, (rim_y - rim_height / 2.0) / frame_height)),
+        "right": max(0.0, min(1.0, (center_x + box_width / 2.0) / frame_width)),
+        "bottom": max(0.0, min(1.0, (rim_y + rim_height / 2.0) / frame_height)),
+    }
+
+
 def select_stable_hoop(
     detections: Iterable[dict[str, Any]],
     frame_width: int,
