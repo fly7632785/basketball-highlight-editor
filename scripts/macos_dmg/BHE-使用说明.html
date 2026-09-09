@@ -12,26 +12,64 @@
     .step { margin: 24px 0; padding: 18px 20px; background: #f3f6f8; border-radius: 14px; }
     code { padding: 2px 6px; background: #e5eaee; border-radius: 5px; }
     .note { color: #8a4b08; }
-    .gate { border-left: 4px solid #e8590c; background: #fdf3ec; }
+    .cmd-box { display: flex; align-items: stretch; gap: 8px; margin-top: 10px; }
+    .cmd-box code {
+      flex: 1; padding: 12px 14px; background: #17202a; color: #7bd88f;
+      border-radius: 10px; font-size: 13px; word-break: break-all;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    .copy-btn {
+      border: none; background: #e8590c; color: #fff; border-radius: 10px;
+      padding: 0 18px; font-size: 14px; font-weight: 600; cursor: pointer;
+      white-space: nowrap;
+    }
+    .copy-btn:active { transform: scale(.97); }
   </style>
 </head>
 <body>
   <h1>BHE macOS 使用说明</h1>
   <p class="lead">当前版本是 Ad Hoc 签名的测试版，未做 Apple 公证，首次打开会被拦截——这是正常现象，不是软件损坏。</p>
 
-  <div class="step"><strong>1. 安装</strong><br>把 <code>BHE.app</code> 拖到旁边的“Applications”图标中。</div>
-
-  <div class="step gate"><strong>2. 首次打开（关键一步）</strong><br>
-    打开“应用程序”文件夹，在 <code>BHE</code> 上<strong>按住 Control 点击（或右键）→ 打开 → 再点“打开”</strong>。<br>
-    只需要这一次，之后可以正常双击启动。<br><br>
-    双击 BHE 时弹出的“Apple 无法验证是否包含恶意软件”指的就是这个拦截，用上面的右键方式放行即可。如果右键打开也不行，到<strong>“系统设置 → 隐私与安全性”</strong>页面底部点<strong>“仍要允许”</strong>。
+  <div class="step">
+    <strong>方法一：一条命令解决（最稳，推荐）</strong>
+    <ol style="margin:10px 0 0; padding-left:22px">
+      <li>按 <code>Command + 空格</code>，输入“终端”或"Terminal"，回车打开；</li>
+      <li>把下面这条命令粘贴进去，按回车；</li>
+      <li>BHE 会自动安装、解除拦截并启动。</li>
+    </ol>
+    <div class="cmd-box">
+      <code id="fix-cmd">ditto "/Volumes/BHE/BHE.app" "$HOME/Applications/BHE.app" 2>/dev/null || ditto "/Volumes/BHE/BHE.app" /Applications/BHE.app; xattr -rd com.apple.quarantine /Applications/BHE.app "$HOME/Applications/BHE.app" 2>/dev/null; open -a BHE</code>
+      <button class="copy-btn" onclick="copyCmd()">复制命令</button>
+    </div>
   </div>
 
-  <div class="step"><strong>3. 全自动方式（可选）</strong><br>
-    也可以双击 <code>BHE-首次打开修复.command</code>，它会自动完成安装、清除拦截并启动。
-    双击它时同样可能弹“无法验证”——同样<strong>右键 → 打开</strong>放行一次即可。
+  <div class="step">
+    <strong>方法二：右键打开（最快，多数情况够用）</strong><br>
+    把 <code>BHE.app</code> 拖到旁边的"Applications"图标中，然后在"应用程序"里的 BHE 上<strong>按住 Control 点击（或右键）→ 打开 → 再点"打开"</strong>。只需一次，之后可正常双击启动。
   </div>
 
-  <p class="note">修复命令只处理 BHE.app，不会上传视频或访问外部服务。如果提示“应用已损坏”，说明下载不完整，请重新下载 DMG。彻底消除这些提示需要 Apple Developer ID 签名和公证，属于正式发布阶段的工作。</p>
+  <div class="step">
+    <strong>方法三：一键修复命令（若系统允许运行）</strong><br>
+    双击 <code>BHE-首次打开修复.command</code>，自动完成安装、清拦截和启动。双击它时如果也弹"无法验证"，同样右键 → 打开；右键也不行，就用上面的方法一。
+  </div>
+
+  <p class="note">以上操作只处理 BHE.app，不会上传视频或访问外部服务。如果提示"应用已损坏"，说明下载不完整，请重新下载 DMG。彻底消除这些提示需要 Apple Developer ID 签名和公证，属于正式发布阶段的工作。</p>
+
+<script>
+function copyCmd() {
+  const text = document.getElementById('fix-cmd').textContent;
+  const btn = document.querySelector('.copy-btn');
+  const done = () => { btn.textContent = '已复制 ✓'; setTimeout(() => btn.textContent = '复制命令', 2000); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else { fallbackCopy(text, done); }
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text; document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch (e) {}
+  document.body.removeChild(ta);
+}
+</script>
 </body>
 </html>
