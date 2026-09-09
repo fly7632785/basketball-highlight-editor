@@ -2,6 +2,7 @@
 set -u
 
 APP_NAME="BHE.app"
+DEST="/Applications/$APP_NAME"
 
 pause_and_exit() {
   local code="$1"
@@ -17,11 +18,10 @@ show_error() {
   pause_and_exit 1
 }
 
-find_installed_app() {
+# 在已挂载的 DMG 卷中查找 BHE.app
+find_volume_app() {
   local candidate
-  for candidate in \
-    "/Applications/$APP_NAME" \
-    "$HOME/Applications/$APP_NAME"; do
+  for candidate in /Volumes/*/"$APP_NAME"; do
     if [[ -d "$candidate" ]]; then
       printf '%s' "$candidate"
       return 0
@@ -31,46 +31,63 @@ find_installed_app() {
 }
 
 clear
-echo "BHE macOS 首次启动修复与验证"
+echo "BHE macOS 一键安装与修复"
 echo "================================"
-echo
-echo "请先把 BHE.app 拖到‘应用程序’文件夹。"
-echo "这个工具只处理 BHE.app，不会修改其他文件。"
+echo "双击本命令后无需其他操作：自动安装、清除首次打开拦截并启动。"
+echo "本工具只处理 BHE.app，不会修改其他文件。"
 echo
 
-APP_PATH="$(find_installed_app || true)"
-if [[ -z "$APP_PATH" ]]; then
-  echo "没有在‘应用程序’中找到 BHE.app，正在打开选择窗口..."
-  APP_PATH="$(osascript -e 'POSIX path of (choose file with prompt "请选择已经安装的 BHE.app" without invisibles)' 2>/dev/null || true)"
+VOLUME_APP="$(find_volume_app || true)"
+
+# [1/4] 安装：优先从 DMG 卷拷贝到“应用程序”，替用户完成拖拽
+if [[ -n "$VOLUME_APP" ]]; then
+  echo "[1/4] 正在安装 BHE 到“应用程序”..."
+  pkill -x BHE 2>/dev/null || true
+  sleep 1
+  if [[ -d "$DEST" ]]; then
+    if rm -rf "$DEST" 2>/dev/null; then
+      :
+    else
+      echo "已安装的旧版本暂时无法替换（应用可能正在运行），将继续修复现有版本。"
+    fi
+  fi
+  if [[ ! -d "$DEST" ]]; then
+    ditto "$VOLUME_APP" "$DEST" || show_error "无法复制 BHE.app 到“应用程序”。请手动把 BHE.app 拖到“应用程序”后，重新双击本命令。"
+  fi
+elif [[ -d "$DEST" ]]; then
+  echo "[1/4] 检测到 BHE 已安装在“应用程序”，跳过安装。"
+else
+  show_error "没有找到 BHE.app。请保留本窗口，把 BHE.app 拖到“应用程序”后重新双击本命令；或选择已安装的 BHE.app。"
 fi
 
-if [[ -z "$APP_PATH" || ! -d "$APP_PATH" || "$(basename "$APP_PATH")" != "$APP_NAME" ]]; then
-  show_error "没有找到有效的 BHE.app。请先将应用拖到‘应用程序’后再运行。"
-fi
-
-echo "目标应用：$APP_PATH"
+echo "目标应用：$DEST"
 echo
-echo "[1/3] 检查下载隔离属性..."
-if xattr -p com.apple.quarantine "$APP_PATH" >/dev/null 2>&1; then
-  xattr -dr com.apple.quarantine "$APP_PATH" || show_error "无法清除 macOS 下载隔离属性。"
+
+# [2/4] 清除下载隔离属性（解决“无法验证开发者 / 已损坏”提示）
+echo "[2/4] 清除下载隔离属性..."
+if xattr -p com.apple.quarantine "$DEST" >/dev/null 2>&1; then
+  xattr -dr com.apple.quarantine "$DEST" || show_error "无法清除 macOS 下载隔离属性。"
   echo "已清除 com.apple.quarantine。"
 else
   echo "未发现下载隔离属性。"
 fi
 
 echo
-echo "[2/3] 验证应用签名完整性..."
-if ! codesign --verify --deep --strict --verbose=2 "$APP_PATH"; then
-  show_error "应用签名验证失败，应用文件可能不完整。请重新下载 DMG。"
+
+# [3/4] 验证应用完整性
+echo "[3/4] 验证应用签名完整性..."
+if ! codesign --verify --deep --strict "$DEST" >/dev/null 2>&1; then
+  show_error "应用签名验证失败，文件可能不完整。请重新下载 DMG 后再试。"
 fi
 echo "签名完整性验证通过。"
 
 echo
-echo "[3/3] 启动 BHE..."
-open "$APP_PATH" || show_error "应用验证通过，但启动失败。"
+
+# [4/4] 启动
+echo "[4/4] 启动 BHE..."
+open "$DEST" || show_error "应用验证通过，但启动失败。可打开“应用程序”手动双击 BHE 启动。"
 
 echo
-echo "完成：BHE 已通过本机签名完整性验证并尝试启动。"
-echo "说明：Ad Hoc 签名不等于 Apple Developer ID 签名，也不代表已完成公证。"
-osascript -e 'display dialog "BHE 修复与验证完成，现在可以使用了。" buttons {"打开的应用"} default button "打开的应用" with icon note' >/dev/null 2>&1 || true
+echo "完成：BHE 已安装并通过本机验证，正在启动。"
+osascript -e 'display dialog "BHE 安装与修复完成，现在可以正常使用了。" buttons {"好的"} default button "好的" with icon note' >/dev/null 2>&1 || true
 pause_and_exit 0

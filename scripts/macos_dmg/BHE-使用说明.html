@@ -16,12 +16,12 @@
 </head>
 <body>
   <h1>BHE macOS 使用说明</h1>
-  <p class="lead">当前版本是用于测试的 Ad Hoc 签名版本，首次打开时可能被 macOS 拦截。</p>
+  <p class="lead">当前版本是用于测试的 Ad Hoc 签名版本，首次打开会被 macOS 拦截，属正常现象。</p>
 
-  <div class="step"><strong>1. 安装</strong><br>将 <code>BHE.app</code> 拖到旁边的“Applications”图标中。</div>
-  <div class="step"><strong>2. 修复并验证</strong><br>打开“应用程序”文件夹，然后双击 <code>BHE-首次打开修复.command</code>。它会清除 BHE 的下载隔离属性，验证应用签名完整性，并自动启动 BHE。</div>
-  <div class="step"><strong>3. 如果系统提示确认</strong><br>首次双击脚本时，如果 macOS 要求确认，请点击“打开”。脚本只处理 BHE.app，不会上传视频或访问外部分析服务。</div>
+  <div class="step"><strong>1. 一键安装</strong><br>直接双击 <code>BHE-首次打开修复.command</code>。它会自动完成：安装 BHE 到“应用程序”、清除首次打开拦截、验证文件完整性并启动应用。</div>
+  <div class="step"><strong>2. 如果双击命令时系统提示“无法打开 / 无法验证开发者”</strong><br>在 <code>BHE-首次打开修复.command</code> 上<strong>右键 → 打开 → 再点“打开”</strong>（只需这一次）。macOS 15 及以后如果右键也不行，到“系统设置 → 隐私与安全性”页面底部点“仍要允许”。</div>
+  <div class="step"><strong>3. 手动方式（备用）</strong><br>把 <code>BHE.app</code> 拖到旁边的“Applications”图标中，然后在“应用程序”里的 BHE 上<strong>右键 → 打开</strong>。</div>
 
-  <p class="note">如果验证失败，请删除旧的 BHE.app，重新下载完整 DMG，并再次安装。Ad Hoc 签名适合本机和测试使用，正式公开发布仍需 Developer ID 签名和 Apple 公证。</p>
+  <p class="note">本命令只处理 BHE.app，不会上传视频或访问外部服务。如果验证失败，请删除旧的 BHE.app 并重新下载完整 DMG。Ad Hoc 签名适合测试使用，正式发布仍需 Developer ID 签名和 Apple 公证。</p>
 </body>
 </html>
