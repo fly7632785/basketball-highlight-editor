@@ -2,15 +2,8 @@ name: Flutter checks
 
 on:
   push:
-    paths:
-      - "apps/**"
-      - "packages/**"
-      - ".github/workflows/flutter-check.yml"
+    branches: [main]
   pull_request:
-    paths:
-      - "apps/**"
-      - "packages/**"
-      - ".github/workflows/flutter-check.yml"
 
 permissions:
   contents: read

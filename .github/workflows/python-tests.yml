@@ -2,17 +2,8 @@ name: Python tests
 
 on:
   push:
-    paths:
-      - "**.py"
-      - "requirements*.txt"
-      - "pytest.ini"
-      - ".github/workflows/python-tests.yml"
+    branches: [main]
   pull_request:
-    paths:
-      - "**.py"
-      - "requirements*.txt"
-      - "pytest.ini"
-      - ".github/workflows/python-tests.yml"
 
 permissions:
   contents: read
