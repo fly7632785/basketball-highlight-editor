@@ -48,6 +48,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   Rect? _roi;
   Rect? _netRoi;
   Rect? _hoopBbox;
+  Rect? _autoRoi;
+  Rect? _autoNetRoi;
+  Rect? _autoHoopBbox;
   bool _netUserEdited = false;
   bool _editingNet = false;
   int _analysisStartMs = 0;
@@ -103,6 +106,14 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   void _syncFromState(ProjectState state) {
     final video = state.video;
     if (video == null) return;
+    final autoRoi = state.suggestedRoi;
+    final autoHoopBbox = state.hoopBbox;
+    final autoNetRoi = _recommendedNetRoi(autoRoi, autoHoopBbox);
+    if (autoRoi != null) {
+      _autoRoi = autoRoi;
+      _autoNetRoi = autoNetRoi;
+      _autoHoopBbox = autoHoopBbox;
+    }
     _roi = state.suggestedRoi;
     _netRoi = state.netRoi ?? _recommendedNetRoi(_roi, state.hoopBbox);
     _netUserEdited = state.netRoi != null;
@@ -124,6 +135,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     final roi = _rectFromJson(draft['roi']);
     final net = _rectFromJson(draft['net_roi']);
     final hoop = _rectFromJson(draft['hoop_bbox']);
+    final autoRoi = _rectFromJson(draft['auto_roi']);
+    final autoNetRoi = _rectFromJson(draft['auto_net_roi']);
+    final autoHoopBbox = _rectFromJson(draft['auto_hoop_bbox']);
     final range = (draft['analysis_range'] as Map?)?.cast<String, dynamic>();
     final savedStep = (draft['step'] as num?)?.toInt() ?? 0;
     setState(() {
@@ -131,6 +145,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       _roi = roi ?? _roi;
       _netRoi = net ?? _netRoi;
       _hoopBbox = hoop ?? _hoopBbox;
+      _autoRoi = autoRoi ?? _autoRoi;
+      _autoNetRoi = autoNetRoi ?? _autoNetRoi;
+      _autoHoopBbox = autoHoopBbox ?? _autoHoopBbox;
       _analysisStartMs =
           (range?['start_ms'] as num?)?.toInt() ?? _analysisStartMs;
       _analysisEndMs = (range?['end_ms'] as num?)?.toInt() ?? _analysisEndMs;
@@ -146,7 +163,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       );
       final mode = draft['analysis_mode']?.toString();
       _analysisMode = mode == 'fast' ? 'fast' : 'standard';
-      _netUserEdited = net != null;
+      final netSource = draft['net_roi_source']?.toString();
+      _netUserEdited = netSource == null ? net != null : netSource == 'manual';
       // 草稿范围成为新基线,用户之后的调整重新生效。
       _rangeTouched = range?['start_ms'] != null || range?['end_ms'] != null;
     });
@@ -159,9 +177,13 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     'analysis_mode': _analysisMode,
     'before_seconds': _beforeSeconds,
     'after_seconds': _afterSeconds,
+    'net_roi_source': _netUserEdited ? 'manual' : 'auto',
     ...?_rectMap('roi', _roi),
     ...?_rectMap('net_roi', _netRoi),
     ...?_rectMap('hoop_bbox', _hoopBbox),
+    ...?_rectMap('auto_roi', _autoRoi),
+    ...?_rectMap('auto_net_roi', _autoNetRoi),
+    ...?_rectMap('auto_hoop_bbox', _autoHoopBbox),
   };
 
   JsonMap _backendDraft({int? step}) {
@@ -175,9 +197,13 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       'analysis_mode': _analysisMode,
       'before_seconds': _beforeSeconds,
       'after_seconds': _afterSeconds,
+      'net_roi_source': _netUserEdited ? 'manual' : 'auto',
       ...?_rectMap('roi', _roi),
       ...?_rectMap('net_roi', _netRoi),
       ...?_rectMap('hoop_bbox', _hoopBbox),
+      ...?_rectMap('auto_roi', _autoRoi),
+      ...?_rectMap('auto_net_roi', _autoNetRoi),
+      ...?_rectMap('auto_hoop_bbox', _autoHoopBbox),
     };
   }
 
@@ -389,9 +415,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     if (next == 2 && _analysisStartMs > 0) {
       final state = ref.read(projectProvider);
       if (state.previewTimeMs < _analysisStartMs) {
-        ref
-            .read(projectProvider.notifier)
-            .setPreviewTimeOnly(_analysisStartMs);
+        ref.read(projectProvider.notifier).setPreviewTimeOnly(_analysisStartMs);
       }
     }
   }
@@ -473,6 +497,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           _roi = null;
           _netRoi = null;
           _hoopBbox = null;
+          _autoRoi = null;
+          _autoNetRoi = null;
+          _autoHoopBbox = null;
           _netUserEdited = false;
           _editingNet = false;
           _analysisStartMs = 0;
@@ -482,6 +509,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       }
       _draftLoaded = true;
       _showExistingDraft = false;
+      _autoRoi = null;
+      _autoNetRoi = null;
+      _autoHoopBbox = null;
       _netUserEdited = false;
       _editingNet = false;
       _rangeTouched = false;
@@ -735,10 +765,26 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
             });
             unawaited(_persistDraft());
           },
-          onResetNet: () {
+          onResetCurrent: () {
             setState(() {
-              _netRoi = _recommendedNetRoi(_roi, state.hoopBbox);
-              _netUserEdited = false;
+              if (_editingNet) {
+                _netRoi =
+                    _autoNetRoi ??
+                    _recommendedNetRoi(
+                      _autoRoi ?? _roi,
+                      _autoHoopBbox ?? state.hoopBbox,
+                    ) ??
+                    _recommendedNetRoi(_roi, state.hoopBbox);
+                _netUserEdited = false;
+              } else if (_autoRoi != null) {
+                _roi = _autoRoi;
+                _hoopBbox = _autoHoopBbox;
+                if (!_netUserEdited) {
+                  _netRoi =
+                      _autoNetRoi ??
+                      _recommendedNetRoi(_autoRoi, _autoHoopBbox);
+                }
+              }
             });
             unawaited(_persistDraft());
           },
@@ -1050,7 +1096,7 @@ class _DetectionStep extends StatefulWidget {
     required this.onRefreshPreview,
     required this.previewPlaying,
     required this.onChanged,
-    required this.onResetNet,
+    required this.onResetCurrent,
   });
   final ProjectState state;
   final Rect? hoopBbox;
@@ -1065,7 +1111,7 @@ class _DetectionStep extends StatefulWidget {
   final VoidCallback onRefreshPreview;
   final bool previewPlaying;
   final ValueChanged<Rect> onChanged;
-  final VoidCallback onResetNet;
+  final VoidCallback onResetCurrent;
 
   @override
   State<_DetectionStep> createState() => _DetectionStepState();
@@ -1254,15 +1300,17 @@ class _DetectionStepState extends State<_DetectionStep> {
           _PreviewTimeControls(
             timeMs: state.previewTimeMs,
             durationMs: (state.video?['duration_ms'] as num?)?.toInt() ?? 0,
-            enabled: widget.enabled &&
+            enabled:
+                widget.enabled &&
                 !state.roiDetecting &&
                 !state.previewRefreshing,
             playing: _playing,
             onStep: _playerReady
                 ? _seekTo
                 : (timeMs) => widget.onPreviewTimeChanged(timeMs),
-            onTogglePlayback:
-                _playerReady ? _togglePlaying : widget.onPreviewPlaybackToggled,
+            onTogglePlayback: _playerReady
+                ? _togglePlaying
+                : widget.onPreviewPlaybackToggled,
           ),
           if (state.previewRefreshing) ...[
             const SizedBox(height: Spacing.xs),
@@ -1310,9 +1358,9 @@ class _DetectionStepState extends State<_DetectionStep> {
               ),
               const Spacer(),
               TextButton.icon(
-                onPressed: widget.enabled ? widget.onResetNet : null,
+                onPressed: widget.enabled ? widget.onResetCurrent : null,
                 icon: const Icon(Icons.restart_alt_rounded, size: 16),
-                label: const Text('重置篮网区'),
+                label: Text(widget.editingNet ? '恢复篮网区' : '恢复投篮区'),
               ),
             ],
           ),
@@ -1740,28 +1788,23 @@ Rect? _recommendedNetRoi(Rect? analysisRoi, Rect? hoopBbox) {
       (analysisRoi.top + analysisRoi.height * 0.74).clamp(0.0, 1.0),
     );
   }
-  final width = (hoopBbox.width * 1.35).clamp(
-    analysisRoi.width * 0.08,
-    analysisRoi.width * 0.34,
-  );
-  final left = (hoopBbox.center.dx - width / 2).clamp(
-    analysisRoi.left,
-    analysisRoi.right - width,
-  );
-  final top = (hoopBbox.top + hoopBbox.height * 0.42).clamp(
-    analysisRoi.top,
-    analysisRoi.bottom,
-  );
-  final height = (hoopBbox.height * 0.95).clamp(
-    analysisRoi.height * 0.12,
-    analysisRoi.height * 0.30,
-  );
-  return Rect.fromLTWH(
-    left,
-    top,
-    width,
-    height.clamp(0.03, analysisRoi.bottom - top),
-  );
+  final rimY = hoopBbox.center.dy - hoopBbox.height * 0.28;
+  final rimHeight = hoopBbox.height * 0.45;
+  final width = (hoopBbox.width * 1.5)
+      .clamp(analysisRoi.width * 0.08, analysisRoi.width * 0.34)
+      .toDouble();
+  final left = (hoopBbox.center.dx - width / 2)
+      .clamp(analysisRoi.left, analysisRoi.right - width)
+      .toDouble();
+  // Start at the physical rim's upper edge so the net region touches the
+  // hoop; keep the previous lower boundary for the same detection coverage.
+  final top = (rimY - rimHeight / 2)
+      .clamp(analysisRoi.top, analysisRoi.bottom)
+      .toDouble();
+  final bottom = (top + rimHeight * 4.5)
+      .clamp(top, analysisRoi.bottom)
+      .toDouble();
+  return Rect.fromLTRB(left, top, left + width, bottom);
 }
 
 String _formatPreviewTime(int milliseconds) {

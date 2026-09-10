@@ -335,7 +335,7 @@ class MainActivity : FlutterActivity() {
         val boxHeight = max(4f, bbox[3] - bbox[1])
         val centerX = (bbox[0] + bbox[2]) / 2f
         val centerY = (bbox[1] + bbox[3]) / 2f
-        val roiWidth = min(max(boxWidth * 12f, frameWidth * .14f), frameWidth * .65f)
+        val roiWidth = min(max(boxWidth * 15f, frameWidth * .18f), frameWidth * .65f)
         val roiHeight = min(max(boxHeight * 20f, frameHeight * .28f), frameHeight * .75f)
         var topExtent = max(boxHeight * 8f, roiHeight * .44f)
         var bottomExtent = max(boxHeight * 12f, roiHeight * .56f)

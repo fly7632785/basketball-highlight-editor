@@ -3,6 +3,7 @@ from basketball_highlight.roi import (
     hoop_bbox_to_rim_roi,
     select_stable_hoop,
 )
+from scripts.refine_candidates import _net_zones
 
 
 def test_expand_hoop_bbox_includes_trajectory_context():
@@ -10,7 +11,7 @@ def test_expand_hoop_bbox_includes_trajectory_context():
 
     assert roi["x1"] < 490 < roi["x2"]
     assert roi["y1"] < 320 < roi["y2"]
-    assert roi["x2"] - roi["x1"] >= 120
+    assert roi["x2"] - roi["x1"] >= 220
     assert roi["y2"] - roi["y1"] >= 190
 
 
@@ -49,3 +50,16 @@ def test_hoop_bbox_to_rim_roi_matches_refiner_plane_calibration():
     assert rim["right"] == 500 / 960
     assert rim["top"] == (320 - 20 * 0.28 - 20 * 0.45 / 2) / 720
     assert rim["bottom"] == (320 - 20 * 0.28 + 20 * 0.45 / 2) / 720
+
+
+def test_fallback_net_zones_include_upper_net_opening():
+    zones = _net_zones(
+        {"center_x": 500, "rim_y": 330, "width": 20, "height": 20},
+        960,
+        720,
+    )
+
+    assert zones["upper"][1] == 320
+    assert zones["upper"][0] == zones["lower"][0]
+    assert zones["lower"][3] == zones["below"][1]
+    assert zones["below"][3] > zones["upper"][1]

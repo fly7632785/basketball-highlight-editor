@@ -15,7 +15,7 @@ def expand_hoop_bbox_to_roi(
     frame_width: int,
     frame_height: int,
     *,
-    min_width_ratio: float = 0.14,
+    min_width_ratio: float = 0.18,
     min_height_ratio: float = 0.28,
     max_width_ratio: float = 0.65,
     max_height_ratio: float = 0.75,
@@ -37,7 +37,7 @@ def expand_hoop_bbox_to_roi(
     center_x = (x1 + x2) / 2.0
     center_y = (y1 + y2) / 2.0
 
-    roi_width = max(rim_width * 12.0, frame_width * min_width_ratio)
+    roi_width = max(rim_width * 15.0, frame_width * min_width_ratio)
     roi_height = max(rim_height * 20.0, frame_height * min_height_ratio)
     roi_width = min(roi_width, frame_width * max_width_ratio)
     roi_height = min(roi_height, frame_height * max_height_ratio)

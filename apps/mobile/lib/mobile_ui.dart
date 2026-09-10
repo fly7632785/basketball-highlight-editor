@@ -28,6 +28,7 @@ class _BheMobileAppState extends State<BheMobileApp> {
   final state = MobileAppState();
   _WorkspaceSection section = _WorkspaceSection.project;
   bool dark = true;
+  String? _lastProjectId;
   String? _lastAnalysisStatus;
   DateTime? _lastBackPress;
 
@@ -38,13 +39,21 @@ class _BheMobileAppState extends State<BheMobileApp> {
   }
 
   void _handleStateChange() {
+    final projectChanged = state.project.id != _lastProjectId;
+    if (projectChanged) {
+      _lastProjectId = state.project.id;
+      section = _WorkspaceSection.project;
+    }
     final status = state.project.lastAnalysisStatus;
+    var sectionChanged = projectChanged;
     if (status != _lastAnalysisStatus) {
       _lastAnalysisStatus = status;
       if (status == 'completed' && state.project.candidates.isNotEmpty) {
-        if (mounted) setState(() => section = _WorkspaceSection.review);
+        section = _WorkspaceSection.review;
+        sectionChanged = true;
       }
     }
+    if (mounted && sectionChanged) setState(() {});
   }
 
   @override
@@ -100,6 +109,8 @@ class _BheMobileAppState extends State<BheMobileApp> {
             onToggleTheme: () => setState(() => dark = !dark),
             section: state.analysing ? _WorkspaceSection.project : section,
             onSectionChanged: (value) => setState(() => section = value),
+            onCreateProject: () =>
+                unawaited(state.createNewProjectAndPickVideo()),
           ),
         ),
       ),
@@ -114,6 +125,7 @@ class _AppShell extends StatelessWidget {
     required this.onToggleTheme,
     required this.section,
     required this.onSectionChanged,
+    required this.onCreateProject,
   });
 
   final MobileAppState state;
@@ -121,6 +133,7 @@ class _AppShell extends StatelessWidget {
   final VoidCallback onToggleTheme;
   final _WorkspaceSection section;
   final ValueChanged<_WorkspaceSection> onSectionChanged;
+  final VoidCallback onCreateProject;
 
   @override
   Widget build(BuildContext context) {
@@ -132,10 +145,12 @@ class _AppShell extends StatelessWidget {
     if (state.analysing) return _AnalysisView(state: state);
     final page = switch (section) {
       _WorkspaceSection.project => _ProjectView(
+        key: ValueKey(state.project.id),
         state: state,
         onOpenReview: () => onSectionChanged(_WorkspaceSection.review),
       ),
       _WorkspaceSection.review => _ReviewView(
+        key: ValueKey(state.project.id),
         state: state,
         onOpenProject: () => onSectionChanged(_WorkspaceSection.project),
         onOpenExport: () => onSectionChanged(_WorkspaceSection.export),
@@ -155,6 +170,7 @@ class _AppShell extends StatelessWidget {
               onOpenExport: state.project.candidates.isEmpty
                   ? null
                   : () => onSectionChanged(_WorkspaceSection.export),
+              onCreateProject: onCreateProject,
             ),
             Expanded(child: page),
           ],
@@ -172,6 +188,7 @@ class _TopBar extends StatelessWidget {
     required this.section,
     required this.onOpenProject,
     required this.onOpenExport,
+    required this.onCreateProject,
   });
 
   final MobileAppState state;
@@ -180,6 +197,7 @@ class _TopBar extends StatelessWidget {
   final _WorkspaceSection section;
   final VoidCallback onOpenProject;
   final VoidCallback? onOpenExport;
+  final VoidCallback onCreateProject;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -248,6 +266,11 @@ class _TopBar extends StatelessWidget {
             tooltip: '导出',
             icon: const Icon(LucideIcons.download, size: 19),
           ),
+        IconButton(
+          onPressed: onCreateProject,
+          tooltip: '新建项目',
+          icon: const Icon(LucideIcons.plus, size: 20),
+        ),
         PopupMenuButton<String>(
           tooltip: '更多操作',
           icon: const Icon(LucideIcons.ellipsis, size: 20),
@@ -255,6 +278,9 @@ class _TopBar extends StatelessWidget {
             switch (value) {
               case 'theme':
                 onToggleTheme();
+                break;
+              case 'new':
+                onCreateProject();
                 break;
               case 'import':
                 await state.importProject();
@@ -269,6 +295,7 @@ class _TopBar extends StatelessWidget {
               value: 'theme',
               child: Text(dark ? '切换浅色主题' : '切换深色主题'),
             ),
+            const PopupMenuItem(value: 'new', child: Text('新建项目')),
             const PopupMenuItem(value: 'import', child: Text('打开项目包')),
             const PopupMenuItem(value: 'delete', child: Text('删除当前项目')),
           ],
@@ -301,7 +328,11 @@ Future<void> _confirmDelete(BuildContext context, MobileAppState state) async {
 }
 
 class _ProjectView extends StatelessWidget {
-  const _ProjectView({required this.state, required this.onOpenReview});
+  const _ProjectView({
+    super.key,
+    required this.state,
+    required this.onOpenReview,
+  });
   final MobileAppState state;
   final VoidCallback onOpenReview;
 
@@ -332,7 +363,9 @@ class _ProjectView extends StatelessWidget {
               )
             else
               _ProjectSetup(state: state, onOpenReview: onOpenReview),
-            if (state.recentProjects.length > 1) ...[
+            if (state.recentProjects.any(
+              (item) => item.id != state.project.id,
+            )) ...[
               const SizedBox(height: 24),
               _SectionHeader(
                 title: '最近项目',
@@ -590,29 +623,24 @@ class _VideoPreview extends StatefulWidget {
 class _VideoPreviewState extends State<_VideoPreview> {
   VideoPlayerController? controller;
   Future<void> _playerQueue = Future<void>.value();
+  Future<void>? _playerInitialization;
+  int _playerGeneration = 0;
   int _lastReportedPosition = -1;
   bool _positionCallbackScheduled = false;
 
   @override
   void initState() {
     super.initState();
-    final player = VideoPlayerController.file(File(widget.path));
-    controller = player;
-    player.addListener(_changed);
-    unawaited(
-      player.initialize().then((_) async {
-        final initial = widget.initialPositionMs;
-        if (initial != null) {
-          await player.seekTo(Duration(milliseconds: initial));
-        }
-        if (mounted) setState(() {});
-      }),
-    );
+    _startPlayer(widget.path, widget.initialPositionMs);
   }
 
   @override
   void didUpdateWidget(covariant _VideoPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.path != oldWidget.path) {
+      unawaited(_replacePlayer());
+      return;
+    }
     final position = widget.requestedPositionMs;
     if (position != null && position != oldWidget.requestedPositionMs) {
       unawaited(_seekTo(position));
@@ -621,9 +649,73 @@ class _VideoPreviewState extends State<_VideoPreview> {
 
   @override
   void dispose() {
+    _playerGeneration++;
     controller?.removeListener(_changed);
-    controller?.dispose();
+    final player = controller;
+    controller = null;
+    final queue = _playerQueue;
+    final initialization = _playerInitialization;
+    _playerQueue = Future<void>.value();
+    _playerInitialization = null;
+    unawaited(() async {
+      await queue;
+      await initialization;
+      await player?.dispose();
+    }());
     super.dispose();
+  }
+
+  void _startPlayer(String path, int? initialPositionMs) {
+    final generation = ++_playerGeneration;
+    final player = VideoPlayerController.file(File(path));
+    controller = player;
+    player.addListener(_changed);
+    _playerInitialization = _initializePlayer(
+      player,
+      generation,
+      initialPositionMs,
+    );
+    unawaited(_playerInitialization!);
+  }
+
+  Future<void> _initializePlayer(
+    VideoPlayerController player,
+    int generation,
+    int? initialPositionMs,
+  ) async {
+    try {
+      await player.initialize();
+      if (initialPositionMs != null) {
+        await player.seekTo(Duration(milliseconds: initialPositionMs));
+      }
+      if (!mounted || generation != _playerGeneration || controller != player) {
+        return;
+      }
+      setState(() {});
+    } catch (error) {
+      if (generation != _playerGeneration || controller != player) return;
+      player.removeListener(_changed);
+      controller = null;
+      await player.dispose();
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _replacePlayer() async {
+    final generation = ++_playerGeneration;
+    final previous = controller;
+    final initialization = _playerInitialization;
+    previous?.removeListener(_changed);
+    controller = null;
+    final queue = _playerQueue;
+    _playerQueue = Future<void>.value();
+    _playerInitialization = null;
+    if (mounted) setState(() {});
+    await queue;
+    await initialization;
+    await previous?.dispose();
+    if (!mounted || generation != _playerGeneration) return;
+    _startPlayer(widget.path, widget.initialPositionMs);
   }
 
   void _changed() {
@@ -1170,6 +1262,7 @@ class _AnalysisViewState extends State<_AnalysisView> {
 
 class _ReviewView extends StatefulWidget {
   const _ReviewView({
+    super.key,
     required this.state,
     required this.onOpenProject,
     required this.onOpenExport,
@@ -1187,6 +1280,7 @@ class _ReviewViewState extends State<_ReviewView> {
   final _railController = ScrollController();
   final _candidateKeys = <GlobalKey>[];
   Future<void> _playerQueue = Future<void>.value();
+  bool _disposed = false;
   int selectedIndex = 0;
   bool annotations = true;
   bool autoReplay = true;
@@ -1270,14 +1364,22 @@ class _ReviewViewState extends State<_ReviewView> {
 
   @override
   void dispose() {
+    _disposed = true;
     unawaited(
       SystemChrome.setPreferredOrientations(const [
         DeviceOrientation.portraitUp,
         DeviceOrientation.portraitDown,
       ]),
     );
-    controller?.removeListener(_videoChanged);
-    controller?.dispose();
+    final player = controller;
+    controller = null;
+    player?.removeListener(_videoChanged);
+    final queue = _playerQueue;
+    _playerQueue = Future<void>.value();
+    unawaited(() async {
+      await queue;
+      await player?.dispose();
+    }());
     _railController.dispose();
     super.dispose();
   }
@@ -1384,6 +1486,7 @@ class _ReviewViewState extends State<_ReviewView> {
     Future<void> Function(VideoPlayerController player) action,
   ) {
     final task = _playerQueue.then((_) async {
+      if (_disposed) return;
       final player = controller;
       if (player == null || !player.value.isInitialized) return;
       await action(player);
@@ -1516,6 +1619,7 @@ class _ReviewViewState extends State<_ReviewView> {
                   child: _ReviewVideoStage(
                     controller: controller,
                     candidate: candidate,
+                    rim: state.project.rimRoi,
                     annotations: annotations,
                     clipOnly: clipOnly,
                     aspectRatio: video.width / video.height,
@@ -1835,6 +1939,7 @@ class _ReviewVideoStage extends StatefulWidget {
   const _ReviewVideoStage({
     required this.controller,
     required this.candidate,
+    required this.rim,
     required this.annotations,
     required this.clipOnly,
     required this.aspectRatio,
@@ -1846,6 +1951,7 @@ class _ReviewVideoStage extends StatefulWidget {
   });
   final VideoPlayerController? controller;
   final Candidate candidate;
+  final Roi? rim;
   final bool annotations;
   final bool clipOnly;
   final double aspectRatio;
@@ -1979,6 +2085,7 @@ class _ReviewVideoStageState extends State<_ReviewVideoStage> {
                             CustomPaint(
                               painter: _CandidateOverlayPainter(
                                 candidate: widget.candidate,
+                                rim: widget.rim,
                                 positionMs:
                                     player.value.position.inMilliseconds,
                               ),
@@ -2130,50 +2237,24 @@ class _CompactEvidence extends StatelessWidget {
 class _CandidateOverlayPainter extends CustomPainter {
   const _CandidateOverlayPainter({
     required this.candidate,
+    required this.rim,
     required this.positionMs,
   });
 
   final Candidate candidate;
+  final Roi? rim;
   final int positionMs;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final points =
-        candidate.trajectory
-            .where(
-              (point) =>
-                  point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1,
-            )
-            .where(
-              (point) => point.confidence == null || point.confidence! >= .05,
-            )
-            .where(
-              (point) =>
-                  candidate.eventMs <= 0 ||
-                  (point.timeMs >= candidate.eventMs - 1800 &&
-                      point.timeMs <= candidate.eventMs + 700),
-            )
-            .where((point) => point.timeMs <= positionMs + 20)
-            .toList()
-          ..sort((a, b) => a.timeMs.compareTo(b.timeMs));
-
-    final segments = <List<EvidencePoint>>[];
-    var segment = <EvidencePoint>[];
-    for (final point in points) {
-      if (segment.isNotEmpty) {
-        final previous = segment.last;
-        final dt = point.timeMs - previous.timeMs;
-        final dx = point.x - previous.x;
-        final dy = point.y - previous.y;
-        final jump = math.sqrt(dx * dx + dy * dy);
-        if (dt <= 0 || dt > 1200 || jump > .24) {
-          if (segment.length >= 2) segments.add(segment);
-          segment = <EvidencePoint>[];
-        }
-      }
-      segment.add(point);
-    }
-    if (segment.length >= 2) segments.add(segment);
+    final points = candidate.trajectory
+        .where(
+          (point) =>
+              point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1,
+        )
+        .where((point) => point.timeMs <= positionMs + 20)
+        .toList()
+      ..sort((a, b) => a.timeMs.compareTo(b.timeMs));
 
     final trajectoryPaint = Paint()
       ..color = BhePalette.orange.withValues(alpha: .8)
@@ -2181,30 +2262,62 @@ class _CandidateOverlayPainter extends CustomPainter {
       ..strokeWidth = 1.1
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
-    for (final points in segments) {
-      if (points.length < 2) continue;
+    final rimRoi = rim;
+    if (rimRoi != null) {
+      final rimPaint = Paint()
+        ..color = BhePalette.orange
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1;
+      final rimRect = Rect.fromLTRB(
+        rimRoi.left * size.width,
+        rimRoi.top * size.height,
+        rimRoi.right * size.width,
+        rimRoi.bottom * size.height,
+      );
+      canvas.drawRect(rimRect, rimPaint);
+      canvas.drawLine(
+        Offset(rimRect.left, (rimRect.top + rimRect.bottom) / 2),
+        Offset(rimRect.right, (rimRect.top + rimRect.bottom) / 2),
+        rimPaint,
+      );
+    }
+    if (points.length >= 2) {
       final path = Path()
         ..moveTo(points.first.x * size.width, points.first.y * size.height);
       for (var index = 0; index + 1 < points.length; index++) {
         final point = points[index];
         final next = points[index + 1];
+        final midpoint = Offset(
+          (point.x + next.x) * size.width / 2,
+          (point.y + next.y) * size.height / 2,
+        );
         path.quadraticBezierTo(
           point.x * size.width,
           point.y * size.height,
-          (point.x + next.x) * size.width / 2,
-          (point.y + next.y) * size.height / 2,
+          midpoint.dx,
+          midpoint.dy,
         );
       }
       path.lineTo(points.last.x * size.width, points.last.y * size.height);
       canvas.drawPath(path, trajectoryPaint);
     }
 
-    final detectionPaint = Paint()..color = BhePalette.green;
-    for (final point in points) {
+    if (points.isNotEmpty) {
+      final current = points.last;
+      final currentOffset =
+          Offset(current.x * size.width, current.y * size.height);
       canvas.drawCircle(
-        Offset(point.x * size.width, point.y * size.height),
-        2.5,
-        detectionPaint,
+        currentOffset,
+        3,
+        Paint()..color = BhePalette.orange,
+      );
+      canvas.drawCircle(
+        currentOffset,
+        5,
+        Paint()
+          ..color = BhePalette.orange.withValues(alpha: .35)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
       );
     }
 
@@ -2216,36 +2329,33 @@ class _CandidateOverlayPainter extends CustomPainter {
         crossing.x <= 1 &&
         crossing.y >= 0 &&
         crossing.y <= 1) {
+      final crossingOffset =
+          Offset(crossing.x * size.width, crossing.y * size.height);
+      final crossingColor = candidate.verdict == 'made'
+          ? BhePalette.green
+          : BhePalette.orange;
       canvas.drawCircle(
-        Offset(crossing.x * size.width, crossing.y * size.height),
-        4.5,
+        crossingOffset,
+        6,
         Paint()
-          ..color = BhePalette.orange
+          ..color = crossingColor.withValues(alpha: .35)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5,
+          ..strokeWidth = 1,
+      );
+      canvas.drawCircle(
+        crossingOffset,
+        3,
+        Paint()..color = crossingColor,
       );
     }
 
-    final prediction = candidate.predictedLandingPoint;
-    if (prediction != null &&
-        prediction.x >= 0 &&
-        prediction.x <= 1 &&
-        prediction.y >= 0 &&
-        prediction.y <= 1) {
-      canvas.drawCircle(
-        Offset(prediction.x * size.width, prediction.y * size.height),
-        4,
-        Paint()..color = BhePalette.gold,
-      );
-    }
   }
 
   @override
   bool shouldRepaint(covariant _CandidateOverlayPainter oldDelegate) =>
       oldDelegate.candidate.trajectory != candidate.trajectory ||
+      oldDelegate.rim != rim ||
       oldDelegate.candidate.crossingPoint != candidate.crossingPoint ||
-      oldDelegate.candidate.predictedLandingPoint !=
-          candidate.predictedLandingPoint ||
       oldDelegate.positionMs != positionMs;
 }
 
@@ -2888,9 +2998,9 @@ class _EvidenceSheet extends StatelessWidget {
         const Divider(height: 24),
         Text('颜色说明', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
-        const _LegendDot(color: BhePalette.green, text: '绿色：当前候选的有效检测点/通过信号'),
+        const _LegendDot(color: BhePalette.green, text: '绿色：确认穿框点'),
         const SizedBox(height: 6),
-        const _LegendDot(color: BhePalette.orange, text: '橙色：篮筐区域或推定穿框点'),
+        const _LegendDot(color: BhePalette.orange, text: '橙色：篮球轨迹、当前位置或推定穿框点'),
         const SizedBox(height: 12),
         Text(
           '最终是否保留由你审核决定，算法结果只是候选建议。',
@@ -3815,6 +3925,7 @@ Future<void> _showRoiEditor(BuildContext context, MobileAppState state) async {
     builder: (context) => _RoiEditorSheet(
       video: video,
       hoop: state.project.hoopRoi,
+      rim: state.project.rimRoi,
       net: state.project.netRoi,
       initialPositionMs: state.project.settings.startMs,
     ),
@@ -3826,11 +3937,13 @@ class _RoiEditorSheet extends StatefulWidget {
   const _RoiEditorSheet({
     required this.video,
     required this.initialPositionMs,
+    this.rim,
     this.hoop,
     this.net,
   });
   final VideoInfo video;
   final int initialPositionMs;
+  final Roi? rim;
   final Roi? hoop;
   final Roi? net;
 
@@ -3842,6 +3955,8 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
   VideoPlayerController? controller;
   late Roi hoop;
   late Roi net;
+  late Roi autoHoop;
+  late Roi autoNet;
   String selected = 'hoop';
   double viewZoom = 1;
   double _gestureStartZoom = 1;
@@ -3854,9 +3969,13 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
   @override
   void initState() {
     super.initState();
-    hoop =
+    autoHoop =
         widget.hoop ?? const Roi(left: .34, top: .25, right: .66, bottom: .48);
-    net = widget.net ?? const Roi(left: .37, top: .42, right: .63, bottom: .72);
+    hoop = autoHoop;
+    autoNet = widget.rim == null
+        ? const Roi(left: .37, top: .42, right: .63, bottom: .72)
+        : netRoiFromRim(hoop, widget.rim!);
+    net = widget.net ?? autoNet;
     previewPositionMs = widget.initialPositionMs
         .clamp(0, widget.video.durationMs)
         .toInt();
@@ -4253,9 +4372,9 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
   void _resetSelectedRoi() {
     setState(() {
       if (selected == 'hoop') {
-        hoop = const Roi(left: .34, top: .25, right: .66, bottom: .48);
+        hoop = autoHoop;
       } else {
-        net = const Roi(left: .37, top: .42, right: .63, bottom: .72);
+        net = autoNet;
       }
       _redrawMode = false;
       _drawStart = null;

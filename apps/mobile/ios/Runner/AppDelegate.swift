@@ -284,7 +284,7 @@ import ImageIO
     let boxHeight = max(4.0, bbox[3] - bbox[1])
     let centerX = (bbox[0] + bbox[2]) / 2.0
     let centerY = (bbox[1] + bbox[3]) / 2.0
-    let roiWidth = min(max(boxWidth * 12.0, width * 0.14), width * 0.65)
+    let roiWidth = min(max(boxWidth * 15.0, width * 0.18), width * 0.65)
     let roiHeight = min(max(boxHeight * 20.0, height * 0.28), height * 0.75)
     var topExtent = max(boxHeight * 8.0, roiHeight * 0.44)
     var bottomExtent = max(boxHeight * 12.0, roiHeight * 0.56)
@@ -583,11 +583,22 @@ import ImageIO
       return sorted[sorted.count / 2]
     }
     func clamp(_ value: Double) -> Double { min(max(value, 0.0), 1.0) }
+    let rawLeft = median(observations.map { $0["left"] ?? 0.0 })
+    let rawTop = median(observations.map { $0["top"] ?? 0.0 })
+    let rawRight = median(observations.map { $0["right"] ?? 1.0 })
+    let rawBottom = median(observations.map { $0["bottom"] ?? 1.0 })
+    // Coarse observations are raw YOLO hoop boxes. Convert their median to
+    // the physical rim plane before passing it to the fine session.
+    let boxWidth = max(0.002, rawRight - rawLeft)
+    let boxHeight = max(0.002, rawBottom - rawTop)
+    let centerX = (rawLeft + rawRight) / 2.0
+    let rimY = (rawTop + rawBottom) / 2.0 - boxHeight * 0.28
+    let rimHeight = boxHeight * 0.45
     return [
-      "left": clamp(median(observations.map { $0["left"] ?? 0.0 })),
-      "top": clamp(median(observations.map { $0["top"] ?? 0.0 })),
-      "right": clamp(median(observations.map { $0["right"] ?? 1.0 })),
-      "bottom": clamp(median(observations.map { $0["bottom"] ?? 1.0 })),
+      "left": clamp(centerX - boxWidth / 2.0),
+      "top": clamp(rimY - rimHeight / 2.0),
+      "right": clamp(centerX + boxWidth / 2.0),
+      "bottom": clamp(rimY + rimHeight / 2.0),
     ]
   }
 

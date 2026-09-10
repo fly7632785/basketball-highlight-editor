@@ -390,8 +390,9 @@ class Candidate {
         : evidence['overlay'] is Map
         ? (evidence['overlay'] as Map).cast<String, dynamic>()
         : const <String, dynamic>{};
-    final trajectoryValue =
-        json['trajectory'] ?? overlay['trajectory'] ?? evidence['trajectory'];
+    final trajectoryValue = json['trajectory'] is List
+        ? json['trajectory']
+        : overlay['trajectory'] ?? evidence['trajectory'];
     final crossingValue =
         json['crossing'] ?? overlay['crossing'] ?? evidence['crossing'];
     final rawPrediction = json['prediction'];
@@ -740,6 +741,7 @@ class ProjectSnapshot {
       .length;
 
   ProjectSnapshot copyWith({
+    String? id,
     String? name,
     VideoInfo? video,
     bool clearVideo = false,
@@ -760,7 +762,7 @@ class ProjectSnapshot {
     bool clearLastAnalysis = false,
     int? lastExportDurationMs,
   }) => ProjectSnapshot(
-    id: id,
+    id: id ?? this.id,
     name: name ?? this.name,
     video: clearVideo ? null : (video ?? this.video),
     hoopRoi: clearHoopRoi ? null : (hoopRoi ?? this.hoopRoi),

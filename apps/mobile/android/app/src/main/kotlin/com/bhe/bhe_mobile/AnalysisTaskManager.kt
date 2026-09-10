@@ -789,11 +789,18 @@ object AnalysisTaskManager {
         val y1 = median(top)
         val x2 = median(right)
         val y2 = median(bottom)
+        // Coarse observations are raw YOLO hoop boxes. Convert their median
+        // to the physical rim plane before passing it to the fine session.
+        val boxWidth = (x2 - x1).coerceAtLeast(0.002)
+        val boxHeight = (y2 - y1).coerceAtLeast(0.002)
+        val centerX = (x1 + x2) / 2.0
+        val rimY = (y1 + y2) / 2.0 - boxHeight * 0.28
+        val rimHeight = boxHeight * 0.45
         return JSONObject()
-            .put("left", x1.coerceIn(0.0, 1.0))
-            .put("top", y1.coerceIn(0.0, 1.0))
-            .put("right", x2.coerceIn(0.0, 1.0))
-            .put("bottom", y2.coerceIn(0.0, 1.0))
+            .put("left", (centerX - boxWidth / 2.0).coerceIn(0.0, 1.0))
+            .put("top", (rimY - rimHeight / 2.0).coerceIn(0.0, 1.0))
+            .put("right", (centerX + boxWidth / 2.0).coerceIn(0.0, 1.0))
+            .put("bottom", (rimY + rimHeight / 2.0).coerceIn(0.0, 1.0))
     }
 
     /** Converts the detector's hoop box into the compact physical-rim ROI used by PC geometry. */

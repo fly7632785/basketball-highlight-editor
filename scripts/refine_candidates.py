@@ -106,9 +106,9 @@ def _net_zones(rim, frame_width, frame_height, net_roi=None):
         )
 
     return {
-        "upper": box(0.15 * rh, 1.8 * rh, 1.5 * rw),
-        "lower": box(1.8 * rh, 3.6 * rh, 1.0 * rw),
-        "below": box(3.6 * rh, 5.2 * rh, max(1.25 * rw, 24.0)),
+        "upper": box(-0.5 * rh, 1.0 * rh, 0.75 * rw),
+        "lower": box(1.0 * rh, 2.75 * rh, 0.75 * rw),
+        "below": box(2.75 * rh, 4.0 * rh, max(0.75 * rw, 24.0)),
     }
 
 
@@ -166,10 +166,14 @@ def scan_window(
         net_y1 = max(y1, net_y1)
         net_y2 = min(y2, net_y2)
     elif rim:
-        net_x1 = max(x1, int(rim["center_x"] - 2.0 * rim["width"]))
-        net_x2 = min(x2, int(rim["center_x"] + 2.0 * rim["width"]))
-        net_y1 = max(y1, int(rim["rim_y"]))
-        net_y2 = min(y2, int(rim["rim_y"] + 3.5 * rim.get("height", 20)))
+        rim_height = max(8.0, float(rim.get("height", 20)))
+        net_half_width = 0.75 * max(4.0, float(rim["width"]))
+        net_x1 = max(x1, int(rim["center_x"] - net_half_width))
+        net_x2 = min(x2, int(rim["center_x"] + net_half_width))
+        # Start at the physical rim's upper edge so the net region touches
+        # the hoop. Keep the previous lower boundary to preserve coverage.
+        net_y1 = max(y1, int(rim["rim_y"] - 0.5 * rim_height))
+        net_y2 = min(y2, int(rim["rim_y"] + 4.0 * rim_height))
     else:
         net_x1 = net_x2 = net_y1 = net_y2 = 0
     signal_bounds = [*zones.values()]

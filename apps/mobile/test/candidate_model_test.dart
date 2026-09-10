@@ -106,6 +106,26 @@ void main() {
     },
   );
 
+  test('desktop trajectory features do not hide overlay trajectory points', () {
+    final candidate = Candidate.fromJson({
+      'id': 'desktop_overlay_candidate',
+      'start_ms': 1000,
+      'end_ms': 5000,
+      'event_ms': 3000,
+      'trajectory': {'trajectory_score': .8, 'point_count': 6},
+      'overlay': {
+        'trajectory': [
+          {'time': 2.5, 'x': .4, 'y': .3},
+          {'time': 3.0, 'x': .5, 'y': .5},
+        ],
+      },
+    });
+
+    expect(candidate.trajectory, hasLength(2));
+    expect(candidate.trajectory.first.timeMs, 2500);
+    expect(candidate.trajectoryScore, .8);
+  });
+
   test('project package v2 round-trips portable manifest fields', () {
     const project = ProjectSnapshot(
       id: 'project-v2',

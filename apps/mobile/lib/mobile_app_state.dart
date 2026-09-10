@@ -45,6 +45,7 @@ class MobileAppState extends ChangeNotifier {
   List<String> exportedPaths = const [];
   Future<void> _saveChain = Future<void>.value();
   int _analysisGeneration = 0;
+  int _videoPreparationGeneration = 0;
   DateTime? analysisStartedAt;
 
   bool get hasVideo => project.video != null;
@@ -145,17 +146,29 @@ class MobileAppState extends ChangeNotifier {
         final ids =
             (jsonDecode(await indexFile.readAsString()) as List?)
                 ?.whereType<String>()
+                .toSet()
                 .toList() ??
             const <String>[];
+        final loadedProjects = <ProjectSnapshot>[];
         for (final id in ids) {
           final file = await _projectFile(id);
           if (!await file.exists()) continue;
-          recentProjects = [
-            ...recentProjects,
-            const ProjectPackageCodec().decode(await file.readAsString()),
-          ];
+          try {
+            loadedProjects.add(
+              const ProjectPackageCodec().decode(await file.readAsString()),
+            );
+          } on Object catch (error, stack) {
+            developer.log(
+              'skipping invalid project $id: $error',
+              name: 'BHE-Project',
+              error: error,
+              stackTrace: stack,
+            );
+          }
         }
+        recentProjects = loadedProjects;
         if (recentProjects.isNotEmpty) project = recentProjects.first;
+        await _persistProjects();
       } else if (await legacyFile.exists()) {
         project = const ProjectPackageCodec().decode(
           await legacyFile.readAsString(),
@@ -261,9 +274,12 @@ class MobileAppState extends ChangeNotifier {
 
   Future<void> openProject(String id) async {
     if (analysing) await cancelAnalysis();
+    _invalidateVideoPreparation();
+    await _saveChain;
     final file = await _projectFile(id);
     if (!await file.exists()) return;
     project = const ProjectPackageCodec().decode(await file.readAsString());
+    _resetTransientState();
     errorMessage = null;
     exportedPaths = const [];
     await _validateImportedVideoIfPresent();
@@ -277,20 +293,33 @@ class MobileAppState extends ChangeNotifier {
 
   Future<void> createNewProject() async {
     if (analysing) await cancelAnalysis();
-    project = ProjectSnapshot(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      name: '新项目',
-      video: null,
-    );
-    stage = AnalysisStage.idle;
-    errorMessage = null;
-    exportedPaths = const [];
+    _invalidateVideoPreparation();
+    if (project.video != null) await _queueSave();
+    project = _newProject();
+    _resetTransientState();
     notifyListeners();
   }
 
+  ProjectSnapshot _newProject() =>
+      ProjectSnapshot(id: _newProjectId(), name: '新项目', video: null);
+
+  String _newProjectId() {
+    var id = DateTime.now().microsecondsSinceEpoch.toString();
+    final usedIds = {project.id, ...recentProjects.map((item) => item.id)};
+    var suffix = 0;
+    while (usedIds.contains(id)) {
+      id = '${DateTime.now().microsecondsSinceEpoch}_${suffix++}';
+    }
+    return id;
+  }
+
   Future<void> createNewProjectAndPickVideo() async {
+    if (analysing) await cancelAnalysis();
+    _invalidateVideoPreparation();
+    final path = await _pickVideoPath();
+    if (path == null) return;
     await createNewProject();
-    await pickVideo();
+    await _prepareVideo(path);
   }
 
   Future<void> _queueSave() {
@@ -304,10 +333,21 @@ class MobileAppState extends ChangeNotifier {
 
   Future<void> pickVideo() async {
     if (analysing) await cancelAnalysis();
-    final result = await FilePicker.platform.pickFiles(type: FileType.video);
-    final path = result?.files.single.path;
+    _invalidateVideoPreparation();
+    final path = await _pickVideoPath();
     if (path == null) return;
+    await _prepareVideo(path);
+  }
+
+  Future<String?> _pickVideoPath() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.video);
+    return result?.files.single.path;
+  }
+
+  Future<void> _prepareVideo(String path) async {
     final file = File(path);
+    final projectId = project.id;
+    final preparationGeneration = ++_videoPreparationGeneration;
     preparingVideo = true;
     preparingVideoMessage = '正在读取视频信息';
     errorMessage = null;
@@ -320,6 +360,7 @@ class MobileAppState extends ChangeNotifier {
       preparingVideoMessage = '正在读取文件大小';
       notifyListeners();
       final sizeBytes = await file.length();
+      if (!_isCurrentVideoPreparation(preparationGeneration, projectId)) return;
       project = project.copyWith(
         name: name.replaceFirst(RegExp(r'\.[^.]+$'), ''),
         video: VideoInfo(
@@ -340,6 +381,9 @@ class MobileAppState extends ChangeNotifier {
       preparingVideoMessage = '正在保存项目';
       notifyListeners();
       await _queueSave();
+      if (!_isCurrentVideoPreparation(preparationGeneration, projectId)) {
+        return;
+      }
       preparingVideoMessage = '正在识别篮筐区域';
       notifyListeners();
       try {
@@ -348,6 +392,9 @@ class MobileAppState extends ChangeNotifier {
           startMs: project.settings.startMs,
           modelSize: project.settings.modelInputSize,
         );
+        if (!_isCurrentVideoPreparation(preparationGeneration, projectId)) {
+          return;
+        }
         final rawRoi = suggestion?['roi'];
         if (rawRoi is Map) {
           final analysisRoi = Roi.fromJson(
@@ -365,7 +412,7 @@ class MobileAppState extends ChangeNotifier {
                   rawNet.map((key, value) => MapEntry(key.toString(), value)),
                 )
               : rimRoi != null
-              ? _netRoiFromRim(analysisRoi, rimRoi)
+              ? netRoiFromRim(analysisRoi, rimRoi)
               : Roi(
                   left: analysisRoi.left,
                   top: (analysisRoi.top + .06).clamp(0, 1),
@@ -387,7 +434,15 @@ class MobileAppState extends ChangeNotifier {
           stackTrace: stack,
         );
       }
-      unawaited(_finishVideoHash(path, sizeBytes, value));
+      unawaited(
+        _finishVideoHash(
+          projectId,
+          preparationGeneration,
+          path,
+          sizeBytes,
+          value,
+        ),
+      );
     } on Object catch (error, stack) {
       developer.log(
         'video preparation failed: $error',
@@ -397,20 +452,49 @@ class MobileAppState extends ChangeNotifier {
       );
       errorMessage = '无法读取该视频，请换一个视频重试。';
     } finally {
-      preparingVideo = false;
-      preparingVideoMessage = '';
-      notifyListeners();
+      if (preparationGeneration == _videoPreparationGeneration) {
+        preparingVideo = false;
+        preparingVideoMessage = '';
+        notifyListeners();
+      }
       await controller.dispose();
     }
   }
 
+  bool _isCurrentVideoPreparation(int generation, String projectId) =>
+      generation == _videoPreparationGeneration && project.id == projectId;
+
+  void _invalidateVideoPreparation() {
+    _videoPreparationGeneration++;
+    preparingVideo = false;
+    preparingVideoMessage = '';
+  }
+
+  void _resetTransientState() {
+    stage = AnalysisStage.idle;
+    progress = 0;
+    progressMessage = '';
+    processedFrames = null;
+    totalFrames = null;
+    eta = null;
+    analysing = false;
+    exporting = false;
+    exportedPaths = const [];
+    analysisStartedAt = null;
+  }
+
   Future<void> _finishVideoHash(
+    String projectId,
+    int preparationGeneration,
     String path,
     int sizeBytes,
     VideoPlayerValue metadata,
   ) async {
     final hash = await _sha256(File(path));
-    if (project.video?.path != path) return;
+    if (!_isCurrentVideoPreparation(preparationGeneration, projectId) ||
+        project.video?.path != path) {
+      return;
+    }
     project = project.copyWith(
       video: VideoInfo(
         path: path,
@@ -428,6 +512,7 @@ class MobileAppState extends ChangeNotifier {
 
   Future<void> importProject() async {
     if (analysing) await cancelAnalysis();
+    _invalidateVideoPreparation();
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['bhe', 'json'],
@@ -435,11 +520,19 @@ class MobileAppState extends ChangeNotifier {
     final path = result?.files.single.path;
     if (path == null) return;
     try {
+      if (project.video != null) await _queueSave();
       final file = File(path);
       final content = path.toLowerCase().endsWith('.bhe')
           ? _readProjectFromArchive(await file.readAsBytes())
           : await file.readAsString();
-      project = const ProjectPackageCodec().decode(content);
+      final imported = const ProjectPackageCodec().decode(content);
+      final importedId =
+          project.id == imported.id ||
+              recentProjects.any((item) => item.id == imported.id)
+          ? _newProjectId()
+          : imported.id;
+      project = imported.copyWith(id: importedId);
+      _resetTransientState();
       errorMessage = null;
       await _validateImportedVideoIfPresent();
       await _queueSave();
@@ -527,21 +620,25 @@ class MobileAppState extends ChangeNotifier {
 
   Future<void> clearProject() async {
     if (analysing) await cancelAnalysis();
+    _invalidateVideoPreparation();
     await _saveChain;
     final deletedId = project.id;
-    project = ProjectSnapshot(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      name: '新项目',
-      video: null,
-    );
     stage = AnalysisStage.idle;
     errorMessage = null;
+    _resetTransientState();
     final file = await _projectFile(deletedId);
     if (await file.exists()) await file.delete();
     recentProjects = recentProjects
         .where((item) => item.id != deletedId)
         .toList();
     await _persistProjects();
+    if (recentProjects.isEmpty) {
+      project = _newProject();
+    } else {
+      project = recentProjects.first;
+      exportedPaths = const [];
+      await _validateImportedVideoIfPresent();
+    }
     final directory = await _dataDirectory();
     for (final name in ['project.bhe.json', 'project.bhe']) {
       final legacy = File('${directory.path}/$name');
@@ -966,21 +1063,23 @@ class MobileAppState extends ChangeNotifier {
   }
 }
 
-Roi _netRoiFromRim(Roi analysisRoi, Roi rimRoi) {
+Roi netRoiFromRim(Roi analysisRoi, Roi rimRoi) {
   final centerX = (rimRoi.left + rimRoi.right) / 2;
   final rimWidth = (rimRoi.right - rimRoi.left).clamp(0.004, 1.0).toDouble();
-  final rimY = (rimRoi.top + rimRoi.bottom) / 2;
   final rimHeight = (rimRoi.bottom - rimRoi.top).clamp(0.008, 1.0).toDouble();
-  final left = analysisRoi.left > centerX - 2 * rimWidth
-      ? analysisRoi.left
-      : centerX - 2 * rimWidth;
-  final right = analysisRoi.right < centerX + 2 * rimWidth
-      ? analysisRoi.right
-      : centerX + 2 * rimWidth;
-  final top = analysisRoi.top > rimY ? analysisRoi.top : rimY;
-  final bottom = analysisRoi.bottom < rimY + 3.5 * rimHeight
+  final analysisWidth = analysisRoi.right - analysisRoi.left;
+  final width = (rimWidth * 1.5)
+      .clamp(analysisWidth * 0.08, analysisWidth * 0.34)
+      .toDouble();
+  final left = (centerX - width / 2).clamp(
+    analysisRoi.left,
+    analysisRoi.right - width,
+  );
+  final right = left + width;
+  final top = analysisRoi.top > rimRoi.top ? analysisRoi.top : rimRoi.top;
+  final bottom = analysisRoi.bottom < top + 4.5 * rimHeight
       ? analysisRoi.bottom
-      : rimY + 3.5 * rimHeight;
+      : top + 4.5 * rimHeight;
   return Roi(
     left: left.clamp(0.0, 1.0).toDouble(),
     top: top.clamp(0.0, 1.0).toDouble(),
