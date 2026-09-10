@@ -21,10 +21,24 @@ import ImageIO
     let stability: Double
   }
 
+  private struct FineWindowResult {
+    let response: [String: Any]
+    let processed: Int
+    let inferenceNanos: UInt64
+  }
+
+  // Keep the iOS analysis contract aligned with Android's AnalysisTaskManager.
+  private let coarseFps = 5.0
+  private let coarseMaxDimension = 960
+  private let fineWindowMs = 1_500
+  private let coarseCropScale = 4.0
+  private let runtimeIntraThreads = 2
+
   private let progressStream = AnalysisProgressStreamHandler()
   private let analysisCancellationLock = NSLock()
   private var analysisCancelled = false
   private var analysisRunning = false
+  private var analysisState: [String: Any] = ["status": "idle"]
   private let exportLock = NSLock()
   private var activeExporters = [String: AVAssetExportSession]()
   override func application(
@@ -51,6 +65,8 @@ import ImageIO
         self.analyzeVideo(call.arguments as? [String: Any], result: result)
       case "suggestRoi":
         self.suggestRoi(call.arguments as? [String: Any], result: result)
+      case "getAnalysisState":
+        result(self.currentAnalysisState())
       case "cancelAnalysis":
         self.setAnalysisCancelled(true)
         result(nil)
@@ -78,6 +94,18 @@ import ImageIO
         result(FlutterMethodNotImplemented)
       }
     }
+  }
+
+  private func currentAnalysisState() -> [String: Any] {
+    analysisCancellationLock.lock()
+    defer { analysisCancellationLock.unlock() }
+    return analysisState
+  }
+
+  private func setAnalysisState(_ state: [String: Any]) {
+    analysisCancellationLock.lock()
+    analysisState = state
+    analysisCancellationLock.unlock()
   }
 
   private func suggestRoi(_ arguments: [String: Any]?, result: @escaping FlutterResult) {
@@ -294,7 +322,7 @@ import ImageIO
   private func proxyURL(sourcePath: String, startMs: Int, endMs: Int) -> URL {
     let sourceURL = URL(fileURLWithPath: sourcePath)
     let resourceValues = try? sourceURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-    let values = "\(sourcePath)|\(resourceValues?.fileSize ?? 0)|\(resourceValues?.contentModificationDate ?? Date.distantPast)|\(startMs)|\(endMs)|640|480|3"
+    let values = "\(sourcePath)|\(resourceValues?.fileSize ?? 0)|\(resourceValues?.contentModificationDate ?? Date.distantPast)|\(startMs)|\(endMs)|960|540|4"
     let key = values.data(using: .utf8)!.map { String(format: "%02x", $0) }.joined()
     let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("bhe/analysis/proxies", isDirectory: true)
@@ -310,7 +338,7 @@ import ImageIO
     }
     let temporaryURL = outputURL.deletingPathExtension().appendingPathExtension("part.mp4")
     try? FileManager.default.removeItem(at: temporaryURL)
-    guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset640x480) else {
+    guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset960x540) else {
       throw NSError(domain: "BHERuntime", code: 20, userInfo: [NSLocalizedDescriptionKey: "无法创建代理视频导出器"])
     }
     exporter.outputURL = temporaryURL
@@ -332,27 +360,6 @@ import ImageIO
     return outputURL
   }
 
-  private func hasBallNearHoop(_ value: [String: Any], width: Int, height: Int, hoop: [String: Any]) -> Bool {
-    guard let detections = value["detections"] as? [[String: Any]] else { return false }
-    let left = ((hoop["left"] as? Double ?? 0) - 0.16) * Double(width)
-    let top = ((hoop["top"] as? Double ?? 0) - 0.22) * Double(height)
-    let right = ((hoop["right"] as? Double ?? 1) + 0.16) * Double(width)
-    let bottom = ((hoop["bottom"] as? Double ?? 1) + 0.22) * Double(height)
-    return detections.contains { detection in
-      guard (detection["name"] as? String) == "ball",
-            let center = detection["center"] as? [Double], center.count >= 2 else { return false }
-      return center[0] >= left && center[0] <= right && center[1] >= top && center[1] <= bottom
-    }
-  }
-
-  private func coarseRoi(_ hoop: [String: Any]) -> [String: Double] {
-    let left = max(0.0, min(1.0, (hoop["left"] as? Double ?? 0.0) - 0.20))
-    let top = max(0.0, min(1.0, (hoop["top"] as? Double ?? 0.0) - 0.30))
-    let right = max(0.0, min(1.0, (hoop["right"] as? Double ?? 1.0) + 0.20))
-    let bottom = max(0.0, min(1.0, (hoop["bottom"] as? Double ?? 1.0) + 0.30))
-    return ["left": left, "top": top, "right": right, "bottom": bottom]
-  }
-
   private func sampleTimes(startMs: Int, endMs: Int, fps: Double) -> [Int] {
     guard endMs > startMs, fps > 0 else { return [] }
     let count = max(1, Int(ceil(Double(endMs - startMs) * fps / 1000.0 - 1e-9)))
@@ -364,10 +371,224 @@ import ImageIO
       }
   }
 
-  private func refineTimes(around seeds: [Int], startMs: Int, endMs: Int, fps: Double) -> [Int] {
-    return Array(Set(seeds.flatMap { seed in
-      sampleTimes(startMs: max(startMs, seed - 4000), endMs: min(endMs, seed + 4000), fps: fps)
-    })).sorted()
+  private func fullRoi() -> [String: Any] {
+    ["left": 0.0, "top": 0.0, "right": 1.0, "bottom": 1.0]
+  }
+
+  private func jsonCandidates(_ value: Any?) -> [[String: Any]] {
+    (value as? [[String: Any]]) ?? []
+  }
+
+  private func candidateEventMs(_ candidate: [String: Any]) -> Int? {
+    if let value = candidate["event_ms"] as? Int { return value }
+    if let value = candidate["event_ms"] as? NSNumber { return value.intValue }
+    return nil
+  }
+
+  private func candidatePriority(_ candidate: [String: Any]) -> Double {
+    if let value = candidate["composite_score"] as? NSNumber { return value.doubleValue }
+    if let value = candidate["confidence"] as? NSNumber { return value.doubleValue }
+    return 0.0
+  }
+
+  private func dedupeCandidates(
+    _ candidates: [[String: Any]],
+    dedupeMs: Int
+  ) -> [[String: Any]] {
+    let sorted = candidates.compactMap { candidate -> (Int, [String: Any])? in
+      guard let eventMs = candidateEventMs(candidate) else { return nil }
+      return (eventMs, candidate)
+    }.sorted { $0.0 < $1.0 }
+    var result = [[String: Any]]()
+    var clusterStart: Int?
+    var winner: (Int, [String: Any])?
+    for item in sorted {
+      if winner == nil || item.0 - (clusterStart ?? item.0) <= dedupeMs {
+        if winner == nil { clusterStart = item.0 }
+        if winner == nil || candidatePriority(item.1) > candidatePriority(winner!.1) {
+          winner = item
+        }
+      } else {
+        if let winner { result.append(winner.1) }
+        clusterStart = item.0
+        winner = item
+      }
+    }
+    if let winner { result.append(winner.1) }
+    return result
+  }
+
+  private func reviewFallbackCandidate(
+    eventMs: Int,
+    startMs: Int,
+    endMs: Int,
+    beforeMs: Int,
+    afterMs: Int
+  ) -> [String: Any] {
+    let clipStart = max(startMs, eventMs - beforeMs)
+    let clipEnd = min(endMs, eventMs + afterMs)
+    return [
+      "id": "coarse_review_\(eventMs)",
+      "track_id": -1,
+      "start_ms": clipStart,
+      "end_ms": clipEnd,
+      "default_start_ms": clipStart,
+      "default_end_ms": clipEnd,
+      "event_ms": eventMs,
+      "confidence": 0.0,
+      "confidence_label": "review",
+      "verdict": "ambiguous",
+      "reason": "coarse_crossing_fine_review",
+      "selection": "included",
+      "trajectory": [],
+      "algorithm_version": "analysis-contract-v1",
+      "evidence_source": "ios_coarse_crossing",
+    ]
+  }
+
+  private func runSession(
+    asset: AVAsset,
+    startMs: Int,
+    endMs: Int,
+    sampleTimes: [Int],
+    config: [String: Any],
+    maxDimension: Int? = nil,
+    onProgress: ((Int, Int) -> Void)? = nil,
+    onFrame: (([String: Any], Int, Int) -> Void)? = nil
+  ) throws -> FineWindowResult {
+    guard !sampleTimes.isEmpty else {
+      return FineWindowResult(response: ["candidates": []], processed: 0, inferenceNanos: 0)
+    }
+    let configData = try JSONSerialization.data(withJSONObject: config)
+    let configString = String(decoding: configData, as: UTF8.self)
+    guard let session = configString.withCString({ bhe_runtime_create_session($0) }) else {
+      throw NSError(domain: "BHERuntime", code: 1, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 无法加载模型或 ONNX Runtime"])
+    }
+    defer { bhe_runtime_free_session(session) }
+
+    var processed = 0
+    var inferenceNanos: UInt64 = 0
+    if let candidateReader = try? makeVideoReader(asset: asset, startMs: startMs, endMs: endMs, maxDimension: maxDimension),
+       let output = candidateReader.outputs.first {
+      while let sampleBuffer = output.copyNextSampleBuffer() {
+        defer { CMSampleBufferInvalidate(sampleBuffer) }
+        if isAnalysisCancelled() { throw CancellationError() }
+        guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
+        let pts = Int(CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1000.0)
+        guard processed < sampleTimes.count && sampleTimes[processed] <= pts else { continue }
+        let timeMs = sampleTimes[processed]
+        let started = DispatchTime.now().uptimeNanoseconds
+        guard let responsePointer = try pushPixelBuffer(session: session, pixelBuffer: imageBuffer, timeMs: timeMs) else {
+          throw NSError(domain: "BHERuntime", code: 2, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 未返回结果"])
+        }
+        let responseData = Data(bytes: responsePointer, count: strlen(responsePointer))
+        bhe_runtime_free_string(responsePointer)
+        guard let response = try JSONSerialization.jsonObject(with: responseData) as? [String: Any] else {
+          throw NSError(domain: "BHERuntime", code: 3, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 返回结果无效"])
+        }
+        if let error = response["error"] as? String {
+          throw NSError(domain: "BHERuntime", code: 4, userInfo: [NSLocalizedDescriptionKey: error])
+        }
+        onFrame?(response, CVPixelBufferGetWidth(imageBuffer), CVPixelBufferGetHeight(imageBuffer))
+        inferenceNanos += DispatchTime.now().uptimeNanoseconds - started
+        processed += 1
+        onProgress?(processed, sampleTimes.count)
+      }
+      if candidateReader.status != .failed && processed < sampleTimes.count {
+        // AVAssetReader can finish before a target that falls between the last
+        // decoded PTS and the requested end. Match Android's EOS fallback by
+        // recovering the remaining targets with AVAssetImageGenerator.
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        while processed < sampleTimes.count {
+          if isAnalysisCancelled() { throw CancellationError() }
+          let timeMs = sampleTimes[processed]
+          var actualTime = CMTime.invalid
+          let image = try generator.copyCGImage(
+            at: CMTime(value: CMTimeValue(timeMs), timescale: 1000),
+            actualTime: &actualTime
+          )
+          let started = DispatchTime.now().uptimeNanoseconds
+          guard let responsePointer = try pushRawFrame(session: session, image: image, timeMs: timeMs) else {
+            throw NSError(domain: "BHERuntime", code: 13, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 未返回补帧结果"])
+          }
+          let responseData = Data(bytes: responsePointer, count: strlen(responsePointer))
+          bhe_runtime_free_string(responsePointer)
+          guard let response = try JSONSerialization.jsonObject(with: responseData) as? [String: Any] else {
+            throw NSError(domain: "BHERuntime", code: 14, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 补帧结果无效"])
+          }
+          if let error = response["error"] as? String {
+            throw NSError(domain: "BHERuntime", code: 15, userInfo: [NSLocalizedDescriptionKey: error])
+          }
+          onFrame?(response, image.width, image.height)
+          inferenceNanos += DispatchTime.now().uptimeNanoseconds - started
+          processed += 1
+          onProgress?(processed, sampleTimes.count)
+        }
+      }
+      if candidateReader.status == .failed || processed != sampleTimes.count {
+        throw NSError(domain: "BHERuntime", code: 5, userInfo: [NSLocalizedDescriptionKey: "视频解码不完整：\(processed)/\(sampleTimes.count) 帧"])
+      }
+      candidateReader.cancelReading()
+    } else {
+      let generator = AVAssetImageGenerator(asset: asset)
+      generator.appliesPreferredTrackTransform = true
+      for timeMs in sampleTimes {
+        if isAnalysisCancelled() { throw CancellationError() }
+        var actualTime = CMTime.invalid
+        let image = try generator.copyCGImage(
+          at: CMTime(value: CMTimeValue(timeMs), timescale: 1000),
+          actualTime: &actualTime
+        )
+        let started = DispatchTime.now().uptimeNanoseconds
+        guard let responsePointer = try pushRawFrame(session: session, image: image, timeMs: timeMs) else {
+          throw NSError(domain: "BHERuntime", code: 6, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 未返回结果"])
+        }
+        let responseData = Data(bytes: responsePointer, count: strlen(responsePointer))
+        bhe_runtime_free_string(responsePointer)
+        guard let response = try JSONSerialization.jsonObject(with: responseData) as? [String: Any] else {
+          throw NSError(domain: "BHERuntime", code: 7, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 返回结果无效"])
+        }
+        if let error = response["error"] as? String {
+          throw NSError(domain: "BHERuntime", code: 8, userInfo: [NSLocalizedDescriptionKey: error])
+        }
+        onFrame?(response, image.width, image.height)
+        inferenceNanos += DispatchTime.now().uptimeNanoseconds - started
+        processed += 1
+        onProgress?(processed, sampleTimes.count)
+      }
+    }
+    guard let responsePointer = bhe_runtime_finish_session(session) else {
+      throw NSError(domain: "BHERuntime", code: 9, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 未返回最终结果"])
+    }
+    let responseData = Data(bytes: responsePointer, count: strlen(responsePointer))
+    bhe_runtime_free_string(responsePointer)
+    guard let response = try JSONSerialization.jsonObject(with: responseData) as? [String: Any] else {
+      throw NSError(domain: "BHERuntime", code: 10, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 最终结果无效"])
+    }
+    if let error = response["error"] as? String {
+      throw NSError(domain: "BHERuntime", code: 11, userInfo: [NSLocalizedDescriptionKey: error])
+    }
+    return FineWindowResult(response: response, processed: processed, inferenceNanos: inferenceNanos)
+  }
+
+  private func medianCoarseRim(_ observations: [[String: Double]]) -> [String: Any]? {
+    guard !observations.isEmpty else { return nil }
+    func median(_ values: [Double]) -> Double {
+      let sorted = values.sorted()
+      guard !sorted.isEmpty else { return 0.0 }
+      if sorted.count.isMultiple(of: 2) {
+        return (sorted[sorted.count / 2 - 1] + sorted[sorted.count / 2]) / 2.0
+      }
+      return sorted[sorted.count / 2]
+    }
+    func clamp(_ value: Double) -> Double { min(max(value, 0.0), 1.0) }
+    return [
+      "left": clamp(median(observations.map { $0["left"] ?? 0.0 })),
+      "top": clamp(median(observations.map { $0["top"] ?? 0.0 })),
+      "right": clamp(median(observations.map { $0["right"] ?? 1.0 })),
+      "bottom": clamp(median(observations.map { $0["bottom"] ?? 1.0 })),
+    ]
   }
 
   private func analyzeVideo(_ arguments: [String: Any]?, result: @escaping FlutterResult) {
@@ -390,235 +611,202 @@ import ImageIO
       return
     }
     DispatchQueue.global(qos: .userInitiated).async {
-      var session: OpaquePointer?
-      defer {
-        if let session { bhe_runtime_free_session(session) }
-        self.finishAnalysis()
-      }
+      defer { self.finishAnalysis() }
       let asset = AVAsset(url: URL(fileURLWithPath: videoPath))
-      let durationMs = Int(CMTimeGetSeconds(asset.duration) * 1000)
-      let fps = max(1.0, min((arguments["fps"] as? Double) ?? 10.0, 10.0))
-      let confidenceThreshold = max(0.0, min((arguments["confidenceThreshold"] as? Double) ?? 0.10, 1.0))
-      let modelSize = max(320, ((arguments["modelSize"] as? Int) ?? 640) / 32 * 32)
-      let actualEndMs = min(endMs, durationMs > 0 ? durationMs : endMs)
-      let originalSampleTimes = sequence(first: 0, next: { $0 + 1 })
-        .map { index in startMs + Int((Double(index) * 1000.0 / fps).rounded()) }
-        .prefix(while: { $0 < actualEndMs })
-      var sampleTimes = Array(originalSampleTimes)
-      var totalFrames = max(1, sampleTimes.count)
-      let beforeMs = (arguments["beforeMs"] as? Int) ?? 6_000
-      let afterMs = (arguments["afterMs"] as? Int) ?? 3_000
-      let cropScale = max(1.0, min((arguments["cropScale"] as? Double) ?? 2.0, 8.0))
-      let maxCrossGapMs = max(1, (arguments["maxCrossGapMs"] as? Int) ?? 1_800)
-      let dedupeMs = max(0, (arguments["dedupeMs"] as? Int) ?? 2_000)
-      let optimizedModelPath = (arguments["optimizedModelPath"] as? String) ?? "\(modelPath).optimized.onnx"
-      let executionProvider = (arguments["executionProvider"] as? String) ?? "cpu"
-
       do {
-        if durationMs <= 0 || startMs < 0 || startMs >= durationMs || endMs <= startMs {
-          throw NSError(domain: "BHERuntime", code: 9, userInfo: [NSLocalizedDescriptionKey: "分析范围超出视频时长"])
+        let durationMs = Int(CMTimeGetSeconds(asset.duration) * 1000)
+        guard durationMs > 0, startMs >= 0, startMs < durationMs else {
+          throw NSError(domain: "BHERuntime", code: 12, userInfo: [NSLocalizedDescriptionKey: "分析范围超出视频时长"])
         }
-        self.emitProgress(stage: "prepareProxy", progress: 0.05, processed: 0, total: totalFrames, message: "正在生成或复用代理视频")
-        let proxy = try self.createOrGetProxy(asset: asset, sourcePath: videoPath, startMs: startMs, endMs: actualEndMs)
-        let proxyAsset = AVAsset(url: proxy)
-        let proxyDurationMs = Int(CMTimeGetSeconds(proxyAsset.duration) * 1000)
-        let coarseTimes = self.sampleTimes(startMs: 0, endMs: proxyDurationMs, fps: 0.5)
-        let fullRoi: [String: Any] = ["left": 0.0, "top": 0.0, "right": 1.0, "bottom": 1.0]
-        var coarseSession: OpaquePointer?
-        let coarseConfig: [String: Any] = [
-          "model_path": modelPath,
-          "hoop_roi": fullRoi,
-          "analysis_roi": self.coarseRoi(hoopRoi),
-          "net_roi": fullRoi,
-          "confidence_threshold": confidenceThreshold,
-          "model_size": 640,
-          "input_max_dimension": 320,
-          "detection_only": true,
-          "execution_provider": executionProvider,
-        ]
-        let coarseData = try JSONSerialization.data(withJSONObject: coarseConfig)
-        let coarseConfigString = String(decoding: coarseData, as: UTF8.self)
-        coarseSession = coarseConfigString.withCString { bhe_runtime_create_session($0) }
-        guard let coarseHandle = coarseSession else {
-          throw NSError(domain: "BHERuntime", code: 22, userInfo: [NSLocalizedDescriptionKey: "无法创建代理粗扫会话"])
-        }
-        var coarseSeeds = [Int]()
-        if let reader = try? self.makeVideoReader(asset: proxyAsset, startMs: 0, endMs: proxyDurationMs),
-           let output = reader.outputs.first {
-          var coarseIndex = 0
-          while let sampleBuffer = output.copyNextSampleBuffer(), coarseIndex < coarseTimes.count {
-            if self.isAnalysisCancelled() { throw CancellationError() }
-            guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
-            let pts = Int(CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1000.0)
-            if coarseTimes[coarseIndex] <= pts {
-              let coarseTime = coarseTimes[coarseIndex]
-              let responseString = try self.pushPixelBuffer(session: coarseHandle, pixelBuffer: imageBuffer, timeMs: coarseTime)
-              guard let responseString else { throw NSError(domain: "BHERuntime", code: 23, userInfo: [NSLocalizedDescriptionKey: "代理粗扫无返回结果"]) }
-              let responseData = Data(bytes: responseString, count: strlen(responseString))
-              bhe_runtime_free_string(responseString)
-              if let value = try JSONSerialization.jsonObject(with: responseData) as? [String: Any],
-                 self.hasBallNearHoop(value, width: CVPixelBufferGetWidth(imageBuffer), height: CVPixelBufferGetHeight(imageBuffer), hoop: hoopRoi) {
-                coarseSeeds.append(startMs + coarseTime)
-              }
-              coarseIndex += 1
-              self.emitProgress(stage: "coarseScan", progress: 0.08 + Double(coarseIndex) / Double(max(1, coarseTimes.count)) * 0.10, processed: coarseIndex, total: coarseTimes.count, message: "正在快速扫描视频")
-            }
-            CMSampleBufferInvalidate(sampleBuffer)
-          }
-          reader.cancelReading()
-        }
-        if let coarseResult = bhe_runtime_finish_session(coarseHandle) {
-          bhe_runtime_free_string(coarseResult)
-        }
-        bhe_runtime_free_session(coarseHandle)
-        coarseSession = nil
-        sampleTimes = coarseSeeds.isEmpty
-          ? Array(originalSampleTimes)
-          : self.refineTimes(around: coarseSeeds, startMs: startMs, endMs: actualEndMs, fps: fps)
-        totalFrames = max(1, sampleTimes.count)
+        let actualEndMs = min(endMs, durationMs)
+        let fps = max(1.0, min((arguments["fps"] as? Double) ?? 10.0, 10.0))
+        let confidenceThreshold = max(0.0, min((arguments["confidenceThreshold"] as? Double) ?? 0.10, 1.0))
+        let modelSize = max(320, ((arguments["modelSize"] as? Int) ?? 640) / 32 * 32)
+        let beforeMs = (arguments["beforeMs"] as? Int) ?? 6_000
+        let afterMs = (arguments["afterMs"] as? Int) ?? 3_000
+        let cropScale = max(1.0, min((arguments["cropScale"] as? Double) ?? 2.0, 8.0))
+        let maxCrossGapMs = max(1, (arguments["maxCrossGapMs"] as? Int) ?? 1_800)
+        let dedupeMs = max(0, (arguments["dedupeMs"] as? Int) ?? 2_000)
+        let executionProvider = (arguments["executionProvider"] as? String) ?? "coreml"
+        let inferenceBatchSize = max(1, min((arguments["inferenceBatchSize"] as? Int) ?? 4, 8))
+        let optimizedModelPath = (arguments["optimizedModelPath"] as? String)
+          .flatMap { $0.isEmpty ? nil : $0 }
 
-        var config: [String: Any] = [
-          "model_path": modelPath,
-          "hoop_roi": hoopRoi,
-          "analysis_roi": hoopRoi,
-          "net_roi": netRoi,
-          "duration_ms": durationMs,
-          "confidence_threshold": confidenceThreshold,
-          "clip_before_ms": beforeMs,
-          "clip_after_ms": afterMs,
-          "model_size": modelSize,
-          "crop_scale": cropScale,
-          "max_cross_gap_ms": maxCrossGapMs,
-          "dedupe_ms": dedupeMs,
-          "execution_provider": executionProvider,
-          "optimized_model_path": optimizedModelPath,
-        ]
-        if let rimRoi = arguments["rimRoi"] as? [String: Any] {
-          config["rim"] = rimRoi
-        }
-        let configData = try JSONSerialization.data(withJSONObject: config)
-        let configString = String(decoding: configData, as: UTF8.self)
-        session = configString.withCString { bhe_runtime_create_session($0) }
-        guard let session else {
-          throw NSError(domain: "BHERuntime", code: 1, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 无法加载模型或 ONNX Runtime"])
-        }
+        let full = self.fullRoi()
+        let originalTimes = self.sampleTimes(startMs: startMs, endMs: actualEndMs, fps: fps)
+        var candidateTimes = [Int]()
+        var effectiveRimRoi: [String: Any] = full
 
-        self.emitProgress(stage: "prepareProxy", progress: 0.05, processed: 0, total: totalFrames, message: "正在准备本地分析")
-            var lastResponse: [String: Any] = ["candidates": []]
-        var processed = 0
-        if let reader = try? self.makeVideoReader(asset: asset, startMs: startMs, endMs: actualEndMs),
-           let output = reader.outputs.first {
-          while let sampleBuffer = output.copyNextSampleBuffer() {
-            if self.isAnalysisCancelled() { throw CancellationError() }
-            guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
-            let pts = Int(CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1000.0)
-            if processed < sampleTimes.count && sampleTimes[processed] <= pts {
-              let timeMs = sampleTimes[processed]
-              let responseString = try self.pushPixelBuffer(session: session, pixelBuffer: imageBuffer, timeMs: timeMs)
-              guard let responseString else { throw NSError(domain: "BHERuntime", code: 2, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 未返回结果"]) }
-              let responseData = Data(bytes: responseString, count: strlen(responseString))
-              bhe_runtime_free_string(responseString)
-              let value = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
-              if let error = value?["error"] as? String { throw NSError(domain: "BHERuntime", code: 3, userInfo: [NSLocalizedDescriptionKey: error]) }
-              if let value { lastResponse = value }
-              processed += 1
-              self.emitProgress(stage: "refineCandidates", progress: 0.05 + Double(processed) / Double(totalFrames) * 0.90, processed: processed, total: totalFrames, message: "正在分析视频帧")
-            }
-            CMSampleBufferInvalidate(sampleBuffer)
-            if processed >= sampleTimes.count { break }
+        // Match Android's coarse discovery: scan a 5fps low-resolution proxy
+        // with the Rust coarse-crossing contract, then refine each crossing in
+        // its own +/-1.5s native-resolution session.
+        if fps > 0.5 {
+          self.emitProgress(stage: "prepareProxy", progress: 0.05, processed: 0, total: max(1, originalTimes.count), message: "正在生成低分辨率代理视频")
+          let coarseAsset: AVAsset
+          let coarseStartMs: Int
+          let coarseEndMs: Int
+          let coarseSourceOffsetMs: Int
+          do {
+            let proxy = try self.createOrGetProxy(asset: asset, sourcePath: videoPath, startMs: startMs, endMs: actualEndMs)
+            coarseAsset = AVAsset(url: proxy)
+            coarseStartMs = 0
+            coarseEndMs = Int(CMTimeGetSeconds(coarseAsset.duration) * 1000)
+            coarseSourceOffsetMs = startMs
+          } catch {
+            // Match Android's fallback when hardware proxy encoding is not
+            // available for a particular codec or video container.
+            NSLog("[BHE-AnalysisTask] iOS proxy unavailable, falling back to source scan: %@", error.localizedDescription)
+            coarseAsset = asset
+            coarseStartMs = startMs
+            coarseEndMs = actualEndMs
+            coarseSourceOffsetMs = 0
           }
-          if reader.status != .failed && processed < sampleTimes.count {
-            // AVAssetReader can end before the final canonical target when
-            // the target is between the last decoded PTS and the duration.
-            // Recover those tail samples with the same closest-frame policy
-            // used by Android's MediaCodec pipeline.
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            while processed < sampleTimes.count {
-              if self.isAnalysisCancelled() { throw CancellationError() }
-              let timeMs = sampleTimes[processed]
-              var actualTime = CMTime.invalid
-              let image = try generator.copyCGImage(
-                at: CMTime(value: CMTimeValue(timeMs), timescale: 1000),
-                actualTime: &actualTime
-              )
-              guard let responseString = try self.pushRawFrame(
-                session: session,
-                image: image,
-                timeMs: timeMs
-              ) else {
-                throw NSError(domain: "BHERuntime", code: 4, userInfo: [
-                  NSLocalizedDescriptionKey: "Rust Runtime 未返回补帧结果"
+          let coarseTimes = self.sampleTimes(startMs: coarseStartMs, endMs: coarseEndMs, fps: self.coarseFps)
+          var rimObservations = [[String: Double]]()
+          let coarseConfig: [String: Any] = [
+            "model_path": modelPath,
+            "hoop_roi": full,
+            "analysis_roi": hoopRoi,
+            "net_roi": full,
+            "duration_ms": coarseEndMs,
+            "confidence_threshold": confidenceThreshold,
+            "model_size": 640,
+            "crop_scale": self.coarseCropScale,
+            "input_max_dimension": self.coarseMaxDimension,
+            "detection_only": false,
+            "coarse_mode": true,
+            "intra_threads": self.runtimeIntraThreads,
+            "execution_provider": executionProvider,
+            "inference_batch_size": inferenceBatchSize,
+          ]
+          let coarse = try self.runSession(
+            asset: coarseAsset,
+            startMs: coarseStartMs,
+            endMs: coarseEndMs,
+            sampleTimes: coarseTimes,
+            config: coarseConfig,
+            maxDimension: self.coarseMaxDimension,
+            onProgress: { processed, total in
+              self.emitProgress(stage: "coarseScan", progress: 0.18 + Double(processed) / Double(max(1, total)) * 0.30, processed: processed, total: total, message: "正在快速扫描视频")
+            },
+            onFrame: { response, width, height in
+              guard let detections = response["detections"] as? [[String: Any]] else { return }
+              for detection in detections where (detection["class_id"] as? NSNumber)?.intValue == 1 {
+                guard
+                  let x1 = (detection["x1"] as? NSNumber)?.doubleValue,
+                  let y1 = (detection["y1"] as? NSNumber)?.doubleValue,
+                  let x2 = (detection["x2"] as? NSNumber)?.doubleValue,
+                  let y2 = (detection["y2"] as? NSNumber)?.doubleValue
+                else { continue }
+                rimObservations.append([
+                  "left": x1 / Double(max(1, width)),
+                  "top": y1 / Double(max(1, height)),
+                  "right": x2 / Double(max(1, width)),
+                  "bottom": y2 / Double(max(1, height)),
                 ])
               }
-              let responseData = Data(bytes: responseString, count: strlen(responseString))
-              bhe_runtime_free_string(responseString)
-              let value = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
-              if let error = value?["error"] as? String {
-                throw NSError(domain: "BHERuntime", code: 5, userInfo: [NSLocalizedDescriptionKey: error])
-              }
-              if let value { lastResponse = value }
-              processed += 1
-              NSLog("[BHE-AnalysisTask] recovered tail frame targetMs=%d actualMs=%d", timeMs, Int(CMTimeGetSeconds(actualTime) * 1000.0))
-              self.emitProgress(stage: "refineCandidates", progress: 0.05 + Double(processed) / Double(totalFrames) * 0.90, processed: processed, total: totalFrames, message: "正在分析视频帧")
             }
+          )
+          candidateTimes = self.jsonCandidates(coarse.response["candidates"])
+            .compactMap(self.candidateEventMs)
+            .map { $0 + coarseSourceOffsetMs }
+            .sorted()
+          effectiveRimRoi = self.medianCoarseRim(rimObservations) ?? (arguments["rimRoi"] as? [String: Any] ?? full)
+          if candidateTimes.isEmpty {
+            self.emitProgress(stage: "coarseScan", progress: 0.48, processed: coarse.processed, total: coarse.processed, message: "快速扫描完成，未发现候选")
+            var empty = coarse.response
+            empty["candidates"] = [[String: Any]]()
+            empty["processed_frames"] = 0
+            empty["total_frames"] = 0
+            self.setAnalysisState(["status": "completed", "stage": "completed", "progress": 1.0, "message": "分析完成", "result": empty])
+            DispatchQueue.main.async { result(empty) }
+            return
           }
-          if reader.status == .failed || processed != sampleTimes.count {
-            throw NSError(
-              domain: "BHERuntime",
-              code: 13,
-              userInfo: [NSLocalizedDescriptionKey: "视频解码不完整：\(processed)/\(sampleTimes.count) 帧\(reader.error.map { "（\($0.localizedDescription)）" } ?? "")"]
-            )
-          }
-          reader.cancelReading()
         } else {
-          let generator = AVAssetImageGenerator(asset: asset)
-          generator.appliesPreferredTrackTransform = true
-          for timeMs in sampleTimes {
-            if self.isAnalysisCancelled() { throw CancellationError() }
-            var actualTime = CMTime.invalid
-            let image = try generator.copyCGImage(
-              at: CMTime(value: CMTimeValue(timeMs), timescale: 1000),
-              actualTime: &actualTime
-            )
-            let responseString = try self.pushRawFrame(session: session, image: image, timeMs: timeMs)
-            guard let responseString else { throw NSError(domain: "BHERuntime", code: 2, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 未返回结果"]) }
-            let responseData = Data(bytes: responseString, count: strlen(responseString))
-            bhe_runtime_free_string(responseString)
-            let value = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
-            if let error = value?["error"] as? String { throw NSError(domain: "BHERuntime", code: 3, userInfo: [NSLocalizedDescriptionKey: error]) }
-            if let value { lastResponse = value }
-            processed += 1
-            self.emitProgress(stage: "refineCandidates", progress: 0.05 + Double(processed) / Double(totalFrames) * 0.90, processed: processed, total: totalFrames, message: "正在分析视频帧")
+          candidateTimes = originalTimes
+          effectiveRimRoi = (arguments["rimRoi"] as? [String: Any]) ?? full
+        }
+
+        let fineTimes = Array(Set(candidateTimes)).sorted()
+        let fineTotal = fineTimes.reduce(0) { total, eventMs in
+          total + self.sampleTimes(
+            startMs: max(startMs, eventMs - self.fineWindowMs),
+            endMs: min(actualEndMs, eventMs + self.fineWindowMs),
+            fps: fps
+          ).count
+        }
+        var aggregateCandidates = [[String: Any]]()
+        var completedFrames = 0
+        var inferenceNanos: UInt64 = 0
+        for (index, eventMs) in fineTimes.enumerated() {
+          if self.isAnalysisCancelled() { throw CancellationError() }
+          let windowStart = max(startMs, eventMs - self.fineWindowMs)
+          let windowEnd = min(actualEndMs, eventMs + self.fineWindowMs)
+          let windowTimes = self.sampleTimes(startMs: windowStart, endMs: windowEnd, fps: fps)
+          var fineConfig: [String: Any] = [
+            "model_path": modelPath,
+            "hoop_roi": effectiveRimRoi,
+            "analysis_roi": hoopRoi,
+            "net_roi": netRoi,
+            "duration_ms": durationMs,
+            "confidence_threshold": confidenceThreshold,
+            "clip_before_ms": beforeMs,
+            "clip_after_ms": afterMs,
+            "model_size": modelSize,
+            "crop_scale": cropScale,
+            "max_cross_gap_ms": maxCrossGapMs,
+            "dedupe_ms": dedupeMs,
+            "intra_threads": self.runtimeIntraThreads,
+            "execution_provider": executionProvider,
+            "inference_batch_size": inferenceBatchSize,
+            "rim": effectiveRimRoi,
+          ]
+          if let optimizedModelPath { fineConfig["optimized_model_path"] = optimizedModelPath }
+          let window = try self.runSession(
+            asset: asset,
+            startMs: windowStart,
+            endMs: windowEnd,
+            sampleTimes: windowTimes,
+            config: fineConfig,
+            maxDimension: self.coarseMaxDimension,
+            onProgress: { processed, _ in
+              self.emitProgress(
+                stage: "refineCandidates",
+                progress: 0.52 + Double(completedFrames + processed) / Double(max(1, fineTotal)) * 0.44,
+                processed: completedFrames + processed,
+                total: fineTotal,
+                message: "正在分析候选 \(index + 1)/\(fineTimes.count)"
+              )
+            }
+          )
+          completedFrames += window.processed
+          inferenceNanos += window.inferenceNanos
+          aggregateCandidates.append(contentsOf: self.jsonCandidates(window.response["candidates"]))
+        }
+
+        var finalCandidates = self.dedupeCandidates(aggregateCandidates, dedupeMs: dedupeMs)
+        if finalCandidates.isEmpty, !candidateTimes.isEmpty {
+          finalCandidates = candidateTimes.map {
+            self.reviewFallbackCandidate(eventMs: $0, startMs: startMs, endMs: actualEndMs, beforeMs: beforeMs, afterMs: afterMs)
           }
         }
-        if processed != sampleTimes.count {
-          throw NSError(domain: "BHERuntime", code: 14, userInfo: [NSLocalizedDescriptionKey: "视频解码不完整：\(processed)/\(sampleTimes.count) 帧"])
-        }
-        let finalResponsePointer = bhe_runtime_finish_session(session)
-        guard let finalResponsePointer else {
-          throw NSError(domain: "BHERuntime", code: 6, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 未返回最终结果"])
-        }
-        let finalResponseData = Data(bytes: finalResponsePointer, count: strlen(finalResponsePointer))
-        bhe_runtime_free_string(finalResponsePointer)
-        guard let finalValue = try JSONSerialization.jsonObject(with: finalResponseData) as? [String: Any] else {
-          throw NSError(domain: "BHERuntime", code: 7, userInfo: [NSLocalizedDescriptionKey: "Rust Runtime 最终结果无效"])
-        }
-        if let error = finalValue["error"] as? String { throw NSError(domain: "BHERuntime", code: 8, userInfo: [NSLocalizedDescriptionKey: error]) }
-        lastResponse = finalValue
-        self.emitProgress(stage: "persistCandidates", progress: 0.98, processed: processed, total: totalFrames, message: "正在写入分析结果")
-        lastResponse["processed_frames"] = processed
-        lastResponse["total_frames"] = totalFrames
-        DispatchQueue.main.async { result(lastResponse) }
+        var finalResponse: [String: Any] = ["candidates": finalCandidates]
+        finalResponse["processed_frames"] = completedFrames
+        finalResponse["total_frames"] = fineTotal
+        self.emitProgress(stage: "persistCandidates", progress: 0.98, processed: completedFrames, total: fineTotal, message: "正在写入分析结果")
+        self.setAnalysisState(["status": "completed", "stage": "completed", "progress": 1.0, "message": "分析完成", "result": finalResponse])
+        NSLog("[BHE-AnalysisTask] iOS fine summary frames=%d/%d candidates=%d inferenceMs=%llu", completedFrames, fineTotal, finalCandidates.count, inferenceNanos / 1_000_000)
+        DispatchQueue.main.async { result(finalResponse) }
       } catch is CancellationError {
+        self.setAnalysisState(["status": "cancelled", "stage": "cancelled", "progress": 0.0, "message": "分析已取消"])
         DispatchQueue.main.async { result(FlutterError(code: "ANALYSIS_CANCELLED", message: "分析已取消", details: nil)) }
       } catch {
+        self.setAnalysisState(["status": "failed", "stage": "failed", "progress": 1.0, "message": error.localizedDescription, "errorMessage": error.localizedDescription])
         DispatchQueue.main.async { result(FlutterError(code: "ANALYSIS_FAILED", message: error.localizedDescription, details: nil)) }
       }
     }
   }
-
-  private func makeVideoReader(asset: AVAsset, startMs: Int, endMs: Int) throws -> AVAssetReader {
+  private func makeVideoReader(asset: AVAsset, startMs: Int, endMs: Int, maxDimension: Int? = nil) throws -> AVAssetReader {
     let reader = try AVAssetReader(asset: asset)
     guard let track = asset.tracks(withMediaType: .video).first else { throw NSError(domain: "BHERuntime", code: 10, userInfo: [NSLocalizedDescriptionKey: "视频没有视频轨道"]) }
     let output = AVAssetReaderVideoCompositionOutput(videoTracks: [track], videoSettings: [
@@ -626,7 +814,11 @@ import ImageIO
     ])
     output.alwaysCopiesSampleData = false
     let transformedRect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
-    let renderSize = CGSize(width: abs(transformedRect.width), height: abs(transformedRect.height))
+    let sourceWidth = abs(transformedRect.width)
+    let sourceHeight = abs(transformedRect.height)
+    let longestSide = max(Double(sourceWidth), Double(sourceHeight))
+    let scale = maxDimension.map { min(1.0, Double($0) / longestSide) } ?? 1.0
+    let renderSize = CGSize(width: sourceWidth * CGFloat(scale), height: sourceHeight * CGFloat(scale))
     let videoComposition = AVMutableVideoComposition()
     videoComposition.renderSize = renderSize
     videoComposition.frameDuration = track.minFrameDuration.isValid
@@ -638,6 +830,9 @@ import ImageIO
     var displayTransform = track.preferredTransform
     displayTransform.tx -= transformedRect.minX
     displayTransform.ty -= transformedRect.minY
+    if scale < 1.0 {
+      displayTransform = CGAffineTransform(scaleX: CGFloat(scale), y: CGFloat(scale)).concatenating(displayTransform)
+    }
     layerInstruction.setTransform(displayTransform, at: .zero)
     instruction.layerInstructions = [layerInstruction]
     videoComposition.instructions = [instruction]
@@ -725,6 +920,8 @@ import ImageIO
     guard !analysisRunning else { return false }
     analysisRunning = true
     analysisCancelled = false
+    analysisState = ["status": "running", "stage": "validateInput", "progress": 0.0]
+    DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = true }
     return true
   }
 
@@ -732,6 +929,7 @@ import ImageIO
     analysisCancellationLock.lock()
     analysisRunning = false
     analysisCancellationLock.unlock()
+    DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = false }
   }
 
   private func isAnalysisCancelled() -> Bool {
@@ -741,6 +939,16 @@ import ImageIO
   }
 
   private func emitProgress(stage: String, progress: Double, processed: Int, total: Int, message: String) {
+    analysisCancellationLock.lock()
+    analysisState = [
+      "status": "running",
+      "stage": stage,
+      "progress": min(max(progress, 0), 1),
+      "processed": processed,
+      "total": total,
+      "message": message,
+    ]
+    analysisCancellationLock.unlock()
     progressStream.emit([
       "stage": stage,
       "progress": min(max(progress, 0), 1),
