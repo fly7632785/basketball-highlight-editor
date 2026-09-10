@@ -10,6 +10,11 @@ const DOWNLOADS = {
     "win-x64": ["BHE-windows-x64-latest.zip"],
     "android-arm64": ["BHE-android-arm64-v8a-latest.apk"],
   },
+  // Aliyun OSS blocks public APK distribution through the OSS endpoint.
+  // Keep Android on the versioned GitHub Release asset until a download CNAME is configured.
+  direct: {
+    "android-arm64": "https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.0-alpha.8/BHE-android-arm64-v8a-v0.1.0-alpha.8-debug-signed.apk",
+  },
 };
 
 function fileNameMeta(name) {
@@ -28,7 +33,7 @@ function renderDownloads() {
       const meta = fileNameMeta(name);
       const a = document.createElement("a");
       a.className = "btn btn-ball";
-      a.href = `${DOWNLOADS.ossBase}/${name}`;
+      a.href = DOWNLOADS.direct[box.dataset.os] || `${DOWNLOADS.ossBase}/${name}`;
       a.download = name;
       a.textContent = meta.label;
       box.appendChild(a);

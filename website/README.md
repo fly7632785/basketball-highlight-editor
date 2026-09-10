@@ -56,6 +56,10 @@ https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basket
 2. 发布流程自动把版本文件和 `latest` 固定别名同步到 OSS；
 3. 官网始终使用固定的 `latest` 地址，不需要修改 `website/app.js` 或重新部署官网。
 
+Android APK 是例外：阿里云 OSS 公共 endpoint 会拒绝公开分发 APK，官网 Android 按钮使用
+当前 GitHub Release 的版本固定地址。发布新的 Android 版本时，需要同步更新
+`website/app.js` 中的 GitHub Release 地址；桌面端仍使用 OSS 的 `latest` 别名。
+
 ## SEO
 
 `index.html` 已包含中文产品标题与描述、Canonical、Open Graph 分享信息、JSON-LD
