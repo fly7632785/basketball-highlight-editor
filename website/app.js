@@ -10,10 +10,10 @@ const DOWNLOADS = {
     "win-x64": ["BHE-windows-x64-latest.zip"],
     "android-arm64": ["BHE-android-arm64-v8a-latest.apk"],
   },
-  // Aliyun OSS blocks public APK distribution through the OSS endpoint.
-  // Keep Android on the versioned GitHub Release asset until a download CNAME is configured.
+  // Android uses the OSS custom domain so users in mainland China can download it directly.
+  // Keep this path separate from the Baby project's latest.apk object.
   direct: {
-    "android-arm64": "https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.0-alpha.8/BHE-android-arm64-v8a-v0.1.0-alpha.8-debug-signed.apk",
+    "android-arm64": "https://oss.shengshengniannian.com/shengshengniannian/app/android/bhe/latest.apk",
   },
 };
 

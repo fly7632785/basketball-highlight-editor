@@ -16,6 +16,7 @@ env:
   OSS_ENDPOINT: oss-cn-beijing.aliyuncs.com
   OSS_BUCKET: oss://shengshengniannian
   OSS_PREFIX: shengshengniannian/basketball-highlight-editor/releases
+  OSS_ANDROID_KEY: shengshengniannian/app/android/bhe/latest.apk
   OSSUTIL_VERSION: v1.7.19
 
 jobs:
@@ -93,19 +94,20 @@ jobs:
           publish_alias() {
             local source="$1"
             local alias="$2"
+            local destination="${3:-$OSS_PREFIX/$alias}"
             local digest
             local checksum="$alias_dir/$alias.sha256"
 
             ossutil \
               --config-file "$OSSUTIL_CONFIG" \
               cp -f --meta "Cache-Control:no-cache" \
-              "$source" "$OSS_BUCKET/$OSS_PREFIX/$alias"
+              "$source" "$OSS_BUCKET/$destination"
             digest="$(sha256sum "$source" | awk '{print $1}')"
             printf '%s  %s\n' "$digest" "$alias" > "$checksum"
             ossutil \
               --config-file "$OSSUTIL_CONFIG" \
               cp -f --meta "Cache-Control:no-cache" \
-              "$checksum" "$OSS_BUCKET/$OSS_PREFIX/$alias.sha256"
+              "$checksum" "$OSS_BUCKET/$destination.sha256"
           }
 
           for source in "$RUNNER_TEMP/bhe-release-assets"/BHE-macos-arm64-v*.dmg; do
@@ -118,5 +120,5 @@ jobs:
             publish_alias "$source" "BHE-windows-x64-latest.zip"
           done
           for source in "$RUNNER_TEMP/bhe-release-assets"/BHE-android-arm64-v8a-v*-debug-signed.apk; do
-            publish_alias "$source" "BHE-android-arm64-v8a-latest.apk"
+            publish_alias "$source" "BHE-android-arm64-v8a-latest.apk" "$OSS_ANDROID_KEY"
           done

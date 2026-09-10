@@ -7,14 +7,17 @@
 #      配置：ossutil config -e oss-cn-beijing.aliyuncs.com
 #   2. gh 已登录（gh auth status）
 # 用法：scripts/upload_release_assets_oss.sh v0.1.0-alpha.5
-# 说明：上传路径与官网 website/app.js 的 OSS_PREFIX 约定一致：
+# 说明：桌面包上传路径与官网 website/app.js 的 OSS_PREFIX 约定一致：
 #   https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/releases/<文件名>
+# Android latest 包使用独立路径，避免覆盖 Baby 项目的同名对象：
+#   https://oss.shengshengniannian.com/shengshengniannian/app/android/bhe/latest.apk
 set -euo pipefail
 
 TAG="${1:?用法：$0 <tag>，例如 v0.1.0-alpha.5}"
 REPO="fly7632785/basketball-highlight-editor"
 BUCKET="oss://shengshengniannian"
 PREFIX="shengshengniannian/basketball-highlight-editor/releases"
+ANDROID_KEY="shengshengniannian/app/android/bhe/latest.apk"
 STAGE="${BHE_OSS_STAGE:-/tmp/bhe-oss/$TAG}"
 
 command -v ossutil >/dev/null 2>&1 || {
@@ -38,13 +41,14 @@ mkdir -p "$alias_dir"
 publish_alias() {
   local source="$1"
   local alias="$2"
+  local destination="${3:-$PREFIX/$alias}"
   local digest
   local checksum="$alias_dir/$alias.sha256"
 
-  ossutil cp -f --meta "Cache-Control:no-cache" "$source" "$BUCKET/$PREFIX/$alias"
+  ossutil cp -f --meta "Cache-Control:no-cache" "$source" "$BUCKET/$destination"
   digest="$(shasum -a 256 "$source" | awk '{print $1}')"
   printf '%s  %s\n' "$digest" "$alias" > "$checksum"
-  ossutil cp -f --meta "Cache-Control:no-cache" "$checksum" "$BUCKET/$PREFIX/$alias.sha256"
+  ossutil cp -f --meta "Cache-Control:no-cache" "$checksum" "$BUCKET/$destination.sha256"
 }
 
 for source in "$STAGE"/BHE-macos-arm64-v*.dmg; do
@@ -55,6 +59,9 @@ for source in "$STAGE"/BHE-macos-x86_64-v*.dmg; do
 done
 for source in "$STAGE"/BHE-windows-x64-v*.zip; do
   publish_alias "$source" "BHE-windows-x64-latest.zip"
+done
+for source in "$STAGE"/BHE-android-arm64-v8a-v*-debug-signed.apk; do
+  publish_alias "$source" "BHE-android-arm64-v8a-latest.apk" "$ANDROID_KEY"
 done
 
 echo "==> 完成。下载地址："
