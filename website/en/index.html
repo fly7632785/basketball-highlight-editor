@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BHE — Basketball Highlight Editor | Find the moments, keep the game local</title>
+<meta name="description" content="BHE (Basketball Highlight Editor) is a free, open-source, local-first basketball video editor. It finds suspected scoring moments, lets you review them quickly, and exports highlights by player or scene.">
+<meta name="keywords" content="BHE,Basketball Highlight Editor,basketball highlights,basketball video editor,AI sports video editor,local video editing,basketball scoring detection,macOS,Windows,Android">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+<meta name="author" content="Basketball Highlight Editor contributors">
+<meta name="application-name" content="Basketball Highlight Editor">
+<meta name="theme-color" content="#15120f">
+<link rel="canonical" href="https://bhe.jafir.top/en/">
+<link rel="alternate" hreflang="zh-CN" href="https://bhe.jafir.top/">
+<link rel="alternate" hreflang="en" href="https://bhe.jafir.top/en/">
+<link rel="alternate" hreflang="x-default" href="https://bhe.jafir.top/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Basketball Highlight Editor">
+<meta property="og:locale" content="en_US">
+<meta property="og:title" content="BHE — Basketball Highlight Editor">
+<meta property="og:description" content="A free, local-first AI tool for finding scoring moments in basketball videos, reviewing candidates, and exporting highlights.">
+<meta property="og:url" content="https://bhe.jafir.top/en/">
+<meta property="og:image" content="https://bhe.jafir.top/assets/demo-cover.jpg">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="798">
+<meta property="og:image:alt" content="Basketball Highlight Editor review workbench">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="BHE — Basketball Highlight Editor">
+<meta name="twitter:description" content="Free, open-source, local-first basketball highlight editing. Find the moments, review the draft, and export your cut.">
+<meta name="twitter:image" content="https://bhe.jafir.top/assets/demo-cover.jpg">
+<link rel="sitemap" type="application/xml" href="/sitemap.xml">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../styles.css?v=5">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://bhe.jafir.top/en/#website",
+      "url": "https://bhe.jafir.top/en/",
+      "name": "Basketball Highlight Editor",
+      "alternateName": "BHE",
+      "inLanguage": "en",
+      "publisher": { "@id": "https://bhe.jafir.top/#organization" }
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://bhe.jafir.top/en/#application",
+      "name": "Basketball Highlight Editor",
+      "alternateName": "BHE",
+      "url": "https://bhe.jafir.top/en/",
+      "description": "A free, open-source, local-first basketball video highlight editor that finds suspected scoring moments and lets users review and export them.",
+      "applicationCategory": "MultimediaApplication",
+      "applicationSubCategory": "Sports video editing",
+      "operatingSystem": "macOS, Windows, Android",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "license": "https://github.com/fly7632785/basketball-highlight-editor/blob/main/LICENSE",
+      "downloadUrl": "https://bhe.jafir.top/en/#download",
+      "image": "https://bhe.jafir.top/assets/demo-cover.jpg"
+    },
+    {
+      "@type": "VideoObject",
+      "@id": "https://bhe.jafir.top/en/#demo-video",
+      "name": "Basketball Highlight Editor demo",
+      "description": "A walkthrough of importing a game video, finding suspected scoring moments, reviewing candidates, and exporting highlights.",
+      "thumbnailUrl": "https://bhe.jafir.top/assets/demo-cover.jpg",
+      "contentUrl": "https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4",
+      "embedUrl": "https://bhe.jafir.top/en/#demo",
+      "uploadDate": "2026-08-26",
+      "inLanguage": "en"
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://bhe.jafir.top/en/#faq",
+      "url": "https://bhe.jafir.top/en/#faq",
+      "inLanguage": "en",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does BHE upload my videos?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. Analysis, preview, review, and export run locally by default. You do not need an account. Internet access is only needed to download the app or browse online documentation." }
+        },
+        {
+          "@type": "Question",
+          "name": "Is BHE free?",
+          "acceptedAnswer": { "@type": "Answer", "text": "BHE is open source under the MIT License and does not charge by video length or export count. Models, footage, and third-party dependencies have their own license terms." }
+        },
+        {
+          "@type": "Question",
+          "name": "What if detection is not accurate?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Candidates are kept by default so you can remove false positives, adjust clip boundaries, or add a missed moment manually. The model creates a draft; you make the final call." }
+        },
+        {
+          "@type": "Question",
+          "name": "Which platforms are supported?",
+          "acceptedAnswer": { "@type": "Answer", "text": "The website currently provides macOS and Windows desktop packages and an Android arm64-v8a sideload test build. There is no downloadable iOS build yet." }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+
+<header class="nav">
+  <a class="nav-brand" href="#top">
+    <svg class="nav-ball" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1a11 11 0 1 0 0 22 11 11 0 0 0 0-22Zm0 2.2 4.1 3-1.6 4.9h-5L7.9 6.2 12 3.2ZM4.3 9.4l3.4.2 1.6 4.9-2.5 3.4A8.8 8.8 0 0 1 4.3 9.4Zm5.9 11.2 2.5-3h-3.9l-1.1 1.6a8.7 8.7 0 0 0 2.5 1.4Zm8.7-5.9-2.5-3.2 1.6-4.9 3.4-.2a8.8 8.8 0 0 1-2.5 8.3Zm-3.5 4.5-1.1-1.6h-3.9l2.5 3a8.7 8.7 0 0 0 2.5-1.4Z" fill="currentColor"/></svg>
+    <span class="nav-name">BHE<em>Basketball Highlight Editor</em></span>
+  </a>
+  <nav class="nav-links" aria-label="Page navigation">
+    <a href="#workflow">How it works</a>
+    <a href="#features">Features</a>
+    <a href="#demo">Demo</a>
+    <a href="#faq">FAQ</a>
+    <a class="nav-gh" href="https://github.com/fly7632785/basketball-highlight-editor" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+  <a class="lang-switch" href="/" lang="zh-CN" data-language="zh">中文</a>
+  <a class="btn btn-ball btn-nav" href="#download">Download</a>
+</header>
+
+<main id="top">
+
+<section class="hero">
+  <div class="hero-copy">
+    <p class="eyebrow"><span class="dot"></span>LOCAL-FIRST · OPEN SOURCE · DESKTOP BUILDS AVAILABLE</p>
+    <h1>Finish the game.<br><span class="hl">Not the night.</span></h1>
+    <p class="hero-sub">
+      Let BHE scan the full game and line up suspected scoring moments. You skim the candidates,
+      remove the misses, and export the highlights — without uploading your video or paying a subscription.
+    </p>
+    <div class="hero-cta">
+      <a class="btn btn-ball" href="#download">Download desktop</a>
+      <a class="btn btn-ghost" href="#demo">Watch the demo</a>
+    </div>
+  </div>
+  <figure class="timeline" aria-hidden="true">
+    <div class="timeline-track">
+      <span class="clip" style="--left:8%;  --w:6%; --d:.9s"></span>
+      <span class="clip clip-out" style="--left:17%; --w:4%"></span>
+      <span class="clip" style="--left:27%; --w:7%; --d:3s"></span>
+      <span class="clip" style="--left:44%; --w:5%; --d:4.8s"></span>
+      <span class="clip clip-out" style="--left:53%; --w:3%"></span>
+      <span class="clip" style="--left:62%; --w:6%; --d:6.8s"></span>
+      <span class="clip" style="--left:76%; --w:5%; --d:8.4s"></span>
+      <span class="clip" style="--left:86%; --w:6%; --d:9.5s"></span>
+      <span class="playhead"></span>
+    </div>
+    <figcaption class="timeline-cap">
+      <span class="mono">47-minute game</span>
+      <span class="mono">12 candidate clips</span>
+      <span class="mono">10 kept · 2 removed</span>
+    </figcaption>
+  </figure>
+</section>
+
+<section class="strip">
+  <ul class="strip-grid">
+    <li><strong>Your video stays local</strong><span>Analyze, review, and export on your computer</span></li>
+    <li><strong>No subscription</strong><span>Free and open source, with no per-minute fee</span></li>
+    <li><strong>Keep candidates by default</strong><span>Remove false positives instead of confirming every clip</span></li>
+    <li><strong>You make the call</strong><span>Adjust timing, fill gaps, and tag players or scenes</span></li>
+  </ul>
+</section>
+
+<section class="section section-paper" id="workflow">
+  <p class="kicker mono">WORKFLOW</p>
+  <h2>Five steps from a full game to a highlight reel</h2>
+  <ol class="steps">
+    <li><span class="step-no mono">01</span><strong>Import the game video</strong><p>Choose one game file and the time range you want to analyze.</p></li>
+    <li><span class="step-no mono">02</span><strong>Set the hoop area</strong><p>Start with automatic detection, then draw or fine-tune the area if needed.</p></li>
+    <li><span class="step-no mono">03</span><strong>Let it scan</strong><p>Use Fast for a quick first pass, or Standard when completeness matters.</p></li>
+    <li><span class="step-no mono">04</span><strong>Review the candidates</strong><p>Play through the list, remove false positives, and adjust the timing.</p></li>
+    <li><span class="step-no mono">05</span><strong>Export the highlights</strong><p>Merge everything into one reel or export clips by player or tag.</p></li>
+  </ol>
+</section>
+
+<section class="section section-paper section-tight">
+  <figure class="shot reveal">
+    <img src="../assets/workbench.jpg" alt="Review workbench with a large video preview and a candidate list with keep or remove controls" loading="lazy" width="1680" height="1050">
+    <figcaption>
+      The review workbench keeps the video large and the candidates in time order.
+      <span class="mono">Orange = candidate clips.</span>
+    </figcaption>
+  </figure>
+</section>
+
+<section class="section section-paper" id="features">
+  <p class="kicker mono">FEATURES</p>
+  <h2>Small feature set. All on the main path.</h2>
+  <div class="feature-grid">
+    <article class="feature reveal"><h3>Find suspected scores</h3><p>Scan fixed-camera, single-hoop game videos and turn a long timeline into a short list of moments worth checking.</p></article>
+    <article class="feature reveal"><h3>Fast or Standard</h3><p>Get a quick first draft with Fast, or spend more time on a fuller Standard pass. Review and export work the same way in both modes.</p></article>
+    <article class="feature reveal"><h3>Tags for players and scenes</h3><p>Create your own tags for players, threes, dunks, fouls, defense, or anything else you want to find later.</p></article>
+    <article class="feature reveal"><h3>Two export styles</h3><p>Merge the kept candidates into one reel, or export each candidate as its own clip. Open the output folder when the job is done.</p></article>
+    <article class="feature reveal"><h3>Fill in what it missed</h3><p>Add a manual candidate from the current video position when automatic detection misses a moment.</p></article>
+    <article class="feature reveal"><h3>Private by default</h3><p>No account or online API is required. The model and analysis run on your computer, keeping game footage where it belongs.</p></article>
+  </div>
+</section>
+
+<section class="section section-paper" id="demo">
+  <p class="kicker mono">DEMO</p>
+  <h2>See the full path from import to export</h2>
+  <div class="demo-card reveal">
+    <video controls preload="metadata" poster="../assets/demo-cover.jpg">
+      <source src="https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4" type="video/mp4">
+      Your browser does not support embedded video. <a href="https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4" target="_blank" rel="noopener">Open the recording directly</a>.
+    </video>
+    <p class="demo-note mono">About 34 seconds · hosted on OSS and playable in the page</p>
+  </div>
+</section>
+
+<section class="section section-ink" id="download">
+  <p class="kicker kicker-ink mono">DOWNLOAD</p>
+  <h2 class="h-ink">Download and get started</h2>
+  <p class="dl-note">
+    Desktop packages are mirrored to Aliyun OSS for direct downloads. The Android test build is also available from GitHub Releases.
+    <span class="mono" id="dl-version">Latest version</span> ·
+    macOS and Windows desktop builds are the primary path; Android is an arm64-v8a sideload test build.
+  </p>
+
+  <div class="dl-grid">
+    <article class="dl-card">
+      <h3>macOS · Apple Silicon</h3>
+      <p class="dl-meta mono">M1 / M2 / M3 / M4 · .dmg</p>
+      <div class="dl-actions" data-os="mac-arm64"></div>
+      <p class="dl-tip">On first launch, right-click BHE and choose <strong>Open</strong> once. The DMG includes the Gatekeeper note and repair command.</p>
+    </article>
+    <article class="dl-card">
+      <h3>macOS · Intel</h3>
+      <p class="dl-meta mono">Intel Mac · .dmg</p>
+      <div class="dl-actions" data-os="mac-x64"></div>
+      <p class="dl-tip">On first launch, right-click BHE and choose <strong>Open</strong> once. The DMG includes the Gatekeeper note and repair command.</p>
+    </article>
+    <article class="dl-card">
+      <h3>Windows · x64</h3>
+      <p class="dl-meta mono">Windows 10 / 11 · .zip</p>
+      <div class="dl-actions" data-os="win-x64"></div>
+    </article>
+    <article class="dl-card">
+      <h3>Android</h3>
+      <p class="dl-meta mono">arm64-v8a · sideload test build</p>
+      <div class="dl-actions" data-os="android-arm64"></div>
+      <p class="dl-tip">Allow installs from the relevant unknown source. This is a debug-signed test build, not a Google Play production package.</p>
+    </article>
+  </div>
+
+  <noscript>
+    <p class="dl-fine">Enable JavaScript to see the latest download buttons, or visit <a href="https://github.com/fly7632785/basketball-highlight-editor/releases">GitHub Releases</a> to download manually.</p>
+  </noscript>
+  <p class="dl-fine mono">Every package includes a .sha256 file in GitHub Releases · <a href="https://github.com/fly7632785/basketball-highlight-editor/releases" target="_blank" rel="noopener">github.com/fly7632785/basketball-highlight-editor</a></p>
+</section>
+
+<section class="section section-paper">
+  <p class="kicker mono">HONEST SCOPE</p>
+  <h2>Where BHE works best today</h2>
+  <div class="scope">
+    <div class="scope-yes">
+      <h3>Good fit</h3>
+      <ul>
+        <li>Fixed camera position, such as a tripod or a stable stand</li>
+        <li>One game with one hoop in the frame</li>
+        <li>School teams, pickup games, amateur leagues, and practice footage</li>
+      </ul>
+    </div>
+    <div class="scope-not">
+      <h3>Review carefully</h3>
+      <ul>
+        <li>Frequent camera movement or handheld tracking</li>
+        <li>The hoop is blocked for long stretches</li>
+        <li>Multiple hoops appear in the same frame</li>
+      </ul>
+    </div>
+  </div>
+  <p class="scope-note">A candidate is a suspected event, not a final verdict. That is why the review workbench is at the center of BHE.</p>
+</section>
+
+<section class="section section-paper section-tight" id="faq">
+  <p class="kicker mono">FAQ</p>
+  <h2>Frequently asked questions</h2>
+  <div class="faq">
+    <details><summary>Does BHE need an internet connection?</summary><p>Analysis, preview, review, and export run locally and do not require an account. Internet is only needed to download the app or read online documentation.</p></details>
+    <details><summary>Is it really free?</summary><p>Yes. BHE is open source under the MIT License, with no charge by video length or export count. Models and media still have their own license terms.</p></details>
+    <details><summary>What if the detection is wrong?</summary><p>Candidates stay included by default. Remove false positives, adjust the boundaries, or add a missed moment manually. BHE gives you a draft, not an irreversible decision.</p></details>
+    <details><summary>Is there an iOS version?</summary><p>The iOS project and development path are in progress. There is no downloadable iOS build on the website yet.</p></details>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <p class="footer-brand mono">BHE / basketball-highlight-editor</p>
+    <nav aria-label="Footer">
+      <a href="https://github.com/fly7632785/basketball-highlight-editor" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/fly7632785/basketball-highlight-editor/tree/main/docs" target="_blank" rel="noopener">Documentation</a>
+      <a href="https://linux.do/" target="_blank" rel="noopener">Linux DO</a>
+      <a href="/" lang="zh-CN" data-language="zh">简体中文</a>
+    </nav>
+    <p class="footer-fine">Open source · local video processing · <span class="mono">MIT License</span></p>
+  </div>
+</footer>
+
+<script src="app.js?v=6"></script>
+<script src="../language.js?v=1"></script>
+</body>
+</html>

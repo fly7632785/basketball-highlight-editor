@@ -53,6 +53,8 @@ a { color: inherit; }
 .nav-links { margin-left: auto; display: flex; gap: 1.4rem; }
 .nav-links a { color: var(--t-ink-dim); text-decoration: none; font-size: .92rem; }
 .nav-links a:hover, .nav-links a:focus-visible { color: var(--t-ink); }
+.lang-switch { color: var(--t-ink-dim); text-decoration: none; font-size: .85rem; white-space: nowrap; }
+.lang-switch:hover, .lang-switch:focus-visible { color: var(--t-ink); }
 .btn-nav { padding: .45rem 1.1rem; font-size: .9rem; }
 
 /* ---------- 按钮 ---------- */

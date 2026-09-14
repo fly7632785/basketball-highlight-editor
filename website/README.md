@@ -1,5 +1,10 @@
 # BHE 官网
 
+官网提供中文首页和英文版本。首次访问时会根据浏览器语言选择落地页：中文浏览器进入中文页，其他语言进入英文页；用户手动切换后会记住选择。
+
+- 中文：`/`
+- English：`/en/`
+
 `bhe.jafir.top` 的静态官网。纯 HTML/CSS/JS，无构建步骤。
 
 ## 目录
@@ -7,6 +12,8 @@
 ```text
 website/
   index.html          页面
+  en/index.html       English page
+  language.js         浏览器语言判断与手动语言偏好
   styles.css          样式（深色首尾 + 浅色中段）
   app.js              下载链接渲染 + 滚动进场
   favicon.svg
@@ -74,4 +81,4 @@ Android APK 是例外：阿里云 OSS 公共 endpoint 会拒绝公开分发 APK�
   表示"候选片段"，官网中沿用于候选时间轴（hero 签名元素）、kicker 和 CTA；
 - `prefers-reduced-motion` 下动画全部静止；滚动进场不依赖
   IntersectionObserver（同步 scroll + clientHeight 兜底）；
-- 中文为主，无外部字体/脚本依赖，总资源 < 1MB。
+- 中文首页和英文版本共用同一套样式、图片、演示视频和下载逻辑；两种语言均无外部字体/脚本依赖。

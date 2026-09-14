@@ -2,7 +2,7 @@
 
 > A local tool for detecting basketball scoring candidates, reviewing them manually, and exporting highlight clips from fixed-camera game videos.
 
-[中文](README.md) · **English** · [Website](https://bhe.jafir.top)
+[简体中文](README.md) · **English** · [Website](https://bhe.jafir.top/en/)
 
 [![Python Tests](https://img.shields.io/github/actions/workflow/status/fly7632785/basketball-highlight-editor/python-tests.yml?branch=main&style=flat-square&label=Python%20tests)](https://github.com/fly7632785/basketball-highlight-editor/actions/workflows/python-tests.yml)
 [![Flutter Checks](https://img.shields.io/github/actions/workflow/status/fly7632785/basketball-highlight-editor/flutter-check.yml?branch=main&style=flat-square&label=Flutter%20checks)](https://github.com/fly7632785/basketball-highlight-editor/actions/workflows/flutter-check.yml)
@@ -13,6 +13,36 @@
 ![Free](https://img.shields.io/badge/cost-free-f97316?style=flat-square)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
 [![Linux DO](https://img.shields.io/badge/Linux%20DO-community-00a67d?style=flat-square)](https://linux.do/)
+
+**Local-first · Free to use · Finds the moments · You stay in control**
+
+[🏠 Website](https://bhe.jafir.top/en/) · [⬇ Download](https://bhe.jafir.top/en/#download) · [Getting started](#quick-start-desktop) · [Features](#features) · [Documentation](#documentation)
+
+## The problem BHE is meant to solve
+
+If you have recorded a full basketball game, you probably know the routine: the game takes an hour, the moments worth keeping are scattered across the timeline, and finding them means repeatedly scrubbing, watching, and writing down timestamps. The actual editing is not difficult; doing it for every possession is what makes it exhausting.
+
+Cloud editors can make this trade-off even less appealing: large videos take time to upload, the footage leaves your computer, and a subscription or per-minute fee may be required for a single game.
+
+**BHE takes a simpler approach: let the computer find likely moments, then let you make the final call.**
+
+## What it saves you
+
+### Less time searching
+
+Instead of watching the entire game just to find a handful of scores, BHE scans the video and presents a shortlist of suspected scoring moments.
+
+### Less repetitive work
+
+Candidates are kept by default. In most cases, you remove false positives and adjust a few seconds rather than confirming every item one by one.
+
+### No upload and no subscription
+
+Analysis, preview, review, and export run locally by default. There is no account, online API, video-length billing, or export quota.
+
+### A draft, not a black box
+
+You can keep or exclude candidates, change their boundaries, add notes, tag players or scenes, and add a missed moment manually. The exported result is always yours to decide.
 
 ## Project status
 
@@ -37,6 +67,50 @@
 - Candidates are included by default; only excluded candidates are left out of export, so users do not have to confirm every item individually.
 - Export clips separately or merge them in event-time order; persist export history and statistics.
 - Use SQLite on desktop for project, ROI, candidate, review, job, and export state.
+
+## A typical session
+
+```text
+Import the game video
+        ↓
+Set the analysis range and hoop area
+        ↓
+Choose Fast or Standard
+        ↓
+Let BHE scan for candidate moments
+        ↓
+Review the candidates in the workbench
+        ↓
+Remove false positives, adjust timing, and fill gaps
+        ↓
+Merge the reel or export clips by tag
+```
+
+### Export highlights by player or scene
+
+Tags are not limited to player names. Create tags such as `Alex`, `Jordan`, `three-pointer`, `dunk`, `foul`, or `great defense`, then apply them to one or more candidates. You can export a personal highlight reel, a three-point reel, a dunk reel, or the complete game from the same reviewed set.
+
+## See it in action
+
+The review workbench keeps the video large and the candidates in time order:
+
+![BHE review workbench](capture/screenshot-20260813-150054.png)
+
+This recording walks through importing a video, analyzing candidates, reviewing them, and exporting the result:
+
+[![BHE workflow demo](capture/录制视频封面.jpg)](https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4)
+
+Click the cover to open the recording. The large video is hosted outside the repository so cloning BHE does not download a large demo file.
+
+Candidate and tag management:
+
+![BHE candidate and tag management](capture/screenshot-20260813-150302.png)
+
+After review, you can filter by tag and merge the result or export each clip separately:
+
+![BHE highlight export](capture/screenshot-20260813-150335.png)
+
+For more screens, controls, shortcuts, and the light theme, see [`docs/USER_FLOW_V1.md`](docs/USER_FLOW_V1.md) and [`docs/README.en.md`](docs/README.en.md).
 
 ## Scope
 
@@ -217,6 +291,10 @@ Runtime preparation and packaging commands are consolidated in [`docs/RELEASE.en
 - **Product contracts:** [`docs/DECISIONS_V1.md`](docs/DECISIONS_V1.md) · [`docs/REQUIREMENTS_V1.md`](docs/REQUIREMENTS_V1.md) · [`docs/USER_FLOW_V1.md`](docs/USER_FLOW_V1.md)
 - **Open source and release:** [`docs/RELEASE.en.md`](docs/RELEASE.en.md) · [`docs/OPEN_SOURCE_AUDIT.md`](docs/OPEN_SOURCE_AUDIT.md) · [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) · [`docs/MODEL_AND_DATA_LICENSES.md`](docs/MODEL_AND_DATA_LICENSES.md)
 - **Community:** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) · [`SECURITY.md`](SECURITY.md) · [`CHANGELOG.md`](CHANGELOG.md) · [`LICENSE`](LICENSE)
+
+## Open-source references
+
+BHE's model, detection workflow, and product ideas were informed by several open-source projects, including [HoopCut](https://github.com/RuiYang0122/HoopCut), [basketball-highlights](https://github.com/reborncd/basketball-highlights), [ShotMarker](https://github.com/zhangrunhao/ShotMarker), [basketball_clipper](https://github.com/snowroll/basketball_clipper), [ball-yolo](https://github.com/griftt/ball-yolo), [ClarkWang1214/basketball-highlights](https://github.com/ClarkWang1214/basketball-highlights), and [ai-sports-cut-agent](https://github.com/bond0060/ai-sports-cut-agent). Thanks to the authors for sharing their work and ideas.
 
 ## Privacy and data safety
 

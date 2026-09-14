@@ -12,4 +12,15 @@
       <image:caption>篮球比赛视频自动找进球、审核候选片段并导出集锦</image:caption>
     </image:image>
   </url>
+  <url>
+    <loc>https://bhe.jafir.top/en/</loc>
+    <lastmod>2026-09-14</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+    <image:image>
+      <image:loc>https://bhe.jafir.top/assets/workbench.jpg</image:loc>
+      <image:title>Basketball Highlight Editor review workbench</image:title>
+      <image:caption>Automatically find scoring moments, review candidates, and export basketball highlights</image:caption>
+    </image:image>
+  </url>
 </urlset>

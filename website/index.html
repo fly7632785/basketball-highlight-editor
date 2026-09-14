@@ -13,6 +13,7 @@
 <meta name="theme-color" content="#15120f">
 <link rel="canonical" href="https://bhe.jafir.top/">
 <link rel="alternate" hreflang="zh-CN" href="https://bhe.jafir.top/">
+<link rel="alternate" hreflang="en" href="https://bhe.jafir.top/en/">
 <link rel="alternate" hreflang="x-default" href="https://bhe.jafir.top/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Basketball Highlight Editor">
@@ -31,6 +32,15 @@
 <meta name="twitter:image:alt" content="Basketball Highlight Editor 篮球集锦审核工作台">
 <link rel="sitemap" type="application/xml" href="/sitemap.xml">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<script>
+  (function () {
+    const saved = localStorage.getItem("bhe-language");
+    const browserLanguage = (navigator.language || "").toLowerCase();
+    if (saved === "en" || (!saved && !browserLanguage.startsWith("zh"))) {
+      window.location.replace("/en/");
+    }
+  })();
+</script>
 <link rel="stylesheet" href="styles.css?v=5">
 <script type="application/ld+json">
 {
@@ -126,6 +136,7 @@
     <a href="#faq">常见问题</a>
     <a class="nav-gh" href="https://github.com/fly7632785/basketball-highlight-editor" target="_blank" rel="noopener">GitHub</a>
   </nav>
+  <a class="lang-switch" href="/en/" lang="en" data-language="en">EN</a>
   <a class="btn btn-ball btn-nav" href="#download">下载</a>
 </header>
 
@@ -322,11 +333,13 @@
       <a href="https://github.com/fly7632785/basketball-highlight-editor" target="_blank" rel="noopener">GitHub</a>
       <a href="https://github.com/fly7632785/basketball-highlight-editor/tree/main/docs" target="_blank" rel="noopener">文档</a>
       <a href="https://linux.do/" target="_blank" rel="noopener">Linux DO 社区</a>
+      <a href="/en/" lang="en" data-language="en">English</a>
     </nav>
     <p class="footer-fine">开源免费 · 视频只在本地处理 · <span class="mono">MIT License</span></p>
   </div>
 </footer>
 
 <script src="app.js?v=6"></script>
+<script src="language.js?v=1"></script>
 </body>
 </html>
