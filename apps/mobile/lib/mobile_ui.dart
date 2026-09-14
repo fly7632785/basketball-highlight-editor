@@ -571,7 +571,7 @@ class _ProjectSetup extends StatelessWidget {
               child: FilledButton.icon(
                 onPressed: state.analysing
                     ? null
-                    : () => unawaited(state.startAnalysis()),
+                    : () => unawaited(_confirmAndStartAnalysis(context, state)),
                 icon: const Icon(LucideIcons.play, size: 18),
                 label: Text(state.project.candidates.isEmpty ? '开始分析' : '重新分析'),
               ),
@@ -595,6 +595,32 @@ class _ProjectSetup extends StatelessWidget {
         ],
       ],
     );
+  }
+}
+
+Future<void> _confirmAndStartAnalysis(
+  BuildContext context,
+  MobileAppState state,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('开始分析'),
+      content: const Text('分析期间请保持 BHE 在前台并保持屏幕亮起。锁屏或切到后台可能导致分析变慢或暂停。'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('开始'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed == true && context.mounted) {
+    await state.startAnalysis();
   }
 }
 
@@ -1456,6 +1482,57 @@ class _ReviewViewState extends State<_ReviewView> {
     if (next && selected != null) await _replay(selected!);
   }
 
+  Future<void> _openFullscreen(Candidate candidate) async {
+    final player = controller;
+    if (player == null || !player.value.isInitialized || !mounted) return;
+    await SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    if (!mounted) return;
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          fullscreenDialog: true,
+          builder: (pageContext) => _FullscreenReviewPage(
+            controller: player,
+            candidates: candidates,
+            index: selectedIndex + 1,
+            selectedIndex: selectedIndex,
+            total: candidates.length,
+            rim: state.project.rimRoi,
+            annotations: annotations,
+            clipOnly: clipOnly,
+            aspectRatio: videoAspectRatio(state.project.video),
+            autoReplay: autoReplay,
+            speed: speed,
+            onToggle: _togglePlay,
+            onReplay: (candidate) => _replay(candidate),
+            onSeekTo: _seekTo,
+            onSeek: _seek,
+            onSelect: (index) => _select(index),
+            onReview: (index, selection) => _reviewAt(index, selection),
+            onExit: () => Navigator.of(pageContext).pop(),
+            onToggleAnnotations: () =>
+                setState(() => annotations = !annotations),
+            onToggleAutoReplay: () => setState(() => autoReplay = !autoReplay),
+            onSpeed: (value) async {
+              setState(() => speed = value);
+              await _enqueuePlayer((player) => player.setPlaybackSpeed(value));
+            },
+          ),
+        ),
+      );
+    } finally {
+      await SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
+  }
+
   Future<void> _togglePlay() async {
     await _enqueuePlayer((player) async {
       if (player.value.isPlaying) {
@@ -1627,6 +1704,7 @@ class _ReviewViewState extends State<_ReviewView> {
                     onPause: _pausePlayback,
                     onScrubTo: _seekTo,
                     onResume: _resumePlayback,
+                    onFullscreen: () => _openFullscreen(candidate),
                     onSwipeVertical: (velocity) => _select(
                       velocity < 0 ? selectedIndex + 1 : selectedIndex - 1,
                     ),
@@ -1813,16 +1891,26 @@ class _ReviewViewState extends State<_ReviewView> {
   void _review(CandidateSelection selection) {
     final candidate = selected;
     if (candidate == null) return;
+    unawaited(_reviewAt(selectedIndex, selection));
+  }
+
+  Future<int?> _reviewAt(int index, CandidateSelection selection) async {
+    final items = candidates;
+    if (index < 0 || index >= items.length) return null;
+    final candidate = items[index];
     state.toggleCandidate(candidate.id, selection);
     if (selection == CandidateSelection.included ||
         selection == CandidateSelection.excluded) {
-      if (selectedIndex < candidates.length - 1) {
-        unawaited(_select(selectedIndex + 1));
+      if (index < items.length - 1) {
+        final next = index + 1;
+        await _select(next);
+        return next;
       } else if (!_completionPromptShown) {
         _completionPromptShown = true;
         unawaited(_showReviewCompletePrompt(context));
       }
     }
+    return index;
   }
 
   Future<void> _showReviewCompletePrompt(BuildContext context) async {
@@ -1947,6 +2035,7 @@ class _ReviewVideoStage extends StatefulWidget {
     required this.onPause,
     required this.onScrubTo,
     required this.onResume,
+    required this.onFullscreen,
     required this.onSwipeVertical,
   });
   final VideoPlayerController? controller;
@@ -1959,6 +2048,7 @@ class _ReviewVideoStage extends StatefulWidget {
   final Future<void> Function() onPause;
   final Future<void> Function(int) onScrubTo;
   final Future<void> Function() onResume;
+  final VoidCallback onFullscreen;
   final ValueChanged<double> onSwipeVertical;
 
   @override
@@ -2081,7 +2171,9 @@ class _ReviewVideoStageState extends State<_ReviewVideoStage> {
                         children: [
                           VideoPlayer(player!),
                           if (widget.annotations &&
-                              widget.candidate.trajectory.isNotEmpty)
+                              (widget.candidate.trajectory.isNotEmpty ||
+                                  widget.rim != null ||
+                                  widget.candidate.crossingPoint != null))
                             CustomPaint(
                               painter: _CandidateOverlayPainter(
                                 candidate: widget.candidate,
@@ -2099,10 +2191,32 @@ class _ReviewVideoStageState extends State<_ReviewVideoStage> {
                 Positioned(
                   top: 12,
                   right: 12,
-                  child: _PlaybackTimeBadge(
-                    positionMs:
-                        player?.value.position.inMilliseconds ??
-                        widget.candidate.startMs,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _PlaybackTimeBadge(
+                        positionMs:
+                            player?.value.position.inMilliseconds ??
+                            widget.candidate.startMs,
+                      ),
+                      const SizedBox(width: 6),
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: .62),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: IconButton(
+                          onPressed: widget.onFullscreen,
+                          icon: const Icon(
+                            LucideIcons.maximize,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                          tooltip: '横屏全屏',
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 Positioned(
@@ -2181,6 +2295,577 @@ class _ReviewVideoStageState extends State<_ReviewVideoStage> {
   }
 }
 
+double videoAspectRatio(VideoInfo? video) {
+  if (video == null || video.height <= 0) return 16 / 9;
+  return video.width / video.height;
+}
+
+class _FullscreenReviewPage extends StatefulWidget {
+  const _FullscreenReviewPage({
+    required this.controller,
+    required this.candidates,
+    required this.selectedIndex,
+    required this.index,
+    required this.total,
+    required this.rim,
+    required this.annotations,
+    required this.clipOnly,
+    required this.aspectRatio,
+    required this.autoReplay,
+    required this.speed,
+    required this.onToggle,
+    required this.onReplay,
+    required this.onSeek,
+    required this.onSeekTo,
+    required this.onSelect,
+    required this.onReview,
+    required this.onExit,
+    required this.onToggleAnnotations,
+    required this.onToggleAutoReplay,
+    required this.onSpeed,
+  });
+
+  final VideoPlayerController controller;
+  final List<Candidate> candidates;
+  final int selectedIndex;
+  final int index;
+  final int total;
+  final Roi? rim;
+  final bool annotations;
+  final bool clipOnly;
+  final double aspectRatio;
+  final bool autoReplay;
+  final double speed;
+  final VoidCallback onToggle;
+  final ValueChanged<Candidate> onReplay;
+  final ValueChanged<int> onSeek;
+  final ValueChanged<int> onSeekTo;
+  final Future<void> Function(int index) onSelect;
+  final Future<int?> Function(int index, CandidateSelection selection) onReview;
+  final VoidCallback onExit;
+  final VoidCallback onToggleAnnotations;
+  final VoidCallback onToggleAutoReplay;
+  final ValueChanged<double> onSpeed;
+
+  @override
+  State<_FullscreenReviewPage> createState() => _FullscreenReviewPageState();
+}
+
+class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
+  late List<Candidate> _candidates;
+  late int _selectedIndex;
+  late bool _annotations;
+  late bool _autoReplay;
+  late double _speed;
+  bool _railVisible = true;
+
+  Candidate get _candidate =>
+      _candidates[_selectedIndex.clamp(0, math.max(0, _candidates.length - 1))];
+
+  @override
+  void initState() {
+    super.initState();
+    _candidates = [...widget.candidates];
+    _selectedIndex = widget.selectedIndex.clamp(
+      0,
+      math.max(0, _candidates.length - 1),
+    );
+    _annotations = widget.annotations;
+    _autoReplay = widget.autoReplay;
+    _speed = widget.speed;
+    widget.controller.addListener(_refresh);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_refresh);
+    super.dispose();
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _selectCandidate(int index) async {
+    if (index < 0 || index >= _candidates.length) return;
+    setState(() => _selectedIndex = index);
+    await widget.onSelect(index);
+  }
+
+  Future<void> _reviewCandidate(CandidateSelection selection) async {
+    final reviewedId = _candidate.id;
+    final next = await widget.onReview(_selectedIndex, selection);
+    if (!mounted) return;
+    setState(() {
+      _candidates = [
+        for (final candidate in _candidates)
+          candidate.id == reviewedId
+              ? candidate.copyWith(selection: selection)
+              : candidate,
+      ];
+      if (next != null) {
+        _selectedIndex = next.clamp(0, math.max(0, _candidates.length - 1));
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final railWidth = math.min(236.0, math.max(184.0, size.width * .22));
+    final value = widget.controller.value;
+    final lower = widget.clipOnly ? _candidate.startMs : 0;
+    final upper = widget.clipOnly
+        ? _candidate.endMs
+        : value.duration.inMilliseconds;
+    final maxValue = math.max(lower + 1, upper);
+    final position = value.position.inMilliseconds
+        .clamp(lower, maxValue)
+        .toDouble();
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF090A0C),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: _buildVideoPanel(
+                      context,
+                      position: position.round(),
+                      lower: lower,
+                      upper: upper,
+                      maxValue: maxValue,
+                    ),
+                  ),
+                  if (_railVisible) ...[
+                    const SizedBox(width: 1),
+                    SizedBox(width: railWidth, child: _buildCandidateRail()),
+                  ],
+                ],
+              ),
+            ),
+            _buildBottomBar(
+              context,
+              position: position.round(),
+              lower: lower,
+              upper: upper,
+              maxValue: maxValue,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVideoPanel(
+    BuildContext context, {
+    required int position,
+    required int lower,
+    required int upper,
+    required int maxValue,
+  }) {
+    final playerReady = widget.controller.value.isInitialized;
+    final playing = widget.controller.value.isPlaying;
+    return ColoredBox(
+      color: Colors.black,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onToggle,
+            child: Center(
+              child: playerReady
+                  ? AspectRatio(
+                      aspectRatio: widget.aspectRatio > 0
+                          ? widget.aspectRatio
+                          : 16 / 9,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          VideoPlayer(widget.controller),
+                          if (_annotations &&
+                              (_candidate.trajectory.isNotEmpty ||
+                                  widget.rim != null ||
+                                  _candidate.crossingPoint != null))
+                            CustomPaint(
+                              painter: _CandidateOverlayPainter(
+                                candidate: _candidate,
+                                rim: widget.rim,
+                                positionMs: position,
+                              ),
+                            ),
+                        ],
+                      ),
+                    )
+                  : const Center(child: CircularProgressIndicator()),
+            ),
+          ),
+          Positioned(
+            top: 10,
+            left: 12,
+            child: _LandscapeChip(
+              icon: LucideIcons.listVideo,
+              label: '审核 ${_selectedIndex + 1}/${_candidates.length}',
+            ),
+          ),
+          Positioned(
+            top: 10,
+            right: 12,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _LandscapeIconButton(
+                  icon: _railVisible
+                      ? LucideIcons.panelRightClose
+                      : LucideIcons.panelRightOpen,
+                  tooltip: _railVisible ? '收起候选列表' : '打开候选列表',
+                  onPressed: () => setState(() => _railVisible = !_railVisible),
+                ),
+                const SizedBox(width: 6),
+                _LandscapeIconButton(
+                  icon: _annotations ? LucideIcons.scanLine : LucideIcons.scan,
+                  tooltip: _annotations ? '关闭标注' : '打开标注',
+                  selected: _annotations,
+                  onPressed: () {
+                    setState(() => _annotations = !_annotations);
+                    widget.onToggleAnnotations();
+                  },
+                ),
+                const SizedBox(width: 6),
+                _LandscapeIconButton(
+                  icon: LucideIcons.minimize,
+                  tooltip: '退出横屏审核',
+                  onPressed: widget.onExit,
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            left: 12,
+            bottom: 12,
+            child: _CompactEvidence(candidate: _candidate),
+          ),
+          if (!playing)
+            Center(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: .42),
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                  onPressed: widget.onToggle,
+                  icon: const Icon(
+                    LucideIcons.play,
+                    color: Colors.white,
+                    size: 34,
+                  ),
+                  tooltip: '播放',
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCandidateRail() {
+    final included = _candidates
+        .where(
+          (candidate) => candidate.selection == CandidateSelection.included,
+        )
+        .length;
+    return ColoredBox(
+      color: const Color(0xFF111318),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            child: Row(
+              children: [
+                const Text(
+                  '候选片段',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '$included/${_candidates.length}',
+                  style: TextStyle(
+                    color: BhePalette.orange.withValues(alpha: .9),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.separated(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+              itemCount: _candidates.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 5),
+              itemBuilder: (context, index) {
+                final candidate = _candidates[index];
+                final selected = index == _selectedIndex;
+                final included =
+                    candidate.selection == CandidateSelection.included;
+                return Material(
+                  color: selected
+                      ? BhePalette.orange.withValues(alpha: .16)
+                      : const Color(0xFF1A1D23),
+                  borderRadius: BorderRadius.circular(7),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(7),
+                    onTap: () => _selectCandidate(index),
+                    child: Container(
+                      constraints: const BoxConstraints(minHeight: 52),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: selected
+                              ? BhePalette.orange
+                              : Colors.white.withValues(alpha: .06),
+                          width: selected ? 1.2 : 1,
+                        ),
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(
+                            '#${index + 1}',
+                            style: TextStyle(
+                              color: selected ? Colors.white : Colors.white70,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _formatMs(candidate.eventMs),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${_formatMs(candidate.startMs)} — ${_formatMs(candidate.endMs)}  ·  ${_formatMs(candidate.duration.inMilliseconds)}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white54,
+                                    fontSize: 10,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            included ? LucideIcons.check : LucideIcons.x,
+                            color: included
+                                ? const Color(0xFF45D483)
+                                : Colors.white38,
+                            size: 16,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomBar(
+    BuildContext context, {
+    required int position,
+    required int lower,
+    required int upper,
+    required int maxValue,
+  }) {
+    final value = widget.controller.value;
+    return ColoredBox(
+      color: const Color(0xFF111318),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 7, 10, 8),
+        child: Row(
+          children: [
+            _LandscapeIconButton(
+              icon: LucideIcons.rotateCcw,
+              tooltip: '重播当前片段',
+              onPressed: () => widget.onReplay(_candidate),
+            ),
+            _LandscapeIconButton(
+              icon: LucideIcons.chevronLeft,
+              tooltip: '后退 1.5 秒',
+              onPressed: () => widget.onSeek(-1500),
+            ),
+            _LandscapeIconButton(
+              icon: value.isPlaying ? LucideIcons.pause : LucideIcons.play,
+              tooltip: value.isPlaying ? '暂停' : '播放',
+              selected: value.isPlaying,
+              onPressed: widget.onToggle,
+            ),
+            _LandscapeIconButton(
+              icon: LucideIcons.chevronRight,
+              tooltip: '前进 1.5 秒',
+              onPressed: () => widget.onSeek(1500),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              _formatMs(position),
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
+            ),
+            Expanded(
+              child: Slider(
+                min: lower.toDouble(),
+                max: maxValue.toDouble(),
+                value: position
+                    .clamp(lower.toDouble(), maxValue.toDouble())
+                    .toDouble(),
+                onChanged: (next) => widget.onSeekTo(next.round()),
+              ),
+            ),
+            Text(
+              _formatMs(upper - lower),
+              style: const TextStyle(color: Colors.white54, fontSize: 11),
+            ),
+            const SizedBox(width: 5),
+            _LandscapeIconButton(
+              icon: _autoReplay ? LucideIcons.repeat1 : LucideIcons.repeat,
+              tooltip: _autoReplay ? '关闭循环播放' : '开启循环播放',
+              selected: _autoReplay,
+              onPressed: () {
+                setState(() => _autoReplay = !_autoReplay);
+                widget.onToggleAutoReplay();
+              },
+            ),
+            PopupMenuButton<double>(
+              tooltip: '播放速度',
+              initialValue: _speed,
+              onSelected: (value) {
+                setState(() => _speed = value);
+                widget.onSpeed(value);
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: .75, child: Text('0.75×')),
+                PopupMenuItem(value: 1, child: Text('1.0×')),
+                PopupMenuItem(value: 1.25, child: Text('1.25×')),
+                PopupMenuItem(value: 1.5, child: Text('1.5×')),
+                PopupMenuItem(value: 2, child: Text('2.0×')),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  '${_speed.toStringAsFixed(_speed == _speed.roundToDouble() ? 1 : 2)}×',
+                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                ),
+              ),
+            ),
+            const SizedBox(width: 7),
+            OutlinedButton.icon(
+              onPressed: () => _reviewCandidate(CandidateSelection.excluded),
+              icon: const Icon(LucideIcons.x, size: 17),
+              label: const Text('不选'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                minimumSize: const Size(78, 38),
+                side: BorderSide(color: Colors.white.withValues(alpha: .28)),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+              ),
+            ),
+            const SizedBox(width: 6),
+            FilledButton.icon(
+              onPressed: () => _reviewCandidate(CandidateSelection.included),
+              icon: const Icon(LucideIcons.check, size: 17),
+              label: const Text('选中'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(82, 38),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LandscapeIconButton extends StatelessWidget {
+  const _LandscapeIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+    this.selected = false,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    onPressed: onPressed,
+    tooltip: tooltip,
+    isSelected: selected,
+    visualDensity: VisualDensity.compact,
+    icon: Icon(icon, size: 18),
+    style: IconButton.styleFrom(
+      foregroundColor: selected ? BhePalette.orange : Colors.white70,
+      backgroundColor: Colors.white.withValues(alpha: .08),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+    ),
+  );
+}
+
+class _LandscapeChip extends StatelessWidget {
+  const _LandscapeChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Colors.black.withValues(alpha: .6),
+      borderRadius: BorderRadius.circular(5),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: Colors.white70, size: 14),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white, fontSize: 11),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _PlaybackTimeBadge extends StatelessWidget {
   const _PlaybackTimeBadge({required this.positionMs});
   final int positionMs;
@@ -2247,14 +2932,21 @@ class _CandidateOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final points = candidate.trajectory
-        .where(
-          (point) =>
-              point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1,
-        )
-        .where((point) => point.timeMs <= positionMs + 20)
-        .toList()
-      ..sort((a, b) => a.timeMs.compareTo(b.timeMs));
+    final sourcePoints = candidate.trajectory.isNotEmpty
+        ? candidate.trajectory
+        : [
+            if (candidate.abovePoint != null) candidate.abovePoint!,
+            if (candidate.belowPoint != null) candidate.belowPoint!,
+          ];
+    final points =
+        sourcePoints
+            .where(
+              (point) =>
+                  point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1,
+            )
+            .where((point) => point.timeMs <= positionMs + 20)
+            .toList()
+          ..sort((a, b) => a.timeMs.compareTo(b.timeMs));
 
     final trajectoryPaint = Paint()
       ..color = BhePalette.orange.withValues(alpha: .8)
@@ -2304,13 +2996,11 @@ class _CandidateOverlayPainter extends CustomPainter {
 
     if (points.isNotEmpty) {
       final current = points.last;
-      final currentOffset =
-          Offset(current.x * size.width, current.y * size.height);
-      canvas.drawCircle(
-        currentOffset,
-        3,
-        Paint()..color = BhePalette.orange,
+      final currentOffset = Offset(
+        current.x * size.width,
+        current.y * size.height,
       );
+      canvas.drawCircle(currentOffset, 3, Paint()..color = BhePalette.orange);
       canvas.drawCircle(
         currentOffset,
         5,
@@ -2329,8 +3019,10 @@ class _CandidateOverlayPainter extends CustomPainter {
         crossing.x <= 1 &&
         crossing.y >= 0 &&
         crossing.y <= 1) {
-      final crossingOffset =
-          Offset(crossing.x * size.width, crossing.y * size.height);
+      final crossingOffset = Offset(
+        crossing.x * size.width,
+        crossing.y * size.height,
+      );
       final crossingColor = candidate.verdict == 'made'
           ? BhePalette.green
           : BhePalette.orange;
@@ -2342,13 +3034,8 @@ class _CandidateOverlayPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1,
       );
-      canvas.drawCircle(
-        crossingOffset,
-        3,
-        Paint()..color = crossingColor,
-      );
+      canvas.drawCircle(crossingOffset, 3, Paint()..color = crossingColor);
     }
-
   }
 
   @override

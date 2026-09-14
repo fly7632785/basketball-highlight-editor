@@ -895,8 +895,10 @@ import ImageIO
     guard let context else {
       throw NSError(domain: "BHERuntime", code: 4, userInfo: [NSLocalizedDescriptionKey: "无法创建图像上下文"])
     }
-    context.translateBy(x: 0, y: CGFloat(height))
-    context.scaleBy(x: 1, y: -1)
+    // AVAssetImageGenerator already returns a display-oriented CGImage. Keep
+    // the bitmap rows in that same top-to-bottom order as Android's Bitmap
+    // path; flipping the CGContext here mirrors the detector input vertically
+    // while the Flutter preview remains upright.
     context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
     guard let pixelBuffer = context.data else {
       throw NSError(domain: "BHERuntime", code: 5, userInfo: [NSLocalizedDescriptionKey: "无法读取像素数据"])
