@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 
 import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
@@ -27,6 +28,7 @@ class CsSidebarShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     return Container(
       width: extended ? 224 : 76,
       decoration: BoxDecoration(
@@ -41,40 +43,40 @@ class CsSidebarShell extends StatelessWidget {
           _NavItem(
             shell: shell,
             index: 0,
-            label: '项目',
+            label: l10n?.navProject ?? '项目',
             icon: LucideIcons.home,
             extended: extended,
           ),
           _NavItem(
             shell: shell,
             index: 1,
-            label: '导入',
+            label: l10n?.navImport ?? '导入',
             icon: LucideIcons.upload,
             extended: extended,
           ),
           _NavItem(
             shell: shell,
             index: 2,
-            label: '审核',
+            label: l10n?.navReview ?? '审核',
             icon: LucideIcons.folderCheck,
             extended: extended,
           ),
           _NavItem(
             shell: shell,
             index: 3,
-            label: '导出',
+            label: l10n?.navExport ?? '导出',
             icon: LucideIcons.download,
             extended: extended,
           ),
           const Spacer(),
           _UtilityItem(
-            label: '反馈',
+            label: l10n?.feedback ?? '反馈',
             icon: LucideIcons.messageCircle,
             extended: extended,
             onTap: () => _openFeedback(context),
           ),
           _UtilityItem(
-            label: '关于',
+            label: l10n?.about ?? '关于',
             icon: LucideIcons.info,
             extended: extended,
             onTap: () => showCourtsideAboutDialog(context),
@@ -92,7 +94,7 @@ class CsSidebarShell extends StatelessWidget {
                   Icon(LucideIcons.shield, size: 12, color: c.textTertiary),
                   const SizedBox(width: Spacing.xs),
                   Text(
-                    '本地处理',
+                    l10n?.localProcessing ?? '本地处理',
                     style: Theme.of(
                       context,
                     ).textTheme.labelSmall?.copyWith(color: c.textTertiary),
@@ -117,11 +119,18 @@ class CsSidebarShell extends StatelessWidget {
   }
 
   Future<void> _openFeedback(BuildContext context) async {
-    final opened = await openExternalUri(feedbackMailto());
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+    final opened = await openExternalUri(
+      feedbackMailto(english: l10n?.localeName.startsWith('en') == true),
+    );
     if (!opened && context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('未找到可用的邮件客户端，请手动联系反馈邮箱。')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            l10n?.feedbackMailClientMissing ?? '未找到可用的邮件客户端，请手动联系反馈邮箱。',
+          ),
+        ),
+      );
     }
   }
 }
@@ -221,6 +230,7 @@ class _SidebarBrand extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final theme = Theme.of(context);
     final brand = Container(
       height: 46,
@@ -266,7 +276,7 @@ class _SidebarBrand extends StatelessWidget {
               width: 26,
               height: 30,
               child: IconButton(
-                tooltip: '收缩侧栏',
+                tooltip: l10n?.collapseSidebar ?? '收缩侧栏',
                 padding: EdgeInsets.zero,
                 visualDensity: VisualDensity.compact,
                 onPressed: onToggle,
@@ -281,7 +291,7 @@ class _SidebarBrand extends StatelessWidget {
             const SizedBox(width: 2),
             Expanded(
               child: Tooltip(
-                message: '展开侧栏',
+                message: l10n?.expandSidebar ?? '展开侧栏',
                 child: InkWell(
                   hoverColor: Colors.transparent,
                   splashColor: Colors.transparent,
@@ -371,7 +381,9 @@ class CsSidebarItem extends StatelessWidget {
                       label,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: selected ? c.textPrimary : c.textSecondary,
-                        fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.w400,
                       ),
                     ),
                   ],

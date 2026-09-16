@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
@@ -85,7 +86,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                 id: 'import-draft-${DateTime.now().microsecondsSinceEpoch}',
                 severity: NoticeSeverity.error,
                 title: '配置草稿加载失败',
-                description: error.toString(),
+                description: context.bheText(error.toString()),
               ),
             );
       }
@@ -222,7 +223,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
               id: 'import-draft-save-${DateTime.now().microsecondsSinceEpoch}',
               severity: NoticeSeverity.error,
               title: '配置草稿保存失败',
-              description: error.toString(),
+                description: context.bheText(error.toString()),
             ),
           );
     }
@@ -235,24 +236,24 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('更换当前视频？'),
-          content: const Text('更换视频会创建一个新的分析项目，当前项目和审核记录会保留。'),
+          title: Text(context.bheText('更换当前视频？')),
+          content: Text(context.bheText('更换视频会创建一个新的分析项目，当前项目和审核记录会保留。')),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('取消'),
+              child: Text(context.bheText('取消')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('继续选择'),
+              child: Text(context.bheText('继续选择')),
             ),
           ],
         ),
       );
       if (confirmed != true || !mounted) return;
     }
-    const group = XTypeGroup(
-      label: '视频',
+    final group = XTypeGroup(
+      label: context.bheText('视频'),
       extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
       mimeTypes: [
         'video/*',
@@ -268,7 +269,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
         'com.apple.quicktime-movie',
       ],
     );
-    final file = await openFile(acceptedTypeGroups: const [group]);
+    final file = await openFile(acceptedTypeGroups: [group]);
     if (file == null || !mounted) return;
     setState(() {
       _step = 1;
@@ -286,18 +287,18 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
         final proceed = await showDialog<bool>(
           context: context,
           builder: (dialogContext) => AlertDialog(
-            title: const Text('这个视频可能需要较长时间'),
+            title: Text(context.bheText('这个视频可能需要较长时间')),
             content: Text(
-              '${advice.importDetail}\n\n如果方便，建议先用剪辑工具压缩后再导入。也可以继续，原视频不会被修改。',
+              '${context.bheText(advice.importDetail)}\n\n${context.bheText('如果方便，建议先用剪辑工具压缩后再导入。也可以继续，原视频不会被修改。')}',
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('先取消'),
+                child: Text(context.bheText('先取消')),
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('继续导入'),
+                child: Text(context.bheText('继续导入')),
               ),
             ],
           ),
@@ -337,13 +338,13 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   }
 
   Future<void> _relinkMissingVideo() async {
-    const group = XTypeGroup(
-      label: '视频',
+    final group = XTypeGroup(
+      label: context.bheText('视频'),
       extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
       mimeTypes: ['video/*'],
       uniformTypeIdentifiers: ['public.movie'],
     );
-    final file = await openFile(acceptedTypeGroups: const [group]);
+    final file = await openFile(acceptedTypeGroups: [group]);
     if (file == null || !mounted) return;
     final relinked = await ref
         .read(projectProvider.notifier)
@@ -442,18 +443,20 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('应用新配置？'),
+          title: Text(context.bheText('应用新配置？')),
           content: Text(
-            '当前已有 ${state.candidates.length} 个候选片段。应用后会按新配置重新生成候选，原始视频不会被删除。',
+            context.bheText(
+              '当前已有 ${state.candidates.length} 个候选片段。应用后会按新配置重新生成候选，原始视频不会被删除。',
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('取消'),
+              child: Text(context.bheText('取消')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('应用并重新分析'),
+              child: Text(context.bheText('应用并重新分析')),
             ),
           ],
         ),
@@ -520,31 +523,32 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     });
     final c = AppColors.of(context);
     final theme = Theme.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final hasVideo = state.video != null;
     final busy =
         state.busy || state.analysisRunning || state.exportRunning || _applying;
     final steps = <CsStep>[
       (
         index: '01',
-        title: '选择视频',
+        title: l10n?.selectVideo ?? '选择视频',
         icon: LucideIcons.upload,
         completed: hasVideo,
       ),
       (
         index: '02',
-        title: '分析范围',
+        title: l10n?.analysisRange ?? '分析范围',
         icon: LucideIcons.scanLine,
         completed: hasVideo,
       ),
       (
         index: '03',
-        title: '检测区域',
+        title: l10n?.detectRegionStep ?? '检测区域',
         icon: LucideIcons.target,
         completed: _roi != null,
       ),
       (
         index: '04',
-        title: '确认并分析',
+        title: l10n?.confirmAndStartAnalysis ?? '确认并分析',
         icon: LucideIcons.listChecks,
         completed: false,
       ),
@@ -570,12 +574,17 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('配置分析项目', style: theme.textTheme.displayMedium),
+                        Text(
+                          l10n?.configureProject ?? '配置分析项目',
+                          style: theme.textTheme.displayMedium,
+                        ),
                         const SizedBox(height: Spacing.xs),
                         Text(
                           hasVideo
-                              ? '按步骤确认视频、分析范围和篮筐检测区域，最后再开始分析。'
-                              : '先选择一段固定机位视频，系统会在最后一步统一应用配置。',
+                              ? (l10n?.confirmProjectSteps ??
+                                    '按步骤确认视频、分析范围和篮筐检测区域，最后再开始分析。')
+                              : (l10n?.chooseVideoLastStep ??
+                                    '先选择一段固定机位视频，系统会在最后一步统一应用配置。'),
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: c.textSecondary,
                           ),
@@ -598,8 +607,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                       ),
                       label: Text(
                         state.videoPath == null || state.videoPath!.isEmpty
-                            ? '重新定位视频'
-                            : '更换视频',
+                            ? (l10n?.relinkVideo ?? '重新定位视频')
+                            : (l10n?.replaceVideo ?? '更换视频'),
                       ),
                     ),
                 ],
@@ -657,7 +666,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                     ),
                     const SizedBox(width: Spacing.sm),
                     Text(
-                      state.busyMessage!,
+                      context.bheText(state.busyMessage!),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: c.textSecondary,
                       ),
@@ -672,18 +681,18 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                     TextButton.icon(
                       onPressed: busy ? null : _back,
                       icon: const Icon(Icons.arrow_back_rounded, size: 17),
-                      label: const Text('上一步'),
+                      label: Text(l10n?.returnAction ?? '上一步'),
                     ),
                   const Spacer(),
                   if (_step < _stepCount - 1)
                     CsButton(
-                      label: const Text('下一步'),
+                      label: Text(l10n?.nextStep ?? '下一步'),
                       icon: LucideIcons.arrowRight,
                       onPressed: busy || !_canLeaveStep(_step) ? null : _next,
                     )
                   else
                     CsButton(
-                      label: const Text('确认配置并开始分析'),
+                      label: Text(l10n?.confirmAndStartAnalysis ?? '确认配置并开始分析'),
                       icon: LucideIcons.play,
                       isLoading: _applying,
                       onPressed: busy || _roi == null ? null : _applyAndAnalyze,
@@ -840,9 +849,15 @@ class _DraftBanner extends StatelessWidget {
         children: [
           Icon(Icons.restore_rounded, size: 17, color: c.orange),
           const SizedBox(width: Spacing.sm),
-          const Expanded(child: Text('检测到上次未完成的配置。')),
-          TextButton(onPressed: onDiscard, child: const Text('放弃草稿')),
-          FilledButton(onPressed: onContinue, child: const Text('继续配置')),
+          Expanded(child: Text(context.bheText('检测到上次未完成的配置。'))),
+          TextButton(
+            onPressed: onDiscard,
+            child: Text(context.bheText('放弃草稿')),
+          ),
+          FilledButton(
+            onPressed: onContinue,
+            child: Text(context.bheText('继续配置')),
+          ),
         ],
       ),
     );
@@ -865,17 +880,17 @@ class _VideoStep extends StatelessWidget {
             const SizedBox(height: Spacing.lg),
             Icon(LucideIcons.fileVideo, size: 42, color: c.orange),
             const SizedBox(height: Spacing.md),
-            Text('选择原始视频', style: theme.textTheme.titleLarge),
+            Text(context.bheText('选择原始视频'), style: theme.textTheme.titleLarge),
             const SizedBox(height: Spacing.xs),
             Text(
-              '支持 MP4、MOV、M4V、AVI、MKV。原始视频不会被修改或上传。',
+              context.bheText('支持 MP4、MOV、M4V、AVI、MKV。原始视频不会被修改或上传。'),
               style: theme.textTheme.bodySmall?.copyWith(
                 color: c.textSecondary,
               ),
             ),
             const SizedBox(height: Spacing.lg),
             CsButton(
-              label: const Text('选择视频'),
+              label: Text(context.bheText('选择视频')),
               icon: LucideIcons.folderOpen,
               onPressed: onSelect,
             ),
@@ -885,13 +900,13 @@ class _VideoStep extends StatelessWidget {
       );
     }
     return _InfoPanel(
-      title: '视频已准备好',
+      title: context.bheText('视频已准备好'),
       icon: LucideIcons.checkCircle2,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            _videoSummary(video!),
+            context.bheText(_videoSummary(video!)),
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: Spacing.md),
@@ -941,14 +956,14 @@ class _VideoProcessingHint extends StatelessWidget {
               TextSpan(
                 children: [
                   TextSpan(
-                    text: advice.title,
+                    text: context.bheText(advice.title),
                     style: TextStyle(
                       color: advice.heavy ? c.textPrimary : color,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                   TextSpan(
-                    text: '\n${advice.importDetail}',
+                    text: '\n${context.bheText(advice.importDetail)}',
                     style: TextStyle(color: color, height: 1.4),
                   ),
                 ],
@@ -1064,9 +1079,9 @@ class _AnalysisStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _InfoPanel(
-      title: '分析范围',
+      title: context.bheText('分析范围'),
       icon: LucideIcons.scanLine,
-      subtitle: '默认分析全片。拖动范围手柄排除热身、暂停或比赛结束部分，修改会自动保存在当前草稿。',
+      subtitle: context.bheText('默认分析全片。拖动范围手柄排除热身、暂停或比赛结束部分，修改会自动保存在当前草稿。'),
       child: _AnalysisRangeEditor(
         videoPath: videoPath,
         durationMs: durationMs,
@@ -1259,22 +1274,26 @@ class _DetectionStepState extends State<_DetectionStep> {
     final c = AppColors.of(context);
     final state = widget.state;
     return _InfoPanel(
-      title: '检测区域',
+      title: context.bheText('检测区域'),
       icon: LucideIcons.target,
-      subtitle: '系统会先自动识别篮筐。橙色区域用于球轨迹，白色区域只覆盖篮网摆动范围；拖动或缩放后会自动保存到草稿。',
+      subtitle: context.bheText(
+        '系统会先自动识别篮筐。橙色区域用于球轨迹，白色区域只覆盖篮网摆动范围；拖动或缩放后会自动保存到草稿。',
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (state.roiSource == 'auto') ...[
             Text(
-              '系统已自动选择 ${_formatPreviewTime(state.previewTimeMs)} 作为标记画面',
+              context.bheText(
+                '系统已自动选择 ${_formatPreviewTime(state.previewTimeMs)} 作为标记画面',
+              ),
               style: Theme.of(
                 context,
               ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: Spacing.xs),
             Text(
-              '篮筐可见度较高，如被遮挡可调整画面时间。',
+              context.bheText('篮筐可见度较高，如被遮挡可调整画面时间。'),
               style: Theme.of(
                 context,
               ).textTheme.bodySmall?.copyWith(color: c.textSecondary),
@@ -1290,8 +1309,10 @@ class _DetectionStepState extends State<_DetectionStep> {
             secondaryRoi: widget.editingNet ? widget.roi : widget.netRoi,
             activeColor: widget.editingNet ? Colors.white : c.orange,
             secondaryColor: widget.editingNet ? c.orange : Colors.white,
-            activeLabel: widget.editingNet ? '篮网检测区' : '投篮分析区',
-            secondaryLabel: widget.editingNet ? '投篮分析区' : '篮网检测区',
+            activeLabel: context.bheText(widget.editingNet ? '篮网检测区' : '投篮分析区'),
+            secondaryLabel: context.bheText(
+              widget.editingNet ? '投篮分析区' : '篮网检测区',
+            ),
             onRefreshPreview: widget.onRefreshPreview,
             onChanged: widget.onChanged,
             onEditComplete: () {},
@@ -1326,7 +1347,7 @@ class _DetectionStepState extends State<_DetectionStep> {
                 ),
                 const SizedBox(width: Spacing.xs),
                 Text(
-                  '正在切换标记画面…',
+                  context.bheText('正在切换标记画面…'),
                   style: Theme.of(
                     context,
                   ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
@@ -1339,7 +1360,7 @@ class _DetectionStepState extends State<_DetectionStep> {
             children: [
               _CalibrationTargetButton(
                 index: '1',
-                label: '投篮分析区',
+                label: context.bheText('投篮分析区'),
                 color: c.orange,
                 selected: !widget.editingNet,
                 onPressed: widget.enabled
@@ -1349,7 +1370,7 @@ class _DetectionStepState extends State<_DetectionStep> {
               const SizedBox(width: Spacing.sm),
               _CalibrationTargetButton(
                 index: '2',
-                label: '篮网检测区',
+                label: context.bheText('篮网检测区'),
                 color: Colors.white,
                 selected: widget.editingNet,
                 onPressed: widget.enabled
@@ -1360,15 +1381,21 @@ class _DetectionStepState extends State<_DetectionStep> {
               TextButton.icon(
                 onPressed: widget.enabled ? widget.onResetCurrent : null,
                 icon: const Icon(Icons.restart_alt_rounded, size: 16),
-                label: Text(widget.editingNet ? '恢复篮网区' : '恢复投篮区'),
+                label: Text(
+                  context.bheText(widget.editingNet ? '恢复篮网区' : '恢复投篮区'),
+                ),
               ),
             ],
           ),
           const SizedBox(height: Spacing.xs),
           Text(
             widget.editingNet
-                ? '当前编辑白色篮网区域：覆盖篮圈下方到网底，尽量不要包含篮板、球员或地面。'
-                : '当前编辑橙色投篮分析区域：覆盖来球轨迹、篮圈和篮网下方的落球范围。',
+                ? context.bheText(
+                    '当前编辑白色篮网区域：覆盖篮圈下方到网底，尽量不要包含篮板、球员或地面。',
+                  )
+                : context.bheText(
+                    '当前编辑橙色投篮分析区域：覆盖来球轨迹、篮圈和篮网下方的落球范围。',
+                  ),
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: c.textSecondary,
               height: 1.4,
@@ -1379,7 +1406,7 @@ class _DetectionStepState extends State<_DetectionStep> {
             const LinearProgressIndicator(minHeight: 2),
             const SizedBox(height: Spacing.xs),
             Text(
-              '正在自动识别篮筐区域…',
+              context.bheText('正在自动识别篮筐区域…'),
               style: Theme.of(
                 context,
               ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
@@ -1418,10 +1445,13 @@ class _ClipWindowSelector extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('候选片段长度', style: Theme.of(context).textTheme.titleSmall),
+          Text(
+            context.bheText('候选片段长度'),
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
           const SizedBox(height: Spacing.xs),
           Text(
-            '以下是自动生成候选的默认范围，审核时仍可单独调整片段。',
+            context.bheText('以下是自动生成候选的默认范围，审核时仍可单独调整片段。'),
             style: Theme.of(
               context,
             ).textTheme.bodySmall?.copyWith(color: c.textSecondary),
@@ -1431,7 +1461,7 @@ class _ClipWindowSelector extends StatelessWidget {
             children: [
               Expanded(
                 child: _SecondSelector(
-                  label: '进球前',
+                  label: context.bheText('进球前'),
                   value: beforeSeconds,
                   options: _beforeSecondOptions,
                   onChanged: onBeforeChanged,
@@ -1440,7 +1470,7 @@ class _ClipWindowSelector extends StatelessWidget {
               const SizedBox(width: Spacing.sm),
               Expanded(
                 child: _SecondSelector(
-                  label: '进球后',
+                  label: context.bheText('进球后'),
                   value: afterSeconds,
                   options: _afterSecondOptions,
                   onChanged: onAfterChanged,
@@ -1450,7 +1480,7 @@ class _ClipWindowSelector extends StatelessWidget {
           ),
           const SizedBox(height: Spacing.sm),
           Text(
-            '默认片段总长：$totalSeconds 秒',
+            '${context.bheText('默认片段总长')}：$totalSeconds ${context.bheText('秒')}',
             style: Theme.of(
               context,
             ).textTheme.labelLarge?.copyWith(color: c.orange),
@@ -1484,7 +1514,10 @@ class _SecondSelector extends StatelessWidget {
           isExpanded: true,
           items: [
             for (final seconds in options)
-              DropdownMenuItem<int>(value: seconds, child: Text('$seconds 秒')),
+              DropdownMenuItem<int>(
+                value: seconds,
+                child: Text('$seconds ${context.bheText('秒')}'),
+              ),
           ],
           onChanged: (next) {
             if (next != null) onChanged(next);
@@ -1536,10 +1569,22 @@ class _SummaryStep extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final rows = <(String, String)>[
-      ('视频', state.video?['source_path']?.toString().split('/').last ?? '-'),
-      ('分析范围', '${_formatDuration(startMs)} - ${_formatDuration(endMs)}'),
-      ('投篮分析区', roi == null ? '未设置' : '已设置'),
-      ('篮网检测区', netRoi == null ? '自动推荐' : '已设置'),
+      (
+        context.bheText('视频'),
+        state.video?['source_path']?.toString().split('/').last ?? '-',
+      ),
+      (
+        context.bheText('分析范围'),
+        '${_formatDuration(startMs)} - ${_formatDuration(endMs)}',
+      ),
+      (
+        context.bheText('投篮分析区'),
+        roi == null ? context.bheText('未设置') : context.bheText('已设置'),
+      ),
+      (
+        context.bheText('篮网检测区'),
+        netRoi == null ? context.bheText('自动推荐') : context.bheText('已设置'),
+      ),
     ];
     final estimate = estimateAnalysisDuration(
       startMs: startMs,
@@ -1549,9 +1594,9 @@ class _SummaryStep extends StatelessWidget {
       mode: analysisMode,
     );
     return _InfoPanel(
-      title: '确认配置',
+      title: context.bheText('确认配置'),
       icon: LucideIcons.listChecks,
-      subtitle: '确认后保存检测区域并开始分析；已有候选将被当前配置替换。',
+      subtitle: context.bheText('确认后保存检测区域并开始分析；已有候选将被当前配置替换。'),
       child: Column(
         children: [
           for (final row in rows)
@@ -1569,9 +1614,15 @@ class _SummaryStep extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
               child: SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment<String>(value: 'standard', label: Text('标准分析')),
-                  ButtonSegment<String>(value: 'fast', label: Text('快速分析')),
+                segments: [
+                  ButtonSegment<String>(
+                    value: 'standard',
+                    label: Text(context.bheText('标准分析')),
+                  ),
+                  ButtonSegment<String>(
+                    value: 'fast',
+                    label: Text(context.bheText('快速分析')),
+                  ),
                 ],
                 selected: {analysisMode},
                 onSelectionChanged: (selection) {
@@ -1582,9 +1633,11 @@ class _SummaryStep extends StatelessWidget {
               ),
             ),
           if (fastModeEnabled && analysisMode == 'fast')
-            const Align(
+            Align(
               alignment: Alignment.centerLeft,
-              child: Text('快速分析使用低规格代理，可能漏检少量片段。'),
+              child: Text(
+                context.bheText('快速分析使用低规格代理，可能漏检少量片段。'),
+              ),
             ),
           const SizedBox(height: Spacing.sm),
           _ClipWindowSelector(
@@ -1613,12 +1666,16 @@ class _SummaryStep extends StatelessWidget {
                   child: Text.rich(
                     TextSpan(
                       children: [
-                        const TextSpan(text: '开始前预计耗时：'),
+                        TextSpan(text: context.bheText('开始前预计耗时：')),
                         TextSpan(
-                          text: estimate.label,
+                          text: context.bheText(estimate.label),
                           style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
-                        const TextSpan(text: '\n实际耗时会受视频编码、磁盘和设备负载影响。'),
+                        TextSpan(
+                          text: context.bheText(
+                            '\n实际耗时会受视频编码、磁盘和设备负载影响。',
+                          ),
+                        ),
                       ],
                     ),
                     style: TextStyle(color: c.textSecondary, height: 1.4),
@@ -2021,11 +2078,18 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('分析范围', style: Theme.of(context).textTheme.labelLarge),
+          Text(
+            context.bheText('分析范围'),
+            style: Theme.of(context).textTheme.labelLarge,
+          ),
           Text(
             fullRange
-                ? '默认扫描完整视频。播放视频后设定起点和终点，可排除热身或结束部分。'
-                : '仅扫描 ${_formatDuration(start)} - ${_formatDuration(end)}。',
+                ? context.bheText(
+                    '默认扫描完整视频。播放视频后设定起点和终点，可排除热身或结束部分。',
+                  )
+                : context.bheText(
+                    '仅扫描 ${_formatDuration(start)} - ${_formatDuration(end)}。',
+                  ),
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: c.textSecondary,
               height: 1.4,
@@ -2039,7 +2103,7 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
               child: _error != null
                   ? Center(
                       child: Text(
-                        '视频加载失败，请重新进入此步骤。',
+                        context.bheText('视频加载失败，请重新进入此步骤。'),
                         textAlign: TextAlign.center,
                         style: TextStyle(color: c.error, fontSize: 12),
                       ),
@@ -2116,7 +2180,7 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
           Row(
             children: [
               IconButton(
-                tooltip: '播放/暂停',
+                tooltip: context.bheText('播放/暂停'),
                 onPressed: _ready ? () => unawaited(_togglePlayback()) : null,
                 icon: Icon(
                   _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
@@ -2124,7 +2188,7 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
               ),
               const SizedBox(width: Spacing.xs),
               Text(
-                '拖动下方两个手柄，视频会跳到正在调整的位置。',
+                context.bheText('拖动下方两个手柄，视频会跳到正在调整的位置。'),
                 style: Theme.of(
                   context,
                 ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
@@ -2152,14 +2216,14 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
           Row(
             children: [
               Text(
-                '起点 ${_formatDuration(start)}',
+                context.bheText('起点 ${_formatDuration(start)}'),
                 style: Theme.of(
                   context,
                 ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
               ),
               const Spacer(),
               Text(
-                '终点 ${_formatDuration(end)}',
+                context.bheText('终点 ${_formatDuration(end)}'),
                 style: Theme.of(
                   context,
                 ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
@@ -2177,7 +2241,7 @@ class _AnalysisRangeEditorState extends State<_AnalysisRangeEditor> {
                       }
                     : null,
                 icon: const Icon(Icons.unfold_more_rounded, size: 16),
-                label: const Text('使用全片'),
+                label: Text(context.bheText('使用全片')),
               ),
             ],
           ),
@@ -2246,7 +2310,10 @@ class _AnalysisTimelineState extends State<_AnalysisTimeline> {
             children: [
               Row(
                 children: [
-                  Text('播放进度', style: Theme.of(context).textTheme.labelSmall),
+                  Text(
+                    context.bheText('播放进度'),
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
                   const Spacer(),
                   Text(
                     _formatDuration(widget.positionMs),
@@ -2259,7 +2326,10 @@ class _AnalysisTimelineState extends State<_AnalysisTimeline> {
               ),
               Row(
                 children: [
-                  Text('分析范围', style: Theme.of(context).textTheme.labelSmall),
+                  Text(
+                    context.bheText('分析范围'),
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
                   const Spacer(),
                   Text(
                     '${_formatDuration(widget.startMs)} - ${_formatDuration(widget.endMs)}',
@@ -2488,7 +2558,10 @@ class _PreviewTimeControls extends StatelessWidget {
     final back = (timeMs - 5000).clamp(0, durationMs).toInt();
     return Row(
       children: [
-        Text('标记画面', style: Theme.of(context).textTheme.labelLarge),
+        Text(
+          context.bheText('标记画面'),
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
         const SizedBox(width: Spacing.sm),
         Text(
           _formatPreviewTime(timeMs),
@@ -2500,7 +2573,7 @@ class _PreviewTimeControls extends StatelessWidget {
         const Spacer(),
         OutlinedButton(
           onPressed: enabled && timeMs > 0 ? () => onStep(back) : null,
-          child: const Text('−5 秒'),
+          child: Text(context.bheText('−5 秒')),
         ),
         const SizedBox(width: Spacing.xs),
         OutlinedButton.icon(
@@ -2511,12 +2584,12 @@ class _PreviewTimeControls extends StatelessWidget {
             playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
             size: 16,
           ),
-          label: Text(playing ? '暂停' : '播放'),
+          label: Text(context.bheText(playing ? '暂停' : '播放')),
         ),
         const SizedBox(width: Spacing.xs),
         OutlinedButton(
           onPressed: enabled && timeMs < durationMs ? () => onStep(step) : null,
-          child: const Text('+5 秒'),
+          child: Text(context.bheText('+5 秒')),
         ),
       ],
     );
@@ -2772,7 +2845,7 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                                           Spacing.md,
                                         ),
                                         child: Text(
-                                          '预览加载失败，请重新生成。',
+                                          context.bheText('预览加载失败，请重新生成。'),
                                           textAlign: TextAlign.center,
                                           style: TextStyle(
                                             color: c.error,
@@ -2784,23 +2857,29 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                                   ),
                                 )
                               else if (!widget.enabled)
-                                const Center(
+                                Center(
                                   child: CsEmptyState(
                                     icon: LucideIcons.lock,
-                                    title: '请先选择视频',
-                                    description: '选择原始视频后即可框选篮筐区域。',
+                                    title: context.bheText('请先选择视频'),
+                                    description: context.bheText(
+                                      '选择原始视频后即可框选篮筐区域。',
+                                    ),
                                   ),
                                 )
                               else if (widget.previewPath != null)
                                 Center(
                                   child: CsEmptyState(
                                     icon: LucideIcons.circleAlert,
-                                    title: '预览帧不可用',
-                                    description: '视频元数据已读取，可以重新生成预览后继续框选。',
+                                    title: context.bheText('预览帧不可用'),
+                                    description: context.bheText(
+                                      '视频元数据已读取，可以重新生成预览后继续框选。',
+                                    ),
                                     action: widget.onRefreshPreview == null
                                         ? null
                                         : CsButton(
-                                            label: const Text('重新生成预览'),
+                                            label: Text(
+                                              context.bheText('重新生成预览'),
+                                            ),
                                             icon: LucideIcons.refreshCw,
                                             variant: CsButtonVariant.secondary,
                                             size: CsButtonSize.sm,
@@ -2812,12 +2891,16 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                                 Center(
                                   child: CsEmptyState(
                                     icon: LucideIcons.film,
-                                    title: '正在准备视频预览',
-                                    description: '预览准备好后即可拖拽框选篮筐区域。',
+                                    title: context.bheText('正在准备视频预览'),
+                                    description: context.bheText(
+                                      '预览准备好后即可拖拽框选篮筐区域。',
+                                    ),
                                     action: widget.onRefreshPreview == null
                                         ? null
                                         : CsButton(
-                                            label: const Text('生成预览'),
+                                            label: Text(
+                                              context.bheText('生成预览'),
+                                            ),
                                             icon: LucideIcons.refreshCw,
                                             variant: CsButtonVariant.secondary,
                                             size: CsButtonSize.sm,
@@ -2862,7 +2945,7 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         IconButton(
-                          tooltip: '缩小',
+                          tooltip: context.bheText('缩小'),
                           onPressed: _zoom > 1 ? () => _changeZoom(-0.5) : null,
                           icon: const Icon(Icons.remove_rounded, size: 16),
                           constraints: const BoxConstraints.tightFor(
@@ -2876,7 +2959,7 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                           style: TextStyle(color: c.textPrimary, fontSize: 11),
                         ),
                         IconButton(
-                          tooltip: '放大',
+                          tooltip: context.bheText('放大'),
                           onPressed: _zoom < 4 ? () => _changeZoom(0.5) : null,
                           icon: const Icon(Icons.add_rounded, size: 16),
                           constraints: const BoxConstraints.tightFor(
@@ -2886,7 +2969,7 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                           padding: EdgeInsets.zero,
                         ),
                         IconButton(
-                          tooltip: '适应画面',
+                          tooltip: context.bheText('适应画面'),
                           onPressed: _zoom > 1 ? _resetZoom : null,
                           icon: const Icon(Icons.fit_screen_outlined, size: 15),
                           constraints: const BoxConstraints.tightFor(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 
 import '../../components/cs_button.dart';
 import '../../components/cs_card.dart';
@@ -29,6 +30,7 @@ class HomeScreen extends ConsumerWidget {
     final notifier = ref.read(projectProvider.notifier);
     final c = AppColors.of(context);
     final theme = Theme.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
 
     final included = state.candidates
         .where(
@@ -48,7 +50,13 @@ class HomeScreen extends ConsumerWidget {
     final busy = state.busy || state.exportRunning || state.analysisRunning;
 
     Future<void> openProject() async {
-      if (await notifier.chooseOpenProject()) onProjectOpened?.call();
+      if (await notifier.chooseOpenProject(
+        openProjectButtonLabel: l10n?.openProject,
+        relinkVideoButtonLabel: l10n?.relinkVideo,
+        videoTypeLabel: context.bheText('视频'),
+      )) {
+        onProjectOpened?.call();
+      }
     }
 
     Future<void> startNewProject() async {
@@ -58,7 +66,11 @@ class HomeScreen extends ConsumerWidget {
     }
 
     Future<void> openRecentProject(String root) async {
-      if (await notifier.openProject(root)) {
+      if (await notifier.openProject(
+        root,
+        relinkVideoButtonLabel: l10n?.relinkVideo,
+        videoTypeLabel: context.bheText('视频'),
+      )) {
         onProjectOpened?.call();
       }
     }
@@ -67,20 +79,23 @@ class HomeScreen extends ConsumerWidget {
       final root = item['project_root']?.toString() ?? '';
       if (root.isEmpty) return;
       final project = _map(item['project']);
-      final name = project['name']?.toString() ?? '未命名项目';
+      final name = project['name']?.toString() ?? context.bheText('未命名项目');
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('删除项目？'),
-          content: Text('将删除“$name”的项目数据库、分析缓存和导出文件，原始视频不会被删除。'),
+          title: Text(l10n?.deleteProjectQuestion ?? '删除项目？'),
+          content: Text(
+            l10n?.deleteProjectDescription(name) ??
+                '将删除“$name”的项目数据库、分析缓存和导出文件，原始视频不会被删除。',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('取消'),
+              child: Text(l10n?.cancel ?? '取消'),
             ),
             FilledButton.tonal(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('删除项目'),
+              child: Text(l10n?.deleteProject ?? '删除项目'),
             ),
           ],
         ),
@@ -94,31 +109,31 @@ class HomeScreen extends ConsumerWidget {
     final steps = <CsStep>[
       (
         index: '01',
-        title: '导入视频',
+        title: l10n?.importVideoStep ?? '导入视频',
         icon: LucideIcons.upload,
         completed: state.video != null,
       ),
       (
         index: '02',
-        title: '框选 ROI',
+        title: l10n?.roiStep ?? '框选 ROI',
         icon: LucideIcons.target,
         completed: state.roiSource != null,
       ),
       (
         index: '03',
-        title: '分析扫描',
+        title: l10n?.analysisStep ?? '分析扫描',
         icon: LucideIcons.scanLine,
         completed: state.job?['state'] == 'completed',
       ),
       (
         index: '04',
-        title: '审核候选',
+        title: l10n?.reviewStep ?? '审核候选',
         icon: LucideIcons.checkCheck,
         completed: state.candidates.isNotEmpty,
       ),
       (
         index: '05',
-        title: '导出集锦',
+        title: l10n?.exportHighlightsStep ?? '导出集锦',
         icon: LucideIcons.share,
         completed: state.exportHistory.isNotEmpty,
       ),
@@ -133,11 +148,14 @@ class HomeScreen extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // ── Hero ──
-              Text('把整场比赛，变成你的高光。', style: theme.textTheme.displayLarge),
+              Text(
+                l10n?.homeHeadline ?? '把整场比赛，变成你的高光。',
+                style: theme.textTheme.displayLarge,
+              ),
               const SizedBox(height: Spacing.sm),
               Text(
-                '导入固定机位视频，本地分析候选进球，剔除误检后导出集锦。'
-                '所有处理在本机完成，原始视频不会被复制或上传。',
+                l10n?.homeSubtitle ??
+                    '导入固定机位视频，本地分析候选进球，剔除误检后导出集锦。所有处理在本机完成，原始视频不会被复制或上传。',
                 style: theme.textTheme.bodyLarge?.copyWith(
                   color: c.textSecondary,
                 ),
@@ -161,13 +179,16 @@ class HomeScreen extends ConsumerWidget {
                               color: c.orange,
                             ),
                             const SizedBox(width: Spacing.sm),
-                            Text('从视频开始', style: theme.textTheme.titleLarge),
+                            Text(
+                              l10n?.startFromVideo ?? '从视频开始',
+                              style: theme.textTheme.titleLarge,
+                            ),
                           ],
                         ),
                         const SizedBox(height: Spacing.sm),
                         Text(
-                          '选择一段固定机位录像，系统会优先自动定位篮筐，'
-                          '随后生成候选进球片段供你审核与导出。',
+                          l10n?.startFromVideoDescription ??
+                              '选择一段固定机位录像，系统会优先自动定位篮筐，随后生成候选进球片段供你审核与导出。',
                           style: theme.textTheme.bodyLarge?.copyWith(
                             color: c.textSecondary,
                           ),
@@ -178,12 +199,12 @@ class HomeScreen extends ConsumerWidget {
                           runSpacing: Spacing.sm,
                           children: [
                             CsButton(
-                              label: const Text('新建项目'),
+                              label: Text(l10n?.newProject ?? '新建项目'),
                               icon: LucideIcons.plus,
                               onPressed: busy ? null : startNewProject,
                             ),
                             CsButton(
-                              label: const Text('打开项目'),
+                              label: Text(l10n?.openProject ?? '打开项目'),
                               icon: LucideIcons.folderOpen,
                               variant: CsButtonVariant.secondary,
                               onPressed: busy ? null : openProject,
@@ -198,26 +219,29 @@ class HomeScreen extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text('当前项目', style: theme.textTheme.titleMedium),
+                        Text(
+                          l10n?.currentProject ?? '当前项目',
+                          style: theme.textTheme.titleMedium,
+                        ),
                         const SizedBox(height: Spacing.md),
                         CsMetricTile(
-                          label: '当前保留',
+                          label: l10n?.includedCount ?? '当前保留',
                           value: '$included',
                           icon: LucideIcons.check,
                         ),
                         CsMetricTile(
-                          label: '已排除',
+                          label: l10n?.excludedCount ?? '已排除',
                           value: '$excluded',
                           icon: LucideIcons.x,
                         ),
                         CsMetricTile(
-                          label: '视频时长',
+                          label: l10n?.videoDuration ?? '视频时长',
                           value: _formatDuration(durationMs),
                           icon: LucideIcons.clock,
                         ),
                         const SizedBox(height: Spacing.xs),
                         Text(
-                          '本地 SQLite · 原始视频不复制',
+                          l10n?.localDatabaseNote ?? '本地 SQLite · 原始视频不复制',
                           style: TextStyle(color: c.textTertiary, fontSize: 11),
                         ),
                       ],
@@ -251,10 +275,13 @@ class HomeScreen extends ConsumerWidget {
               Row(
                 children: [
                   Expanded(
-                    child: Text('最近项目', style: theme.textTheme.titleLarge),
+                    child: Text(
+                      l10n?.recentProjects ?? '最近项目',
+                      style: theme.textTheme.titleLarge,
+                    ),
                   ),
                   IconButton(
-                    tooltip: '刷新最近项目',
+                    tooltip: l10n?.refreshRecentProjects ?? '刷新最近项目',
                     onPressed: state.recentLoading || busy
                         ? null
                         : () => notifier.loadRecentProjects(),
@@ -273,7 +300,7 @@ class HomeScreen extends ConsumerWidget {
               const SizedBox(height: Spacing.xxl),
 
               // ── 工作流 ──
-              Text('工作流', style: theme.textTheme.titleMedium),
+              Text(l10n?.workflow ?? '工作流', style: theme.textTheme.titleMedium),
               const SizedBox(height: Spacing.md),
               CsStepIndicator(steps: steps),
               const SizedBox(height: Spacing.xl),
@@ -303,15 +330,23 @@ class _RecentProjects extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     if (state.recentLoading && state.recentProjects.isEmpty) {
       return const _RecentSkeletonGrid();
     }
     if (state.recentProjects.isEmpty) {
       return CsEmptyState(
         icon: LucideIcons.folderOpen,
-        title: state.recentError != null ? '加载最近项目失败' : '还没有项目',
-        description: state.recentError ?? '新建一个项目后，分析记录和导出历史会显示在这里。',
-        action: CsButton(label: const Text('新建项目'), onPressed: onCreate),
+        title: state.recentError != null
+            ? (l10n?.recentProjectsLoadFailed ?? '加载最近项目失败')
+            : (l10n?.noProjects ?? '还没有项目'),
+        description: state.recentError == null
+            ? (l10n?.noProjectsDescription ?? '新建一个项目后，分析记录和导出历史会显示在这里。')
+            : context.bheText(state.recentError!),
+        action: CsButton(
+          label: Text(l10n?.newProject ?? '新建项目'),
+          onPressed: onCreate,
+        ),
       );
     }
     return _RecentGrid(
@@ -396,11 +431,12 @@ class _ProjectCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final c = AppColors.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final project = _map(item['project']);
     final video = _map(item['video']);
     final statistics = _map(item['statistics']);
     final root = item['project_root']?.toString() ?? '';
-    final name = project['name']?.toString() ?? '未命名项目';
+    final name = project['name']?.toString() ?? context.bheText('未命名项目');
     final goals = statistics['included_count'] == null
         ? _int(statistics['goal_count'])
         : _int(statistics['included_count']);
@@ -431,7 +467,7 @@ class _ProjectCard extends StatelessWidget {
               ),
               if (onDelete != null && root.isNotEmpty)
                 IconButton(
-                  tooltip: '删除项目',
+                  tooltip: l10n?.deleteProject ?? '删除项目',
                   onPressed: () => onDelete!(item),
                   icon: const Icon(LucideIcons.trash2, size: 17),
                   visualDensity: VisualDensity.compact,
@@ -452,7 +488,8 @@ class _ProjectCard extends StatelessWidget {
             ),
           const SizedBox(height: Spacing.xs),
           Text(
-            '$goals 保留 · $candidates 候选 · ${_formatDuration(duration)}',
+            l10n?.projectStats(goals, candidates, _formatDuration(duration)) ??
+                '$goals 保留 · $candidates 候选 · ${_formatDuration(duration)}',
             style: theme.textTheme.bodySmall?.copyWith(color: c.textTertiary),
           ),
         ],

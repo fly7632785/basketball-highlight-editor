@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 import '../providers/notice_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
@@ -48,6 +49,7 @@ class _CsNoticeState extends State<CsNotice>
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final (color, icon) = switch (widget.message.severity) {
       NoticeSeverity.success => (c.success, LucideIcons.circleCheck),
       NoticeSeverity.error => (c.error, LucideIcons.circleX),
@@ -94,7 +96,8 @@ class _CsNoticeState extends State<CsNotice>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          widget.message.title,
+                          l10n?.text(widget.message.title) ??
+                              widget.message.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -105,7 +108,8 @@ class _CsNoticeState extends State<CsNotice>
                         ),
                         if (widget.message.description != null)
                           Text(
-                            widget.message.description!,
+                            l10n?.text(widget.message.description!) ??
+                                widget.message.description!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -121,7 +125,8 @@ class _CsNoticeState extends State<CsNotice>
                             child: Padding(
                               padding: const EdgeInsets.only(top: 2),
                               child: Text(
-                                widget.message.actionLabel!,
+                                l10n?.text(widget.message.actionLabel!) ??
+                                    widget.message.actionLabel!,
                                 style: TextStyle(
                                   color: c.orange,
                                   fontSize: 11,
@@ -136,7 +141,7 @@ class _CsNoticeState extends State<CsNotice>
                   const SizedBox(width: 2),
                   Semantics(
                     button: true,
-                    label: '关闭提示',
+                    label: l10n?.dismissHint ?? '关闭提示',
                     child: IconButton(
                       icon: Icon(
                         LucideIcons.x,

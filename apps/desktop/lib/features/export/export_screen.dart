@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 
 import '../../components/cs_button.dart';
 import '../../components/cs_card.dart';
@@ -38,6 +39,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     final notifier = ref.read(projectProvider.notifier);
     final theme = Theme.of(context);
     final c = AppColors.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
 
     final includedCandidates = _filteredCandidates(state);
     final includedCount = includedCandidates.length;
@@ -62,10 +64,13 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('导出集锦', style: theme.textTheme.displayMedium),
+              Text(
+                l10n?.exportHighlights ?? '导出集锦',
+                style: theme.textTheme.displayMedium,
+              ),
               const SizedBox(height: Spacing.sm),
               Text(
-                '分析结果默认保留，导出时只排除你打叉的片段。',
+                l10n?.exportDescription ?? '分析结果默认保留，导出时只排除你打叉的片段。',
                 style: theme.textTheme.bodyLarge?.copyWith(
                   color: c.textSecondary,
                 ),
@@ -77,35 +82,38 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     CsMetricTile(
-                      label: '当前保留',
-                      value: '$includedCount 个',
+                      label: l10n?.includedCount ?? '当前保留',
+                      value: l10n?.text('$includedCount 个') ?? '$includedCount 个',
                       icon: LucideIcons.check,
                     ),
                     CsMetricTile(
-                      label: '合计时长',
+                      label: l10n?.totalDuration ?? '合计时长',
                       value: _formatMs(durationMs),
                       icon: LucideIcons.clock,
                     ),
-                    const CsMetricTile(
-                      label: '输出编码',
+                    CsMetricTile(
+                      label: l10n?.outputCodec ?? '输出编码',
                       value: 'H.264 / AAC',
                       icon: LucideIcons.fileVideo,
                     ),
-                    const CsMetricTile(
-                      label: '处理方式',
-                      value: '硬件编码优先，软件回退',
+                    CsMetricTile(
+                      label: l10n?.processingMethod ?? '处理方式',
+                      value: l10n?.processingValue ?? '硬件编码优先，软件回退',
                       icon: LucideIcons.cpu,
                     ),
                     if (state.players.isNotEmpty) ...[
                       const SizedBox(height: Spacing.md),
-                      Text('导出范围', style: theme.textTheme.titleSmall),
+                      Text(
+                        l10n?.exportScope ?? '导出范围',
+                        style: theme.textTheme.titleSmall,
+                      ),
                       const SizedBox(height: Spacing.xs),
                       Wrap(
                         spacing: Spacing.xs,
                         runSpacing: Spacing.xs,
                         children: [
                           FilterChip(
-                            label: const Text('全部球员'),
+                            label: Text(l10n?.allPlayers ?? '全部球员'),
                             selected: !_playerFilterActive,
                             onSelected: (_) => setState(() {
                               _playerFilterActive = false;
@@ -132,7 +140,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                               }),
                             ),
                           FilterChip(
-                            label: const Text('未标记'),
+                            label: Text(l10n?.unassigned ?? '未标记'),
                             selected: _playerFilterActive && _includeUnassigned,
                             onSelected: (value) => setState(() {
                               _playerFilterActive = true;
@@ -143,7 +151,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                       ),
                       const SizedBox(height: Spacing.xs),
                       Text(
-                        '当前筛选：$includedCount 个 · ${_formatMs(durationMs)}',
+                        '${l10n?.currentFilter ?? '当前筛选'}：${l10n?.filterStats(includedCount, _formatMs(durationMs)) ?? '$includedCount 个 · ${_formatMs(durationMs)}'}',
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: c.textSecondary,
                         ),
@@ -165,9 +173,9 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                               children: [
                                 Expanded(
                                   child: Text(
-                                    '${_exportStageLabel(exportStage)} · '
+                                    '${l10n?.text(_exportStageLabel(exportStage)) ?? _exportStageLabel(exportStage)} · '
                                     '${(exportProgress * 100).round()}%\n'
-                                    '本次输出使用启动导出时的片段列表，之后的审核修改用于下一次导出。',
+                                    '${l10n?.text('本次输出使用启动导出时的片段列表，之后的审核修改用于下一次导出。') ?? '本次输出使用启动导出时的片段列表，之后的审核修改用于下一次导出。'}',
                                     style: theme.textTheme.bodySmall?.copyWith(
                                       color: c.textSecondary,
                                     ),
@@ -175,7 +183,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                                 ),
                                 const SizedBox(width: Spacing.sm),
                                 CsButton(
-                                  label: const Text('取消导出'),
+                                  label: Text(l10n?.cancelExport ?? '取消导出'),
                                   icon: LucideIcons.circleStop,
                                   variant: CsButtonVariant.secondary,
                                   size: CsButtonSize.sm,
@@ -194,7 +202,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                     if (state.analysisRunning) ...[
                       const SizedBox(height: Spacing.sm),
                       Text(
-                        '视频仍在分析，分析完成后才能导出新的候选结果。',
+                        l10n?.analysisStillRunning ?? '视频仍在分析，分析完成后才能导出新的候选结果。',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: c.warning,
                         ),
@@ -223,14 +231,15 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                             const SizedBox(width: Spacing.sm),
                             Expanded(
                               child: Text(
-                                '当前结果来自快速分析，可能漏检；如需更完整结果，建议先用标准模式重新分析。',
+                                l10n?.fastAnalysisRisk ??
+                                    '当前结果来自快速分析，可能漏检；如需更完整结果，建议先用标准模式重新分析。',
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: c.textSecondary,
                                 ),
                               ),
                             ),
                             IconButton(
-                              tooltip: '关闭提示',
+                              tooltip: l10n?.dismissHint ?? '关闭提示',
                               onPressed: () =>
                                   setState(() => _showFastRisk = false),
                               icon: const Icon(Icons.close, size: 16),
@@ -253,7 +262,8 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                           children: [
                             Expanded(
                               child: Text(
-                                '上次导出已中断，可以从原设置重新导出。',
+                                l10n?.exportInterrupted ??
+                                    '上次导出已中断，可以从原设置重新导出。',
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: c.textSecondary,
                                 ),
@@ -261,7 +271,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                             ),
                             const SizedBox(width: Spacing.sm),
                             CsButton(
-                              label: const Text('重试导出'),
+                              label: Text(l10n?.text('重试导出') ?? '重试导出'),
                               icon: LucideIcons.refreshCw,
                               size: CsButtonSize.sm,
                               onPressed: busy
@@ -274,7 +284,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                     ],
                     const SizedBox(height: Spacing.sm),
                     CsButton(
-                      label: const Text('合并导出'),
+                      label: Text(l10n?.text('合并导出') ?? '合并导出'),
                       icon: LucideIcons.merge,
                       isLoading: busy,
                       onPressed: includedCount > 0 && !busy
@@ -283,7 +293,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                     ),
                     const SizedBox(height: Spacing.sm),
                     CsButton(
-                      label: const Text('分别导出'),
+                      label: Text(l10n?.text('分别导出') ?? '分别导出'),
                       icon: LucideIcons.files,
                       variant: CsButtonVariant.secondary,
                       isLoading: busy,
@@ -297,15 +307,17 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               const SizedBox(height: Spacing.md),
               Text(
                 exportRunning
-                    ? '导出任务在后台运行，返回审核后仍可继续修改候选。'
-                    : '导出会包含所有当前保留的候选；已排除片段不会进入输出。',
+                    ? l10n?.text('导出任务在后台运行，返回审核后仍可继续修改候选。') ??
+                        '导出任务在后台运行，返回审核后仍可继续修改候选。'
+                    : l10n?.text('导出会包含所有当前保留的候选；已排除片段不会进入输出。') ??
+                        '导出会包含所有当前保留的候选；已排除片段不会进入输出。',
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: c.textSecondary,
                 ),
               ),
               const SizedBox(height: Spacing.md),
               CsButton(
-                label: const Text('返回审核'),
+                label: Text(l10n?.text('返回审核') ?? '返回审核'),
                 icon: LucideIcons.arrowLeft,
                 variant: CsButtonVariant.ghost,
                 onPressed: () => context.go('/review'),
@@ -314,7 +326,10 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               // ── 历史 ──
               if (state.exportHistory.isNotEmpty) ...[
                 const SizedBox(height: Spacing.xxl),
-                Text('最近导出', style: theme.textTheme.titleLarge),
+                Text(
+                  l10n?.text('最近导出') ?? '最近导出',
+                  style: theme.textTheme.titleLarge,
+                ),
                 const SizedBox(height: Spacing.md),
                 for (final item in state.exportHistory)
                   Padding(
@@ -323,10 +338,12 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                   ),
               ] else ...[
                 const SizedBox(height: Spacing.xxl),
-                const CsEmptyState(
+                CsEmptyState(
                   icon: LucideIcons.history,
-                  title: '还没有导出记录',
-                  description: '完成一次导出后，历史记录会出现在这里。',
+                  title: l10n?.text('还没有导出记录') ?? '还没有导出记录',
+                  description:
+                      l10n?.text('完成一次导出后，历史记录会出现在这里。') ??
+                      '完成一次导出后，历史记录会出现在这里。',
                 ),
               ],
             ],
@@ -342,8 +359,8 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
   ) async {
     final location = await getSaveLocation(
       suggestedName: 'highlights.mp4',
-      acceptedTypeGroups: const [
-        XTypeGroup(label: '视频', extensions: ['mp4']),
+      acceptedTypeGroups: [
+        XTypeGroup(label: context.bheText('视频'), extensions: ['mp4']),
       ],
     );
     if (location != null) {
@@ -369,7 +386,9 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     BuildContext context,
     ProjectNotifier notifier,
   ) async {
-    final directory = await getDirectoryPath(confirmButtonText: '选择输出目录');
+    final directory = await getDirectoryPath(
+      confirmButtonText: context.bheText('选择输出目录'),
+    );
     if (directory != null) {
       await notifier.export(
         'separate',
@@ -394,6 +413,7 @@ class _ExportHistoryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final c = AppColors.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final mode = item['mode'] == 'merge' ? '合并导出' : '分别导出';
     final count = (item['candidate_count'] as num?)?.toInt() ?? 0;
     final duration = (item['duration_ms'] as num?)?.toInt() ?? 0;
@@ -427,7 +447,8 @@ class _ExportHistoryCard extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  '$mode · $count 个片段 · ${_formatMs(duration)}',
+                  l10n?.text('$mode · $count 个片段 · ${_formatMs(duration)}') ??
+                      '$mode · $count 个片段 · ${_formatMs(duration)}',
                   style: theme.textTheme.titleMedium,
                 ),
                 const SizedBox(height: Spacing.xs),
@@ -439,7 +460,10 @@ class _ExportHistoryCard extends StatelessWidget {
                 ),
                 const SizedBox(height: Spacing.xs),
                 Text(
-                  '${time.isEmpty ? '' : '$time · '}处理 ${_formatMs(processing)}',
+                  l10n?.text(
+                        '${time.isEmpty ? '' : '$time · '}处理 ${_formatMs(processing)}',
+                      ) ??
+                      '${time.isEmpty ? '' : '$time · '}处理 ${_formatMs(processing)}',
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: c.textTertiary,
                     fontFeatures: const [FontFeature.tabularFigures()],
@@ -463,7 +487,7 @@ class _ExportHistoryCard extends StatelessWidget {
           ),
           const SizedBox(width: Spacing.md),
           CsButton(
-            label: const Text('打开目录'),
+            label: Text(l10n?.text('打开目录') ?? '打开目录'),
             icon: LucideIcons.folderOpen,
             variant: CsButtonVariant.secondary,
             size: CsButtonSize.sm,
@@ -516,6 +540,7 @@ Future<void> _openDirectory(
   String directory, {
   String? targetPath,
 }) async {
+  final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
   try {
     final String? target = targetPath == null || !File(targetPath).existsSync()
         ? null
@@ -542,12 +567,12 @@ Future<void> _openDirectory(
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('无法打开目录'),
-        content: Text('$directory\n\n$error'),
+        title: Text(l10n?.text('无法打开目录') ?? '无法打开目录'),
+        content: Text('$directory\n\n${context.bheText(error.toString())}'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('知道了'),
+            child: Text(l10n?.text('知道了') ?? '知道了'),
           ),
         ],
       ),

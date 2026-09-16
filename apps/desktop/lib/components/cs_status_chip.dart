@@ -1,6 +1,7 @@
 // lib/components/cs_status_chip.dart
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
 
@@ -14,10 +15,23 @@ class CsStatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final (label, color, icon) = switch (status) {
-      ReviewStatus.goal => ('已确认', c.goal, LucideIcons.check),
-      ReviewStatus.pending => ('待审核', c.pending, LucideIcons.hourglass),
-      ReviewStatus.excluded => ('已排除', c.excluded, LucideIcons.ban),
+      ReviewStatus.goal => (
+        l10n?.statusConfirmed ?? '已确认',
+        c.goal,
+        LucideIcons.check,
+      ),
+      ReviewStatus.pending => (
+        l10n?.statusPending ?? '待审核',
+        c.pending,
+        LucideIcons.hourglass,
+      ),
+      ReviewStatus.excluded => (
+        l10n?.excludedCount ?? '已排除',
+        c.excluded,
+        LucideIcons.ban,
+      ),
     };
     return Container(
       padding: EdgeInsets.symmetric(

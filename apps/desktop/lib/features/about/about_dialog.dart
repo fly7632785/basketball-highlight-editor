@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 
 import '../../core/contact_actions.dart';
 import '../../theme/app_colors.dart';
@@ -19,6 +20,7 @@ class _CourtsideAboutDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     return Dialog(
       backgroundColor: c.surface,
       surfaceTintColor: Colors.transparent,
@@ -57,7 +59,7 @@ class _CourtsideAboutDialog extends StatelessWidget {
                           style: theme.textTheme.bodySmall,
                         ),
                         Text(
-                          '篮球高光视频助手',
+                          l10n?.text('篮球高光视频助手') ?? '篮球高光视频助手',
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: c.textSecondary,
                           ),
@@ -66,7 +68,7 @@ class _CourtsideAboutDialog extends StatelessWidget {
                     ),
                   ),
                   IconButton(
-                    tooltip: '关闭',
+                    tooltip: l10n?.text('关闭') ?? '关闭',
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(LucideIcons.x, size: 18),
                   ),
@@ -74,26 +76,40 @@ class _CourtsideAboutDialog extends StatelessWidget {
               ),
               const SizedBox(height: Spacing.lg),
               Text(
-                '从固定机位视频中识别投篮候选，审核后快速导出个人或全场高光。',
+                l10n?.productDescription ?? '从固定机位视频中识别投篮候选，审核后快速导出个人或全场高光。',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: c.textSecondary,
                   height: 1.5,
                 ),
               ),
               const SizedBox(height: Spacing.lg),
-              _InfoRow(label: '处理方式', value: '本地处理，原始视频不会自动上传'),
-              _InfoRow(label: '反馈邮箱', value: feedbackEmail),
-              _InfoRow(label: 'GitHub', value: '即将开放'),
+              _InfoRow(
+                label: l10n?.processingMethod ?? '处理方式',
+                value: l10n?.text('本地处理，原始视频不会自动上传') ??
+                    '本地处理，原始视频不会自动上传',
+              ),
+              _InfoRow(
+                label: l10n?.feedbackEmail ?? '反馈邮箱',
+                value: feedbackEmail,
+              ),
+              _InfoRow(
+                label: 'GitHub',
+                value: l10n?.githubComingSoon ?? '即将开放',
+              ),
               const SizedBox(height: Spacing.lg),
               Align(
                 alignment: Alignment.centerRight,
                 child: FilledButton.icon(
                   onPressed: () async {
-                    await openExternalUri(feedbackMailto());
+                    await openExternalUri(
+                      feedbackMailto(
+                        english: l10n?.localeName.startsWith('en') == true,
+                      ),
+                    );
                     if (context.mounted) Navigator.pop(context);
                   },
                   icon: const Icon(LucideIcons.mail, size: 17),
-                  label: const Text('发送反馈'),
+                  label: Text(l10n?.sendFeedback ?? '发送反馈'),
                 ),
               ),
             ],

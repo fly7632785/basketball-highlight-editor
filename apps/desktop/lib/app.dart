@@ -4,11 +4,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 
 import 'components/cs_notice_overlay.dart';
 import 'core/windows_caption_bar.dart';
 import 'core/windows_title_bar.dart';
 import 'providers/project_state.dart';
+import 'providers/locale_provider.dart';
 import 'providers/theme_provider.dart';
 import 'router/app_router.dart';
 import 'theme/app_colors.dart';
@@ -94,22 +96,38 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
         return;
       }
       final state = ref.read(projectProvider);
+      final l10n = Localizations.of<BheLocalizations>(
+        dialogContext,
+        BheLocalizations,
+      );
       final analyzing = state.analysisRunning;
       final exporting = state.exportRunning;
       final busy = analyzing || exporting || state.busy;
       final action = await showDialog<String>(
         context: dialogContext,
         builder: (context) => AlertDialog(
-          title: Text(busy ? '任务仍在进行' : '退出 BHE？'),
-          content: Text(busy ? '当前任务还在进行，退出前需要先取消任务。' : '确认关闭软件吗？本地项目数据不会被删除。'),
+          title: Text(
+            busy
+                ? (l10n?.taskInProgress ?? '任务仍在进行')
+                : (l10n?.confirmExit ?? '退出 BHE？'),
+          ),
+          content: Text(
+            busy
+                ? (l10n?.exitBusyDescription ?? '当前任务还在进行，退出前需要先取消任务。')
+                : (l10n?.exitDescription ?? '确认关闭软件吗？本地项目数据不会被删除。'),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, 'stay'),
-              child: const Text('返回'),
+              child: Text(l10n?.returnAction ?? '返回'),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, 'exit'),
-              child: Text(busy ? '取消任务并退出' : '退出软件'),
+              child: Text(
+                busy
+                    ? (l10n?.cancelTaskAndExit ?? '取消任务并退出')
+                    : (l10n?.exitApp ?? '退出软件'),
+              ),
             ),
           ],
         ),
@@ -130,6 +148,9 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
     return MaterialApp.router(
       routerConfig: ref.watch(appRouterProvider),
       title: 'BHE',
+      locale: ref.watch(appLocaleProvider),
+      localizationsDelegates: BheLocalizations.localizationsDelegates,
+      supportedLocales: BheLocalizations.supportedLocales,
       theme: appTheme(Brightness.light),
       darkTheme: appTheme(Brightness.dark),
       themeMode: ref.watch(themeModeProvider),

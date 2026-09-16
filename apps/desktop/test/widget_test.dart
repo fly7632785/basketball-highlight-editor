@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:desktop/app.dart';
@@ -16,8 +17,23 @@ void main() {
         child: const BasketballHighlightApp(enableStartupProjectScan: false),
       ),
     );
-    expect(find.text('把整场比赛，变成你的高光。'), findsOneWidget);
-    expect(find.text('新建项目'), findsWidgets);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Text &&
+            (widget.data == '把整场比赛，变成你的高光。' ||
+                widget.data == 'Turn the whole game into your highlights.'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Text &&
+            (widget.data == '新建项目' || widget.data == 'New project'),
+      ),
+      findsWidgets,
+    );
   });
 }
 

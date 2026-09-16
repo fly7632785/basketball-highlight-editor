@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -17,6 +18,7 @@ class WindowsCaptionBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final foreground = c.textSecondary;
     return GestureDetector(
       onDoubleTap: WindowsCaptionBar.toggleMaximize,
@@ -43,20 +45,20 @@ class WindowsCaptionBar extends StatelessWidget {
                 _CaptionButton(
                   icon: LucideIcons.minus,
                   foreground: foreground,
-                  tooltip: '最小化',
+                  tooltip: l10n?.text('最小化') ?? '最小化',
                   onTap: () => windowManager.minimize(),
                 ),
                 _CaptionButton(
                   icon: LucideIcons.square,
                   iconSize: 12,
                   foreground: foreground,
-                  tooltip: '最大化 / 还原',
+                  tooltip: l10n?.text('最大化 / 还原') ?? '最大化 / 还原',
                   onTap: WindowsCaptionBar.toggleMaximize,
                 ),
                 _CaptionButton(
                   icon: LucideIcons.x,
                   foreground: foreground,
-                  tooltip: '关闭',
+                  tooltip: l10n?.text('关闭') ?? '关闭',
                   isClose: true,
                   onTap: () => windowManager.close(),
                 ),

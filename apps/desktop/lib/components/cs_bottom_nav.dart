@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 
 import '../theme/app_colors.dart';
 
@@ -18,6 +19,7 @@ class CsBottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     return NavigationBar(
       selectedIndex: shell.currentIndex,
       onDestinationSelected: (i) => shell.goBranch(i),
@@ -27,22 +29,22 @@ class CsBottomNav extends StatelessWidget {
         NavigationDestination(
           icon: Icon(LucideIcons.home, color: c.textSecondary),
           selectedIcon: Icon(LucideIcons.home, color: c.orange),
-          label: '项目',
+          label: l10n?.navProject ?? '项目',
         ),
         NavigationDestination(
           icon: Icon(LucideIcons.upload, color: c.textSecondary),
           selectedIcon: Icon(LucideIcons.upload, color: c.orange),
-          label: '导入',
+          label: l10n?.navImport ?? '导入',
         ),
         NavigationDestination(
           icon: Icon(LucideIcons.folderCheck, color: c.textSecondary),
           selectedIcon: Icon(LucideIcons.folderCheck, color: c.orange),
-          label: '审核',
+          label: l10n?.navReview ?? '审核',
         ),
         NavigationDestination(
           icon: Icon(LucideIcons.download, color: c.textSecondary),
           selectedIcon: Icon(LucideIcons.download, color: c.orange),
-          label: '导出',
+          label: l10n?.navExport ?? '导出',
         ),
       ],
     );

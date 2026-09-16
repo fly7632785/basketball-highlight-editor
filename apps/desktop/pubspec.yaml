@@ -30,6 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  bhe_l10n:
+    path: ../../packages/bhe_l10n
   ffi: ^2.1.0
   file_selector: ^1.0.3
   media_kit: ^1.2.5

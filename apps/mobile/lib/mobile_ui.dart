@@ -3,9 +3,11 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:bhe_core/bhe_core.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 
 import 'mobile_app_state.dart';
@@ -28,6 +30,9 @@ class _BheMobileAppState extends State<BheMobileApp> {
   final state = MobileAppState();
   _WorkspaceSection section = _WorkspaceSection.project;
   bool dark = true;
+  Locale _locale = BheLocale.fromSystem(
+    WidgetsBinding.instance.platformDispatcher.locale,
+  );
   String? _lastProjectId;
   String? _lastAnalysisStatus;
   DateTime? _lastBackPress;
@@ -36,6 +41,30 @@ class _BheMobileAppState extends State<BheMobileApp> {
   void initState() {
     super.initState();
     state.addListener(_handleStateChange);
+    unawaited(_loadLocale());
+  }
+
+  Future<void> _loadLocale() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString('bhe.locale');
+      if (saved != null && mounted) {
+        setState(() => _locale = BheLocale.fromName(saved));
+      }
+    } catch (_) {
+      // 读取失败时保留系统语言，不影响应用启动。
+    }
+  }
+
+  Future<void> _setLocale(Locale locale) async {
+    final normalized = BheLocale.fromName(locale.toLanguageTag());
+    setState(() => _locale = normalized);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('bhe.locale', normalized.toLanguageTag());
+    } catch (_) {
+      // 持久化失败时仍保留本次运行的语言选择。
+    }
   }
 
   void _handleStateChange() {
@@ -80,8 +109,14 @@ class _BheMobileAppState extends State<BheMobileApp> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
-          content: Text('再按一次返回键退出 BHE'),
+        SnackBar(
+          content: Text(
+            Localizations.of<BheLocalizations>(
+                  context,
+                  BheLocalizations,
+                )?.pressBackAgainToExit ??
+                '再按一次返回键退出 BHE',
+          ),
           behavior: SnackBarBehavior.floating,
           duration: Duration(seconds: 2),
         ),
@@ -92,6 +127,9 @@ class _BheMobileAppState extends State<BheMobileApp> {
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
     title: 'BHE',
+    locale: _locale,
+    localizationsDelegates: BheLocalizations.localizationsDelegates,
+    supportedLocales: BheLocalizations.supportedLocales,
     theme: bheTheme(Brightness.light),
     darkTheme: bheTheme(Brightness.dark),
     themeMode: dark ? ThemeMode.dark : ThemeMode.light,
@@ -107,6 +145,7 @@ class _BheMobileAppState extends State<BheMobileApp> {
             state: state,
             dark: dark,
             onToggleTheme: () => setState(() => dark = !dark),
+            onLocaleChanged: _setLocale,
             section: state.analysing ? _WorkspaceSection.project : section,
             onSectionChanged: (value) => setState(() => section = value),
             onCreateProject: () =>
@@ -123,6 +162,7 @@ class _AppShell extends StatelessWidget {
     required this.state,
     required this.dark,
     required this.onToggleTheme,
+    required this.onLocaleChanged,
     required this.section,
     required this.onSectionChanged,
     required this.onCreateProject,
@@ -131,6 +171,7 @@ class _AppShell extends StatelessWidget {
   final MobileAppState state;
   final bool dark;
   final VoidCallback onToggleTheme;
+  final ValueChanged<Locale> onLocaleChanged;
   final _WorkspaceSection section;
   final ValueChanged<_WorkspaceSection> onSectionChanged;
   final VoidCallback onCreateProject;
@@ -165,6 +206,7 @@ class _AppShell extends StatelessWidget {
               state: state,
               dark: dark,
               onToggleTheme: onToggleTheme,
+              onLocaleChanged: onLocaleChanged,
               section: section,
               onOpenProject: () => onSectionChanged(_WorkspaceSection.project),
               onOpenExport: state.project.candidates.isEmpty
@@ -185,6 +227,7 @@ class _TopBar extends StatelessWidget {
     required this.state,
     required this.dark,
     required this.onToggleTheme,
+    required this.onLocaleChanged,
     required this.section,
     required this.onOpenProject,
     required this.onOpenExport,
@@ -194,115 +237,144 @@ class _TopBar extends StatelessWidget {
   final MobileAppState state;
   final bool dark;
   final VoidCallback onToggleTheme;
+  final ValueChanged<Locale> onLocaleChanged;
   final _WorkspaceSection section;
   final VoidCallback onOpenProject;
   final VoidCallback? onOpenExport;
   final VoidCallback onCreateProject;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 10, 10, 8),
-    child: Row(
-      children: [
-        if (section != _WorkspaceSection.project)
-          IconButton(
-            onPressed: onOpenProject,
-            tooltip: '返回项目',
-            icon: const Icon(LucideIcons.chevronLeft, size: 23),
-          ),
-        Expanded(
-          child: InkWell(
-            onTap: onOpenProject,
-            borderRadius: BorderRadius.circular(7),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-              child: Row(
-                children: [
-                  Container(
-                    width: 28,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      color: BhePalette.orange,
-                      borderRadius: BorderRadius.circular(7),
+  Widget build(BuildContext context) {
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+    final title = switch (section) {
+      _WorkspaceSection.project => l10n?.appName ?? 'BHE',
+      _WorkspaceSection.review => l10n?.navReview ?? '审核',
+      _WorkspaceSection.export => l10n?.navExport ?? '导出',
+    };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 10, 8),
+      child: Row(
+        children: [
+          if (section != _WorkspaceSection.project)
+            IconButton(
+              onPressed: onOpenProject,
+              tooltip: l10n?.backToProject ?? '返回项目',
+              icon: const Icon(LucideIcons.chevronLeft, size: 23),
+            ),
+          Expanded(
+            child: InkWell(
+              onTap: onOpenProject,
+              borderRadius: BorderRadius.circular(7),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: BhePalette.orange,
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: const Icon(
+                        LucideIcons.play,
+                        color: Colors.white,
+                        size: 15,
+                      ),
                     ),
-                    child: const Icon(
-                      LucideIcons.play,
-                      color: Colors.white,
-                      size: 15,
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        title,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Flexible(
-                    child: Text(
-                      section == _WorkspaceSection.project
-                          ? 'BHE'
-                          : section == _WorkspaceSection.review
-                          ? '审核'
-                          : '导出',
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-        if (state.project.video != null)
-          Flexible(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Text(
-                state.project.name,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: Theme.of(context).textTheme.bodySmall,
+          if (state.project.video != null)
+            Flexible(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Text(
+                  state.project.name,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ),
             ),
-          ),
-        if (onOpenExport != null)
-          IconButton(
-            onPressed: onOpenExport,
-            tooltip: '导出',
-            icon: const Icon(LucideIcons.download, size: 19),
-          ),
-        IconButton(
-          onPressed: onCreateProject,
-          tooltip: '新建项目',
-          icon: const Icon(LucideIcons.plus, size: 20),
-        ),
-        PopupMenuButton<String>(
-          tooltip: '更多操作',
-          icon: const Icon(LucideIcons.ellipsis, size: 20),
-          onSelected: (value) async {
-            switch (value) {
-              case 'theme':
-                onToggleTheme();
-                break;
-              case 'new':
-                onCreateProject();
-                break;
-              case 'import':
-                await state.importProject();
-                break;
-              case 'delete':
-                await _confirmDelete(context, state);
-                break;
-            }
-          },
-          itemBuilder: (context) => [
-            PopupMenuItem(
-              value: 'theme',
-              child: Text(dark ? '切换浅色主题' : '切换深色主题'),
+          if (onOpenExport != null)
+            IconButton(
+              onPressed: onOpenExport,
+              tooltip: l10n?.navExport ?? '导出',
+              icon: const Icon(LucideIcons.download, size: 19),
             ),
-            const PopupMenuItem(value: 'new', child: Text('新建项目')),
-            const PopupMenuItem(value: 'import', child: Text('打开项目包')),
-            const PopupMenuItem(value: 'delete', child: Text('删除当前项目')),
-          ],
-        ),
-      ],
-    ),
-  );
+          IconButton(
+            onPressed: onCreateProject,
+            tooltip: l10n?.newProject ?? '新建项目',
+            icon: const Icon(LucideIcons.plus, size: 20),
+          ),
+          PopupMenuButton<Locale>(
+            tooltip: l10n?.switchLanguage ?? '切换语言',
+            icon: const Icon(LucideIcons.languages, size: 20),
+            onSelected: onLocaleChanged,
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: BheLocale.zh,
+                child: Text(l10n?.languageChinese ?? '简体中文'),
+              ),
+              PopupMenuItem(
+                value: BheLocale.en,
+                child: Text(l10n?.languageEnglish ?? 'English'),
+              ),
+            ],
+          ),
+          PopupMenuButton<String>(
+            tooltip: l10n?.more ?? '更多操作',
+            icon: const Icon(LucideIcons.ellipsis, size: 20),
+            onSelected: (value) async {
+              switch (value) {
+                case 'theme':
+                  onToggleTheme();
+                  break;
+                case 'new':
+                  onCreateProject();
+                  break;
+                case 'import':
+                  await state.importProject();
+                  break;
+                case 'delete':
+                  await _confirmDelete(context, state);
+                  break;
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'theme',
+                child: Text(context.bheText(dark ? '切换浅色主题' : '切换深色主题')),
+              ),
+              PopupMenuItem(
+                value: 'new',
+                child: Text(l10n?.newProject ?? '新建项目'),
+              ),
+              PopupMenuItem(
+                value: 'import',
+                child: Text(l10n?.openPackage ?? '打开项目包'),
+              ),
+              PopupMenuItem(
+                value: 'delete',
+                child: Text(l10n?.deleteProject ?? '删除当前项目'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 Future<void> _confirmDelete(BuildContext context, MobileAppState state) async {
@@ -310,16 +382,16 @@ Future<void> _confirmDelete(BuildContext context, MobileAppState state) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('删除当前项目？'),
-      content: Text('“${state.project.name}”及其审核记录会从本机移除。'),
+      title: Text(context.bheText('删除当前项目？')),
+      content: Text(context.bheText('“${state.project.name}”及其审核记录会从本机移除。')),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context, false),
-          child: const Text('取消'),
+          child: Text(context.bheText('取消')),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(context, true),
-          child: const Text('删除'),
+          child: Text(context.bheText('删除')),
         ),
       ],
     ),
@@ -338,6 +410,7 @@ class _ProjectView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final width = MediaQuery.sizeOf(context).width;
     final maxWidth = width > 840 ? 900.0 : double.infinity;
     return Center(
@@ -347,13 +420,13 @@ class _ProjectView extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 6, 16, 28),
           children: [
             _PageIntro(
-              eyebrow: 'PROJECT WORKSPACE',
+              eyebrow: l10n?.projectWorkspace ?? 'PROJECT WORKSPACE',
               title: state.project.video == null
-                  ? '开始一个视频项目'
+                  ? (l10n?.startVideoProject ?? '开始一个视频项目')
                   : state.project.name,
               subtitle: state.project.video == null
-                  ? '本地完成分析、审核和导出。'
-                  : '配置好分析区域后即可开始识别。',
+                  ? (l10n?.localCompleteDescription ?? '本地完成分析、审核和导出。')
+                  : (l10n?.configureAnalysisDescription ?? '配置好分析区域后即可开始识别。'),
             ),
             if (state.preparingVideo)
               _VideoPreparationCard(message: state.preparingVideoMessage)
@@ -368,8 +441,8 @@ class _ProjectView extends StatelessWidget {
             )) ...[
               const SizedBox(height: 24),
               _SectionHeader(
-                title: '最近项目',
-                action: '${state.recentProjects.length} 个',
+                title: l10n?.recentProjects ?? '最近项目',
+                action: context.bheText('${state.recentProjects.length} 个'),
               ),
               const SizedBox(height: 8),
               for (final project in state.recentProjects.where(
@@ -424,30 +497,40 @@ class _EmptyProject extends StatelessWidget {
   final VoidCallback onPick;
 
   @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(20, 30, 20, 30),
-      child: Column(
-        children: [
-          const Icon(LucideIcons.fileVideo, size: 34, color: BhePalette.orange),
-          const SizedBox(height: 16),
-          Text('选择一段比赛视频', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 7),
-          Text(
-            'BHE 会在本机生成候选片段，之后由你快速审核。',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: onPick,
-            icon: const Icon(LucideIcons.upload, size: 18),
-            label: const Text('选择视频'),
-          ),
-        ],
+  Widget build(BuildContext context) {
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 30, 20, 30),
+        child: Column(
+          children: [
+            const Icon(
+              LucideIcons.fileVideo,
+              size: 34,
+              color: BhePalette.orange,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              l10n?.selectMatchVideo ?? '选择一段比赛视频',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 7),
+            Text(
+              l10n?.mobileCandidateDescription ?? 'BHE 会在本机生成候选片段，之后由你快速审核。',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: onPick,
+              icon: const Icon(LucideIcons.upload, size: 18),
+              label: Text(l10n?.selectVideo ?? '选择视频'),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _VideoPreparationCard extends StatelessWidget {
@@ -456,34 +539,40 @@ class _VideoPreparationCard extends StatelessWidget {
   final String message;
 
   @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
-      child: Row(
-        children: [
-          const SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2.5),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('正在准备视频', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 4),
-                Text(
-                  '$message，大文件可能需要几秒。',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
+  Widget build(BuildContext context) {
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
             ),
-          ),
-        ],
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    l10n?.prepareVideo ?? '正在准备视频',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${l10n?.text(message) ?? message}，${l10n?.text('大文件可能需要几秒') ?? '大文件可能需要几秒'}。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _ProjectSetup extends StatelessWidget {
@@ -495,6 +584,7 @@ class _ProjectSetup extends StatelessWidget {
   Widget build(BuildContext context) {
     final video = state.project.video!;
     final settings = state.project.settings;
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -509,32 +599,45 @@ class _ProjectSetup extends StatelessWidget {
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 20),
-        _SectionHeader(title: '分析配置', action: '自动保存'),
+        _SectionHeader(
+          title: l10n?.analysisConfig ?? '分析配置',
+          action: l10n?.autoSave ?? '自动保存',
+        ),
         const SizedBox(height: 8),
         Card(
           child: Column(
             children: [
               _SettingRow(
                 icon: LucideIcons.scanLine,
-                title: '分析质量',
+                title: l10n?.analysisQuality ?? '分析质量',
                 value: settings.mode == AnalysisMode.standard
-                    ? '标准 · ${settings.modelInputSize} 输入 / ${settings.analysisFpsLabel}fps'
-                    : '高质量 · ${settings.modelInputSize} 输入 / ${settings.analysisFpsLabel}fps',
+                    ? (l10n?.standardQuality(
+                            settings.modelInputSize,
+                            settings.analysisFpsLabel,
+                          ) ??
+                          '标准 · ${settings.modelInputSize} 输入 / ${settings.analysisFpsLabel}fps')
+                    : (l10n?.highQuality(
+                            settings.modelInputSize,
+                            settings.analysisFpsLabel,
+                          ) ??
+                          '高质量 · ${settings.modelInputSize} 输入 / ${settings.analysisFpsLabel}fps'),
                 onTap: () => _showQualitySheet(context, state),
               ),
               const Divider(height: 1),
               _SettingRow(
                 icon: LucideIcons.clock3,
-                title: '片段时长',
+                title: l10n?.clipDuration ?? '片段时长',
                 value:
-                    '${settings.clip.beforeSeconds} 秒前 + ${settings.clip.afterSeconds} 秒后',
+                    '${settings.clip.beforeSeconds} ${context.bheText('秒')} ${context.bheText('前')} + ${settings.clip.afterSeconds} ${context.bheText('秒')} ${context.bheText('后')}',
                 onTap: () => _showClipSheet(context, state),
               ),
               const Divider(height: 1),
               _SettingRow(
                 icon: LucideIcons.crosshair,
-                title: '投篮分析区与篮网区',
-                value: state.project.hoopRoi == null ? '尚未设置' : '已设置，篮筐标定独立保存',
+                title: l10n?.roiZones ?? '投篮分析区与篮网区',
+                value: state.project.hoopRoi == null
+                    ? (l10n?.notSet ?? '尚未设置')
+                    : (l10n?.roiConfigured ?? '已设置，篮筐标定独立保存'),
                 onTap: () => _showRoiEditor(context, state),
                 accent: state.project.hoopRoi == null
                     ? BhePalette.warning
@@ -543,7 +646,7 @@ class _ProjectSetup extends StatelessWidget {
               const Divider(height: 1),
               _SettingRow(
                 icon: LucideIcons.scan,
-                title: '分析范围',
+                title: l10n?.analysisRange ?? '分析范围',
                 value:
                     '${_formatMs(settings.startMs)} — ${_formatMs(settings.endMs ?? video.durationMs)}',
                 onTap: () => _showRangeSheet(context, state),
@@ -553,16 +656,23 @@ class _ProjectSetup extends StatelessWidget {
         ),
         if (state.errorMessage != null) ...[
           const SizedBox(height: 12),
-          _InlineNotice(message: state.errorMessage!, error: true),
+          _InlineNotice(
+            message: l10n?.text(state.errorMessage!) ?? state.errorMessage!,
+            error: true,
+          ),
         ],
         if (state.project.lastAnalysisStatus == 'completed' &&
             state.project.candidates.isEmpty) ...[
           const SizedBox(height: 12),
-          const _InlineNotice(message: '没有找到候选片段。建议检查检测区域或分析范围后重新分析。'),
+          _InlineNotice(
+            message: l10n?.noCandidatesAdvice ?? '没有找到候选片段。建议检查检测区域或分析范围后重新分析。',
+          ),
         ],
         if (state.project.lastAnalysisStatus == 'interrupted') ...[
           const SizedBox(height: 12),
-          const _InlineNotice(message: '上次分析未完成，可以重新开始。'),
+          _InlineNotice(
+            message: l10n?.analysisInterrupted ?? '上次分析未完成，可以重新开始。',
+          ),
         ],
         const SizedBox(height: 18),
         Row(
@@ -573,7 +683,11 @@ class _ProjectSetup extends StatelessWidget {
                     ? null
                     : () => unawaited(_confirmAndStartAnalysis(context, state)),
                 icon: const Icon(LucideIcons.play, size: 18),
-                label: Text(state.project.candidates.isEmpty ? '开始分析' : '重新分析'),
+                label: Text(
+                  state.project.candidates.isEmpty
+                      ? (l10n?.startAnalysis ?? '开始分析')
+                      : (l10n?.redoAnalysis ?? '重新分析'),
+                ),
               ),
             ),
             if (state.project.candidates.isNotEmpty) ...[
@@ -581,7 +695,10 @@ class _ProjectSetup extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: onOpenReview,
                 icon: const Icon(LucideIcons.listChecks, size: 18),
-                label: Text('审核 ${state.project.candidates.length}'),
+                label: Text(
+                  l10n?.reviewCount(state.project.candidates.length) ??
+                      '审核 ${state.project.candidates.length}',
+                ),
               ),
             ],
           ],
@@ -589,7 +706,10 @@ class _ProjectSetup extends StatelessWidget {
         if (state.project.lastAnalysisDurationMs != null) ...[
           const SizedBox(height: 10),
           Text(
-            '上次分析耗时 ${_formatMs(state.project.lastAnalysisDurationMs!)}',
+            l10n?.lastAnalysisDuration(
+                  _formatMs(state.project.lastAnalysisDurationMs!),
+                ) ??
+                '上次分析耗时 ${_formatMs(state.project.lastAnalysisDurationMs!)}',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
@@ -605,16 +725,40 @@ Future<void> _confirmAndStartAnalysis(
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('开始分析'),
-      content: const Text('分析期间请保持 BHE 在前台并保持屏幕亮起。锁屏或切到后台可能导致分析变慢或暂停。'),
+      title: Text(
+        Localizations.of<BheLocalizations>(
+              context,
+              BheLocalizations,
+            )?.startAnalysisTitle ??
+            '开始分析',
+      ),
+      content: Text(
+        Localizations.of<BheLocalizations>(
+              context,
+              BheLocalizations,
+            )?.foregroundAnalysisWarning ??
+            '分析期间请保持 BHE 在前台并保持屏幕亮起。锁屏或切到后台可能导致分析变慢或暂停。',
+      ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context, false),
-          child: const Text('取消'),
+          child: Text(
+            Localizations.of<BheLocalizations>(
+                  context,
+                  BheLocalizations,
+                )?.cancel ??
+                '取消',
+          ),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(context, true),
-          child: const Text('开始'),
+          child: Text(
+            Localizations.of<BheLocalizations>(
+                  context,
+                  BheLocalizations,
+                )?.start ??
+                '开始',
+          ),
         ),
       ],
     ),
@@ -906,7 +1050,8 @@ class _VideoPreviewState extends State<_VideoPreview> {
                     IconButton(
                       onPressed: () => _seek(-widget.seekStepMs),
                       icon: const Icon(LucideIcons.rotateCcw, size: 17),
-                      tooltip: '后退 ${_formatSeekStep(widget.seekStepMs)}',
+                      tooltip:
+                          '${context.bheText('后退')} ${context.bheText(_formatSeekStep(widget.seekStepMs))}',
                     ),
                     IconButton.filledTonal(
                       onPressed: _toggle,
@@ -916,17 +1061,18 @@ class _VideoPreviewState extends State<_VideoPreview> {
                             : LucideIcons.play,
                         size: 18,
                       ),
-                      tooltip: '播放/暂停',
+                      tooltip: context.bheText('播放/暂停'),
                     ),
                     IconButton(
                       onPressed: () => _seek(widget.seekStepMs),
                       icon: const Icon(LucideIcons.rotateCw, size: 17),
-                      tooltip: '前进 ${_formatSeekStep(widget.seekStepMs)}',
+                      tooltip:
+                          '${context.bheText('前进')} ${context.bheText(_formatSeekStep(widget.seekStepMs))}',
                     ),
                     IconButton(
                       onPressed: _replay,
                       icon: const Icon(LucideIcons.refreshCw, size: 17),
-                      tooltip: '重播',
+                      tooltip: context.bheText('重播'),
                     ),
                   ],
                 ),
@@ -969,12 +1115,12 @@ class _RangeEditorSlider extends StatelessWidget {
         Row(
           children: [
             Text(
-              '播放位置 ${_formatMs(boundedPosition.round())}',
+              '${context.bheText('播放位置')} ${_formatMs(boundedPosition.round())}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const Spacer(),
             Text(
-              '范围 ${_formatMs(start.round())} — ${_formatMs(end.round())}',
+              '${context.bheText('范围')} ${_formatMs(start.round())} — ${_formatMs(end.round())}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -1063,7 +1209,7 @@ class _RecentProjectRow extends StatelessWidget {
               child: Text(project.name, overflow: TextOverflow.ellipsis),
             ),
             Text(
-              '${project.candidates.length} 个候选',
+              context.bheText('候选 ${project.candidates.length}'),
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(width: 8),
@@ -1101,35 +1247,41 @@ class _InlineNotice extends StatelessWidget {
   final bool error;
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    decoration: BoxDecoration(
-      color: (error ? BhePalette.error : BhePalette.warning).withValues(
-        alpha: .10,
-      ),
-      border: Border(
-        left: BorderSide(
-          color: error ? BhePalette.error : BhePalette.warning,
-          width: 2,
+  Widget build(BuildContext context) {
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: (error ? BhePalette.error : BhePalette.warning).withValues(
+          alpha: .10,
+        ),
+        border: Border(
+          left: BorderSide(
+            color: error ? BhePalette.error : BhePalette.warning,
+            width: 2,
+          ),
         ),
       ),
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(
-          error ? LucideIcons.circleAlert : LucideIcons.info,
-          size: 16,
-          color: error ? BhePalette.error : BhePalette.warning,
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(message, style: Theme.of(context).textTheme.bodySmall),
-        ),
-      ],
-    ),
-  );
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            error ? LucideIcons.circleAlert : LucideIcons.info,
+            size: 16,
+            color: error ? BhePalette.error : BhePalette.warning,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              l10n?.text(message) ?? message,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _AnalysisView extends StatefulWidget {
@@ -1160,14 +1312,15 @@ class _AnalysisViewState extends State<_AnalysisView> {
   @override
   Widget build(BuildContext context) {
     final state = widget.state;
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final percent = (state.progress * 100).round();
-    const steps = <(AnalysisStage, String)>[
-      (AnalysisStage.validateInput, '检查视频'),
-      (AnalysisStage.prepareProxy, '准备本地模型'),
-      (AnalysisStage.coarseScan, '扫描视频'),
-      (AnalysisStage.generateCandidates, '生成候选'),
-      (AnalysisStage.refineCandidates, '精筛候选'),
-      (AnalysisStage.persistCandidates, '保存结果'),
+    final steps = <(AnalysisStage, String)>[
+      (AnalysisStage.validateInput, l10n?.checkingVideo ?? '检查视频'),
+      (AnalysisStage.prepareProxy, l10n?.prepareLocalAnalysis ?? '准备本地模型'),
+      (AnalysisStage.coarseScan, context.bheText('扫描视频')),
+      (AnalysisStage.generateCandidates, context.bheText('生成候选')),
+      (AnalysisStage.refineCandidates, context.bheText('精筛候选')),
+      (AnalysisStage.persistCandidates, context.bheText('保存结果')),
     ];
     final current = steps.indexWhere((item) => item.$1 == state.stage);
     return Scaffold(
@@ -1180,16 +1333,17 @@ class _AnalysisViewState extends State<_AnalysisView> {
               children: [
                 Row(
                   children: [
-                    const Expanded(
+                    Expanded(
                       child: _PageIntro(
                         eyebrow: 'LOCAL ANALYSIS',
-                        title: '正在分析视频',
-                        subtitle: '分析在本机运行，完成后会自动保存结果。',
+                        title: l10n?.analysisInProgress ?? '正在分析视频',
+                        subtitle:
+                            l10n?.analysisLocalSaved ?? '分析在本机运行，完成后会自动保存结果。',
                       ),
                     ),
                     TextButton(
                       onPressed: () => unawaited(state.cancelAnalysis()),
-                      child: const Text('取消'),
+                      child: Text(l10n?.cancel ?? '取消'),
                     ),
                   ],
                 ),
@@ -1207,7 +1361,12 @@ class _AnalysisViewState extends State<_AnalysisView> {
                             ),
                             const Spacer(),
                             Text(
-                              '已用 ${_formatMs(state.analysisElapsed.inMilliseconds)}',
+                              l10n?.elapsed(
+                                    _formatMs(
+                                      state.analysisElapsed.inMilliseconds,
+                                    ),
+                                  ) ??
+                                  '已用 ${_formatMs(state.analysisElapsed.inMilliseconds)}',
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
@@ -1223,14 +1382,18 @@ class _AnalysisViewState extends State<_AnalysisView> {
                             Expanded(
                               child: Text(
                                 state.progressMessage.isEmpty
-                                    ? '准备本地分析'
-                                    : state.progressMessage,
+                                    ? (l10n?.prepareLocalAnalysis ?? '准备本地分析')
+                                    : l10n?.text(state.progressMessage) ??
+                                          state.progressMessage,
                                 style: Theme.of(context).textTheme.bodySmall,
                               ),
                             ),
                             if (state.eta != null)
                               Text(
-                                '还需 ${_formatMs(state.eta!.inMilliseconds)}',
+                                l10n?.remaining(
+                                      _formatMs(state.eta!.inMilliseconds),
+                                    ) ??
+                                    '还需 ${_formatMs(state.eta!.inMilliseconds)}',
                                 style: Theme.of(context).textTheme.bodySmall,
                               ),
                           ],
@@ -1239,7 +1402,11 @@ class _AnalysisViewState extends State<_AnalysisView> {
                             state.totalFrames != null) ...[
                           const SizedBox(height: 7),
                           Text(
-                            '${state.processedFrames} / ${state.totalFrames} 帧',
+                            l10n?.processedFrames(
+                                  state.processedFrames!,
+                                  state.totalFrames!,
+                                ) ??
+                                '${state.processedFrames} / ${state.totalFrames} 帧',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ],
@@ -1275,7 +1442,11 @@ class _AnalysisViewState extends State<_AnalysisView> {
                 ),
                 if (state.errorMessage != null) ...[
                   const SizedBox(height: 12),
-                  _InlineNotice(message: state.errorMessage!, error: true),
+                  _InlineNotice(
+                    message:
+                        l10n?.text(state.errorMessage!) ?? state.errorMessage!,
+                    error: true,
+                  ),
                 ],
               ],
             ),
@@ -1602,25 +1773,27 @@ class _ReviewViewState extends State<_ReviewView> {
       useSafeArea: true,
       builder: (context) => StatefulBuilder(
         builder: (context, setSheetState) => _SheetFrame(
-          title: '批量设置片段时长',
+          title: context.bheText('批量设置片段时长'),
           child: Column(
             children: [
-              Text('全部 ${candidates.length} 个候选片段'),
+              Text(context.bheText('全部 ${candidates.length} 个候选片段')),
               const SizedBox(height: 8),
               _BatchSecondsSlider(
-                label: '进球前',
+                label: context.bheText('进球前'),
                 value: before,
                 onChanged: (value) => setSheetState(() => before = value),
               ),
               _BatchSecondsSlider(
-                label: '进球后',
+                label: context.bheText('进球后'),
                 value: after,
                 onChanged: (value) => setSheetState(() => after = value),
               ),
               Text(
-                overwriteManual
-                    ? '将覆盖全部 ${candidates.length} 个片段，其中 $manualCount 个曾手动调整。'
-                    : '将更新 ${candidates.length - manualCount} 个片段，保留 $manualCount 个手动调整片段。',
+                context.bheText(
+                  overwriteManual
+                      ? '将覆盖全部 ${candidates.length} 个片段，其中 $manualCount 个曾手动调整。'
+                      : '将更新 ${candidates.length - manualCount} 个片段，保留 $manualCount 个手动调整片段。',
+                ),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 4),
@@ -1629,15 +1802,17 @@ class _ReviewViewState extends State<_ReviewView> {
                 value: overwriteManual,
                 onChanged: (value) =>
                     setSheetState(() => overwriteManual = value ?? false),
-                title: const Text('覆盖手动调整过的片段'),
-                subtitle: const Text('关闭时会保留手动调整的范围'),
+                title: Text(context.bheText('覆盖手动调整过的片段')),
+                subtitle: Text(context.bheText('关闭时会保留手动调整的范围')),
               ),
               FilledButton(
                 onPressed: before.round() == 0 && after.round() == 0
                     ? null
                     : () => Navigator.pop(context, true),
                 child: Text(
-                  '应用到 ${overwriteManual ? candidates.length : candidates.length - manualCount} 个片段',
+                  context.bheText(
+                    '应用到 ${overwriteManual ? candidates.length : candidates.length - manualCount} 个片段',
+                  ),
                 ),
               ),
             ],
@@ -1750,33 +1925,39 @@ class _ReviewViewState extends State<_ReviewView> {
     await showModalBottomSheet<void>(
       context: context,
       useSafeArea: true,
-      builder: (_) => _SheetFrame(
-        title: '操作提示',
-        child: Column(
-          children: const [
-            _ShortcutRow(
-              icon: LucideIcons.arrowUp,
-              title: '上滑 / 下滑',
-              detail: '切换上一个 / 下一个候选片段',
-            ),
-            _ShortcutRow(
-              icon: LucideIcons.moveHorizontal,
-              title: '左右拖动视频',
-              detail: '拖动预览位置，松手后跳转到对应时间',
-            ),
-            _ShortcutRow(
-              icon: LucideIcons.play,
-              title: '点击视频',
-              detail: '播放或暂停当前片段',
-            ),
-            _ShortcutRow(
-              icon: LucideIcons.check,
-              title: '选中 / 不选',
-              detail: '完成当前候选后自动进入下一个',
-            ),
-          ],
-        ),
-      ),
+      builder: (context) {
+        final l10n = Localizations.of<BheLocalizations>(
+          context,
+          BheLocalizations,
+        );
+        return _SheetFrame(
+          title: l10n?.shortcuts ?? '操作提示',
+          child: Column(
+            children: [
+              _ShortcutRow(
+                icon: LucideIcons.arrowUp,
+                title: l10n?.text('上滑 / 下滑') ?? '上滑 / 下滑',
+                detail: l10n?.text('切换上一个 / 下一个候选片段') ?? '切换上一个 / 下一个候选片段',
+              ),
+              _ShortcutRow(
+                icon: LucideIcons.moveHorizontal,
+                title: l10n?.text('左右拖动视频') ?? '左右拖动视频',
+                detail: l10n?.text('拖动预览位置，松手后跳转到对应时间') ?? '拖动预览位置，松手后跳转到对应时间',
+              ),
+              _ShortcutRow(
+                icon: LucideIcons.play,
+                title: l10n?.text('点击视频') ?? '点击视频',
+                detail: l10n?.text('播放或暂停当前片段') ?? '播放或暂停当前片段',
+              ),
+              _ShortcutRow(
+                icon: LucideIcons.check,
+                title: l10n?.text('选中 / 不选') ?? '选中 / 不选',
+                detail: l10n?.text('完成当前候选后自动进入下一个') ?? '完成当前候选后自动进入下一个',
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1806,11 +1987,11 @@ class _ReviewViewState extends State<_ReviewView> {
       useSafeArea: true,
       builder: (context) => StatefulBuilder(
         builder: (context, setSheetState) => _SheetFrame(
-          title: '补漏候选',
+          title: context.bheText('补漏候选'),
           child: Column(
             children: [
               Text(
-                '用视频控制确认时间，再拖动两端确定要审核的片段。',
+                context.bheText('用视频控制确认时间，再拖动两端确定要审核的片段。'),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 10),
@@ -1861,7 +2042,7 @@ class _ReviewViewState extends State<_ReviewView> {
                     end: end.round(),
                   )),
                   icon: const Icon(LucideIcons.plus, size: 18),
-                  label: const Text('加入审核列表'),
+                  label: Text(context.bheText('加入审核列表')),
                 ),
               ),
             ],
@@ -1914,20 +2095,24 @@ class _ReviewViewState extends State<_ReviewView> {
   }
 
   Future<void> _showReviewCompletePrompt(BuildContext context) async {
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final export = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('审核完成'),
-        content: Text('已处理 ${candidates.length} 个候选片段，可以进入导出。'),
+        title: Text(l10n?.reviewComplete ?? '审核完成'),
+        content: Text(
+          l10n?.reviewCompleteDescription(candidates.length) ??
+              '已处理 ${candidates.length} 个候选片段，可以进入导出。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('稍后导出'),
+            child: Text(l10n?.laterExport ?? '稍后导出'),
           ),
           FilledButton.icon(
             onPressed: () => Navigator.pop(context, true),
             icon: const Icon(LucideIcons.download, size: 17),
-            label: const Text('去导出'),
+            label: Text(l10n?.goExport ?? '去导出'),
           ),
         ],
       ),
@@ -1948,7 +2133,7 @@ class _ReviewViewState extends State<_ReviewView> {
       useSafeArea: true,
       builder: (context) => StatefulBuilder(
         builder: (context, setSheetState) => _SheetFrame(
-          title: '调整片段范围',
+          title: context.bheText('调整片段范围'),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1991,7 +2176,7 @@ class _ReviewViewState extends State<_ReviewView> {
                 },
               ),
               Text(
-                '先用上方视频找到位置，再拖动滑杆两端微调片段起止。',
+                context.bheText('先用上方视频找到位置，再拖动滑杆两端微调片段起止。'),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 8),
@@ -2000,7 +2185,7 @@ class _ReviewViewState extends State<_ReviewView> {
                   start: start.round(),
                   end: end.round(),
                 )),
-                child: const Text('应用'),
+                child: Text(context.bheText('应用')),
               ),
             ],
           ),
@@ -2212,7 +2397,7 @@ class _ReviewVideoStageState extends State<_ReviewVideoStage> {
                             color: Colors.white,
                             size: 18,
                           ),
-                          tooltip: '横屏全屏',
+                          tooltip: context.bheText('横屏全屏'),
                           visualDensity: VisualDensity.compact,
                         ),
                       ),
@@ -2256,7 +2441,9 @@ class _ReviewVideoStageState extends State<_ReviewVideoStage> {
                                 ),
                               ),
                               Text(
-                                _resumeAfterScrub ? '松手后继续播放' : '松手后定位并暂停',
+                                context.bheText(
+                                  _resumeAfterScrub ? '松手后继续播放' : '松手后定位并暂停',
+                                ),
                                 style: const TextStyle(
                                   color: Colors.white70,
                                   fontSize: 10,
@@ -2510,7 +2697,9 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
             left: 12,
             child: _LandscapeChip(
               icon: LucideIcons.listVideo,
-              label: '审核 ${_selectedIndex + 1}/${_candidates.length}',
+              label: context.bheText(
+                '审核 ${_selectedIndex + 1}/${_candidates.length}',
+              ),
             ),
           ),
           Positioned(
@@ -2523,13 +2712,13 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
                   icon: _railVisible
                       ? LucideIcons.panelRightClose
                       : LucideIcons.panelRightOpen,
-                  tooltip: _railVisible ? '收起候选列表' : '打开候选列表',
+                  tooltip: context.bheText(_railVisible ? '收起候选列表' : '打开候选列表'),
                   onPressed: () => setState(() => _railVisible = !_railVisible),
                 ),
                 const SizedBox(width: 6),
                 _LandscapeIconButton(
                   icon: _annotations ? LucideIcons.scanLine : LucideIcons.scan,
-                  tooltip: _annotations ? '关闭标注' : '打开标注',
+                  tooltip: context.bheText(_annotations ? '关闭标注' : '打开标注'),
                   selected: _annotations,
                   onPressed: () {
                     setState(() => _annotations = !_annotations);
@@ -2539,7 +2728,7 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
                 const SizedBox(width: 6),
                 _LandscapeIconButton(
                   icon: LucideIcons.minimize,
-                  tooltip: '退出横屏审核',
+                  tooltip: context.bheText('退出横屏审核'),
                   onPressed: widget.onExit,
                 ),
               ],
@@ -2564,7 +2753,7 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
                     color: Colors.white,
                     size: 34,
                   ),
-                  tooltip: '播放',
+                  tooltip: context.bheText('播放'),
                 ),
               ),
             ),
@@ -2587,8 +2776,8 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
             child: Row(
               children: [
-                const Text(
-                  '候选片段',
+                Text(
+                  context.bheText('候选片段'),
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 13,
@@ -2710,23 +2899,23 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
           children: [
             _LandscapeIconButton(
               icon: LucideIcons.rotateCcw,
-              tooltip: '重播当前片段',
+              tooltip: context.bheText('重播当前片段'),
               onPressed: () => widget.onReplay(_candidate),
             ),
             _LandscapeIconButton(
               icon: LucideIcons.chevronLeft,
-              tooltip: '后退 1.5 秒',
+              tooltip: '${context.bheText('后退')} 1.5 ${context.bheText('秒')}',
               onPressed: () => widget.onSeek(-1500),
             ),
             _LandscapeIconButton(
               icon: value.isPlaying ? LucideIcons.pause : LucideIcons.play,
-              tooltip: value.isPlaying ? '暂停' : '播放',
+              tooltip: context.bheText(value.isPlaying ? '暂停' : '播放'),
               selected: value.isPlaying,
               onPressed: widget.onToggle,
             ),
             _LandscapeIconButton(
               icon: LucideIcons.chevronRight,
-              tooltip: '前进 1.5 秒',
+              tooltip: '${context.bheText('前进')} 1.5 ${context.bheText('秒')}',
               onPressed: () => widget.onSeek(1500),
             ),
             const SizedBox(width: 6),
@@ -2751,7 +2940,7 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
             const SizedBox(width: 5),
             _LandscapeIconButton(
               icon: _autoReplay ? LucideIcons.repeat1 : LucideIcons.repeat,
-              tooltip: _autoReplay ? '关闭循环播放' : '开启循环播放',
+              tooltip: context.bheText(_autoReplay ? '关闭循环播放' : '开启循环播放'),
               selected: _autoReplay,
               onPressed: () {
                 setState(() => _autoReplay = !_autoReplay);
@@ -2759,7 +2948,7 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
               },
             ),
             PopupMenuButton<double>(
-              tooltip: '播放速度',
+              tooltip: context.bheText('播放速度'),
               initialValue: _speed,
               onSelected: (value) {
                 setState(() => _speed = value);
@@ -2784,7 +2973,7 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
             OutlinedButton.icon(
               onPressed: () => _reviewCandidate(CandidateSelection.excluded),
               icon: const Icon(LucideIcons.x, size: 17),
-              label: const Text('不选'),
+              label: Text(context.bheText('不选')),
               style: OutlinedButton.styleFrom(
                 foregroundColor: Colors.white,
                 minimumSize: const Size(78, 38),
@@ -2796,7 +2985,7 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
             FilledButton.icon(
               onPressed: () => _reviewCandidate(CandidateSelection.included),
               icon: const Icon(LucideIcons.check, size: 17),
-              label: const Text('选中'),
+              label: Text(context.bheText('选中')),
               style: FilledButton.styleFrom(
                 minimumSize: const Size(82, 38),
                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -2890,7 +3079,7 @@ class _PlaybackTimeBadge extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           Text(
-            '当前 ${_formatMs(positionMs)}',
+            context.bheText('当前 ${_formatMs(positionMs)}'),
             style: const TextStyle(color: Colors.white, fontSize: 12),
           ),
         ],
@@ -2912,7 +3101,9 @@ class _CompactEvidence extends StatelessWidget {
     child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
       child: Text(
-        '置信度 ${_score(candidate.confidence)}  ·  轨迹 ${_score(candidate.trajectoryScore)}  ·  穿框 ${_score(candidate.crossingScore)}  ·  篮网 ${_score(candidate.netMotionScore)}',
+        context.bheText(
+          '置信度 ${_score(candidate.confidence)}  ·  轨迹 ${_score(candidate.trajectoryScore)}  ·  穿框 ${_score(candidate.crossingScore)}  ·  篮网 ${_score(candidate.netMotionScore)}',
+        ),
         style: const TextStyle(color: Colors.white, fontSize: 10),
       ),
     ),
@@ -3065,125 +3256,129 @@ class _CandidateRail extends StatelessWidget {
   final VoidCallback onBatchRange;
 
   @override
-  Widget build(BuildContext context) => ColoredBox(
-    color: Theme.of(context).cardTheme.color ?? BhePalette.surface,
-    child: Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 4, 8, 2),
-          child: Row(
-            children: [
-              Text(
-                '候选 ${candidates.length}',
-                style: Theme.of(context).textTheme.labelMedium,
-              ),
-              const Spacer(),
-              TextButton.icon(
-                onPressed: onBatchRange,
-                icon: const Icon(LucideIcons.clock3, size: 16),
-                label: const Text('时长'),
-                style: TextButton.styleFrom(
-                  minimumSize: const Size(44, 34),
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
+  Widget build(BuildContext context) {
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+    return ColoredBox(
+      color: Theme.of(context).cardTheme.color ?? BhePalette.surface,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 8, 2),
+            child: Row(
+              children: [
+                Text(
+                  l10n?.candidateCount(candidates.length) ??
+                      '候选 ${candidates.length}',
+                  style: Theme.of(context).textTheme.labelMedium,
                 ),
-              ),
-              TextButton.icon(
-                onPressed: onAdd,
-                icon: const Icon(LucideIcons.plus, size: 16),
-                label: const Text('补漏'),
-                style: TextButton.styleFrom(
-                  minimumSize: const Size(44, 34),
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: onBatchRange,
+                  icon: const Icon(LucideIcons.clock3, size: 16),
+                  label: Text(l10n?.clipDuration ?? '时长'),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(44, 34),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
                 ),
-              ),
-            ],
+                TextButton.icon(
+                  onPressed: onAdd,
+                  icon: const Icon(LucideIcons.plus, size: 16),
+                  label: Text(l10n?.addManualCandidate ?? '补漏'),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(44, 34),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        Expanded(
-          child: ListView.separated(
-            controller: controller,
-            padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
-            itemCount: candidates.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 6),
-            itemBuilder: (context, index) {
-              final candidate = candidates[index];
-              final selected = index == selectedIndex;
-              final included =
-                  candidate.selection == CandidateSelection.included;
-              return InkWell(
-                key: itemKeys[index],
-                onTap: () => onSelect(index),
-                borderRadius: BorderRadius.circular(8),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? BhePalette.orange.withValues(alpha: .13)
-                        : Colors.transparent,
-                    border: Border.all(
-                      color: selected ? BhePalette.orange : BhePalette.border,
+          Expanded(
+            child: ListView.separated(
+              controller: controller,
+              padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
+              itemCount: candidates.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 6),
+              itemBuilder: (context, index) {
+                final candidate = candidates[index];
+                final selected = index == selectedIndex;
+                final included =
+                    candidate.selection == CandidateSelection.included;
+                return InkWell(
+                  key: itemKeys[index],
+                  onTap: () => onSelect(index),
+                  borderRadius: BorderRadius.circular(8),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
                     ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 7,
-                        height: 7,
-                        decoration: BoxDecoration(
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? BhePalette.orange.withValues(alpha: .13)
+                          : Colors.transparent,
+                      border: Border.all(
+                        color: selected ? BhePalette.orange : BhePalette.border,
+                      ),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: included
+                                ? BhePalette.green
+                                : BhePalette.textTertiary,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '#${index + 1}  ${candidate.displayTime}',
+                                style: Theme.of(context).textTheme.titleMedium,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${_formatMs(candidate.startMs)} — ${_formatMs(candidate.endMs)}  ·  ${_formatMs(candidate.duration.inMilliseconds)}',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (candidate.player != null)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 10, right: 12),
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 104),
+                              child: _PlayerTagChip(player: candidate.player!),
+                            ),
+                          ),
+                        Icon(
+                          included ? LucideIcons.check : LucideIcons.x,
+                          size: 17,
                           color: included
                               ? BhePalette.green
                               : BhePalette.textTertiary,
-                          shape: BoxShape.circle,
                         ),
-                      ),
-                      const SizedBox(width: 9),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '#${index + 1}  ${candidate.displayTime}',
-                              style: Theme.of(context).textTheme.titleMedium,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '${_formatMs(candidate.startMs)} — ${_formatMs(candidate.endMs)}  ·  ${_formatMs(candidate.duration.inMilliseconds)}',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (candidate.player != null)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 10, right: 12),
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 104),
-                            child: _PlayerTagChip(player: candidate.player!),
-                          ),
-                        ),
-                      Icon(
-                        included ? LucideIcons.check : LucideIcons.x,
-                        size: 17,
-                        color: included
-                            ? BhePalette.green
-                            : BhePalette.textTertiary,
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 }
 
 class _BatchSecondsSlider extends StatelessWidget {
@@ -3210,7 +3405,10 @@ class _BatchSecondsSlider extends StatelessWidget {
           onChanged: onChanged,
         ),
       ),
-      SizedBox(width: 44, child: Text('${value.round()} 秒')),
+      SizedBox(
+        width: 44,
+        child: Text('${value.round()} ${context.bheText('秒')}'),
+      ),
     ],
   );
 }
@@ -3284,6 +3482,7 @@ class _ReviewActionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final value = controller?.value;
     final fullDuration = value?.duration.inMilliseconds.toDouble() ?? 1;
     final minPosition = clipOnly ? candidate.startMs.toDouble() : 0.0;
@@ -3310,14 +3509,22 @@ class _ReviewActionBar extends StatelessWidget {
               child: Row(
                 children: [
                   Text(
-                    '当前 ${_formatMs(position.round())}',
+                    l10n?.currentTime(_formatMs(position.round())) ??
+                        '当前 ${_formatMs(position.round())}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const Spacer(),
                   Text(
                     clipOnly
-                        ? '片段 ${_formatMs(candidate.startMs)} — ${_formatMs(candidate.endMs)}'
-                        : '全片 ${_formatMs(fullDuration.round())}',
+                        ? (l10n?.clipTime(
+                                _formatMs(candidate.startMs),
+                                _formatMs(candidate.endMs),
+                              ) ??
+                              '片段 ${_formatMs(candidate.startMs)} — ${_formatMs(candidate.endMs)}')
+                        : (l10n?.fullVideoTime(
+                                _formatMs(fullDuration.round()),
+                              ) ??
+                              '全片 ${_formatMs(fullDuration.round())}'),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -3331,9 +3538,15 @@ class _ReviewActionBar extends StatelessWidget {
                   SizedBox(
                     width: 132,
                     child: SegmentedButton<bool>(
-                      segments: const [
-                        ButtonSegment(value: true, label: Text('审核')),
-                        ButtonSegment(value: false, label: Text('原视频')),
+                      segments: [
+                        ButtonSegment(
+                          value: true,
+                          label: Text(l10n?.reviewMode ?? '审核'),
+                        ),
+                        ButtonSegment(
+                          value: false,
+                          label: Text(l10n?.originalVideo ?? '原视频'),
+                        ),
                       ],
                       selected: {clipOnly},
                       onSelectionChanged: (selection) {
@@ -3375,7 +3588,9 @@ class _ReviewActionBar extends StatelessWidget {
                     onPressed: onToggleAnnotations,
                     isSelected: annotations,
                     icon: const Icon(LucideIcons.scanLine, size: 19),
-                    tooltip: annotations ? '隐藏轨迹' : '显示轨迹',
+                    tooltip: annotations
+                        ? (l10n?.hideTrajectory ?? '隐藏轨迹')
+                        : (l10n?.showTrajectory ?? '显示轨迹'),
                     style: IconButton.styleFrom(
                       foregroundColor: annotations
                           ? Theme.of(context).colorScheme.primary
@@ -3401,7 +3616,7 @@ class _ReviewActionBar extends StatelessWidget {
                   IconButton(
                     onPressed: onShortcuts,
                     icon: const Icon(LucideIcons.info, size: 19),
-                    tooltip: '操作提示',
+                    tooltip: l10n?.shortcuts ?? '操作提示',
                     style: IconButton.styleFrom(
                       foregroundColor: Theme.of(
                         context,
@@ -3420,7 +3635,7 @@ class _ReviewActionBar extends StatelessWidget {
                   SizedBox(
                     width: 44,
                     child: PopupMenuButton<String>(
-                      tooltip: '更多审核操作',
+                      tooltip: l10n?.moreReviewActions ?? '更多审核操作',
                       onSelected: _handleMore,
                       color: Theme.of(context).cardTheme.color,
                       elevation: 8,
@@ -3431,14 +3646,14 @@ class _ReviewActionBar extends StatelessWidget {
                         side: const BorderSide(color: BhePalette.borderStrong),
                       ),
                       itemBuilder: (_) => [
-                        const PopupMenuItem(
+                        PopupMenuItem(
                           value: 'range',
-                          child: Text('调整片段范围'),
+                          child: Text(l10n?.editClipRange ?? '调整片段范围'),
                         ),
                         const PopupMenuDivider(),
-                        const PopupMenuItem(
+                        PopupMenuItem(
                           value: 'evidence',
-                          child: Text('查看判断依据'),
+                          child: Text(l10n?.viewEvidence ?? '查看判断依据'),
                         ),
                         PopupMenuItem(
                           value: 'export',
@@ -3452,7 +3667,7 @@ class _ReviewActionBar extends StatelessWidget {
                               color: BhePalette.orange.withValues(alpha: .13),
                               borderRadius: BorderRadius.circular(6),
                             ),
-                            child: const Row(
+                            child: Row(
                               children: [
                                 Icon(
                                   LucideIcons.download,
@@ -3460,7 +3675,7 @@ class _ReviewActionBar extends StatelessWidget {
                                   color: BhePalette.orange,
                                 ),
                                 SizedBox(width: 9),
-                                Text('导出保留片段'),
+                                Text(l10n?.exportIncluded ?? '导出保留片段'),
                               ],
                             ),
                           ),
@@ -3492,7 +3707,7 @@ class _ReviewActionBar extends StatelessWidget {
                   IconButton(
                     onPressed: onReplay,
                     icon: const Icon(LucideIcons.refreshCw, size: 19),
-                    tooltip: '重播',
+                    tooltip: l10n?.replay ?? '重播',
                   ),
                   const SizedBox(width: 4),
                   IconButton(
@@ -3504,10 +3719,12 @@ class _ReviewActionBar extends StatelessWidget {
                           ? Theme.of(context).colorScheme.primary
                           : null,
                     ),
-                    tooltip: autoReplay ? '关闭自动重播' : '打开自动重播',
+                    tooltip: autoReplay
+                        ? (l10n?.closeAutoReplay ?? '关闭自动重播')
+                        : (l10n?.openAutoReplay ?? '打开自动重播'),
                   ),
                   PopupMenuButton<double>(
-                    tooltip: '播放速度',
+                    tooltip: l10n?.playbackSpeed ?? '播放速度',
                     initialValue: speed,
                     onSelected: onSpeed,
                     itemBuilder: (_) => [
@@ -3528,7 +3745,8 @@ class _ReviewActionBar extends StatelessWidget {
                   IconButton(
                     onPressed: onSeekBack,
                     icon: const Icon(LucideIcons.rotateCcw, size: 19),
-                    tooltip: '后退 1.5 秒',
+                    tooltip:
+                        '${context.bheText('后退')} 1.5 ${context.bheText('秒')}',
                   ),
                   const SizedBox(width: 4),
                   IconButton.filled(
@@ -3539,13 +3757,16 @@ class _ReviewActionBar extends StatelessWidget {
                           : LucideIcons.play,
                       size: 20,
                     ),
-                    tooltip: value?.isPlaying == true ? '暂停' : '播放',
+                    tooltip: context.bheText(
+                      value?.isPlaying == true ? '暂停' : '播放',
+                    ),
                   ),
                   const SizedBox(width: 4),
                   IconButton(
                     onPressed: onSeekForward,
                     icon: const Icon(LucideIcons.rotateCw, size: 19),
-                    tooltip: '前进 1.5 秒',
+                    tooltip:
+                        '${context.bheText('前进')} 1.5 ${context.bheText('秒')}',
                   ),
                 ],
               ),
@@ -3556,9 +3777,11 @@ class _ReviewActionBar extends StatelessWidget {
                 children: [
                   IconButton(
                     onPressed: onPlayer,
-                    tooltip: candidate.player == null
-                        ? '球员标签'
-                        : '球员：${candidate.player}',
+                    tooltip: context.bheText(
+                      candidate.player == null
+                          ? '球员标签'
+                          : '球员：${candidate.player}',
+                    ),
                     icon: Icon(
                       LucideIcons.tag,
                       color: candidate.player == null
@@ -3572,7 +3795,7 @@ class _ReviewActionBar extends StatelessWidget {
                     child: OutlinedButton.icon(
                       onPressed: onExclude,
                       icon: const Icon(LucideIcons.x, size: 18),
-                      label: const Text('不选'),
+                      label: Text(context.bheText('不选')),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -3580,7 +3803,7 @@ class _ReviewActionBar extends StatelessWidget {
                     child: FilledButton.icon(
                       onPressed: onInclude,
                       icon: const Icon(LucideIcons.check, size: 18),
-                      label: const Text('选中'),
+                      label: Text(context.bheText('选中')),
                     ),
                   ),
                 ],
@@ -3622,12 +3845,15 @@ class _ReviewEmpty extends StatelessWidget {
             color: BhePalette.textSecondary,
           ),
           const SizedBox(height: 14),
-          Text('还没有候选片段', style: Theme.of(context).textTheme.titleLarge),
+          Text(
+            context.bheText('还没有候选片段'),
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
           const SizedBox(height: 6),
           Text(
             onAddManual == null
-                ? '先完成视频分析，结果会自动出现在这里。'
-                : '分析没有找到候选，也可以手动补一个片段。',
+                ? context.bheText('先完成视频分析，结果会自动出现在这里。')
+                : context.bheText('分析没有找到候选，也可以手动补一个片段。'),
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 16),
@@ -3637,13 +3863,13 @@ class _ReviewEmpty extends StatelessWidget {
             children: [
               OutlinedButton(
                 onPressed: onOpenProject,
-                child: const Text('返回项目'),
+                child: Text(context.bheText('返回项目')),
               ),
               if (onAddManual != null)
                 FilledButton.icon(
                   onPressed: onAddManual,
                   icon: const Icon(LucideIcons.plus, size: 17),
-                  label: const Text('补漏候选'),
+                  label: Text(context.bheText('补漏候选')),
                 ),
             ],
           ),
@@ -3660,7 +3886,7 @@ class _EvidenceSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => _SheetFrame(
-    title: '候选判断依据',
+    title: context.bheText('候选判断依据'),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -3670,41 +3896,67 @@ class _EvidenceSheet extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         _EvidenceRow(
-          label: '综合置信度',
+          label: context.bheText('综合置信度'),
           value: '${(candidate.confidence * 100).toStringAsFixed(0)}%',
         ),
-        _EvidenceRow(label: '轨迹分数', value: _score(candidate.trajectoryScore)),
-        _EvidenceRow(label: '穿框分数', value: _score(candidate.crossingScore)),
-        _EvidenceRow(label: '篮网运动', value: _score(candidate.netMotionScore)),
+        _EvidenceRow(
+          label: context.bheText('轨迹分数'),
+          value: _score(candidate.trajectoryScore),
+        ),
+        _EvidenceRow(
+          label: context.bheText('穿框分数'),
+          value: _score(candidate.crossingScore),
+        ),
+        _EvidenceRow(
+          label: context.bheText('篮网运动'),
+          value: _score(candidate.netMotionScore),
+        ),
         if (candidate.verdict != null)
-          _EvidenceRow(label: '算法结论', value: _verdictLabel(candidate.verdict!)),
+          _EvidenceRow(
+            label: context.bheText('算法结论'),
+            value: _verdictLabel(candidate.verdict!),
+          ),
         if (candidate.reason != null)
-          _EvidenceRow(label: '审核提示', value: _reasonLabel(candidate.reason!)),
+          _EvidenceRow(
+            label: context.bheText('审核提示'),
+            value: _reasonLabel(candidate.reason!),
+          ),
         if (candidate.trajectory.isNotEmpty)
-          _EvidenceRow(label: '轨迹点', value: '${candidate.trajectory.length} 个'),
+          _EvidenceRow(
+            label: context.bheText('轨迹点'),
+            value: '${candidate.trajectory.length}',
+          ),
         const Divider(height: 24),
-        Text('颜色说明', style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          context.bheText('颜色说明'),
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
         const SizedBox(height: 8),
-        const _LegendDot(color: BhePalette.green, text: '绿色：确认穿框点'),
+        _LegendDot(color: BhePalette.green, text: context.bheText('绿色：确认穿框点')),
         const SizedBox(height: 6),
-        const _LegendDot(color: BhePalette.orange, text: '橙色：篮球轨迹、当前位置或推定穿框点'),
+        _LegendDot(
+          color: BhePalette.orange,
+          text: context.bheText('橙色：篮球轨迹、当前位置或推定穿框点'),
+        ),
         const SizedBox(height: 12),
         Text(
-          '最终是否保留由你审核决定，算法结果只是候选建议。',
+          context.bheText('最终是否保留由你审核决定，算法结果只是候选建议。'),
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 10),
         OutlinedButton.icon(
           onPressed: () => _showNoteEditor(context),
           icon: const Icon(LucideIcons.notebookPen, size: 17),
-          label: Text(candidate.note == null ? '写备注' : '编辑备注'),
+          label: Text(context.bheText(candidate.note == null ? '写备注' : '编辑备注')),
         ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
           onPressed: () => _showPlayerEditor(context),
           icon: const Icon(LucideIcons.tag, size: 17),
           label: Text(
-            candidate.player == null ? '选择球员标签' : '球员：${candidate.player}',
+            context.bheText(
+              candidate.player == null ? '选择球员标签' : '球员：${candidate.player}',
+            ),
           ),
         ),
       ],
@@ -3761,7 +4013,7 @@ class _NoteSheetState extends State<_NoteSheet> {
     curve: Curves.easeOut,
     padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
     child: _SheetFrame(
-      title: '备注',
+      title: context.bheText('备注'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -3770,8 +4022,8 @@ class _NoteSheetState extends State<_NoteSheet> {
             autofocus: true,
             maxLines: 4,
             textInputAction: TextInputAction.done,
-            decoration: const InputDecoration(
-              hintText: '记录这个候选的情况',
+            decoration: InputDecoration(
+              hintText: context.bheText('记录这个候选的情况'),
               alignLabelWithHint: true,
             ),
             onSubmitted: (value) => _close(value),
@@ -3782,14 +4034,14 @@ class _NoteSheetState extends State<_NoteSheet> {
               Expanded(
                 child: OutlinedButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('取消'),
+                  child: Text(context.bheText('取消')),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: FilledButton(
                   onPressed: () => _close(_input.text),
-                  child: const Text('保存备注'),
+                  child: Text(context.bheText('保存备注')),
                 ),
               ),
             ],
@@ -3944,16 +4196,22 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
     curve: Curves.easeOut,
     padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
     child: _SheetFrame(
-      title: '球员标签',
+      title: context.bheText('球员标签'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (_players.isEmpty)
-            Text('还没有球员标签。', style: Theme.of(context).textTheme.bodySmall)
+            Text(
+              context.bheText('还没有球员标签。'),
+              style: Theme.of(context).textTheme.bodySmall,
+            )
           else ...[
             Row(
               children: [
-                Text('选择球员', style: Theme.of(context).textTheme.labelLarge),
+                Text(
+                  context.bheText('选择球员'),
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
                 const Spacer(),
                 TextButton.icon(
                   onPressed: () => setState(() => _managing = !_managing),
@@ -3961,7 +4219,7 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
                     _managing ? LucideIcons.check : LucideIcons.settings2,
                     size: 15,
                   ),
-                  label: Text(_managing ? '完成管理' : '管理'),
+                  label: Text(context.bheText(_managing ? '完成管理' : '管理')),
                 ),
               ],
             ),
@@ -3992,9 +4250,9 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
               controller: _input,
               autofocus: true,
               textInputAction: TextInputAction.done,
-              decoration: const InputDecoration(
-                labelText: '新建球员标签',
-                hintText: '例如 #10 Kobe',
+              decoration: InputDecoration(
+                labelText: context.bheText('新建球员标签'),
+                hintText: context.bheText('例如 #10 Kobe'),
                 prefixIcon: Icon(LucideIcons.tag, size: 18),
               ),
               onChanged: (value) {
@@ -4007,7 +4265,7 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
             OutlinedButton.icon(
               onPressed: () => setState(() => _creating = true),
               icon: const Icon(LucideIcons.plus, size: 17),
-              label: const Text('新建球员标签'),
+              label: Text(context.bheText('新建球员标签')),
             ),
           const SizedBox(height: 16),
           Row(
@@ -4015,14 +4273,14 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
               Expanded(
                 child: OutlinedButton(
                   onPressed: () => _close(''),
-                  child: const Text('清除标签'),
+                  child: Text(context.bheText('清除标签')),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: FilledButton(
                   onPressed: () => _close(_selected ?? _input.text.trim()),
-                  child: const Text('应用标签'),
+                  child: Text(context.bheText('应用标签')),
                 ),
               ),
             ],
@@ -4103,6 +4361,7 @@ class _ExportViewState extends State<_ExportView> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final included = state.project.candidates
         .where((item) => item.selection == CandidateSelection.included)
         .toList();
@@ -4116,10 +4375,11 @@ class _ExportViewState extends State<_ExportView> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 6, 16, 28),
           children: [
-            const _PageIntro(
+            _PageIntro(
               eyebrow: 'EXPORT',
-              title: '导出集锦',
-              subtitle: '按审核结果导出保留片段，可分别导出或合并为一条视频。',
+              title: l10n?.exportHighlights ?? '导出集锦',
+              subtitle:
+                  l10n?.exportPageSubtitle ?? '按审核结果导出保留片段，可分别导出或合并为一条视频。',
             ),
             Card(
               child: Padding(
@@ -4128,15 +4388,18 @@ class _ExportViewState extends State<_ExportView> {
                   children: [
                     Expanded(
                       child: _Metric(
-                        label: '保留片段',
-                        value: '${included.length} 个',
+                        label: l10n?.keptClips ?? '保留片段',
+                        value: context.bheText('${included.length} 个'),
                       ),
                     ),
                     Expanded(
-                      child: _Metric(label: '总时长', value: _formatMs(duration)),
+                      child: _Metric(
+                        label: l10n?.videoDuration ?? '总时长',
+                        value: _formatMs(duration),
+                      ),
                     ),
                     Expanded(
-                      child: _Metric(label: '输出', value: 'MP4'),
+                      child: _Metric(label: l10n?.output ?? '输出', value: 'MP4'),
                     ),
                   ],
                 ),
@@ -4144,7 +4407,10 @@ class _ExportViewState extends State<_ExportView> {
             ),
             const SizedBox(height: 14),
             if (state.project.players.isNotEmpty) ...[
-              _SectionHeader(title: '按球员导出', action: '可选'),
+              _SectionHeader(
+                title: l10n?.playerExport ?? '按球员导出',
+                action: l10n?.optional ?? '可选',
+              ),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -4177,7 +4443,7 @@ class _ExportViewState extends State<_ExportView> {
                       size: 18,
                       color: Colors.white,
                     ),
-                    label: Text('导出 $selectedPlayer 的片段'),
+                    label: Text(context.bheText('导出 $selectedPlayer 的片段')),
                   ),
                 ),
               ],
@@ -4190,12 +4456,12 @@ class _ExportViewState extends State<_ExportView> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '输出方式',
+                      l10n?.outputMode ?? '输出方式',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '当前移动端使用原视频分别导出，保留原始音频。',
+                      l10n?.mobileExportDescription ?? '当前移动端使用原视频分别导出，保留原始音频。',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 16),
@@ -4206,7 +4472,7 @@ class _ExportViewState extends State<_ExportView> {
                             ? null
                             : () => unawaited(state.exportClips()),
                         icon: const Icon(LucideIcons.files, size: 18),
-                        label: const Text('分别导出全部'),
+                        label: Text(l10n?.exportAllSeparately ?? '分别导出全部'),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -4221,8 +4487,9 @@ class _ExportViewState extends State<_ExportView> {
                         icon: const Icon(LucideIcons.merge, size: 18),
                         label: Text(
                           selectedPlayer == null
-                              ? '合并导出全部保留片段'
-                              : '合并导出 $selectedPlayer 的片段',
+                              ? (l10n?.mergeAllIncluded ?? '合并导出全部保留片段')
+                              : (l10n?.mergePlayerClips(selectedPlayer!) ??
+                                    '合并导出 $selectedPlayer 的片段'),
                         ),
                       ),
                     ),
@@ -4242,13 +4509,14 @@ class _ExportViewState extends State<_ExportView> {
                         children: [
                           Expanded(
                             child: Text(
-                              state.progressMessage,
+                              l10n?.text(state.progressMessage) ??
+                                  state.progressMessage,
                               style: Theme.of(context).textTheme.bodyMedium,
                             ),
                           ),
                           TextButton(
                             onPressed: () => unawaited(state.cancelExport()),
-                            child: const Text('取消'),
+                            child: Text(l10n?.cancel ?? '取消'),
                           ),
                         ],
                       ),
@@ -4270,7 +4538,8 @@ class _ExportViewState extends State<_ExportView> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '已导出 ${state.exportedPaths.length} 个片段',
+                        l10n?.exportedClips(state.exportedPaths.length) ??
+                            '已导出 ${state.exportedPaths.length} 个片段',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 12),
@@ -4281,7 +4550,7 @@ class _ExportViewState extends State<_ExportView> {
                               onPressed: () =>
                                   unawaited(state.shareExportedFiles()),
                               icon: const Icon(LucideIcons.share2, size: 17),
-                              label: const Text('分享'),
+                              label: Text(context.bheText('分享')),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -4290,7 +4559,7 @@ class _ExportViewState extends State<_ExportView> {
                               onPressed: () =>
                                   unawaited(state.saveExportedFiles()),
                               icon: const Icon(LucideIcons.save, size: 17),
-                              label: const Text('保存到相册'),
+                              label: Text(context.bheText('保存到相册')),
                             ),
                           ),
                         ],
@@ -4302,7 +4571,10 @@ class _ExportViewState extends State<_ExportView> {
             ],
             if (state.errorMessage != null) ...[
               const SizedBox(height: 12),
-              _InlineNotice(message: state.errorMessage!, error: true),
+              _InlineNotice(
+                message: l10n?.text(state.errorMessage!) ?? state.errorMessage!,
+                error: true,
+              ),
             ],
           ],
         ),
@@ -4361,7 +4633,7 @@ class _SheetFrame extends StatelessWidget {
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
-                  tooltip: '返回上一步',
+                  tooltip: context.bheText('返回上一步'),
                   icon: const Icon(LucideIcons.x, size: 19),
                 ),
               ],
@@ -4383,18 +4655,18 @@ Future<void> _showQualitySheet(
   final value = await showModalBottomSheet<AnalysisMode>(
     context: context,
     builder: (context) => _SheetFrame(
-      title: '分析质量',
+      title: context.bheText('分析质量'),
       child: Column(
         children: [
           _ChoiceRow(
-            title: '标准',
-            subtitle: '640 输入 / 10fps，候选窗口精筛',
+            title: context.bheText('标准'),
+            subtitle: context.bheText('640 输入 / 10fps，候选窗口精筛'),
             selected: current.mode == AnalysisMode.standard,
             onTap: () => Navigator.pop(context, AnalysisMode.standard),
           ),
           _ChoiceRow(
-            title: '高质量',
-            subtitle: '640 输入 / 10fps，更高质量代理',
+            title: context.bheText('高质量'),
+            subtitle: context.bheText('640 输入 / 10fps，更高质量代理'),
             selected: current.mode == AnalysisMode.highQuality,
             onTap: () => Navigator.pop(context, AnalysisMode.highQuality),
           ),
@@ -4416,17 +4688,17 @@ Future<void> _showClipSheet(BuildContext context, MobileAppState state) async {
     isScrollControlled: true,
     builder: (context) => StatefulBuilder(
       builder: (context, setSheetState) => _SheetFrame(
-        title: '片段时长',
+        title: context.bheText('片段时长'),
         child: Column(
           children: [
             Text(
-              '${before.round()} 秒前 + ${after.round()} 秒后',
+              '${before.round()} ${context.bheText('秒')} ${context.bheText('前')} + ${after.round()} ${context.bheText('秒')} ${context.bheText('后')}',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 12),
             Row(
               children: [
-                const SizedBox(width: 56, child: Text('进球前')),
+                SizedBox(width: 56, child: Text(context.bheText('进球前'))),
                 Expanded(
                   child: SliderTheme(
                     data: SliderTheme.of(context).copyWith(trackHeight: 5),
@@ -4439,12 +4711,15 @@ Future<void> _showClipSheet(BuildContext context, MobileAppState state) async {
                     ),
                   ),
                 ),
-                SizedBox(width: 44, child: Text('${before.round()} 秒')),
+                SizedBox(
+                  width: 44,
+                  child: Text('${before.round()} ${context.bheText('秒')}'),
+                ),
               ],
             ),
             Row(
               children: [
-                const SizedBox(width: 56, child: Text('进球后')),
+                SizedBox(width: 56, child: Text(context.bheText('进球后'))),
                 Expanded(
                   child: SliderTheme(
                     data: SliderTheme.of(context).copyWith(trackHeight: 5),
@@ -4457,7 +4732,10 @@ Future<void> _showClipSheet(BuildContext context, MobileAppState state) async {
                     ),
                   ),
                 ),
-                SizedBox(width: 44, child: Text('${after.round()} 秒')),
+                SizedBox(
+                  width: 44,
+                  child: Text('${after.round()} ${context.bheText('秒')}'),
+                ),
               ],
             ),
             const SizedBox(height: 8),
@@ -4469,7 +4747,7 @@ Future<void> _showClipSheet(BuildContext context, MobileAppState state) async {
                   afterSeconds: after.round(),
                 ),
               ),
-              child: const Text('应用'),
+              child: Text(context.bheText('应用')),
             ),
           ],
         ),
@@ -4494,7 +4772,7 @@ Future<void> _showRangeSheet(BuildContext context, MobileAppState state) async {
     isScrollControlled: true,
     builder: (context) => StatefulBuilder(
       builder: (context, setSheetState) => _SheetFrame(
-        title: '分析范围',
+        title: context.bheText('分析范围'),
         child: Column(
           children: [
             SizedBox(
@@ -4547,7 +4825,7 @@ Future<void> _showRangeSheet(BuildContext context, MobileAppState state) async {
                     previewPosition = 0;
                     requestedPosition = 0;
                   }),
-                  child: const Text('使用全片'),
+                  child: Text(context.bheText('使用全片')),
                 ),
                 const Spacer(),
                 FilledButton(
@@ -4555,13 +4833,13 @@ Future<void> _showRangeSheet(BuildContext context, MobileAppState state) async {
                     start: start.round(),
                     end: end.round(),
                   )),
-                  child: const Text('完成'),
+                  child: Text(context.bheText('完成')),
                 ),
               ],
             ),
             const SizedBox(height: 6),
             Text(
-              '跳过热身或无关片段，修改会自动保存。',
+              context.bheText('跳过热身或无关片段，修改会自动保存。'),
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -4755,11 +5033,16 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  Text('设置检测区域', style: Theme.of(context).textTheme.titleLarge),
+                  Text(
+                    context.bheText('设置检测区域'),
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      selected == 'hoop' ? '覆盖投篮发生区域' : '覆盖白色篮网区域',
+                      context.bheText(
+                        selected == 'hoop' ? '覆盖投篮发生区域' : '覆盖白色篮网区域',
+                      ),
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -4767,21 +5050,21 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
                   FilledButton(
                     onPressed: () =>
                         Navigator.pop(context, (hoop: hoop, net: net)),
-                    child: const Text('完成'),
+                    child: Text(context.bheText('完成')),
                   ),
                 ],
               ),
               const SizedBox(height: 10),
               SegmentedButton<String>(
-                segments: const [
+                segments: [
                   ButtonSegment(
                     value: 'hoop',
-                    label: Text('投篮分析区'),
+                    label: Text(context.bheText('投篮分析区')),
                     icon: Icon(LucideIcons.scan),
                   ),
                   ButtonSegment(
                     value: 'net',
-                    label: Text('篮网区域'),
+                    label: Text(context.bheText('篮网区域')),
                     icon: Icon(LucideIcons.network),
                   ),
                 ],
@@ -4871,6 +5154,8 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
                                           hoop: hoop,
                                           net: net,
                                           selected: selected,
+                                          hoopLabel: context.bheText('投篮区'),
+                                          netLabel: context.bheText('篮网'),
                                           redrawStart: _drawStart,
                                           redrawEnd: _drawEnd,
                                         ),
@@ -4916,7 +5201,8 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
                   IconButton(
                     onPressed: () => _seekPreview(-5000),
                     icon: const Icon(LucideIcons.rotateCcw, size: 18),
-                    tooltip: '后退 5 秒',
+                    tooltip:
+                        '${context.bheText('后退')} 5 ${context.bheText('秒')}',
                   ),
                   IconButton.filledTonal(
                     onPressed: _togglePreview,
@@ -4926,17 +5212,18 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
                           : LucideIcons.play,
                       size: 18,
                     ),
-                    tooltip: '播放/暂停',
+                    tooltip: context.bheText('播放/暂停'),
                   ),
                   IconButton(
                     onPressed: () => _seekPreview(5000),
                     icon: const Icon(LucideIcons.rotateCw, size: 18),
-                    tooltip: '前进 5 秒',
+                    tooltip:
+                        '${context.bheText('前进')} 5 ${context.bheText('秒')}',
                   ),
                   IconButton(
                     onPressed: _replayPreview,
                     icon: const Icon(LucideIcons.refreshCw, size: 18),
-                    tooltip: '从分析范围起点重播',
+                    tooltip: context.bheText('从分析范围起点重播'),
                   ),
                 ],
               ),
@@ -4953,7 +5240,7 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
                             () => viewZoom = (viewZoom - .5).clamp(1.0, 4.0),
                           ),
                     icon: const Icon(LucideIcons.minus),
-                    tooltip: '缩小画面',
+                    tooltip: context.bheText('缩小画面'),
                   ),
                   SizedBox(
                     width: 56,
@@ -4969,11 +5256,11 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
                             () => viewZoom = (viewZoom + .5).clamp(1.0, 4.0),
                           ),
                     icon: const Icon(LucideIcons.plus),
-                    tooltip: '放大画面',
+                    tooltip: context.bheText('放大画面'),
                   ),
                   TextButton(
                     onPressed: () => setState(() => viewZoom = 1),
-                    child: const Text('复位'),
+                    child: Text(context.bheText('复位')),
                   ),
                   TextButton.icon(
                     onPressed: _redrawMode
@@ -4989,23 +5276,27 @@ class _RoiEditorSheetState extends State<_RoiEditorSheet> {
                           : LucideIcons.squareDashed,
                       size: 16,
                     ),
-                    label: Text(_redrawMode ? '拖动重画中' : '重新画框'),
+                    label: Text(
+                      context.bheText(_redrawMode ? '拖动重画中' : '重新画框'),
+                    ),
                   ),
                   TextButton(
                     onPressed: _resetSelectedRoi,
-                    child: const Text('重置当前'),
+                    child: Text(context.bheText('重置当前')),
                   ),
                 ],
               ),
               Text(
                 _redrawMode
-                    ? '拖动出一个新矩形来重新设置当前区域。'
-                    : '拖动框角调整大小，拖动画面移动区域；双指捏合放大画面。',
+                    ? context.bheText('拖动出一个新矩形来重新设置当前区域。')
+                    : context.bheText('拖动框角调整大小，拖动画面移动区域；双指捏合放大画面。'),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 4),
               Text(
-                '当前区域 ${(current.right - current.left).toStringAsFixed(2)} × ${(current.bottom - current.top).toStringAsFixed(2)}',
+                context.bheText(
+                  '当前区域 ${(current.right - current.left).toStringAsFixed(2)} × ${(current.bottom - current.top).toStringAsFixed(2)}',
+                ),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
@@ -5183,18 +5474,22 @@ class _RoiPainter extends CustomPainter {
     required this.hoop,
     required this.net,
     required this.selected,
+    required this.hoopLabel,
+    required this.netLabel,
     this.redrawStart,
     this.redrawEnd,
   });
   final Roi hoop;
   final Roi net;
   final String selected;
+  final String hoopLabel;
+  final String netLabel;
   final Offset? redrawStart;
   final Offset? redrawEnd;
 
   @override
   void paint(Canvas canvas, Size size) {
-    void draw(Roi roi, Color color, String label, bool active) {
+    void draw(Roi roi, Color color, String label, bool active, bool isNet) {
       final rect = Rect.fromLTRB(
         roi.left * size.width,
         roi.top * size.height,
@@ -5218,7 +5513,7 @@ class _RoiPainter extends CustomPainter {
       final labelWidth = text.width + horizontalPadding * 2;
       final labelHeight = text.height + verticalPadding * 2;
       final labelX = rect.left.clamp(0.0, size.width - labelWidth).toDouble();
-      final preferredY = label == '篮网'
+      final preferredY = isNet
           ? rect.bottom + 6
           : rect.top - labelHeight - 6;
       final labelY = preferredY >= 0 && preferredY + labelHeight <= size.height
@@ -5242,8 +5537,8 @@ class _RoiPainter extends CustomPainter {
       );
     }
 
-    draw(hoop, BhePalette.orange, '投篮区', selected == 'hoop');
-    draw(net, BhePalette.gold, '篮网', selected == 'net');
+    draw(hoop, BhePalette.orange, hoopLabel, selected == 'hoop', false);
+    draw(net, BhePalette.gold, netLabel, selected == 'net', true);
     if (redrawStart != null && redrawEnd != null) {
       canvas.drawRect(
         Rect.fromPoints(redrawStart!, redrawEnd!),
@@ -5260,6 +5555,8 @@ class _RoiPainter extends CustomPainter {
       oldDelegate.hoop != hoop ||
       oldDelegate.net != net ||
       oldDelegate.selected != selected ||
+      oldDelegate.hoopLabel != hoopLabel ||
+      oldDelegate.netLabel != netLabel ||
       oldDelegate.redrawStart != redrawStart ||
       oldDelegate.redrawEnd != redrawEnd;
 }

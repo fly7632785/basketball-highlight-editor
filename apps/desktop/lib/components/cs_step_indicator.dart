@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 
 import '../theme/app_colors.dart';
 
@@ -45,7 +46,9 @@ class _HorizontalSteps extends StatelessWidget {
                   : () => onStepTap!(index),
               child: Semantics(
                 label:
-                    '${steps[index].title}，${steps[index].completed ? '已完成' : '未完成'}',
+                    context.bheText(
+                      '${steps[index].title}，${steps[index].completed ? '已完成' : '未完成'}',
+                    ),
                 child: Column(
                   children: [
                     SizedBox(
@@ -111,7 +114,9 @@ class _VerticalSteps extends StatelessWidget {
         for (var index = 0; index < steps.length; index++) ...[
           Semantics(
             label:
-                '${steps[index].title}，${steps[index].completed ? '已完成' : '未完成'}',
+                context.bheText(
+                  '${steps[index].title}，${steps[index].completed ? '已完成' : '未完成'}',
+                ),
             child: GestureDetector(
               onTap: onStepTap == null || !steps[index].completed
                   ? null

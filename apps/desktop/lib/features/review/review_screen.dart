@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 
 import '../../components/cs_button.dart';
 import '../../components/cs_empty_state.dart';
@@ -131,10 +132,10 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   Future<String?> _promptPlayerName() async {
     final name = await showDialog<String>(
       context: context,
-      builder: (_) => const _TextEntryDialog(
-        title: '添加球员',
-        hintText: '例如：科比、罗斯',
-        confirmLabel: '添加',
+      builder: (_) => _TextEntryDialog(
+        title: context.bheText('添加球员'),
+        hintText: context.bheText('例如：科比、罗斯'),
+        confirmLabel: context.bheText('添加'),
       ),
     );
     return name?.trim().isEmpty == true ? null : name?.trim();
@@ -191,29 +192,35 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
           context: context,
           builder: (dialogContext) => StatefulBuilder(
             builder: (context, setDialogState) => AlertDialog(
-              title: const Text('批量设置片段时长'),
+              title: Text(context.bheText('批量设置片段时长')),
               content: SizedBox(
                 width: 380,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('进球前后时间会以每个候选的进球时刻为中心计算。'),
+                    Text(context.bheText('进球前后时间会以每个候选的进球时刻为中心计算。')),
                     const SizedBox(height: 16),
                     if (_selectedForBatch.isNotEmpty)
                       DropdownButtonFormField<bool>(
                         key: ValueKey(applyToSelected),
                         initialValue: applyToSelected,
-                        decoration: const InputDecoration(labelText: '应用范围'),
+                        decoration: InputDecoration(
+                          labelText: context.bheText('应用范围'),
+                        ),
                         items: [
                           DropdownMenuItem(
                             value: false,
-                            child: Text('全部候选 · ${allCandidates.length} 个'),
+                            child: Text(
+                              context.bheText(
+                                '全部候选 · ${allCandidates.length} 个',
+                              ),
+                            ),
                           ),
                           DropdownMenuItem(
                             value: true,
                             child: Text(
-                              '已勾选候选 · ${_selectedForBatch.length} 个',
+                              context.bheText('已勾选候选 · ${_selectedForBatch.length} 个'),
                             ),
                           ),
                         ],
@@ -224,24 +231,30 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     if (_selectedForBatch.isNotEmpty) const SizedBox(height: 8),
                     Row(
                       children: [
-                        const SizedBox(width: 72, child: Text('进球前')),
+                        SizedBox(
+                          width: 72,
+                          child: Text(context.bheText('进球前')),
+                        ),
                         Expanded(
                           child: TextField(
                             controller: beforeController,
                             keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(suffixText: '秒'),
+                            decoration: InputDecoration(suffixText: context.bheText('秒')),
                           ),
                         ),
                       ],
                     ),
                     Row(
                       children: [
-                        const SizedBox(width: 72, child: Text('进球后')),
+                        SizedBox(
+                          width: 72,
+                          child: Text(context.bheText('进球后')),
+                        ),
                         Expanded(
                           child: TextField(
                             controller: afterController,
                             keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(suffixText: '秒'),
+                            decoration: InputDecoration(suffixText: context.bheText('秒')),
                           ),
                         ),
                       ],
@@ -252,8 +265,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       onChanged: (value) => setDialogState(
                         () => overwriteManual = value ?? false,
                       ),
-                      title: const Text('覆盖手动调整过的片段'),
-                      subtitle: const Text('关闭时自动保留手动调整的范围'),
+                      title: Text(context.bheText('覆盖手动调整过的片段')),
+                      subtitle: Text(context.bheText('关闭时自动保留手动调整的范围')),
                     ),
                   ],
                 ),
@@ -261,7 +274,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('取消'),
+                  child: Text(context.bheText('取消')),
                 ),
                 FilledButton(
                   onPressed: () {
@@ -281,7 +294,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     ));
                   },
                   child: Text(
-                    '应用到 ${applyToSelected ? _selectedForBatch.length : allCandidates.length} 个片段',
+                    context.bheText(
+                      '应用到 ${applyToSelected ? _selectedForBatch.length : allCandidates.length} 个片段',
+                    ),
                   ),
                 ),
               ],
@@ -320,16 +335,16 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('删除球员？'),
-        content: Text('删除“$playerName”后，已标记的候选会变为未标记。'),
+        title: Text(context.bheText('删除球员？')),
+        content: Text(context.bheText('删除“$playerName”后，已标记的候选会变为未标记。')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
+            child: Text(context.bheText('取消')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('删除'),
+            child: Text(context.bheText('删除')),
           ),
         ],
       ),
@@ -417,6 +432,11 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         durationMs: _number(
           ref.read(projectProvider).video?['duration_ms'],
         ).round(),
+        title: context.bheText('调整片段范围'),
+        description: context.bheText(
+          '拖动时间轴两端即可调整。视频会跳到正在拖动的一端；原视频不会被修改。',
+        ),
+        confirmLabel: context.bheText('应用'),
       ),
     );
     if (!mounted || result == null) return;
@@ -444,9 +464,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         startMs: startMs,
         endMs: endMs,
         durationMs: durationMs,
-        title: '补漏片段',
-        description: '已定位到原视频当前时间。调整起止时间后加入候选。',
-        confirmLabel: '加入候选',
+        title: context.bheText('补漏片段'),
+        description: context.bheText('已定位到原视频当前时间。调整起止时间后加入候选。'),
+        confirmLabel: context.bheText('加入候选'),
       ),
     );
     if (!mounted || result == null) return;
@@ -466,11 +486,11 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final note = await showDialog<String>(
       context: context,
       builder: (_) => _TextEntryDialog(
-        title: '候选备注',
+        title: context.bheText('候选备注'),
         initialText: candidate['note']?.toString() ?? '',
-        hintText: '例如：补篮、擦框、镜头遮挡',
+        hintText: context.bheText('例如：补篮、擦框、镜头遮挡'),
         maxLines: 4,
-        confirmLabel: '保存',
+        confirmLabel: context.bheText('保存'),
       ),
     );
     if (!mounted || note == null) return;
@@ -521,20 +541,26 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('重新分析当前视频？'),
+        title: Text(context.bheText('重新分析当前视频？')),
         content: Text(
-          forceStandard
-              ? '快速分析可能漏检，建议改用标准模式重新分析。当前候选会在新结果成功后替换，原始视频不会被删除。'
-              : '重新分析会替换当前候选列表，但不会删除原始视频。',
+          context.bheText(
+            forceStandard
+                ? context.bheText(
+                    '快速分析可能漏检，建议改用标准模式重新分析。当前候选会在新结果成功后替换，原始视频不会被删除。',
+                  )
+                : context.bheText(
+                    '重新分析会替换当前候选列表，但不会删除原始视频。',
+                  ),
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
+            child: Text(context.bheText('取消')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(forceStandard ? '用标准模式重新分析' : '重新分析'),
+            child: Text(context.bheText(forceStandard ? '用标准模式重新分析' : '重新分析')),
           ),
         ],
       ),
@@ -950,6 +976,7 @@ class _AnalysisBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final attached = state == 'running' && !recoverable;
     final failed = state == 'failed' && !recoverable;
     final interrupted = recoverable || state == 'cancelled';
@@ -966,15 +993,16 @@ class _AnalysisBar extends StatelessWidget {
         ? c.warning.withValues(alpha: 0.07)
         : c.surface2;
     final title = failed
-        ? '分析失败'
+        ? (l10n?.text('分析失败') ?? '分析失败')
         : interrupted
-        ? '上次分析没有完成'
-        : '正在分析视频';
+        ? (l10n?.text('上次分析没有完成') ?? '上次分析没有完成')
+        : (l10n?.analysisInProgress ?? '正在分析视频');
     final detail = failed
-        ? (errorMessage ?? '请检查视频后重试')
+        ? (l10n?.text(errorMessage ?? '请检查视频后重试') ??
+              (errorMessage ?? '请检查视频后重试'))
         : interrupted
-        ? '已有候选可以继续使用，也可以重新分析'
-        : '${_stageLabel(stage)} · ${(value * 100).round()}%';
+        ? (l10n?.text('已有候选可以继续使用，也可以重新分析') ?? '已有候选可以继续使用，也可以重新分析')
+        : '${l10n?.text(_stageLabel(stage)) ?? _stageLabel(stage)} · ${(value * 100).round()}%';
     final elapsed = _formatElapsed(startedAt);
     final remaining = _formatEstimatedRemaining(startedAt, value);
 
@@ -1004,7 +1032,7 @@ class _AnalysisBar extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.only(left: Spacing.xs),
                         child: Text(
-                          '分析进行中',
+                          l10n?.text('分析进行中') ?? '分析进行中',
                           style: Theme.of(context).textTheme.labelSmall
                               ?.copyWith(color: c.textSecondary),
                         ),
@@ -1031,8 +1059,8 @@ class _AnalysisBar extends StatelessWidget {
                         const SizedBox(width: Spacing.sm),
                         Text(
                           remaining.isEmpty
-                              ? '已用 $elapsed'
-                              : '已用 $elapsed · 剩余约 $remaining',
+                              ? '${l10n?.text('已用') ?? '已用'} $elapsed'
+                              : '${l10n?.text('已用') ?? '已用'} $elapsed · ${l10n?.text('剩余约') ?? '剩余约'} $remaining',
                           style: TextStyle(
                             fontSize: 10,
                             color: c.textSecondary,
@@ -1048,19 +1076,19 @@ class _AnalysisBar extends StatelessWidget {
           const SizedBox(width: Spacing.sm),
           if (onCancel != null)
             _SmallAction(
-              label: '取消',
+              label: l10n?.cancel ?? '取消',
               icon: Icons.stop_circle_outlined,
               onPressed: onCancel!,
             ),
           if (onRetry != null && !attached)
             _SmallAction(
-              label: '重试分析',
+              label: l10n?.text('重试分析') ?? '重试分析',
               icon: Icons.refresh,
               onPressed: onRetry!,
             ),
           if (onReanalyze != null)
             _SmallAction(
-              label: '重新分析',
+              label: l10n?.redoAnalysis ?? '重新分析',
               icon: Icons.replay,
               onPressed: onReanalyze!,
             ),
@@ -1088,9 +1116,10 @@ class _CompletedLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final duration = _formatCompletedDuration(startedAt, finishedAt);
     final modeLabel = mode == 'fast' ? '快速分析 · 可能漏检' : '标准分析';
-    final detail = _analysisDetailLabel(checkpoint);
+    final detail = _analysisDetailLabel(checkpoint, l10n);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 9),
@@ -1107,7 +1136,9 @@ class _CompletedLine extends StatelessWidget {
               const SizedBox(width: Spacing.xs),
               Expanded(
                 child: Text(
-                  '$modeLabel · $candidateCount 个候选${duration.isEmpty ? '' : ' · 用时 $duration'}',
+                  context.bheText(
+                    '$modeLabel · $candidateCount 个候选${duration.isEmpty ? '' : ' · 用时 $duration'}',
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(
@@ -1216,7 +1247,7 @@ class _TextEntryDialogState extends State<_TextEntryDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(context.bheText('取消')),
         ),
         FilledButton(onPressed: _submit, child: Text(widget.confirmLabel)),
       ],
@@ -1771,13 +1802,17 @@ class _VideoPaneState extends State<_VideoPane> {
                         icon: _error == null
                             ? Icons.movie_outlined
                             : Icons.error_outline,
-                        title: !hasVideo ? '还没有视频' : _error ?? '视频加载失败',
+                        title: !hasVideo
+                            ? context.bheText('还没有视频')
+                            : context.bheText(_error ?? '视频加载失败'),
                         description: _error == null && hasVideo
-                            ? '分析完成后会在这里预览候选片段，点击播放开始'
+                            ? context.bheText(
+                                '分析完成后会在这里预览候选片段，点击播放开始',
+                              )
                             : null,
                         action: _error != null && hasVideo
                             ? CsButton(
-                                label: const Text('重新加载视频'),
+                                label: Text(context.bheText('重新加载视频')),
                                 icon: Icons.refresh,
                                 onPressed: _reloadVideo,
                               )
@@ -2017,7 +2052,7 @@ class _CenterPlaybackButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     return Tooltip(
-      message: playing ? '暂停（Space）' : '播放（Space）',
+      message: context.bheText(playing ? '暂停（Space）' : '播放（Space）'),
       child: Material(
         color: c.background.withValues(alpha: playing ? 0.42 : 0.72),
         shape: const CircleBorder(),
@@ -2050,7 +2085,7 @@ class _AnnotationToggle extends StatelessWidget {
     final c = AppColors.of(context);
     final accent = enabled ? c.orange : c.textTertiary;
     return Tooltip(
-      message: enabled ? '关闭标注（A）' : '显示标注（A）',
+      message: context.bheText(enabled ? '关闭标注（A）' : '显示标注（A）'),
       child: Material(
         color: c.background.withValues(alpha: 0.88),
         borderRadius: BorderRadius.circular(CsRadius.full),
@@ -2065,7 +2100,7 @@ class _AnnotationToggle extends StatelessWidget {
                 Icon(Icons.auto_awesome_outlined, size: 13, color: accent),
                 const SizedBox(width: 5),
                 Text(
-                  '标注',
+                  context.bheText('标注'),
                   style: TextStyle(
                     color: c.textPrimary,
                     fontSize: 10,
@@ -2124,7 +2159,7 @@ class _VideoSourceToggle extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     return Tooltip(
-      message: '切换视频来源',
+      message: context.bheText('切换视频来源'),
       child: Material(
         color: c.background.withValues(alpha: 0.88),
         borderRadius: BorderRadius.circular(CsRadius.full),
@@ -2134,13 +2169,13 @@ class _VideoSourceToggle extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               _VideoSourceOption(
-                label: '候选预览',
+                label: context.bheText('候选预览'),
                 icon: Icons.video_library_outlined,
                 selected: !showingOriginal,
                 onPressed: showingOriginal ? onPressed : null,
               ),
               _VideoSourceOption(
-                label: '原视频',
+                label: context.bheText('原视频'),
                 icon: Icons.movie_filter_outlined,
                 selected: showingOriginal,
                 onPressed: showingOriginal ? null : onPressed,
@@ -2172,7 +2207,9 @@ class _VideoSourceOption extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      label: selected ? '正在查看$label' : '切换到$label',
+      label: selected
+          ? '${context.bheText('正在查看')}$label'
+          : '${context.bheText('切换到')}$label',
       child: Material(
         color: selected ? c.orange.withValues(alpha: 0.18) : Colors.transparent,
         borderRadius: BorderRadius.circular(CsRadius.full),
@@ -2226,7 +2263,7 @@ class _AnnotationHint extends StatelessWidget {
               vertical: Spacing.xs,
             ),
             child: Text(
-              '标注会显示轨迹与判定点 · 按 A 可开关',
+              context.bheText('标注会显示轨迹与判定点 · 按 A 可开关'),
               style: TextStyle(color: c.textSecondary, fontSize: 10),
               textAlign: TextAlign.right,
             ),
@@ -2595,7 +2632,7 @@ class _VideoControlsState extends State<_VideoControls> {
                   children: [
                     if (widget.isOriginalVideo) ...[
                       Text(
-                        '原视频',
+                        context.bheText('原视频'),
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: c.textSecondary,
                         ),
@@ -2603,7 +2640,9 @@ class _VideoControlsState extends State<_VideoControls> {
                       const SizedBox(width: Spacing.sm),
                     ] else if (widget.eventTimeMs != null) ...[
                       Text(
-                        '候选 ${_formatMs(widget.eventTimeMs!)}',
+                        context.bheText(
+                          '候选 ${_formatMs(widget.eventTimeMs!)}',
+                        ),
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: c.textSecondary,
                           fontFeatures: const [FontFeature.tabularFigures()],
@@ -2626,7 +2665,8 @@ class _VideoControlsState extends State<_VideoControls> {
                       builder: (context, snapshot) {
                         final rate = snapshot.data ?? 1.0;
                         return PopupMenuButton<double>(
-                          tooltip: '播放速度：${_playbackRateLabel(rate)}',
+                          tooltip:
+                              '${context.bheText('播放速度')}：${_playbackRateLabel(rate)}',
                           initialValue: rate,
                           enabled: widget.enabled,
                           onSelected: (next) =>
@@ -2670,7 +2710,7 @@ class _VideoControlsState extends State<_VideoControls> {
                       },
                     ),
                     IconButton(
-                      tooltip: '上一个候选 (↑)',
+                      tooltip: '${context.bheText('上一个候选')} (↑)',
                       onPressed: widget.enabled && widget.hasPrevious
                           ? widget.onPrevious
                           : null,
@@ -2687,8 +2727,8 @@ class _VideoControlsState extends State<_VideoControls> {
                       initialData: false,
                       builder: (context, snapshot) => IconButton(
                         tooltip: snapshot.data == true
-                            ? '暂停 (Space)'
-                            : '播放 (Space)',
+                            ? '${context.bheText('暂停')} (Space)'
+                            : '${context.bheText('播放')} (Space)',
                         onPressed: !widget.enabled
                             ? null
                             : () => unawaited(widget.onTogglePlayback()),
@@ -2707,7 +2747,7 @@ class _VideoControlsState extends State<_VideoControls> {
                       ),
                     ),
                     IconButton(
-                      tooltip: '下一个候选 (↓)',
+                      tooltip: '${context.bheText('下一个候选')} (↓)',
                       onPressed: widget.enabled && widget.hasNext
                           ? widget.onNext
                           : null,
@@ -2721,7 +2761,7 @@ class _VideoControlsState extends State<_VideoControls> {
                     ),
                     if (widget.eventTimeMs != null) ...[
                       IconButton(
-                        tooltip: '重播当前片段 (R)',
+                        tooltip: '${context.bheText('重播当前片段')} (R)',
                         onPressed: widget.enabled
                             ? () => unawaited(widget.onReplayCandidate())
                             : null,
@@ -2735,8 +2775,8 @@ class _VideoControlsState extends State<_VideoControls> {
                       ),
                       IconButton(
                         tooltip: widget.loopEnabled
-                            ? '关闭循环播放 (L)'
-                            : '循环当前片段 (L)',
+                            ? context.bheText('关闭循环播放 (L)')
+                            : context.bheText('循环当前片段 (L)'),
                         onPressed: widget.enabled ? widget.onToggleLoop : null,
                         icon: Icon(
                           Icons.repeat,
@@ -2831,8 +2871,10 @@ class _CandidateEvidencePanel extends StatelessWidget {
       ['review_reason'],
     ]);
     final clip =
-        '片段 ${_formatMs(_clipStart(candidate))} - ${_formatMs(_clipEnd(candidate))} · '
-        '时长 ${_formatClipDuration(_clipEnd(candidate) - _clipStart(candidate))}';
+        context.bheText(
+          '片段 ${_formatMs(_clipStart(candidate))} - ${_formatMs(_clipEnd(candidate))} · '
+          '时长 ${_formatClipDuration(_clipEnd(candidate) - _clipStart(candidate))}',
+        );
 
     return Container(
       width: double.infinity,
@@ -2853,13 +2895,13 @@ class _CandidateEvidencePanel extends StatelessWidget {
               child: Row(
                 children: [
                   _EvidenceCell(
-                    label: '候选 ${_formatMs(_candidateTime(candidate))}',
+                    label: context.bheText('候选 ${_formatMs(_candidateTime(candidate))}'),
                     value: clip,
                     width: 190,
                     color: c.textPrimary,
                   ),
                   _EvidenceCell(
-                    label: '备注',
+                    label: context.bheText('备注'),
                     value:
                         candidate['note']?.toString().trim().isNotEmpty == true
                         ? candidate['note']!.toString()
@@ -2868,70 +2910,82 @@ class _CandidateEvidencePanel extends StatelessWidget {
                     color: c.textSecondary,
                   ),
                   _EvidenceCell(
-                    label: '候选置信度',
-                    value: _candidateConfidence(candidate, evidence) ?? '—',
+                    label: context.bheText('候选置信度'),
+                    value: context.bheText(
+                      _candidateConfidence(candidate, evidence) ?? '—',
+                    ),
                     width: 72,
                     color: c.textPrimary,
-                    tooltip: '综合轨迹穿框、篮网运动和反弹等信号得出，只用于排序和辅助审核。',
+                    tooltip: context.bheText(
+                      '综合轨迹穿框、篮网运动和反弹等信号得出，只用于排序和辅助审核。',
+                    ),
                   ),
                   _EvidenceCell(
-                    label: '轨迹评分',
+                    label: context.bheText('轨迹评分'),
                     value: _formatScore(trajectoryScore),
                     width: 72,
                     color: c.textSecondary,
                   ),
                   _EvidenceCell(
-                    label: '预测评分',
-                    value: _formatPredictionScore(
+                    label: context.bheText('预测评分'),
+                    value: context.bheText(_formatPredictionScore(
                       prediction,
                       isCoarse: isCoarse,
                       isManual: isManual,
-                    ),
+                    )),
                     width: 112,
                     color: prediction is num ? c.textSecondary : c.textTertiary,
-                    tooltip: _predictionScoreTooltip(
+                    tooltip: context.bheText(_predictionScoreTooltip(
                       prediction,
                       isCoarse: isCoarse,
                       isManual: isManual,
-                    ),
+                    )),
                   ),
                   _EvidenceCell(
-                    label: '轨迹穿框',
+                    label: context.bheText('轨迹穿框'),
                     value: isCoarse && crossingState == _CrossingDisplay.unknown
-                        ? '粗扫通过'
-                        : _formatCrossing(crossingState),
+                        ? context.bheText('粗扫通过')
+                        : context.bheText(_formatCrossing(crossingState)),
                     width: 92,
                     color: isCoarse && crossingState == _CrossingDisplay.unknown
                         ? c.warning
                         : _crossingColor(c, crossingState),
-                    tooltip: '判断篮球轨迹是否从篮筐上方进入，并在篮筐横向范围内向下穿过。',
+                    tooltip: context.bheText(
+                      '判断篮球轨迹是否从篮筐上方进入，并在篮筐横向范围内向下穿过。',
+                    ),
                   ),
                   _EvidenceCell(
-                    label: '篮网运动',
-                    value: net == null && isCoarse ? '未计算' : _formatSignal(net),
+                    label: context.bheText('篮网运动'),
+                    value: net == null && isCoarse
+                        ? context.bheText('未计算')
+                        : context.bheText(_formatSignal(net)),
                     width: 82,
                     color: net == null && isCoarse
                         ? c.textTertiary
                         : _signalColor(c, net),
-                    tooltip: '检测白色篮网区域在球经过后的运动强度；光线、球员遮挡会影响该信号。',
+                    tooltip: context.bheText(
+                      '检测白色篮网区域在球经过后的运动强度；光线、球员遮挡会影响该信号。',
+                    ),
                   ),
                   _EvidenceCell(
-                    label: '反弹判断',
+                    label: context.bheText('反弹判断'),
                     value: rebound == null && isCoarse
-                        ? '未计算'
-                        : _formatRebound(rebound),
+                        ? context.bheText('未计算')
+                        : context.bheText(_formatRebound(rebound)),
                     width: 82,
                     color: rebound == null && isCoarse
                         ? c.textTertiary
                         : _reboundColor(c, rebound),
-                    tooltip: '检测篮球撞框后向上或向外回弹；出现反弹通常降低进球可能性。',
+                    tooltip: context.bheText(
+                      '检测篮球撞框后向上或向外回弹；出现反弹通常降低进球可能性。',
+                    ),
                   ),
                   _EvidenceCell(
-                    label: '系统说明',
-                    value: _reviewReasonLabel(reason),
+                    label: context.bheText('系统说明'),
+                    value: context.bheText(_reviewReasonLabel(reason)),
                     width: 118,
                     color: c.textSecondary,
-                    tooltip: '当前候选被纳入审核列表的主要原因。',
+                    tooltip: context.bheText('当前候选被纳入审核列表的主要原因。'),
                   ),
                 ],
               ),
@@ -2945,7 +2999,7 @@ class _CandidateEvidencePanel extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   IconButton(
-                    tooltip: '调整片段范围',
+                    tooltip: context.bheText('调整片段范围'),
                     onPressed: onEditRange,
                     icon: const Icon(Icons.tune_rounded, size: 17),
                     padding: EdgeInsets.zero,
@@ -2956,7 +3010,7 @@ class _CandidateEvidencePanel extends StatelessWidget {
                     visualDensity: VisualDensity.compact,
                   ),
                   IconButton(
-                    tooltip: '编辑备注',
+                    tooltip: context.bheText('编辑备注'),
                     onPressed: onEditNote,
                     icon: const Icon(Icons.edit_outlined, size: 17),
                     padding: EdgeInsets.zero,
@@ -2967,7 +3021,7 @@ class _CandidateEvidencePanel extends StatelessWidget {
                     visualDensity: VisualDensity.compact,
                   ),
                   IconButton(
-                    tooltip: '撤销上一次审核 (Cmd/Ctrl+Z)',
+                    tooltip: context.bheText('撤销上一次审核 (Cmd/Ctrl+Z)'),
                     onPressed: onUndo,
                     icon: const Icon(Icons.undo_rounded, size: 17),
                     padding: EdgeInsets.zero,
@@ -3262,7 +3316,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
                   child: _error != null
                       ? Center(
                           child: Text(
-                            _error!,
+                            context.bheText(_error!),
                             textAlign: TextAlign.center,
                             style: TextStyle(color: c.error),
                           ),
@@ -3291,7 +3345,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
               Row(
                 children: [
                   IconButton(
-                    tooltip: '播放/暂停',
+                    tooltip: context.bheText('播放/暂停'),
                     onPressed: _ready
                         ? () => unawaited(_togglePlayback())
                         : null,
@@ -3306,7 +3360,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
                     ),
                   ),
                   Text(
-                    '当前位置 ${_formatMs(_positionMs)}',
+                    context.bheText('当前位置 ${_formatMs(_positionMs)}'),
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: c.textSecondary,
                       fontFeatures: const [FontFeature.tabularFigures()],
@@ -3314,8 +3368,10 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
                   ),
                   const Spacer(),
                   Text(
-                    '片段 ${_formatMs(start)} - ${_formatMs(end)} · '
-                    '${_formatClipDuration(end - start)}',
+                    context.bheText(
+                      '片段 ${_formatMs(start)} - ${_formatMs(end)} · '
+                      '${_formatClipDuration(end - start)}',
+                    ),
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: c.textSecondary,
                       fontFeatures: const [FontFeature.tabularFigures()],
@@ -3360,7 +3416,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
                 children: [
                   Expanded(
                     child: _ClipTimeField(
-                      label: '开始',
+                      label: context.bheText('开始'),
                       controller: _startController,
                       onSubmitted: () => _submitTimeField(isStart: true),
                     ),
@@ -3371,7 +3427,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
                   ),
                   Expanded(
                     child: _ClipTimeField(
-                      label: '结束',
+                      label: context.bheText('结束'),
                       controller: _endController,
                       onSubmitted: () => _submitTimeField(isStart: false),
                     ),
@@ -3387,7 +3443,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
                     style: TextButton.styleFrom(
                       foregroundColor: c.textSecondary,
                     ),
-                    child: const Text('恢复默认'),
+                    child: Text(context.bheText('恢复默认')),
                   ),
                   const SizedBox(width: Spacing.xs),
                   OutlinedButton(
@@ -3396,7 +3452,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
                       foregroundColor: c.textPrimary,
                       side: BorderSide(color: c.borderStrong),
                     ),
-                    child: const Text('取消'),
+                    child: Text(context.bheText('取消')),
                   ),
                   const SizedBox(width: Spacing.sm),
                   FilledButton(
@@ -3450,7 +3506,7 @@ class _ClipTimeField extends StatelessWidget {
       decoration: InputDecoration(
         labelText: label,
         hintText: '00:00',
-        suffixText: '时:分:秒',
+        suffixText: context.bheText('时:分:秒'),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: Spacing.sm,
           vertical: 10,
@@ -3647,7 +3703,7 @@ class _CandidatePanel extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    '候选片段',
+                    context.bheText('候选片段'),
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
@@ -3664,7 +3720,7 @@ class _CandidatePanel extends StatelessWidget {
                         vertical: 4,
                       ),
                       child: Text(
-                        '已选 $includedCount / $totalCount',
+                        context.bheText('已选 $includedCount / $totalCount'),
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: c.textSecondary,
                           fontWeight: FontWeight.w600,
@@ -3682,13 +3738,13 @@ class _CandidatePanel extends StatelessWidget {
                 children: [
                   if (batchMode && selectedForBatch.isNotEmpty) ...[
                     Text(
-                      '批量 ${selectedForBatch.length} 个',
+                      context.bheText('批量 ${selectedForBatch.length} 个'),
                       style: theme.textTheme.labelSmall?.copyWith(
                         color: c.orange,
                       ),
                     ),
                     IconButton(
-                      tooltip: '设置批量球员标签',
+                    tooltip: context.bheText('设置批量球员标签'),
                       onPressed: busy
                           ? null
                           : () => _showBatchPlayerMenu(context),
@@ -3700,13 +3756,15 @@ class _CandidatePanel extends StatelessWidget {
                     ),
                   ],
                   IconButton(
-                    tooltip: '批量设置片段时长',
+                    tooltip: context.bheText('批量设置片段时长'),
                     onPressed: busy ? null : onBatchRange,
                     icon: const Icon(Icons.schedule_outlined, size: 18),
                     visualDensity: VisualDensity.compact,
                   ),
                   IconButton(
-                    tooltip: batchMode ? '退出批量选择' : '批量选择候选',
+                    tooltip: context.bheText(
+                      batchMode ? '退出批量选择' : '批量选择候选',
+                    ),
                     onPressed: busy ? null : onToggleBatch,
                     icon: Icon(
                       batchMode
@@ -3717,15 +3775,30 @@ class _CandidatePanel extends StatelessWidget {
                     visualDensity: VisualDensity.compact,
                   ),
                   PopupMenuButton<String>(
-                    tooltip: '筛选候选',
+                    tooltip: context.bheText('筛选候选'),
                     initialValue: filter,
                     onSelected: onFilterChanged,
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(value: 'all', child: Text('全部候选')),
-                      PopupMenuItem(value: 'pending', child: Text('待审核')),
-                      PopupMenuItem(value: 'confirmed', child: Text('已确认')),
-                      PopupMenuItem(value: 'excluded', child: Text('已排除')),
-                      PopupMenuItem(value: 'low', child: Text('低置信度')),
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: 'all',
+                        child: Text(context.bheText('全部候选')),
+                      ),
+                      PopupMenuItem(
+                        value: 'pending',
+                        child: Text(context.bheText('待审核')),
+                      ),
+                      PopupMenuItem(
+                        value: 'confirmed',
+                        child: Text(context.bheText('已确认')),
+                      ),
+                      PopupMenuItem(
+                        value: 'excluded',
+                        child: Text(context.bheText('已排除')),
+                      ),
+                      PopupMenuItem(
+                        value: 'low',
+                        child: Text(context.bheText('低置信度')),
+                      ),
                     ],
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -3740,7 +3813,7 @@ class _CandidatePanel extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            _candidateFilterLabel(filter),
+                            context.bheText(_candidateFilterLabel(filter)),
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: c.textSecondary,
                               fontWeight: FontWeight.w600,
@@ -3756,8 +3829,9 @@ class _CandidatePanel extends StatelessWidget {
                     ),
                   ),
                   Tooltip(
-                    message:
-                        '快捷键\nSpace  播放/暂停\nR  重播当前\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒\nC / Enter  保留\nX / Backspace  排除\nCmd/Ctrl+Z  撤销',
+                    message: context.bheText(
+                      '快捷键\nSpace  播放/暂停\nR  重播当前\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒\nC / Enter  保留\nX / Backspace  排除\nCmd/Ctrl+Z  撤销',
+                    ),
                     child: Padding(
                       padding: const EdgeInsets.all(8),
                       child: Icon(
@@ -3852,7 +3926,9 @@ class _CandidatePanel extends StatelessWidget {
               children: [
                 Expanded(
                   child: CsButton(
-                    label: Text('导出 $includedCount 个片段'),
+                    label: Text(
+                      context.bheText('导出 $includedCount 个片段'),
+                    ),
                     icon: Icons.file_upload_outlined,
                     size: CsButtonSize.sm,
                     onPressed: onExport,
@@ -3861,10 +3937,10 @@ class _CandidatePanel extends StatelessWidget {
                 if (onCreateManualCandidate != null) ...[
                   const SizedBox(width: Spacing.xs),
                   Tooltip(
-                    message: '从原视频当前时间补漏候选',
+                    message: context.bheText('从原视频当前时间补漏候选'),
                     child: IconButton(
                       key: const Key('create-manual-candidate'),
-                      tooltip: '补漏',
+                      tooltip: context.bheText('补漏'),
                       onPressed: onCreateManualCandidate,
                       icon: const Icon(Icons.playlist_add_rounded, size: 18),
                       visualDensity: VisualDensity.compact,
@@ -3874,7 +3950,7 @@ class _CandidatePanel extends StatelessWidget {
                 if (hasVideo) ...[
                   const SizedBox(width: Spacing.xs),
                   IconButton(
-                    tooltip: '重新配置分析区域和范围',
+                    tooltip: context.bheText('重新配置分析区域和范围'),
                     onPressed: busy ? null : onGoImport,
                     icon: const Icon(Icons.tune_rounded, size: 18),
                     visualDensity: VisualDensity.compact,
@@ -3883,7 +3959,7 @@ class _CandidatePanel extends StatelessWidget {
                 if (onReanalyze != null) ...[
                   const SizedBox(width: Spacing.xs),
                   IconButton(
-                    tooltip: '重新分析当前视频',
+                    tooltip: context.bheText('重新分析当前视频'),
                     onPressed: onReanalyze,
                     icon: const Icon(Icons.replay, size: 18),
                     visualDensity: VisualDensity.compact,
@@ -3928,40 +4004,42 @@ class _EmptyCandidates extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (hydrating) {
-      return const CsEmptyState(
+      return CsEmptyState(
         icon: Icons.sync,
-        title: '正在恢复项目',
-        description: '正在加载候选片段和审核记录。',
+        title: context.bheText('正在恢复项目'),
+        description: context.bheText('正在加载候选片段和审核记录。'),
       );
     }
     if (hydrateError != null) {
       return CsEmptyState(
         icon: Icons.sync_problem_outlined,
-        title: '项目数据加载失败',
-        description: '候选片段没有成功恢复，请重试加载，不需要重新分析视频。',
+        title: context.bheText('项目数据加载失败'),
+        description: context.bheText(
+          '候选片段没有成功恢复，请重试加载，不需要重新分析视频。',
+        ),
         action: CsButton(
-          label: const Text('重试加载'),
+          label: Text(context.bheText('重试加载')),
           icon: Icons.refresh,
           onPressed: onRetryHydration,
         ),
       );
     }
     if (analyzing) {
-      return const CsEmptyState(
+      return CsEmptyState(
         icon: Icons.hourglass_top,
-        title: '正在等待候选片段',
-        description: '分析完成后会显示候选片段。',
+        title: context.bheText('正在等待候选片段'),
+        description: context.bheText('分析完成后会显示候选片段。'),
       );
     }
     if (filterEmpty) {
       return CsEmptyState(
         icon: Icons.filter_alt_off_outlined,
-        title: '没有匹配的候选',
-        description: '当前筛选条件下没有片段。',
+        title: context.bheText('没有匹配的候选'),
+        description: context.bheText('当前筛选条件下没有片段。'),
         action: onClearFilter == null
             ? null
             : CsButton(
-                label: const Text('显示全部'),
+                label: Text(context.bheText('显示全部')),
                 icon: Icons.filter_alt_off,
                 onPressed: onClearFilter,
               ),
@@ -3971,27 +4049,33 @@ class _EmptyCandidates extends StatelessWidget {
     return CsEmptyState(
       icon: Icons.inbox_outlined,
       title: fastEmpty
-          ? '快速分析未找到候选 · 可能漏检'
+          ? context.bheText('快速分析未找到候选 · 可能漏检')
           : hasVideo
-          ? '暂未找到候选片段'
-          : '还没有分析结果',
+          ? context.bheText('暂未找到候选片段')
+          : context.bheText('还没有分析结果'),
       description: hasVideo
           ? fastEmpty
-                ? '快速模式可能漏检，建议用标准模式重新分析。'
-                : '重新分析直接使用当前配置；重新配置可以修改分析范围和篮筐区域。'
-          : '先导入视频并完成配置，再开始分析。',
+                ? context.bheText('快速模式可能漏检，建议用标准模式重新分析。')
+                : context.bheText(
+                    '重新分析直接使用当前配置；重新配置可以修改分析范围和篮筐区域。',
+                  )
+          : context.bheText('先导入视频并完成配置，再开始分析。'),
       action: Wrap(
         alignment: WrapAlignment.center,
         spacing: Spacing.xs,
         children: [
           if (hasVideo)
             CsButton(
-              label: Text(fastEmpty ? '用标准模式重新分析' : '重新分析'),
+              label: Text(
+                context.bheText(fastEmpty ? '用标准模式重新分析' : '重新分析'),
+              ),
               icon: Icons.replay,
               onPressed: onReanalyze,
             ),
           CsButton(
-            label: Text(hasVideo ? '重新配置' : '去导入视频'),
+            label: Text(
+              context.bheText(hasVideo ? '重新配置' : '去导入视频'),
+            ),
             icon: hasVideo ? Icons.tune : Icons.upload_file,
             variant: CsButtonVariant.secondary,
             onPressed: onGoImport,
@@ -4050,7 +4134,9 @@ class _CandidateRow extends StatelessWidget {
       button: true,
       selected: selected,
       label:
-          '候选 ${index + 1}，${_formatMs(_candidateTime(candidate))}，${excluded ? '已排除' : '已保留'}',
+          context.bheText(
+            '候选 ${index + 1}，${_formatMs(_candidateTime(candidate))}，${excluded ? '已排除' : '已保留'}',
+          ),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: AnimatedContainer(
@@ -4131,7 +4217,9 @@ class _CandidateRow extends StatelessWidget {
                                 LayoutBuilder(
                                   builder: (context, constraints) {
                                     final duration = Text(
-                                      '时长 ${_formatClipDuration(_clipEnd(candidate) - _clipStart(candidate))}',
+                                      context.bheText(
+                                        '时长 ${_formatClipDuration(_clipEnd(candidate) - _clipStart(candidate))}',
+                                      ),
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: theme.textTheme.labelSmall
@@ -4201,7 +4289,7 @@ class _CandidateRow extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _DecisionButton(
-                      tooltip: '保留片段 (C / Enter)',
+                      tooltip: context.bheText('保留片段 (C / Enter)'),
                       icon: Icons.check_rounded,
                       active: !excluded,
                       color: c.goal,
@@ -4210,7 +4298,7 @@ class _CandidateRow extends StatelessWidget {
                     ),
                     const SizedBox(width: 3),
                     _DecisionButton(
-                      tooltip: '排除片段 (X / Backspace)',
+                      tooltip: context.bheText('排除片段 (X / Backspace)'),
                       icon: Icons.close_rounded,
                       active: excluded,
                       color: c.error,
@@ -4305,7 +4393,7 @@ class _PlayerChipState extends State<_PlayerChip> {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: '设置球员标签',
+      message: context.bheText('设置球员标签'),
       child: MenuAnchor(
         controller: _menuController,
         alignmentOffset: const Offset(0, 4),
@@ -4343,7 +4431,7 @@ class _PlayerChipState extends State<_PlayerChip> {
                   Flexible(
                     child: Text(
                       widget.name == null || widget.name!.isEmpty
-                          ? '未标记'
+                          ? context.bheText('未标记')
                           : widget.name!,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -4394,7 +4482,7 @@ class _PlayerPickerMenuContent extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
                 child: Text(
-                  '选择球员',
+                  context.bheText('选择球员'),
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     color: c.textSecondary,
                     fontWeight: FontWeight.w600,
@@ -4402,7 +4490,7 @@ class _PlayerPickerMenuContent extends StatelessWidget {
                 ),
               ),
               _PlayerPickerOption(
-                label: '未标记',
+                label: context.bheText('未标记'),
                 icon: Icons.person_off_outlined,
                 color: c.textTertiary,
                 onTap: () => onSelected(null),
@@ -4423,7 +4511,7 @@ class _PlayerPickerMenuContent extends StatelessWidget {
                             trailing: onDelete == null || id == null
                                 ? null
                                 : IconButton(
-                                    tooltip: '删除$name',
+                                    tooltip: '${context.bheText('删除')}$name',
                                     onPressed: () => onDelete!(id, name),
                                     icon: const Icon(
                                       Icons.delete_outline,
@@ -4439,7 +4527,7 @@ class _PlayerPickerMenuContent extends StatelessWidget {
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           child: Text(
-                            '暂无球员',
+                            context.bheText('暂无球员'),
                             style: TextStyle(
                               color: c.textTertiary,
                               fontSize: 12,
@@ -4450,7 +4538,7 @@ class _PlayerPickerMenuContent extends StatelessWidget {
               ),
               const Divider(height: 8),
               _PlayerPickerOption(
-                label: '新建球员',
+                label: context.bheText('新建球员'),
                 icon: Icons.add,
                 color: c.orange,
                 onTap: onCreate,
@@ -4943,7 +5031,10 @@ Map<String, dynamic> _decodeJobCheckpoint(Map<String, dynamic>? job) {
   }
 }
 
-String _analysisDetailLabel(Map<String, dynamic> checkpoint) {
+String _analysisDetailLabel(
+  Map<String, dynamic> checkpoint,
+  BheLocalizations? l10n,
+) {
   final rawTimings = checkpoint['stage_timings_ms'];
   final timings = rawTimings is Map
       ? rawTimings.cast<String, dynamic>()
@@ -4959,12 +5050,17 @@ String _analysisDetailLabel(Map<String, dynamic> checkpoint) {
   }.entries) {
     final value = timings[entry.key];
     if (value is num) {
-      parts.add('${entry.value} ${_formatSeconds(value / 1000)}');
+      parts.add(
+        '${l10n?.text(entry.value) ?? entry.value} ${l10n?.text(_formatSeconds(value / 1000)) ?? _formatSeconds(value / 1000)}',
+      );
     }
   }
   final cacheHits = checkpoint['cache_hits'];
-  if (cacheHits is num) parts.add('缓存命中 ${cacheHits.toInt()}');
-  return parts.isEmpty ? '' : '分析详情：${parts.join(' · ')}';
+  if (cacheHits is num) {
+    parts.add('缓存命中 ${cacheHits.toInt()}');
+  }
+  final result = parts.isEmpty ? '' : '分析详情：${parts.join(' · ')}';
+  return l10n?.text(result) ?? result;
 }
 
 String _formatSeconds(double value) {

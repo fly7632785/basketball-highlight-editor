@@ -23,7 +23,11 @@ class _FakeProjectNotifier extends ProjectNotifier {
   );
 
   @override
-  Future<bool> openProject(String root) async {
+  Future<bool> openProject(
+    String root, {
+    String? relinkVideoButtonLabel,
+    String? videoTypeLabel,
+  }) async {
     openedRoot = root;
     return true;
   }

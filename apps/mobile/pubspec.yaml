@@ -33,8 +33,11 @@ dependencies:
 
   bhe_core:
     path: ../../packages/bhe_core
+  bhe_l10n:
+    path: ../../packages/bhe_l10n
   file_picker: ^10.3.3
   path_provider: ^2.1.5
+  shared_preferences: ^2.5.3
   share_plus: ^11.0.0
   video_player: ^2.10.0
   archive: ^4.0.9

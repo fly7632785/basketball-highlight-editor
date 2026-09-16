@@ -566,10 +566,20 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   /// 等价 app.dart:_chooseOpenProject(297)。
-  Future<bool> chooseOpenProject() async {
-    final root = await getDirectoryPath(confirmButtonText: '打开项目');
+  Future<bool> chooseOpenProject({
+    String? openProjectButtonLabel,
+    String? relinkVideoButtonLabel,
+    String? videoTypeLabel,
+  }) async {
+    final root = await getDirectoryPath(
+      confirmButtonText: openProjectButtonLabel ?? '打开项目',
+    );
     if (root == null) return false;
-    return openProject(root);
+    return openProject(
+      root,
+      relinkVideoButtonLabel: relinkVideoButtonLabel,
+      videoTypeLabel: videoTypeLabel,
+    );
   }
 
   Future<bool> relinkCurrentVideo(String path) async {
@@ -773,7 +783,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   /// 等价 app.dart:_openProject(302)。
-  Future<bool> openProject(String root) async {
+  Future<bool> openProject(
+    String root, {
+    String? relinkVideoButtonLabel,
+    String? videoTypeLabel,
+  }) async {
     var opened = false;
     await flushReviewQueue();
     await _runBusy(() async {
@@ -801,10 +815,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
             !File(sourcePath).existsSync();
         if (sourceMissing) {
           final replacementFile = await openFile(
-            confirmButtonText: '重新定位视频',
-            acceptedTypeGroups: const [
+            confirmButtonText: relinkVideoButtonLabel ?? '重新定位视频',
+            acceptedTypeGroups: [
               XTypeGroup(
-                label: '视频',
+                label: videoTypeLabel ?? '视频',
                 extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
               ),
             ],

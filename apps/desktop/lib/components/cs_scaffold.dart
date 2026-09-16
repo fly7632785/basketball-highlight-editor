@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
 
 import '../providers/session_provider.dart';
 import '../providers/project_state.dart';
+import '../providers/locale_provider.dart';
 import '../providers/sidebar_provider.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_colors.dart';
@@ -72,8 +74,6 @@ class _CsScaffoldState extends ConsumerState<CsScaffold> {
   }
 }
 
-const List<String> _branchLabels = <String>['项目', '导入', '审核', '导出'];
-
 /// 顶部条:branch 标题 + Engine 胶囊 + 隐私徽章 + 主题切换 IconButton。
 ///
 /// 放在 cs_scaffold.dart 内(与 Scaffold 同文件,无独立 spec 章节)。Engine
@@ -89,7 +89,13 @@ class CsTopBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final c = AppColors.of(context);
-    final title = _branchLabels[shell.currentIndex];
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+    final title = switch (shell.currentIndex) {
+      0 => l10n?.navProject ?? '项目',
+      1 => l10n?.navImport ?? '导入',
+      2 => l10n?.navReview ?? '审核',
+      _ => l10n?.navExport ?? '导出',
+    };
     final engineAsync = ref.watch(engineBootstrapProvider);
     final themeMode = ref.watch(themeModeProvider);
     final projectState = ref.watch(projectProvider);
@@ -115,7 +121,7 @@ class CsTopBar extends ConsumerWidget {
           const Spacer(),
           if (shell.currentIndex != 0)
             IconButton(
-              tooltip: '关闭当前项目',
+              tooltip: l10n?.confirmCloseProject ?? '关闭当前项目',
               icon: Icon(LucideIcons.folderX, size: 17, color: c.textSecondary),
               onPressed: projectState.busy
                   ? null
@@ -125,7 +131,7 @@ class CsTopBar extends ConsumerWidget {
             Icon(LucideIcons.shield, size: 12, color: c.textSecondary),
             const SizedBox(width: Spacing.xs),
             Text(
-              '本地处理',
+              l10n?.localProcessing ?? '本地处理',
               style: Theme.of(
                 context,
               ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
@@ -133,20 +139,26 @@ class CsTopBar extends ConsumerWidget {
             const SizedBox(width: Spacing.md),
           ],
           PopupMenuButton<String>(
-            tooltip: '更多',
+            tooltip: l10n?.more ?? '更多',
             icon: Icon(
               LucideIcons.moreHorizontal,
               size: 18,
               color: c.textSecondary,
             ),
             onSelected: (value) => _handleUtilityAction(context, value),
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'feedback', child: Text('反馈')),
-              PopupMenuItem(value: 'about', child: Text('关于 BHE')),
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'feedback',
+                child: Text(l10n?.feedback ?? '反馈'),
+              ),
+              PopupMenuItem(
+                value: 'about',
+                child: Text(l10n?.about ?? '关于 BHE'),
+              ),
             ],
           ),
           IconButton(
-            tooltip: '切换主题',
+            tooltip: l10n?.switchTheme ?? '切换主题',
             icon: Icon(
               themeMode == ThemeMode.dark
                   ? LucideIcons.moon
@@ -161,6 +173,22 @@ class CsTopBar extends ConsumerWidget {
                   .read(themeModeProvider.notifier)
                   .set(_nextThemeMode(themeMode));
             },
+          ),
+          PopupMenuButton<Locale>(
+            tooltip: l10n?.switchLanguage ?? '切换语言',
+            icon: Icon(LucideIcons.languages, size: 18, color: c.textSecondary),
+            onSelected: (locale) =>
+                ref.read(appLocaleProvider.notifier).set(locale),
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: BheLocale.zh,
+                child: Text(l10n?.languageChinese ?? '简体中文'),
+              ),
+              PopupMenuItem(
+                value: BheLocale.en,
+                child: Text(l10n?.languageEnglish ?? 'English'),
+              ),
+            ],
           ),
         ],
       ),
@@ -183,11 +211,19 @@ class CsTopBar extends ConsumerWidget {
       await showCourtsideAboutDialog(context);
       return;
     }
-    final opened = await openExternalUri(feedbackMailto());
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+    final opened = await openExternalUri(
+      feedbackMailto(english: l10n?.localeName.startsWith('en') == true),
+    );
     if (!opened && context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('未找到可用的邮件客户端，请手动联系反馈邮箱。')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            l10n?.feedbackMailClientMissing ??
+                '未找到可用的邮件客户端，请手动联系反馈邮箱。',
+          ),
+        ),
+      );
     }
   }
 }
@@ -199,6 +235,7 @@ Future<void> _confirmCloseProject(
 ) async {
   final state = ref.read(projectProvider);
   final session = ref.read(projectSessionProvider);
+  final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
   if (state.busy) return;
   if (session.projectRoot == null && state.video == null) {
     shell.goBranch(0);
@@ -211,18 +248,29 @@ Future<void> _confirmCloseProject(
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: Text(busy ? '任务仍在进行' : '关闭当前项目？'),
+      title: Text(
+        busy
+            ? (l10n?.taskInProgress ?? '任务仍在进行')
+            : (l10n?.confirmCloseProject ?? '关闭当前项目？'),
+      ),
       content: Text(
-        busy ? '关闭项目会先取消当前任务，项目数据和原始视频不会被删除。' : '项目数据和原始视频会保留，下次可以从项目列表重新打开。',
+        busy
+            ? (l10n?.closeProjectBusyDescription ??
+                  '关闭项目会先取消当前任务，项目数据和原始视频不会被删除。')
+            : (l10n?.closeProjectDescription ?? '项目数据和原始视频会保留，下次可以从项目列表重新打开。'),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext, false),
-          child: const Text('返回'),
+          child: Text(l10n?.returnAction ?? '返回'),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(dialogContext, true),
-          child: Text(busy ? '取消任务并关闭' : '关闭项目'),
+          child: Text(
+            busy
+                ? (l10n?.cancelTaskAndClose ?? '取消任务并关闭')
+                : (l10n?.closeProject ?? '关闭项目'),
+          ),
         ),
       ],
     ),
@@ -242,12 +290,22 @@ class _EngineStatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final (label, color, icon) = async.when(
       data: (v) => v
-          ? ('Engine 就绪', c.goal, LucideIcons.circleCheck)
-          : ('Engine 未启动', c.excluded, LucideIcons.ban),
-      loading: () => ('等待 Engine', c.pending, LucideIcons.hourglass),
-      error: (_, _) => ('Engine 错误', c.error, LucideIcons.circleAlert),
+          ? (l10n?.engineReady ?? 'Engine 就绪', c.goal, LucideIcons.circleCheck)
+          : (
+              l10n?.engineNotStarted ?? 'Engine 未启动',
+              c.excluded,
+              LucideIcons.ban,
+            ),
+      loading: () => (
+        l10n?.waitingEngine ?? '等待 Engine',
+        c.pending,
+        LucideIcons.hourglass,
+      ),
+      error: (_, _) =>
+          (l10n?.engineError ?? 'Engine 错误', c.error, LucideIcons.circleAlert),
     );
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: Spacing.sm, vertical: 3),
