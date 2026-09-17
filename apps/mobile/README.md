@@ -10,6 +10,23 @@
 - 缺少原生库时会返回 `NATIVE_RUNTIME_UNAVAILABLE`，不会返回伪造候选；
 - 移动端真机长视频性能、模型一致性、多 ABI 和 iOS 分析仍需单独验收。
 
+## 界面预览
+
+移动端提供项目工作台、候选审核和导出页面。审核页支持竖屏浏览，也支持横屏获得更大的视频预览区域。
+
+<p align="center">
+  <img src="../../capture/mobile-ios-project.png" alt="iOS 项目工作台" width="240">
+  <img src="../../capture/mobile-ios-review.png" alt="iOS 候选审核" width="240">
+</p>
+
+<p align="center">
+  <img src="../../capture/mobile-ios-review-landscape.png" alt="iOS 横屏审核" width="480">
+</p>
+
+<p align="center">
+  <img src="../../capture/mobile-ios-export.png" alt="iOS 导出集锦" width="240">
+</p>
+
 ## 本地开发
 
 ```bash

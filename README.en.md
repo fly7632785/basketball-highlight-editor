@@ -8,7 +8,7 @@
 [![Flutter Checks](https://img.shields.io/github/actions/workflow/status/fly7632785/basketball-highlight-editor/flutter-check.yml?branch=main&style=flat-square&label=Flutter%20checks)](https://github.com/fly7632785/basketball-highlight-editor/actions/workflows/flutter-check.yml)
 [![Latest tag](https://img.shields.io/github/v/tag/fly7632785/basketball-highlight-editor?include_prereleases&style=flat-square&label=latest%20tag)](https://github.com/fly7632785/basketball-highlight-editor/tags)
 [![License](https://img.shields.io/github/license/fly7632785/basketball-highlight-editor?style=flat-square)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-4c6ef5?style=flat-square)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Android%20%7C%20iOS-4c6ef5?style=flat-square)
 ![Local first](https://img.shields.io/badge/operation-local--first-2ea44f?style=flat-square)
 ![Free](https://img.shields.io/badge/cost-free-f97316?style=flat-square)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
@@ -111,6 +111,31 @@ After review, you can filter by tag and merge the result or export each clip sep
 ![BHE highlight export](capture/screenshot-20260813-150335.png)
 
 For more screens, controls, shortcuts, and the light theme, see [`docs/USER_FLOW_V1.md`](docs/USER_FLOW_V1.md) and [`docs/README.en.md`](docs/README.en.md).
+
+## Android and iOS mobile apps
+
+BHE now also has Android and iOS mobile app versions. On a phone, you can open a project, import or inspect a game video, review candidate clips, and export the selected clips separately or as one merged reel. Android currently includes the native local-analysis path; iOS local analysis depends on the Rust Runtime and ONNX Runtime artifacts being built and linked for the target.
+
+The mobile app keeps the same core flow as desktop: prepare a project, inspect the video and candidates, then export. Portrait mode is convenient for browsing candidates, while landscape mode gives the video and review controls more room.
+
+<p align="center">
+  <img src="capture/mobile-ios-project.png" alt="BHE iOS project workspace" width="280">
+  <img src="capture/mobile-ios-review.png" alt="BHE iOS candidate review" width="280">
+</p>
+
+Landscape review brings the video, candidate list, and review controls into one workspace:
+
+<p align="center">
+  <img src="capture/mobile-ios-review-landscape.png" alt="BHE iOS landscape review" width="560">
+</p>
+
+After review, export every retained clip separately or merge the retained clips into one reel:
+
+<p align="center">
+  <img src="capture/mobile-ios-export.png" alt="BHE iOS export" width="280">
+</p>
+
+See [`apps/mobile/README.md`](apps/mobile/README.md) for mobile builds, device testing, and native inference dependencies. Cross-platform boundaries are documented in [`docs/MOBILE_PC_FEATURE_MATRIX.md`](docs/MOBILE_PC_FEATURE_MATRIX.md).
 
 ## Scope
 

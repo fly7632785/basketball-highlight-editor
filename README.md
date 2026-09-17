@@ -10,7 +10,7 @@
 [![Flutter Checks](https://img.shields.io/github/actions/workflow/status/fly7632785/basketball-highlight-editor/flutter-check.yml?branch=main&style=flat-square&label=Flutter%20checks)](https://github.com/fly7632785/basketball-highlight-editor/actions/workflows/flutter-check.yml)
 [![Latest tag](https://img.shields.io/github/v/tag/fly7632785/basketball-highlight-editor?include_prereleases&style=flat-square&label=latest%20tag)](https://github.com/fly7632785/basketball-highlight-editor/tags)
 [![License](https://img.shields.io/github/license/fly7632785/basketball-highlight-editor?style=flat-square)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-4c6ef5?style=flat-square)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Android%20%7C%20iOS-4c6ef5?style=flat-square)
 ![Local first](https://img.shields.io/badge/运行方式-完全本地-2ea44f?style=flat-square)
 ![Free](https://img.shields.io/badge/费用-免费-f97316?style=flat-square)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
@@ -134,6 +134,31 @@ https://github.com/user-attachments/assets/43bfed76-bbc6-42c2-bbaa-ea2bf0604292
 同一个片段可以有多个标签。导出时可以只选某位球员、某种场景，或同时选择多个标签，分别制作个人集锦、三分集锦、扣篮集锦和整场集锦。
 
 更多页面、按钮、快捷键和白色主题截图见 [`docs/USER_FLOW_V1.md`](docs/USER_FLOW_V1.md) 以及 [`docs/README.md`](docs/README.md)。
+
+## Android / iOS 移动端
+
+BHE 现在也提供 Android 和 iOS 移动端版本。移动端适合在手机上导入比赛视频、查看项目、审核候选片段，并把保留的片段分别导出或合并导出；Android 当前还接入了本地原生分析路径，iOS 的本地分析能力取决于 Rust Runtime 和 ONNX Runtime 是否完成构建链接。
+
+移动端界面保持和桌面端相同的核心流程：先准备项目，再查看视频和候选，最后进入导出页。手机上审核时可以在竖屏查看候选，也可以横屏获得更大的视频画面。
+
+<p align="center">
+  <img src="capture/mobile-ios-project.png" alt="iOS 项目工作台" width="280">
+  <img src="capture/mobile-ios-review.png" alt="iOS 候选审核" width="280">
+</p>
+
+横屏审核会把视频、候选列表和审核操作集中到同一工作区：
+
+<p align="center">
+  <img src="capture/mobile-ios-review-landscape.png" alt="iOS 横屏审核" width="560">
+</p>
+
+审核完成后，可以分别导出所有保留片段，也可以合并成一条集锦：
+
+<p align="center">
+  <img src="capture/mobile-ios-export.png" alt="iOS 导出集锦" width="280">
+</p>
+
+移动端构建、真机测试和原生推理依赖见 [`apps/mobile/README.md`](apps/mobile/README.md)；跨端能力边界见 [`docs/MOBILE_PC_FEATURE_MATRIX.md`](docs/MOBILE_PC_FEATURE_MATRIX.md)。
 
 ## 开始使用
 
