@@ -298,12 +298,17 @@ jobs:
           flutter build apk --release \
             --build-name="$version" \
             --build-number="${GITHUB_RUN_NUMBER}"
-          unzip -p build/app/outputs/flutter-apk/app-release.apk \
-            lib/arm64-v8a/libbhe_runtime_jni.so > "$RUNNER_TEMP/libbhe_runtime_jni.so"
+          apk="build/app/outputs/flutter-apk/app-release.apk"
+          for library in libbhe_runtime.so libbhe_runtime_jni.so libonnxruntime.so; do
+            unzip -p "$apk" "lib/arm64-v8a/$library" > "$RUNNER_TEMP/$library"
+            test -s "$RUNNER_TEMP/$library"
+          done
           readelf --dyn-syms --wide "$RUNNER_TEMP/libbhe_runtime_jni.so" \
             | grep -q 'Java_com_bhe_bhe_1mobile_NativeRuntime_pushFrameRaw'
+          readelf --dynamic --wide "$RUNNER_TEMP/libbhe_runtime_jni.so" \
+            | grep -q 'Shared library: \[libbhe_runtime.so\]'
           mkdir -p "$GITHUB_WORKSPACE/dist"
-          cp build/app/outputs/flutter-apk/app-release.apk \
+          cp "$apk" \
             "$GITHUB_WORKSPACE/dist/BHE-android-arm64-v8a-v${version}-debug-signed.apk"
           cd "$GITHUB_WORKSPACE/dist"
           sha256sum "BHE-android-arm64-v8a-v${version}-debug-signed.apk" \

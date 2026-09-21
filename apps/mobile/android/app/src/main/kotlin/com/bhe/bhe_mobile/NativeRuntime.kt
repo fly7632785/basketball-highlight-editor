@@ -1,20 +1,62 @@
 package com.bhe.bhe_mobile
 
 import android.util.Log
+import android.os.Build
 import java.io.File
 
 object NativeRuntime {
     private const val TAG = "BHE-NativeRuntime"
 
-    private val loadResult: Pair<Boolean, String?> = try {
-            System.loadLibrary("bhe_runtime_jni")
-            true to null
-        } catch (error: UnsatisfiedLinkError) {
-            false to (error.message ?: error.toString())
-        }
+    @Volatile
+    var available: Boolean = false
+        private set
 
-    val available: Boolean = loadResult.first
-    val loadError: String? = loadResult.second
+    @Volatile
+    var loadError: String? = null
+        private set
+
+    @Volatile
+    private var loadAttempted = false
+
+    /**
+     * Load the Rust runtime through absolute paths. Android's linker can fail
+     * to resolve a custom JNI library's DT_NEEDED dependency on some devices
+     * even when both files are present in the APK. Loading the dependency
+     * first makes the order explicit and gives us an actionable error.
+     */
+    @JvmStatic
+    fun ensureLoaded(nativeLibraryDir: String): Boolean {
+        if (available) return true
+        synchronized(this) {
+            if (available) return true
+            if (loadAttempted) return false
+            loadAttempted = true
+
+            val directory = File(nativeLibraryDir)
+            val runtime = File(directory, "libbhe_runtime.so")
+            val jni = File(directory, "libbhe_runtime_jni.so")
+            val missing = listOf(runtime, jni).filterNot(File::isFile)
+            if (missing.isNotEmpty()) {
+                loadError = "Android native libraries are missing: ${missing.joinToString { it.name }}; " +
+                    "nativeLibraryDir=$nativeLibraryDir; supportedAbis=${Build.SUPPORTED_ABIS.joinToString()}"
+                Log.e(TAG, loadError!!)
+                return false
+            }
+
+            try {
+                System.load(runtime.absolutePath)
+                System.load(jni.absolutePath)
+                available = true
+                loadError = null
+                Log.i(TAG, "loaded runtime=${runtime.absolutePath} jni=${jni.absolutePath}")
+            } catch (error: UnsatisfiedLinkError) {
+                loadError = "Android native runtime load failed: ${error.message ?: error}; " +
+                    "nativeLibraryDir=$nativeLibraryDir; supportedAbis=${Build.SUPPORTED_ABIS.joinToString()}"
+                Log.e(TAG, loadError!!, error)
+            }
+            return available
+        }
+    }
 
     @Volatile
     private var onnxLoadResult: Pair<Boolean, String?>? = null
@@ -30,7 +72,7 @@ object NativeRuntime {
         synchronized(this) {
             onnxLoadResult?.let { return it.first }
             val file = File(path)
-            val result = if (!available) {
+            val result = if (!ensureLoaded(file.parentFile?.absolutePath ?: "")) {
                 false to (loadError ?: "JNI runtime is unavailable")
             } else if (!file.isFile) {
                 false to "ONNX library does not exist: $path"

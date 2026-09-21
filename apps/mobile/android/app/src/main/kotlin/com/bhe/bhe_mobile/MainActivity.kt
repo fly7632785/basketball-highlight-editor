@@ -142,7 +142,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun suggestRoi(call: MethodCall, result: MethodChannel.Result) {
-        if (!NativeRuntime.available) {
+        if (!NativeRuntime.ensureLoaded(applicationInfo.nativeLibraryDir)) {
             result.error("NATIVE_RUNTIME_UNAVAILABLE", NativeRuntime.loadError, null)
             return
         }
