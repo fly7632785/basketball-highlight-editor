@@ -23,7 +23,7 @@ env:
   PYTHON_BUILD_STANDALONE_TAG: "20260814"
   PYTHON_VERSION: "3.11.16"
   ANDROID_NDK_VERSION: "27.0.12077973"
-  ONNXRUNTIME_VERSION: "1.22.0"
+  ONNXRUNTIME_VERSION: "1.28.0"
   TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
