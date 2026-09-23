@@ -7,7 +7,9 @@ import 'package:bhe_l10n/bhe_l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
 import 'mobile_app_state.dart';
@@ -36,6 +38,8 @@ class _BheMobileAppState extends State<BheMobileApp> {
   String? _lastProjectId;
   String? _lastAnalysisStatus;
   DateTime? _lastBackPress;
+  bool _wasExporting = false;
+  bool _starPromptHandled = false;
 
   @override
   void initState() {
@@ -68,6 +72,15 @@ class _BheMobileAppState extends State<BheMobileApp> {
   }
 
   void _handleStateChange() {
+    final exportCompleted =
+        _wasExporting &&
+        !state.exporting &&
+        state.exportedPaths.isNotEmpty &&
+        state.errorMessage == null &&
+        !state.exportCancelled;
+    _wasExporting = state.exporting;
+    if (exportCompleted) unawaited(_maybeShowStarPrompt());
+
     final projectChanged = state.project.id != _lastProjectId;
     if (projectChanged) {
       _lastProjectId = state.project.id;
@@ -83,6 +96,71 @@ class _BheMobileAppState extends State<BheMobileApp> {
       }
     }
     if (mounted && sectionChanged) setState(() {});
+  }
+
+  Future<void> _maybeShowStarPrompt() async {
+    if (_starPromptHandled || !mounted) return;
+    _starPromptHandled = true;
+    final prefs = await SharedPreferences.getInstance();
+    const key = 'bhe.github-star-prompt-shown';
+    if (prefs.getBool(key) ?? false) return;
+    await prefs.setBool(key, true);
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_showStarPrompt());
+    });
+  }
+
+  Future<void> _showStarPrompt() async {
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(LucideIcons.heart, color: BhePalette.orange),
+        title: Text(context.bheText('如果 BHE 对你有帮助')),
+        content: Text(
+          context.bheText(
+            '如果 BHE 帮你省下了一些剪辑时间，欢迎在 GitHub 点个 Star，也可以分享给球友，让更多人知道这个项目。谢谢支持！',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(l10n?.text('以后再说') ?? '以后再说'),
+          ),
+          TextButton.icon(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await SharePlus.instance.share(
+                ShareParams(
+                  text: context.bheText(
+                    '我在用 BHE 整理篮球比赛集锦，推荐你看看：',
+                  ),
+                  uri: Uri.parse(
+                    'https://github.com/fly7632785/basketball-highlight-editor',
+                  ),
+                ),
+              );
+            },
+            icon: const Icon(LucideIcons.share2, size: 17),
+            label: Text(l10n?.text('分享给球友') ?? '分享给球友'),
+          ),
+          FilledButton.icon(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await launchUrl(
+                Uri.parse(
+                  'https://github.com/fly7632785/basketball-highlight-editor',
+                ),
+                mode: LaunchMode.externalApplication,
+              );
+            },
+            icon: const Icon(LucideIcons.star, size: 17),
+            label: Text(l10n?.text('去 GitHub 点个 Star') ?? '去 GitHub 点个 Star'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

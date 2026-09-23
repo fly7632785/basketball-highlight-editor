@@ -269,6 +269,23 @@ a { color: inherit; }
 .faq details p { padding: 0 1.3rem 1.1rem; font-size: .92rem; color: var(--t-paper-dim); }
 .faq summary:focus-visible { outline: 2px solid var(--ball); outline-offset: -2px; border-radius: 10px; }
 
+.star-prompt {
+  width: min(440px, calc(100% - 32px)); margin: auto; padding: 2rem;
+  border: 1px solid var(--line-ink); border-radius: 16px;
+  background: var(--panel); color: var(--t-ink); text-align: center;
+}
+.star-prompt::backdrop { background: rgba(4, 6, 10, .72); }
+.star-prompt-mark { display: inline-grid; place-items: center; width: 42px; height: 42px; margin-bottom: .8rem; border-radius: 50%; background: rgba(240, 140, 0, .14); color: var(--ball); font-size: 1.35rem; }
+.star-prompt h2 { margin-bottom: .65rem; font-size: 1.35rem; line-height: 1.3; }
+.star-prompt p { color: var(--t-ink-dim); font-size: .96rem; }
+.star-prompt-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: .65rem; margin-top: 1.3rem; }
+.star-prompt-actions .btn { padding: .65rem .9rem; font-size: .9rem; cursor: pointer; }
+.star-prompt-later, .star-prompt-close { border: 0; background: transparent; color: var(--t-ink-dim); cursor: pointer; }
+.star-prompt-later { margin-top: .9rem; padding: .35rem .7rem; font: inherit; font-size: .88rem; }
+.star-prompt-close { position: absolute; top: .65rem; right: .75rem; width: 34px; height: 34px; border-radius: 50%; font-size: 1.5rem; }
+.star-prompt-close:hover, .star-prompt-later:hover { color: var(--t-ink); }
+.star-prompt :focus-visible { outline: 2px solid var(--ball); outline-offset: 3px; }
+
 /* ---------- 页脚 ---------- */
 .footer { background: var(--ink); border-top: 1px solid var(--line-ink); color: var(--t-ink-dim); }
 .footer-inner { max-width: var(--maxw); margin: 0 auto; padding: 2.5rem 1.5rem; display: flex; flex-wrap: wrap; gap: 1.5rem 3rem; align-items: center; }

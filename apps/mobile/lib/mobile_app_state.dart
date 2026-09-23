@@ -42,6 +42,7 @@ class MobileAppState extends ChangeNotifier {
   String preparingVideoMessage = '';
   bool analysing = false;
   bool exporting = false;
+  bool exportCancelled = false;
   List<String> exportedPaths = const [];
   Future<void> _saveChain = Future<void>.value();
   int _analysisGeneration = 0;
@@ -866,6 +867,7 @@ class MobileAppState extends ChangeNotifier {
       return;
     }
     exporting = true;
+    exportCancelled = false;
     exportedPaths = const [];
     final stopwatch = Stopwatch()..start();
     errorMessage = null;
@@ -917,6 +919,7 @@ class MobileAppState extends ChangeNotifier {
       return;
     }
     exporting = true;
+    exportCancelled = false;
     exportedPaths = const [];
     final stopwatch = Stopwatch()..start();
     errorMessage = null;
@@ -952,6 +955,7 @@ class MobileAppState extends ChangeNotifier {
 
   Future<void> cancelExport() async {
     if (!exporting) return;
+    exportCancelled = true;
     try {
       await exportEngine.cancel();
       progressMessage = '导出已取消';

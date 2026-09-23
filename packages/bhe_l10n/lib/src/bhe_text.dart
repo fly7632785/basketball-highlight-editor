@@ -313,6 +313,14 @@ String _englishDuration(String value) => value
     .trim();
 
 const _englishText = <String, String>{
+  '如果 BHE 对你有帮助': 'If BHE has been helpful',
+  '如果 BHE 帮你省下了一些剪辑时间，欢迎在 GitHub 点个 Star，也可以分享给球友，让更多人知道这个项目。谢谢支持！':
+      'If BHE has saved you some editing time, please consider starring it on GitHub or sharing it with your basketball friends. It helps more people discover the project. Thank you for your support!',
+  '以后再说': 'Maybe later',
+  '分享给球友': 'Share with friends',
+  '去 GitHub 点个 Star': 'Star BHE on GitHub',
+  '我在用 BHE 整理篮球比赛集锦，推荐你看看：':
+      'I use BHE to put together basketball highlights. Take a look:',
   '分析完成': 'Analysis complete',
   '退出 BHE？': 'Exit BHE?',
   '分析失败': 'Analysis failed',

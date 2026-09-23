@@ -234,13 +234,25 @@
   <p class="kicker mono">DEMO</p>
   <h2>从导入到导出，完整走一遍</h2>
   <div class="demo-card reveal">
-    <video controls preload="metadata" poster="assets/demo-cover.jpg">
+    <video id="bhe-demo-video" controls preload="metadata" poster="assets/demo-cover.jpg">
       <source src="https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4" type="video/mp4">
       你的浏览器不支持内嵌视频，可<a href="https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4" target="_blank" rel="noopener">直接打开录屏文件</a>。
     </video>
     <p class="demo-note mono">约 34 秒 · 存放在国内 OSS，页内直接播放</p>
   </div>
 </section>
+
+<dialog class="star-prompt" id="star-prompt" aria-labelledby="star-prompt-title" aria-describedby="star-prompt-copy">
+  <button class="star-prompt-close" type="button" aria-label="关闭">×</button>
+  <span class="star-prompt-mark" aria-hidden="true">★</span>
+  <h2 id="star-prompt-title">如果 BHE 对你有帮助</h2>
+  <p id="star-prompt-copy">如果它帮你省下了一些剪辑时间，欢迎在 GitHub 点个 Star，也可以分享给球友，让更多人知道这个项目。谢谢支持！</p>
+  <div class="star-prompt-actions">
+    <a class="btn btn-ball" href="https://github.com/fly7632785/basketball-highlight-editor" target="_blank" rel="noopener">去 GitHub 点个 Star</a>
+    <button class="btn btn-ghost" type="button" data-star-share>分享给球友</button>
+  </div>
+  <button class="star-prompt-later" type="button" data-star-later>以后再说</button>
+</dialog>
 
 <!-- ============ 下载 ============ -->
 <section class="section section-ink" id="download">
@@ -343,6 +355,6 @@
 </footer>
 
 <script src="app.js?v=6"></script>
-<script src="language.js?v=1"></script>
+<script src="language.js?v=2"></script>
 </body>
 </html>

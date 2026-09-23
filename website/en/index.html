@@ -206,13 +206,25 @@
   <p class="kicker mono">DEMO</p>
   <h2>See the full path from import to export</h2>
   <div class="demo-card reveal">
-    <video controls preload="metadata" poster="../assets/demo-cover.jpg">
+    <video id="bhe-demo-video" controls preload="metadata" poster="../assets/demo-cover.jpg">
       <source src="https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4" type="video/mp4">
       Your browser does not support embedded video. <a href="https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/recording-demo.mp4" target="_blank" rel="noopener">Open the recording directly</a>.
     </video>
     <p class="demo-note mono">About 34 seconds · hosted on OSS and playable in the page</p>
   </div>
 </section>
+
+<dialog class="star-prompt" id="star-prompt" aria-labelledby="star-prompt-title" aria-describedby="star-prompt-copy">
+  <button class="star-prompt-close" type="button" aria-label="Close">×</button>
+  <span class="star-prompt-mark" aria-hidden="true">★</span>
+  <h2 id="star-prompt-title">Has BHE been helpful?</h2>
+  <p id="star-prompt-copy">If BHE has saved you some editing time, please consider starring it on GitHub or sharing it with your basketball friends. It helps more people discover the project. Thank you for your support!</p>
+  <div class="star-prompt-actions">
+    <a class="btn btn-ball" href="https://github.com/fly7632785/basketball-highlight-editor" target="_blank" rel="noopener">Star BHE on GitHub</a>
+    <button class="btn btn-ghost" type="button" data-star-share>Share with friends</button>
+  </div>
+  <button class="star-prompt-later" type="button" data-star-later>Maybe later</button>
+</dialog>
 
 <section class="section section-ink" id="download">
   <p class="kicker kicker-ink mono">DOWNLOAD</p>
@@ -306,6 +318,6 @@
 </footer>
 
 <script src="app.js?v=6"></script>
-<script src="../language.js?v=1"></script>
+<script src="../language.js?v=2"></script>
 </body>
 </html>
