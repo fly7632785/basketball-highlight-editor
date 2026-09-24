@@ -270,20 +270,28 @@ a { color: inherit; }
 .faq summary:focus-visible { outline: 2px solid var(--ball); outline-offset: -2px; border-radius: 10px; }
 
 .star-prompt {
-  width: min(440px, calc(100% - 32px)); margin: auto; padding: 2rem;
-  border: 1px solid var(--line-ink); border-radius: 16px;
-  background: var(--panel); color: var(--t-ink); text-align: center;
+  width: min(430px, calc(100% - 32px));
+  max-height: calc(100vh - 32px);
+  margin: auto;
+  padding: 2.1rem 2rem 1.45rem;
+  border: 1px solid #303846;
+  border-radius: 18px;
+  background: var(--panel);
+  color: var(--t-ink);
+  text-align: center;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .42);
 }
 .star-prompt::backdrop { background: rgba(4, 6, 10, .72); }
-.star-prompt-mark { display: inline-grid; place-items: center; width: 42px; height: 42px; margin-bottom: .8rem; border-radius: 50%; background: rgba(240, 140, 0, .14); color: var(--ball); font-size: 1.35rem; }
-.star-prompt h2 { margin-bottom: .65rem; font-size: 1.35rem; line-height: 1.3; }
-.star-prompt p { color: var(--t-ink-dim); font-size: .96rem; }
-.star-prompt-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: .65rem; margin-top: 1.3rem; }
-.star-prompt-actions .btn { padding: .65rem .9rem; font-size: .9rem; cursor: pointer; }
+.star-prompt-mark { display: inline-grid; place-items: center; width: 46px; height: 46px; margin-bottom: .9rem; border-radius: 50%; background: rgba(240, 140, 0, .14); color: var(--ball); font-size: 1.45rem; }
+.star-prompt h2 { margin-bottom: .65rem; font-size: 1.4rem; line-height: 1.3; letter-spacing: -.02em; }
+.star-prompt p { max-width: 36ch; margin: 0 auto; color: var(--t-ink-dim); font-size: .94rem; line-height: 1.65; }
+.star-prompt-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem; margin-top: 1.35rem; }
+.star-prompt-actions .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: .65rem 1rem; font-size: .9rem; cursor: pointer; font-family: inherit; }
 .star-prompt-later, .star-prompt-close { border: 0; background: transparent; color: var(--t-ink-dim); cursor: pointer; }
 .star-prompt-later { margin-top: .9rem; padding: .35rem .7rem; font: inherit; font-size: .88rem; }
-.star-prompt-close { position: absolute; top: .65rem; right: .75rem; width: 34px; height: 34px; border-radius: 50%; font-size: 1.5rem; }
+.star-prompt-close { position: absolute; top: .7rem; right: .75rem; width: 30px; height: 30px; border-radius: 50%; font: inherit; font-size: 1.25rem; line-height: 1; }
 .star-prompt-close:hover, .star-prompt-later:hover { color: var(--t-ink); }
+.star-prompt-close:hover { background: rgba(255, 255, 255, .07); }
 .star-prompt :focus-visible { outline: 2px solid var(--ball); outline-offset: 3px; }
 
 /* ---------- 页脚 ---------- */
@@ -314,6 +322,9 @@ a { color: inherit; }
   .lang-switch { padding-left: .6rem; padding-right: .6rem; }
   .lang-switch-icon { display: none; }
   .btn-nav { padding-left: .8rem; padding-right: .8rem; }
+  .star-prompt { padding: 1.9rem 1.25rem 1.25rem; }
+  .star-prompt-actions { flex-direction: column; }
+  .star-prompt-actions .btn { width: 100%; }
   .steps { grid-template-columns: 1fr; }
   .feature-grid, .dl-grid, .scope, .strip-grid { grid-template-columns: 1fr; }
   .footer-inner { flex-direction: column; align-items: flex-start; }

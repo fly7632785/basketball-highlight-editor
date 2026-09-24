@@ -10,9 +10,17 @@
   const video = document.getElementById("bhe-demo-video");
   const dialog = document.getElementById("star-prompt");
   const promptKey = "bhe-star-prompt-shown";
-  if (!video || !dialog || localStorage.getItem(promptKey) === "1") return;
+  if (!dialog) return;
 
-  const close = () => dialog.close();
+  const close = () => {
+    if (dialog.open) dialog.close();
+  };
+  const markShown = () => localStorage.setItem(promptKey, "1");
+  const showPrompt = () => {
+    if (dialog.open || localStorage.getItem(promptKey) === "1") return;
+    markShown();
+    dialog.showModal();
+  };
   dialog.querySelector(".star-prompt-close").addEventListener("click", close);
   dialog.querySelector("[data-star-later]").addEventListener("click", close);
   dialog.querySelector("[data-star-share]").addEventListener("click", async () => {
@@ -26,17 +34,18 @@
     };
     if (navigator.share) {
       await navigator.share(shareData).catch(() => {});
-    } else {
-      await navigator.clipboard.writeText(shareData.url);
+    } else if (navigator.clipboard) {
+      await navigator.clipboard.writeText(shareData.url).catch(() => {});
     }
     close();
   });
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) close();
   });
-  video.addEventListener("ended", () => {
-    if (dialog.open || localStorage.getItem(promptKey) === "1") return;
-    localStorage.setItem(promptKey, "1");
-    dialog.showModal();
-  }, { once: true });
+  if (video) video.addEventListener("ended", showPrompt, { once: true });
+  document.addEventListener("click", (event) => {
+    const downloadLink = event.target.closest(".dl-actions a.btn");
+    if (!downloadLink) return;
+    window.setTimeout(showPrompt, 0);
+  });
 })();
