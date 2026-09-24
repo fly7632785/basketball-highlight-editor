@@ -287,6 +287,8 @@ a { color: inherit; }
 .star-prompt p { max-width: 36ch; margin: 0 auto; color: var(--t-ink-dim); font-size: .94rem; line-height: 1.65; }
 .star-prompt-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem; margin-top: 1.35rem; }
 .star-prompt-actions .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: .65rem 1rem; font-size: .9rem; cursor: pointer; font-family: inherit; }
+.star-prompt-actions .btn-ghost { border-color: var(--line-ink); color: var(--t-ink); background: transparent; }
+.star-prompt-actions .btn-ghost:hover { border-color: var(--t-ink-dim); background: rgba(255, 255, 255, .05); }
 .star-prompt-later, .star-prompt-close { border: 0; background: transparent; color: var(--t-ink-dim); cursor: pointer; }
 .star-prompt-later { margin-top: .9rem; padding: .35rem .7rem; font: inherit; font-size: .88rem; }
 .star-prompt-close { position: absolute; top: .7rem; right: .75rem; width: 30px; height: 30px; border-radius: 50%; font: inherit; font-size: 1.25rem; line-height: 1; }
