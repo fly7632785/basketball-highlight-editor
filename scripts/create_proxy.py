@@ -84,22 +84,24 @@ def parse_args():
 
 def proxy_attempts(codec, hwaccel, system):
     """Encoder and decoder pairs to try in order."""
-    auto_codec = codec == "auto"
-    if auto_codec:
-        codec = "h264_videotoolbox" if system == "Darwin" else "libx264"
     if hwaccel == "auto":
         hwaccel = {"Darwin": "videotoolbox", "Windows": "d3d11va"}.get(system, "none")
-    attempts = [(codec, hwaccel)]
-    if not auto_codec:
-        return attempts
-    if codec != "libx264":
-        attempts.append(("libx264", "none"))
+    if codec != "auto":
+        return [(codec, hwaccel)]
+    # 代理统一用 libx264 的 CRF 编码:码率随画面复杂度变化,6 分钟 1080p
+    # 素材的体积约为硬件编码器固定 2Mbps 的 1/8,粗扫候选与篮筐复核结论
+    # 不变。尽量保留硬件解码。基准见
+    # docs/benchmarks/PROXY_ENCODING_BENCHMARK_20261024.md。
+    attempts = [("libx264", hwaccel)]
+    if system == "Darwin":
+        # 随包 FFmpeg 缺少 libx264 时退回硬件编码器,解码仍走硬件。
+        attempts.append(("h264_videotoolbox", hwaccel))
     # Windows 发布包随附的 FFmpeg 可能是 LGPL 构建(BtbN 等),不含
     # GPL 的 libx264。追加 mpeg4(MPEG-4 Part 2)作为最终回退——
     # 它内置于所有 FFmpeg 构建且无需外部库;画质略低但代理视频
     # 仅用于分析,不影响最终导出质量。Windows 上先带着显卡解码试,
     # 显卡解码不可用时再纯软件。
-    if hwaccel == "d3d11va":
+    elif hwaccel == "d3d11va":
         attempts.append(("mpeg4", hwaccel))
     attempts.append(("mpeg4", "none"))
     return attempts
@@ -125,7 +127,9 @@ def build_proxy_command(
         "-c:v", codec,
     ]
     if codec == "libx264":
-        command += ["-preset", "veryfast", "-crf", "28"]
+        # crf 23:比 28 多保留细节,标准模式的精筛与篮筐复核结论与固定码率
+        # 2Mbps 完全一致;28 会丢掉置信度偏低的候选。
+        command += ["-preset", "veryfast", "-crf", "23"]
     else:
         command += ["-b:v", "2M"]
     command.append(str(output))

@@ -10,9 +10,11 @@ def test_progress_from_ffmpeg_line_ignores_unrelated_or_unknown_duration():
     assert progress_from_ffmpeg_line("out_time_us=5000000", None) is None
 
 
-def test_proxy_attempts_keep_mac_unchanged():
+def test_proxy_attempts_prefer_libx264_on_mac_and_keep_hardware_decode():
     assert proxy_attempts("auto", "auto", "Darwin") == [
-        ("h264_videotoolbox", "videotoolbox"), ("libx264", "none"), ("mpeg4", "none"),
+        ("libx264", "videotoolbox"),
+        ("h264_videotoolbox", "videotoolbox"),
+        ("mpeg4", "none"),
     ]
 
 
