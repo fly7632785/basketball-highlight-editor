@@ -1,23 +1,24 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// A video path dropped on the home screen, waiting for the import screen to
-/// pick it up after the new project opens.
-class PendingImportNotifier extends Notifier<String?> {
+/// Video paths dropped on the home screen, waiting for the import screen to
+/// pick them up after the new project opens.
+class PendingImportNotifier extends Notifier<List<String>?> {
   @override
-  String? build() => null;
+  List<String>? build() => null;
 
-  void set(String path) => state = path;
+  void set(List<String> paths) => state = paths;
 
-  String? take() {
-    final path = state;
+  List<String>? take() {
+    final paths = state;
     state = null;
-    return path;
+    return paths;
   }
 }
 
-final pendingImportProvider = NotifierProvider<PendingImportNotifier, String?>(
-  PendingImportNotifier.new,
-);
+final pendingImportProvider =
+    NotifierProvider<PendingImportNotifier, List<String>?>(
+      PendingImportNotifier.new,
+    );
 
 const importVideoExtensions = <String>{'mp4', 'mov', 'm4v', 'avi', 'mkv'};
 

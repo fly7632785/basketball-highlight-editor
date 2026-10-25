@@ -8,8 +8,6 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
-from ultralytics import YOLO
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -29,7 +27,7 @@ def parse_args():
     parser.add_argument("--conf", type=float, default=0.2)
     parser.add_argument("--batch", type=int, default=8)
     parser.add_argument("--net-roi", nargs=4, type=int, metavar=("X1", "Y1", "X2", "Y2"))
-    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda"))
+    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda", "dml"))
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -61,11 +59,10 @@ def validate_args(args):
 
 
 def select_device(requested):
-    if requested != "auto":
-        return requested
-    if torch.cuda.is_available():
-        return "cuda"
-    return "mps" if torch.backends.mps.is_available() else "cpu"
+    """解析推理设备;`auto` 会按 cuda > dml > mps > cpu 选,详见 inference.py。"""
+    from basketball_highlight.inference import select_device as resolve_device
+
+    return resolve_device(requested)
 
 
 def _clamp01(value):
@@ -336,7 +333,11 @@ def main(args):
     coarse_data = json.loads(Path(args.coarse).read_text(encoding="utf-8"))
     roi = args.roi
     device = select_device(args.device)
-    model = YOLO(str(args.model))
+    from basketball_highlight.inference import current_device, load_detector
+
+    model = load_detector(args.model)
+    # 实际后端可能回落(onnx 缺失 / DML 不可用),以模型为准。
+    device = current_device()
     started = time.perf_counter()
     refined = []
     for index, coarse in enumerate(coarse_data["candidates"], 1):

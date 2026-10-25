@@ -1,0 +1,8 @@
+# Windows 桌面端 DirectML 加速(可选)。
+# 装上后 ONNX Runtime 会注册 DmlExecutionProvider,引擎可以用显卡跑检测;
+# 不装或显卡不支持时自动回落到 CPU(torch),不影响功能。
+# 其它平台装了也不会启用该 provider,因此不需要按平台排除。
+onnxruntime-directml>=1.20
+# 打包时用 scripts/export_mobile_model.py --dynamic 生成桌面用的动态 batch ONNX,
+# 那一步需要 onnx 包;放在同一个文件里,避免发布脚本再装一遍依赖。
+onnx>=1.16

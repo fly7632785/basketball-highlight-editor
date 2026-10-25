@@ -9,6 +9,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from basketball_highlight.events import find_refined_crossings
+from basketball_highlight.inference import (
+    current_device,
+    load_detector,
+    select_device as resolve_device,
+)
 from basketball_highlight.ranking import dedupe_candidates
 from basketball_highlight.tracking import link_ball_detections
 from cache_io import read_json_cache, write_json_cache
@@ -45,25 +50,19 @@ def parse_args():
                         help="Optional directory for per-window detection caches.")
     parser.add_argument("--min-score", type=float, default=0.0,
                         help="Keep only crossings at or above this multi-signal score.")
-    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda"))
+    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda", "dml"))
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
 
 def select_device(requested):
-    if requested != "auto":
-        return requested
-    import torch
-
-    if torch.cuda.is_available():
-        return "cuda"
-    return "mps" if torch.backends.mps.is_available() else "cpu"
+    """解析推理设备;`auto` 会按 cuda > dml > mps > cpu 选,详见 inference.py。"""
+    return resolve_device(requested)
 
 
 def load_yolo_model(model_path):
-    from ultralytics import YOLO
-
-    return YOLO(str(model_path))
+    """按当前设备加载检测器:DirectML 走 ORT,其余走 ultralytics。"""
+    return load_detector(model_path)
 
 
 def load_scan_window():
@@ -279,6 +278,8 @@ def main(args):
     for group_index, group in enumerate(scan_groups, 1):
         if model is None:
             model = load_yolo_model(model_path)
+            # 实际后端可能回落(onnx 缺失 / DML 不可用),以模型为准。
+            device = current_device()
             scan_window = load_scan_window()
         group_indices = [missing_indices[item] for item in group["indices"]]
         group_rim = rims_by_index[group_indices[0]][0]

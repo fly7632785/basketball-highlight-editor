@@ -23,6 +23,7 @@ The root [`README.en.md`](../README.en.md) is the project overview and shortest 
 | Read the rim check accuracy sample | [`benchmarks/RIM_CHECK_RECALL_BENCHMARK_20261021.md`](benchmarks/RIM_CHECK_RECALL_BENCHMARK_20261021.md), [`benchmarks/RIM_CHECK_BENCHMARK_20261020.md`](benchmarks/RIM_CHECK_BENCHMARK_20261020.md) |
 | Audit model, data, and dependency rights | [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) |
 | Review the source-publication gate | [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md) |
+| Write promo copy or check public claims | [`promo/README.md`](promo/README.md) (Chinese) |
 
 ## User documentation
 
@@ -56,6 +57,7 @@ The root [`README.en.md`](../README.en.md) is the project overview and shortest 
 
 - [`RELEASE.en.md`](RELEASE.en.md): source-preview release, desktop/Android runtime, signing, notarization, and license checks.
 - [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md): current source-tree blockers.
+- [`promo/README.md`](promo/README.md): promo scripts, platform copy, and the source of every public number (Chinese).
 - [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md): rights boundaries for models, training data, videos, and inference dependencies.
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md): consolidated runtime-dependency and research-reference list.
 - Root [`CONTRIBUTING.md`](../CONTRIBUTING.md), [`SECURITY.md`](../SECURITY.md), [`CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md), [`CHANGELOG.md`](../CHANGELOG.md), and [`LICENSE`](../LICENSE).

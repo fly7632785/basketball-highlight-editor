@@ -198,7 +198,65 @@ PYTHONPATH=src:scripts .venv/bin/python scripts/scan_video.py --help
 
 修改移动端 channel、Rust C ABI、ONNX 输入输出或 ABI 时同步 [`architecture/MOBILE_RUNTIME_V1.md`](architecture/MOBILE_RUNTIME_V1.md)、Android/iOS 构建说明和目标平台测试。
 
-## 9. 提交前检查
+## 9. 本地手工打包与 DirectML 常见坑
+
+### 9.1 不要手工拼 runtime 目录
+
+`runtime/` 的完整清单由 [`../scripts/prepare_windows_runtime.ps1`](../scripts/prepare_windows_runtime.ps1) 定义（`engine/python`、`scripts`、`src`、`models/bball_model.pt`、`docs/architecture/SQLITE_SCHEMA_V1.sql`、`bin/ffmpeg.exe`、`bin/ffprobe.exe`）。**按记忆列举目录一定会漏**，漏掉 `docs/architecture/SQLITE_SCHEMA_V1.sql` 时表现是：
+
+```text
+FileNotFoundError: ...\runtime\docs\architecture\SQLITE_SCHEMA_V1.sql
+create_project failed: {"code":"FILE_NOT_FOUND", ...}
+```
+
+界面上提示「找不到文件或文件夹」并显示 `runtime` 下的路径，容易误判成视频路径问题。正确做法是直接跑官方脚本，或改完后用它生成：
+
+```powershell
+powershell -File scripts\prepare_windows_runtime.ps1 -PythonRuntime <含 python.exe 的目录> `
+  -Ffmpeg <ffmpeg.exe> -Ffprobe <ffprobe.exe> -OutPath dist\windows-runtime
+```
+
+手工组装后至少按清单逐项 `Test-Path` 核对，并用一次 `create_project` + `open_project` 冒烟验证。
+
+### 9.2 `runtime/` 放在 Release 目录会让增量构建失败
+
+`flutter build windows` 的 install 步骤会清理 `build\windows\x64\runner\Release`，如果手工放进 `runtime\` 且 App 正在运行，会出现 `MSB3073` / `cmake_install.cmake` 失败。先关掉 App 再构建，或把 runtime 放到构建目录之外。
+
+### 9.3 onnxruntime 与 onnxruntime-directml 不能共存
+
+两个 wheel 都装 `onnxruntime/` 包，同目录会互相覆盖，Python 会加载版本号更高的那个。**结果是请求 `dml` 时静默回落到 CPU，不报错**，只是日志里 `coarse_scan device=cpu`，看起来「加速没效果」。
+
+确认方法：
+
+```powershell
+.venv\Scripts\python.exe -c "import onnxruntime as ort; print(ort.__version__, ort.get_available_providers())"
+# 必须出现 DmlExecutionProvider，且版本与 onnxruntime-directml 一致
+```
+
+若同时存在两个 `dist-info`，先 `pip uninstall onnxruntime onnxruntime-directml`，再只装 `onnxruntime-directml`。注意 `ultralytics[export-base]` 会把普通 `onnxruntime` 装回来，装完要复查。
+
+### 9.4 不要用 PYTHONPATH 注入 DML 包
+
+[`../apps/desktop/lib/core/engine_client.dart`](../apps/desktop/lib/core/engine_client.dart) 启动引擎时是**覆盖**而非追加 `PYTHONPATH`：
+
+```dart
+environment['PYTHONPATH'] = enginePythonPath;
+```
+
+所以把 `onnxruntime-directml` 装到临时目录、再用 `PYTHONPATH` 指过去不会生效，引擎子进程看不到。加速包必须装进引擎实际使用的解释器环境（`BHE_PYTHON` 指向的那个）。
+
+### 9.5 确认加速是否真的生效
+
+看 `%LOCALAPPDATA%\BHE\logs\engine.log` 里分析完成行：
+
+```text
+coarse_scan device=dml          # 生效
+coarse_scan device=cpu          # 回落到 CPU，检查 9.3 / 9.4
+```
+
+DML 必须单张推理（`BACKEND_MAX_BATCH["dml"]=1`），批量喂反而更慢，这是后端特性不是 bug。
+
+## 10. 提交前检查
 
 ```bash
 python3 scripts/check_open_source.py
@@ -223,6 +281,6 @@ git status --short --branch
 - [ ] 中英文入口已同步；
 - [ ] 协议、数据库、移动 Runtime 或许可证影响已记录。
 
-## 10. 提交问题和 PR
+## 11. 提交问题和 PR
 
 Bug 报告至少包含版本/commit、系统、运行方式、最小复现步骤、实际结果和预期结果。不要附带未脱敏视频、密钥、个人路径或包含球员个人信息的素材。

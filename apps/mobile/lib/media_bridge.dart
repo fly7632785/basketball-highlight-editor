@@ -3,6 +3,18 @@ import 'dart:async';
 import 'package:bhe_core/bhe_core.dart';
 import 'package:flutter/services.dart';
 
+String clipFileName(int index, Candidate candidate) {
+  final name =
+      'goal_${index.toString().padLeft(3, '0')}_${(candidate.eventMs / 1000).toStringAsFixed(2)}s';
+  var player = (candidate.player ?? '').replaceAll(
+    RegExp(r'[\x00-\x1f<>:"/\\|?*]+'),
+    '_',
+  );
+  player = player.replaceAll(RegExp(r'^[ ._]+|[ ._]+$'), '');
+  if (player.length > 40) player = player.substring(0, 40);
+  return player.isEmpty ? '$name.mp4' : '${name}_$player.mp4';
+}
+
 class NativeMediaExportEngine implements MobileExportEngine {
   NativeMediaExportEngine();
 
@@ -39,7 +51,8 @@ class NativeMediaExportEngine implements MobileExportEngine {
 
     Future<void> exportOne(Candidate candidate) async {
       if (failed || _cancelled) return;
-      final outputPath = '$outputDirectory/${candidate.id}.mp4';
+      final index = candidates.indexOf(candidate) + 1;
+      final outputPath = '$outputDirectory/${clipFileName(index, candidate)}';
       try {
         await _channel.invokeMethod<String>('exportClip', {
           'exportId': candidate.id,

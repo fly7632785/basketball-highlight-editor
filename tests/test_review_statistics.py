@@ -276,3 +276,18 @@ def test_export_snapshot_filters_by_player_and_unassigned(tmp_path: Path, monkey
     checkpoint = store.get_job(result["job"]["id"])["checkpoint_json"]
     snapshot = json.loads(checkpoint)["candidate_snapshot"]
     assert [item["id"] for item in snapshot] == [rows[0]["id"]]
+    assert snapshot[0]["player_name"] == "罗斯"
+
+
+def test_players_keep_the_order_they_were_added_in(tmp_path: Path):
+    # 快捷键按这个顺序分配，新加的球员不能让已有球员的键变掉。
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "排序", "root_path": str(project_root)})
+    for name in ["张三", "Alice", "李四", "bob"]:
+        service.handle("create_player", {"project_root": str(project_root), "name": name})
+
+    players = service.handle("list_players", {"project_root": str(project_root)})["players"]
+
+    assert [player["name"] for player in players] == ["张三", "Alice", "李四", "bob"]
+    assert snapshot[0]["player_name"] == "罗斯"

@@ -198,7 +198,65 @@ When changing SQLite, update:
 
 When changing mobile channels, the Rust C ABI, ONNX inputs/outputs, or ABIs, update [`architecture/MOBILE_RUNTIME_V1.md`](architecture/MOBILE_RUNTIME_V1.md), Android/iOS build notes, and target-platform tests.
 
-## 9. Pre-submit checks
+## 9. Manual packaging and DirectML pitfalls
+
+### 9.1 Do not assemble the runtime directory by hand
+
+The full contents of `runtime/` are defined by [`../scripts/prepare_windows_runtime.ps1`](../scripts/prepare_windows_runtime.ps1) (`engine/python`, `scripts`, `src`, `models/bball_model.pt`, `docs/architecture/SQLITE_SCHEMA_V1.sql`, `bin/ffmpeg.exe`, `bin/ffprobe.exe`). **Listing directories from memory will miss entries.** Missing `docs/architecture/SQLITE_SCHEMA_V1.sql` shows up as:
+
+```text
+FileNotFoundError: ...\runtime\docs\architecture\SQLITE_SCHEMA_V1.sql
+create_project failed: {"code":"FILE_NOT_FOUND", ...}
+```
+
+The UI reports "file or folder not found" with a path under `runtime`, which is easy to mistake for a video-path problem. Run the official script instead, or regenerate with it after changing anything:
+
+```powershell
+powershell -File scripts\prepare_windows_runtime.ps1 -PythonRuntime <dir with python.exe> `
+  -Ffmpeg <ffmpeg.exe> -Ffprobe <ffprobe.exe> -OutPath dist\windows-runtime
+```
+
+If you do assemble it manually, `Test-Path` every entry against the list and smoke-test with one `create_project` plus `open_project`.
+
+### 9.2 A `runtime/` directory inside Release breaks incremental builds
+
+The install step of `flutter build windows` cleans `build\windows\x64\runner\Release`. A hand-copied `runtime\` there, with the app still running, produces `MSB3073` / `cmake_install.cmake` failures. Close the app first, or keep the runtime outside the build directory.
+
+### 9.3 onnxruntime and onnxruntime-directml cannot coexist
+
+Both wheels install the same `onnxruntime/` package and overwrite each other; Python loads whichever version is higher. **The result is a silent fallback to CPU when you request `dml`, with no error** — the log just says `coarse_scan device=cpu`, which looks like "acceleration does nothing".
+
+Check with:
+
+```powershell
+.venv\Scripts\python.exe -c "import onnxruntime as ort; print(ort.__version__, ort.get_available_providers())"
+# DmlExecutionProvider must be present, and the version must match onnxruntime-directml
+```
+
+If two `dist-info` directories exist, run `pip uninstall onnxruntime onnxruntime-directml` and install only `onnxruntime-directml`. Note that `ultralytics[export-base]` pulls the plain `onnxruntime` back in, so re-check afterwards.
+
+### 9.4 Do not inject the DML package through PYTHONPATH
+
+[`../apps/desktop/lib/core/engine_client.dart`](../apps/desktop/lib/core/engine_client.dart) **overwrites** rather than appends `PYTHONPATH` when it launches the engine:
+
+```dart
+environment['PYTHONPATH'] = enginePythonPath;
+```
+
+Installing `onnxruntime-directml` into a temporary directory and pointing `PYTHONPATH` at it therefore has no effect: the engine subprocess never sees it. The acceleration package must be installed into the interpreter the engine actually uses (the one `BHE_PYTHON` points to).
+
+### 9.5 Confirm acceleration actually took effect
+
+Look at the completion line in `%LOCALAPPDATA%\BHE\logs\engine.log`:
+
+```text
+coarse_scan device=dml          # active
+coarse_scan device=cpu          # fell back to CPU; see 9.3 / 9.4
+```
+
+DirectML must run one image at a time (`BACKEND_MAX_BATCH["dml"]=1`); batching is slower, which is a backend property rather than a bug.
+
+## 10. Pre-submit checks
 
 ```bash
 python3 scripts/check_open_source.py
@@ -223,6 +281,6 @@ Confirm:
 - [ ] Chinese and English entry points are synchronized.
 - [ ] Protocol, database, mobile-runtime, or license impacts are documented.
 
-## 10. Issues and pull requests
+## 11. Issues and pull requests
 
 A bug report should include the version/commit, OS, launch method, minimal reproduction, actual result, and expected result. Do not attach unsanitized videos, secrets, personal paths, or material containing player-identifying data.

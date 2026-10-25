@@ -24,7 +24,7 @@ fi
   cd "$ROOT/apps/desktop"
   build_args=(build macos --release)
   if [[ -n "$BUILD_NAME" ]]; then
-    build_args+=(--build-name "$BUILD_NAME")
+    build_args+=(--build-name "$BUILD_NAME" --dart-define "BHE_VERSION=$BUILD_NAME")
   fi
   if [[ -n "$BUILD_NUMBER" ]]; then
     build_args+=(--build-number "$BUILD_NUMBER")

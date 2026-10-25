@@ -449,10 +449,7 @@ void main() {
         'video_id': 'video-1',
         'sample_fps': 10.0,
       });
-      expect(transport.payloads[4], {
-        'project_root': resolvedPath(root),
-        'video_id': 'video-1',
-      });
+      expect(transport.payloads[4], {'project_root': resolvedPath(root)});
       expect(transport.payloads[5], {
         'project_root': resolvedPath(root),
         'candidate_id': 'candidate-1',
@@ -460,7 +457,6 @@ void main() {
       });
       expect(transport.payloads[6], {
         'project_root': resolvedPath(root),
-        'video_id': 'video-1',
         'mode': 'merge',
         'output_path': '/tmp/merged.mp4',
       });

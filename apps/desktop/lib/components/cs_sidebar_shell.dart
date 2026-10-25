@@ -6,8 +6,9 @@ import 'package:bhe_l10n/bhe_l10n.dart';
 
 import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
-import '../core/contact_actions.dart';
 import '../features/about/about_dialog.dart';
+import '../features/feedback/feedback_dialog.dart';
+import '../features/feedback/feedback_guide.dart';
 
 /// 桌面侧栏:`≥ md(900)` 时显示；展开/收缩由用户控制，宽度不足时自动使用折叠态。
 ///
@@ -69,11 +70,14 @@ class CsSidebarShell extends StatelessWidget {
             extended: extended,
           ),
           const Spacer(),
-          _UtilityItem(
-            label: l10n?.feedback ?? '反馈',
-            icon: LucideIcons.messageCircle,
-            extended: extended,
-            onTap: () => _openFeedback(context),
+          KeyedSubtree(
+            key: feedbackSidebarKey,
+            child: _UtilityItem(
+              label: l10n?.feedback ?? '反馈',
+              icon: LucideIcons.messageCircle,
+              extended: extended,
+              onTap: () => showFeedbackDialog(context),
+            ),
           ),
           _UtilityItem(
             label: l10n?.about ?? '关于',
@@ -116,22 +120,6 @@ class CsSidebarShell extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  Future<void> _openFeedback(BuildContext context) async {
-    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
-    final opened = await openExternalUri(
-      feedbackMailto(english: l10n?.localeName.startsWith('en') == true),
-    );
-    if (!opened && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            l10n?.feedbackMailClientMissing ?? '未找到可用的邮件客户端，请手动联系反馈邮箱。',
-          ),
-        ),
-      );
-    }
   }
 }
 

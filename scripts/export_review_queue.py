@@ -14,8 +14,8 @@ def parse_args():
     parser.add_argument("--video", required=True)
     parser.add_argument("--detections", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--before", type=float, default=6.0)
-    parser.add_argument("--after", type=float, default=3.0)
+    parser.add_argument("--before", type=float, default=3.0)
+    parser.add_argument("--after", type=float, default=1.0)
     parser.add_argument("--dedupe-sec", type=float, default=2.0)
     parser.add_argument("--auto-only", action="store_true",
                         help="Export only candidates passing the automatic-goal gate.")
@@ -103,7 +103,7 @@ def main(args):
                 "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                 "-ss", f"{start:.3f}", "-i", str(video),
                 "-t", f"{end - start:.3f}",
-                "-map", "0:v:0?", "-map", "0:a?", "-c", "copy",
+                "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy",
                 str(clip_path),
             ], check=True)
         rows.append({

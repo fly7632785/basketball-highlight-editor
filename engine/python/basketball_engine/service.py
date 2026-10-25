@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,10 +30,18 @@ from .adapters.analysis import (
     scale_roi_to_proxy,
     terminate_process,
 )
-from .adapters.export import export_goal_clips, merge_existing_videos
+from .adapters.export import (
+    EFFECTS,
+    available_output_path,
+    export_goal_clips,
+    merge_existing_videos,
+    safe_file_stem,
+    trajectory_points,
+)
 from .protocol import ProtocolError
 from .storage import ProjectStore, new_id
 from .media_tools import resolve_media_tool
+from .diagnostics import log_diagnostic, video_summary
 from basketball_highlight.rim_check import RIM_CHECK_VERSION
 from basketball_highlight.tracking import link_ball_detections
 
@@ -106,6 +115,8 @@ class EngineService:
             "inspect_video": self.inspect_video,
             "link_video": self.link_video,
             "relink_video": self.relink_video,
+            "reorder_videos": self.reorder_videos,
+            "set_analysis_queue": self.set_analysis_queue,
             "extract_preview": self.extract_preview,
             "suggest_roi": self.suggest_roi,
             "save_roi": self.save_roi,
@@ -215,8 +226,37 @@ class EngineService:
         return {"project": project, "database_path": str(store.db_path)}
 
     def open_project(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        _, context = self._existing_store(payload)
+        store, context = self._existing_store(payload)
+        corrected = self._correct_video_orientations(store)
+        if corrected:
+            context = store.context()
+            context["orientation_corrected"] = corrected
         return context
+
+    def _correct_video_orientations(self, store: ProjectStore) -> list[str]:
+        """Fix stored sizes that were read before display rotation was honoured.
+
+        relink_video also drops the video's ROI and candidates, because they were
+        drawn on the wrongly oriented frame.
+        """
+        corrected = []
+        for video in store.list_videos():
+            source = Path(video["source_path"])
+            if not source.is_file():
+                continue
+            try:
+                probed = self.inspect_video({"video_path": str(source)})
+            except (ProtocolError, OSError):
+                continue
+            # 只修正横竖互换的记录（旧版本存的是编码尺寸），其它差异不动。
+            if (video.get("width"), video.get("height")) != (probed["height"], probed["width"]):
+                continue
+            store.relink_video(video["id"], {
+                **probed,
+                "source_fingerprint": video.get("source_fingerprint"),
+            })
+            corrected.append(video["id"])
+        return corrected
 
     def delete_project(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         raw_root = payload.get("project_root") or payload.get("root_path")
@@ -418,7 +458,10 @@ class EngineService:
             "-v",
             "error",
             "-show_entries",
-            "format=duration,size:stream=index,codec_type,codec_name,width,height,r_frame_rate",
+            "format=duration,size:format_tags=creation_time:"
+            "stream=index,codec_type,codec_name,width,height,r_frame_rate:"
+            "stream_side_data=rotation:stream_disposition=attached_pic:"
+            "stream_tags=rotate",
             "-of",
             "json",
             str(path),
@@ -430,6 +473,8 @@ class EngineService:
                 capture_output=True,
                 stdin=subprocess.DEVNULL,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
             )
             probe = json.loads(completed.stdout)
@@ -449,10 +494,14 @@ class EngineService:
         streams = probe.get("streams")
         if not isinstance(streams, list):
             raise ProtocolError("VIDEO_OPEN_FAILED", "视频流信息无效")
-        video_stream = next(
-            (item for item in streams if isinstance(item, dict) and item.get("codec_type") == "video"),
-            None,
-        )
+        video_streams = [
+            item for item in streams if isinstance(item, dict) and item.get("codec_type") == "video"
+        ]
+        # 封面图（attached_pic）是静态图片，不能拿它的尺寸描述正片；只有封面时才退回使用它。
+        footage_streams = [
+            item for item in video_streams if not (item.get("disposition") or {}).get("attached_pic")
+        ]
+        video_stream = next(iter(footage_streams or video_streams), None)
         audio_stream = next(
             (item for item in streams if isinstance(item, dict) and item.get("codec_type") == "audio"),
             None,
@@ -466,6 +515,11 @@ class EngineService:
             raise ProtocolError("VIDEO_DIMENSION_INVALID", "视频分辨率无效")
         if width <= 0 or height <= 0:
             raise ProtocolError("VIDEO_DIMENSION_INVALID", "视频分辨率无效")
+        # 编码方向和显示方向可能不同（手机、运动相机、屏幕录制常见），
+        # 存显示方向的尺寸，才和播放器、代理视频、篮筐坐标一致。
+        rotation = self._display_rotation(video_stream)
+        if rotation % 180 == 90:
+            width, height = height, width
         fps = self._parse_ratio(video_stream.get("r_frame_rate"))
         format_data = probe.get("format")
         if not isinstance(format_data, dict):
@@ -482,7 +536,7 @@ class EngineService:
             self._MIN_PROCESSING_SPACE_BYTES,
             round(path.stat().st_size * 0.20),
         )
-        return {
+        info = {
             "source_path": str(path),
             "source_exists": True,
             "source_status": "linked",
@@ -495,10 +549,35 @@ class EngineService:
             "fps": fps,
             "video_codec": video_stream.get("codec_name"),
             "audio_codec": audio_stream.get("codec_name") if audio_stream else None,
+            "recorded_at": (format_data.get("tags") or {}).get("creation_time"),
             "available_disk_bytes": disk.free,
             "estimated_processing_space_bytes": estimated_processing_space,
             "disk_space_sufficient": disk.free >= estimated_processing_space,
         }
+        log_diagnostic(
+            f"inspect {path.name} {video_summary(info)} "
+            f"{f'rotation={rotation}deg ' if rotation else ''}"
+            f"free_disk={disk.free / 1024 ** 3:.1f}GB"
+        )
+        return info
+
+    @staticmethod
+    def _display_rotation(stream: Dict[str, Any]) -> int:
+        """Display rotation in degrees, as the player applies it (MP4 matrix or old rotate tag)."""
+        candidates = [
+            item.get("rotation")
+            for item in stream.get("side_data_list") or []
+            if isinstance(item, dict)
+        ]
+        candidates.append((stream.get("tags") or {}).get("rotate"))
+        for value in candidates:
+            if value is None:
+                continue
+            try:
+                return int(round(float(value)))
+            except (TypeError, ValueError, OverflowError):
+                continue
+        return 0
 
     def _ensure_disk_space(self, workspace: Path, source: Path) -> None:
         if not source.is_file():
@@ -643,6 +722,8 @@ class EngineService:
             str(max_samples),
             "--conf",
             str(confidence),
+            "--device",
+            str(payload.get("device") or "auto").strip().lower(),
         ]
         try:
             subprocess.run(
@@ -651,6 +732,8 @@ class EngineService:
                 capture_output=True,
                 stdin=subprocess.DEVNULL,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=120,
             )
             result = json.loads(output.read_text(encoding="utf-8"))
@@ -713,6 +796,33 @@ class EngineService:
         metadata = self.inspect_video(payload)
         store = self._require_store(payload)
         return {"video": store.link_video(metadata)}
+
+    def reorder_videos(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        video_ids = payload.get("video_ids")
+        if not isinstance(video_ids, list) or not all(isinstance(item, str) for item in video_ids):
+            raise ProtocolError("INVALID_REQUEST", "video_ids 必须是字符串列表")
+        try:
+            videos = self._require_store(payload).reorder_videos(video_ids)
+        except ValueError as exc:
+            raise ProtocolError("INVALID_REQUEST", "video_ids 必须包含项目里的全部视频") from exc
+        return {"videos": videos}
+
+    def set_analysis_queue(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        video_ids = payload.get("video_ids")
+        if not isinstance(video_ids, list) or not all(isinstance(item, str) for item in video_ids):
+            raise ProtocolError("INVALID_REQUEST", "video_ids 必须是字符串列表")
+        try:
+            before_seconds = float(payload.get("before_seconds", 3))
+            after_seconds = float(payload.get("after_seconds", 1))
+        except (TypeError, ValueError) as exc:
+            raise ProtocolError("INVALID_REQUEST", "片段前后秒数格式无效") from exc
+        if not (math.isfinite(before_seconds) and before_seconds >= 0 and math.isfinite(after_seconds) and after_seconds > 0):
+            raise ProtocolError("INVALID_REQUEST", "片段前后秒数必须在有效范围内")
+        try:
+            queue = self._require_store(payload).set_analysis_queue(video_ids, before_seconds, after_seconds)
+        except (LookupError, ValueError) as exc:
+            raise ProtocolError("INVALID_REQUEST", "排队的视频必须属于当前项目且不重复") from exc
+        return {"analysis_queue": queue}
 
     def relink_video(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         raw_path = payload.get("video_path")
@@ -785,6 +895,8 @@ class EngineService:
                 capture_output=True,
                 stdin=subprocess.DEVNULL,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=20,
             )
             temporary_path.replace(output_path)
@@ -965,8 +1077,8 @@ class EngineService:
         try:
             sample_fps = float(payload.get("sample_fps", 10))
             window_seconds = float(payload.get("window_seconds", 2.5))
-            before_seconds = float(payload.get("before_seconds", 6))
-            after_seconds = float(payload.get("after_seconds", 3))
+            before_seconds = float(payload.get("before_seconds", 3))
+            after_seconds = float(payload.get("after_seconds", 1))
         except (TypeError, ValueError) as exc:
             raise ProtocolError("INVALID_REQUEST", "分析参数格式无效") from exc
         if (
@@ -976,12 +1088,17 @@ class EngineService:
             or not math.isfinite(after_seconds) or after_seconds <= 0
         ):
             raise ProtocolError("INVALID_REQUEST", "分析参数必须在有效范围内")
+        # auto 由各脚本按 cuda > dml > mps > cpu 解析;显式指定时不可用会降级到 cpu。
+        device = str(payload.get("device") or "auto").strip().lower()
+        if device not in {"auto", "cpu", "cuda", "mps", "dml"}:
+            raise ProtocolError("INVALID_REQUEST", "推理设备必须是 auto/cpu/cuda/mps/dml")
         analysis_start_ms = int(video.get("analysis_start_ms") or 0)
         analysis_end_ms = int(video.get("analysis_end_ms") or video.get("duration_ms") or 0)
         if analysis_end_ms <= analysis_start_ms:
             raise ProtocolError("ANALYSIS_RANGE_INVALID", "分析范围无效")
         checkpoint = {
             "mode": mode,
+            "device": device,
             "sample_fps": sample_fps,
             "window_seconds": window_seconds,
             "before_seconds": before_seconds,
@@ -1074,7 +1191,7 @@ class EngineService:
         retry_payload = dict(payload)
         retry_payload.pop("job_id", None)
         for key in (
-            "mode",
+            "mode", "device",
             "sample_fps", "window_seconds", "before_seconds", "after_seconds",
             "proxy_width", "proxy_height", "proxy_fps", "coarse_scale",
             "refine_scale", "conf", "model_path",
@@ -1113,18 +1230,18 @@ class EngineService:
             retry_payload["output_dir"] = checkpoint["output_dir"]
         if checkpoint.get("output_path") is not None:
             retry_payload["output_path"] = checkpoint["output_path"]
-        for key in ("player_ids", "include_unassigned"):
+        for key in ("player_ids", "include_unassigned", "effect"):
             if key in checkpoint:
                 retry_payload[key] = checkpoint[key]
         # Check what start_export would reject before ending the old job, so a
         # failed retry leaves the interrupted job retryable.
         video_id = retry_payload["video_id"]
-        video = store.video(video_id) if isinstance(video_id, str) else None
-        if not store.project() or not video:
+        if not store.project() or (video_id is not None and not store.video(video_id)):
             raise ProtocolError("VIDEO_NOT_FOUND", "导出任务缺少有效视频")
-        source = self._validated_source(video)
-        self._ensure_disk_space(store.root, source)
-        self._export_candidate_snapshot(store, video_id, retry_payload)
+        self._export_videos(
+            store,
+            self._export_candidate_snapshot(store, video_id, retry_payload)[2],
+        )
         if job.get("state") in {"running", "queued"}:
             store.update_job(
                 job_id,
@@ -1288,6 +1405,18 @@ class EngineService:
                 ),
             }
 
+        label = f"analysis job={job_id}"
+        last_stage = {"name": "validate_input"}
+
+        def elapsed() -> str:
+            return f"{time.perf_counter() - analysis_started:.1f}s"
+
+        def log_end(state: str, code: str, message: str) -> None:
+            log_diagnostic(
+                f"{label} {state} stage={last_stage['name']} elapsed={elapsed()} "
+                f"code={code}: {message}"
+            )
+
         try:
             video_id = payload["video_id"]
             video = store.video(video_id)
@@ -1306,6 +1435,9 @@ class EngineService:
             mode = payload.get("mode", "standard")
             if mode not in {"fast", "standard"}:
                 raise ProtocolError("ANALYSIS_MODE_INVALID", "分析模式必须是 fast 或 standard")
+            # 推理设备只影响速度,不改变产物契约,因此不进 analysis_key
+            # (否则换设备会重建代理、白跑一遍缓存)。实际后端由各脚本回写日志。
+            device = str(payload.get("device") or "auto").strip().lower()
             if mode == "fast":
                 proxy_width = 640
                 proxy_height = 480
@@ -1357,14 +1489,20 @@ class EngineService:
                 "sample_fps": float(payload.get("sample_fps", 10)),
                 "refine_scale": int(payload.get("refine_scale", 2)),
                 "conf": float(payload.get("conf", 0.10)),
-                "before_seconds": float(payload.get("before_seconds", 6)),
-                "after_seconds": float(payload.get("after_seconds", 3)),
+                "before_seconds": float(payload.get("before_seconds", 3)),
+                "after_seconds": float(payload.get("after_seconds", 1)),
                 "analysis_start_ms": int(video.get("analysis_start_ms") or 0),
                 "analysis_end_ms": int(video.get("analysis_end_ms") or video.get("duration_ms") or 0),
             }
             analysis_key = hashlib.sha256(
                 json.dumps(analysis_parameters, ensure_ascii=False, sort_keys=True).encode("utf-8")
             ).hexdigest()[:16]
+            log_diagnostic(
+                f"{label} start mode={mode} device={device} video={video_id} {video_summary(video)} "
+                f"range={analysis_parameters['analysis_start_ms']}-{analysis_parameters['analysis_end_ms']}ms "
+                f"roi_source={calibration.get('source', 'manual')} net_roi={net_roi is not None} "
+                f"proxy={proxy_width}x{proxy_height}@{proxy_fps:g}fps"
+            )
             artifact_root = store.root / "artifacts"
             run_root = artifact_root / "detections" / f"{video_id}_{analysis_key}"
             proxy_video = artifact_root / "proxies" / f"{video_id}_{analysis_key}.mp4"
@@ -1397,6 +1535,7 @@ class EngineService:
                 analysis_end_ms=int(video.get("analysis_end_ms") or video.get("duration_ms") or 0),
                 net_roi=net_roi,
                 include_refinement=mode == "standard",
+                device=device,
             )
 
             checkpoint = {
@@ -1411,6 +1550,9 @@ class EngineService:
             }
 
             def on_stage(stage: str, progress: float) -> None:
+                if stage != last_stage["name"]:
+                    last_stage["name"] = stage
+                    log_diagnostic(f"{label} stage={stage} progress={progress:.2f} elapsed={elapsed()}")
                 store.update_job(
                     job_id,
                     state="running",
@@ -1418,6 +1560,10 @@ class EngineService:
                     progress=progress,
                     checkpoint=checkpoint,
                 )
+
+            def on_output(stage: str, line: str) -> None:
+                if line.startswith("device="):
+                    log_diagnostic(f"{label} {stage} {line}")
 
             store.update_job(
                 job_id,
@@ -1433,6 +1579,7 @@ class EngineService:
                 on_stage,
                 cancel_check=cancel_event.is_set if cancel_event else None,
                 process_callback=lambda process: self._set_job_process(job_id, process),
+                output_callback=on_output,
                 manifest_path=manifest_path,
                 stage_outputs=(
                     [proxy_video, coarse_detections, coarse_candidates]
@@ -1543,16 +1690,21 @@ class EngineService:
                     cancel_event=cancel_event,
                     job_id=job_id,
                     pipeline=pipeline,
+                    device=device,
                 )
             detection_counts = self._detection_counts(coarse_detections)
+            inference_device = self._inference_device(
+                coarse_detections,
+                refined_output,
+            )
             rows = [
                 candidate_to_row(
                     match,
                     video_id=video_id,
                     roi_id=roi["id"],
                     duration_ms=int(video.get("duration_ms") or 0),
-                    before_seconds=float(payload.get("before_seconds", 6)),
-                    after_seconds=float(payload.get("after_seconds", 3)),
+                    before_seconds=float(payload.get("before_seconds", 3)),
+                    after_seconds=float(payload.get("after_seconds", 1)),
                     detector_version=f"{ANALYSIS_ALGORITHM_VERSION}:{mode}",
                     analysis_source=(
                         "coarse"
@@ -1601,6 +1753,7 @@ class EngineService:
                 **checkpoint,
                 "candidate_count": len(rows),
                 "detection_counts": detection_counts,
+                "inference_device": inference_device,
                 "preview_counts": preview_counts,
                 "logs": pipeline["logs"],
                 "cache_hits": pipeline.get("cache_hits", 0),
@@ -1610,7 +1763,24 @@ class EngineService:
                 ),
             }
             store.update_job(job_id, state="completed", stage="persist_candidates", progress=1.0, checkpoint=checkpoint)
+            proxy_info: Dict[str, Any] = {}
+            try:
+                proxy_info = json.loads(Path(f"{proxy_video}.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+            timings = " ".join(
+                f"{stage}={value / 1000:.1f}s" for stage, value in stage_timings_ms.items()
+            )
+            log_diagnostic(
+                f"{label} completed elapsed={elapsed()} candidates={len(rows)} "
+                f"inference={inference_device} "
+                f"detections={json.dumps(detection_counts, ensure_ascii=False)} "
+                f"cache_hits={pipeline.get('cache_hits', 0)} "
+                f"proxy_codec={proxy_info.get('codec')} hwaccel={proxy_info.get('hwaccel')} "
+                f"timings: {timings}"
+            )
         except PipelineCancelled:
+            log_end("cancelled", "JOB_CANCELLED", "任务已取消")
             store.update_job(
                 job_id,
                 state="cancelled",
@@ -1620,6 +1790,7 @@ class EngineService:
                 checkpoint=checkpoint_with_elapsed(),
             )
         except ProtocolError as exc:
+            log_end("failed", exc.code, exc.message)
             store.update_job(
                 job_id,
                 state="failed",
@@ -1629,6 +1800,7 @@ class EngineService:
                 checkpoint=checkpoint_with_elapsed(),
             )
         except Exception as exc:
+            log_end("failed", "ANALYSIS_FAILED", f"{exc}\n{traceback.format_exc(limit=-4)}")
             store.update_job(
                 job_id,
                 state="failed",
@@ -1655,6 +1827,7 @@ class EngineService:
         cancel_event: threading.Event | None,
         job_id: str,
         pipeline: Dict[str, Any],
+        device: str = "auto",
     ) -> None:
         """Re-check every final candidate frame by frame around the rim.
 
@@ -1688,6 +1861,7 @@ class EngineService:
                 checked = run_pipeline(
                     [build_rim_check_command(
                         repo_root, source_video, model_path, input_path, output_path,
+                        device=device,
                     )],
                     output_path,
                     on_stage,
@@ -1744,6 +1918,30 @@ class EngineService:
                 name = str(detection.get("name", "unknown")).lower()
                 counts[name] = counts.get(name, 0) + 1
         return counts
+
+    @staticmethod
+    def _inference_device(*paths: Any) -> str | None:
+        """从阶段产物里读实际使用的推理后端。
+
+        推理脚本会把 ``--device auto`` 解析后的真实后端写进输出 JSON 的
+        ``device`` 字段（回落 CPU 时也是 ``cpu``）。引擎据此记录这次分析
+        到底用没用上 GPU，供 UI 展示；读不到就返回 None，不猜。
+        """
+        found: list[str] = []
+        for path in paths:
+            if not path:
+                continue
+            try:
+                data = json.loads(Path(path).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            device = str(data.get("device") or "").strip().lower()
+            if device:
+                found.append(device)
+        if not found:
+            return None
+        # 任何一段回落 CPU 都按 CPU 报，避免把部分加速说成全程加速。
+        return "cpu" if "cpu" in found else found[0]
 
     def cancel_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         store = self._require_store(payload)
@@ -1886,16 +2084,27 @@ class EngineService:
         store, context = self._existing_store(payload)
         video_id = payload.get("video_id")
         candidates = store.list_candidates(video_id)
-        video = store.video(video_id) if isinstance(video_id, str) else None
-        if video:
-            for candidate in candidates:
-                preview_path = self._preview_path(
-                    store,
-                    video,
-                    int(candidate.get("event_time_ms") or 0),
-                )
-                if preview_path.is_file() and preview_path.stat().st_size > 0:
-                    candidate["preview_path"] = str(preview_path)
+        videos = {item["id"]: item for item in store.list_videos()}
+        # 不传 video_id 时按整个项目查询候选。单段项目仍只有一个可播放视频，
+        # 审核端需要它作为候选预览的源；多段项目由调用方按当前段选择源视频。
+        if isinstance(video_id, str):
+            video = store.video(video_id)
+        else:
+            video = next(iter(videos.values())) if len(videos) == 1 else None
+        segments = {video_id: index for index, video_id in enumerate(videos, 1)} if len(videos) > 1 else {}
+        for candidate in candidates:
+            candidate_video = videos.get(candidate["video_id"])
+            if not candidate_video:
+                continue
+            if segments:
+                candidate["segment"] = segments[candidate["video_id"]]
+            preview_path = self._preview_path(
+                store,
+                candidate_video,
+                int(candidate.get("event_time_ms") or 0),
+            )
+            if preview_path.is_file() and preview_path.stat().st_size > 0:
+                candidate["preview_path"] = str(preview_path)
         review_video_path = (
             str(Path(video["source_path"]).resolve())
             if context.get("project") and video
@@ -2047,22 +2256,30 @@ class EngineService:
         store = self._require_store(payload)
         project = store.project()
         video_id = payload.get("video_id")
-        video = store.video(video_id) if isinstance(video_id, str) else None
-        if not project or not video:
+        if not project:
             raise ProtocolError("VIDEO_NOT_FOUND", "导出任务缺少有效视频")
-        source = self._validated_source(video)
-        self._ensure_disk_space(store.root, source)
         raw_snapshot = payload.get("candidate_snapshot")
         if not isinstance(raw_snapshot, list):
             raise ProtocolError("EXPORT_SNAPSHOT_MISSING", "导出任务缺少候选快照")
         candidates = [
-            dict(candidate)
+            {"video_id": video_id, **candidate}
             for candidate in raw_snapshot
             if isinstance(candidate, dict)
         ]
         if not candidates:
             raise ProtocolError("NO_EXPORT_CANDIDATES", "没有可导出的候选片段")
+        videos = self._export_videos(store, candidates)
+        for candidate in candidates:
+            video = videos[candidate["video_id"]]
+            candidate["source_path"] = str(video["source"])
+            candidate["width"] = video.get("width")
+            candidate["height"] = video.get("height")
+            candidate["fps"] = video.get("fps")
+            candidate["has_audio"] = bool(video.get("audio_codec"))
         mode = payload.get("mode", "separate")
+        effect = payload.get("effect", "none")
+        if effect not in EFFECTS:
+            raise ProtocolError("INVALID_REQUEST", "effect 必须是 none、approach 或 replay")
         raw_output = payload.get("output_dir")
         output_dir = Path(raw_output).expanduser() if isinstance(raw_output, str) and raw_output.strip() else (
             store.root / "artifacts" / "exports" / f"export_{int(time.time())}"
@@ -2077,23 +2294,36 @@ class EngineService:
             if not merged_output.is_absolute():
                 merged_output = store.root / merged_output
             merged_output = merged_output.resolve()
-        if merged_output is not None and merged_output == source.resolve():
-            raise ProtocolError(
-                "EXPORT_SOURCE_CONFLICT",
-                "导出目标不能覆盖原始视频",
-                {"source_path": str(source.resolve())},
-            )
+        for video in videos.values():
+            if merged_output is not None and merged_output == video["source"].resolve():
+                raise ProtocolError(
+                    "EXPORT_SOURCE_CONFLICT",
+                    "导出目标不能覆盖原始视频",
+                    {"source_path": str(video["source"].resolve())},
+                )
         try:
-            result = export_goal_clips(
-                source,
-                candidates,
-                output_dir,
-                mode,
-                merged_output,
-                progress_callback=progress_callback,
-                cancel_check=cancel_check,
-                process_callback=process_callback,
-            )
+            if mode == "merge_by_player":
+                result = self._export_merged_per_player(
+                    store,
+                    candidates,
+                    output_dir,
+                    {video["source"].resolve() for video in videos.values()},
+                    progress_callback=progress_callback,
+                    cancel_check=cancel_check,
+                    process_callback=process_callback,
+                    effect=effect,
+                )
+            else:
+                result = export_goal_clips(
+                    candidates,
+                    output_dir,
+                    mode,
+                    merged_output,
+                    progress_callback=progress_callback,
+                    cancel_check=cancel_check,
+                    process_callback=process_callback,
+                    effect=effect,
+                )
         except (OSError, ValueError, subprocess.CalledProcessError) as exc:
             raise ProtocolError("EXPORT_FAILED", f"导出失败: {exc}") from exc
         if cancel_check and cancel_check():
@@ -2104,7 +2334,8 @@ class EngineService:
                 Path(path).unlink(missing_ok=True)
             raise PipelineCancelled("JOB_CANCELLED")
         try:
-            self._validated_source(video)
+            for video in videos.values():
+                self._validated_source(video)
         except ProtocolError:
             for path in {
                 *result.get("files", []),
@@ -2139,6 +2370,111 @@ class EngineService:
         })
         return {"export": export, "files": result["files"]}
 
+    def _export_merged_per_player(
+        self,
+        store: ProjectStore,
+        candidates: list[Dict[str, Any]],
+        output_dir: Path,
+        sources: set[Path],
+        progress_callback=None,
+        cancel_check=None,
+        process_callback=None,
+        effect: str = "none",
+    ) -> Dict[str, Any]:
+        """每个标签各合成一个视频，文件名用标签名；中间片段放在项目缓存里。"""
+        groups: Dict[str, list[Dict[str, Any]]] = {}
+        for candidate in candidates:
+            groups.setdefault(str(candidate.get("player_name") or ""), []).append(candidate)
+        work_root = store.root / "artifacts" / "exports" / f"by_player_{int(time.time() * 1000)}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        files: list[str] = []
+        clip_files: list[str] = []
+        duration_ms = 0
+        processing_ms = 0
+        done = 0
+        try:
+            for index, (name, group) in enumerate(groups.items()):
+                merged = available_output_path(output_dir / f"{safe_file_stem(name) or '未标记'}.mp4")
+                if merged.resolve() in sources:
+                    raise ProtocolError(
+                        "EXPORT_SOURCE_CONFLICT",
+                        "导出目标不能覆盖原始视频",
+                        {"source_path": str(merged.resolve())},
+                    )
+
+                def on_progress(stage: str, fraction: float, offset: int = done, size: int = len(group)) -> None:
+                    if progress_callback:
+                        progress_callback(stage, (offset + fraction * size) / len(candidates))
+
+                result = export_goal_clips(
+                    group,
+                    work_root / str(index),
+                    "merge",
+                    merged,
+                    progress_callback=on_progress,
+                    cancel_check=cancel_check,
+                    process_callback=process_callback,
+                    effect=effect,
+                )
+                files.extend(result["files"])
+                clip_files.extend(result["clip_files"])
+                duration_ms += result["duration_ms"]
+                processing_ms += result["processing_ms"]
+                done += len(group)
+        except Exception:
+            for path in files:
+                Path(path).unlink(missing_ok=True)
+            raise
+        return {
+            "files": files,
+            "clip_files": clip_files,
+            "duration_ms": duration_ms,
+            "processing_ms": processing_ms,
+        }
+
+    def _export_videos(
+        self,
+        store: ProjectStore,
+        candidates: list[Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Any]]:
+        videos: Dict[str, Dict[str, Any]] = {}
+        for video_id in dict.fromkeys(candidate.get("video_id") for candidate in candidates):
+            video = store.video(video_id) if isinstance(video_id, str) else None
+            if not video:
+                raise ProtocolError("VIDEO_NOT_FOUND", "导出任务缺少有效视频")
+            source = self._validated_source(video)
+            self._ensure_disk_space(store.root, source)
+            videos[video_id] = {**video, "source": source}
+        return videos
+
+    @staticmethod
+    def _candidate_trail(candidate: Dict[str, Any]) -> list[list[float]]:
+        if str(candidate.get("detector_version") or "").startswith("manual"):
+            return []
+        return trajectory_points(candidate.get("evidence_json"), int(candidate["event_time_ms"]))
+
+    @staticmethod
+    def _candidate_rim(store: ProjectStore, candidate: Dict[str, Any]) -> Dict[str, float] | None:
+        """慢放特写的篮筐位置：优先用这个进球当时跟踪到的篮筐，没有就用项目里设的篮筐框。"""
+        if str(candidate.get("detector_version") or "").startswith("manual"):
+            return None
+        try:
+            overlay_rim = (json.loads(candidate.get("evidence_json") or "{}").get("overlay") or {}).get("rim")
+        except (TypeError, ValueError):
+            overlay_rim = None
+        if isinstance(overlay_rim, dict) and overlay_rim.get("width"):
+            return {
+                "x": float(overlay_rim["center_x"]),
+                "y": float(overlay_rim["rim_y"]),
+                "width": float(overlay_rim["width"]),
+            }
+        roi = store.active_roi(candidate["video_id"])
+        hoop = ((roi or {}).get("calibration") or {}).get("hoop_bbox")
+        if isinstance(hoop, list) and len(hoop) == 4:
+            x1, y1, x2, _ = (float(value) for value in hoop)
+            return {"x": (x1 + x2) / 2, "y": y1, "width": x2 - x1}
+        return None
+
     @staticmethod
     def _export_candidate_snapshot(
         store: ProjectStore,
@@ -2153,12 +2489,21 @@ class EngineService:
             raise ProtocolError("INVALID_REQUEST", "player_ids 必须是字符串列表")
         include_unassigned = payload.get("include_unassigned", True) is True
         selected_players = {item for item in requested_player_ids or []}
+        video_ids = [video["id"] for video in store.list_videos()]
+        segments = {item: index for index, item in enumerate(video_ids, 1)} if len(video_ids) > 1 else {}
         candidate_snapshot = [
             {
                 "id": candidate["id"],
+                "video_id": candidate["video_id"],
+                **({"segment": segments[candidate["video_id"]]} if segments else {}),
                 "event_time_ms": int(candidate["event_time_ms"]),
                 "review_start_ms": int(candidate["review_start_ms"]),
                 "review_end_ms": int(candidate["review_end_ms"]),
+                "player_name": candidate.get("player_name"),
+                "rim": EngineService._candidate_rim(store, candidate),
+                "manual": str(candidate.get("detector_version") or "").startswith("manual"),
+                "trail": EngineService._candidate_trail(candidate),
+                "player_name": candidate.get("player_name"),
             }
             for candidate in store.list_candidates(video_id)
             if candidate.get("selection_status") != "excluded"

@@ -14,13 +14,24 @@ class EngineException implements Exception {
   String toString() => '$code: $message';
 }
 
+String engineLogDirectory(Map<String, String> env) {
+  final home = env['HOME'] ?? env['USERPROFILE'] ?? Directory.systemTemp.path;
+  if (Platform.isMacOS) return '$home/Library/Logs/BHE';
+  if (Platform.isWindows) return '${env['LOCALAPPDATA'] ?? home}\\BHE\\logs';
+  return '${env['XDG_STATE_HOME'] ?? '$home/.local/state'}/bhe/logs';
+}
+
 class EngineClient implements EngineTransport {
   EngineClient({
     this.requestTimeout = const Duration(minutes: 2),
     this.onUnexpectedExit,
+    this.logFile,
   });
 
   final Duration requestTimeout;
+
+  /// 引擎启动参数、stderr、失败请求与退出记录;超过 2MB 时轮换为 `.1`。
+  final File? logFile;
 
   /// 引擎进程意外退出(非 dispose 触发)时回调,携带退出码与 stderr 尾部。
   void Function(int exitCode, String stderrTail)? onUnexpectedExit;
@@ -55,13 +66,20 @@ class EngineClient implements EngineTransport {
         if (existingPath != null && existingPath.isNotEmpty) existingPath,
       ].join(Platform.isWindows ? ';' : ':');
     }
-    final process = await Process.start(
-      pythonExecutable,
-      ['-m', 'basketball_engine'],
-      workingDirectory: workingDirectory,
-      environment: environment,
-      runInShell: false,
-    );
+    log('start python=$pythonExecutable cwd=$workingDirectory');
+    final Process process;
+    try {
+      process = await Process.start(
+        pythonExecutable,
+        ['-m', 'basketball_engine'],
+        workingDirectory: workingDirectory,
+        environment: environment,
+        runInShell: false,
+      );
+    } on Object catch (error) {
+      log('start failed: $error');
+      rethrow;
+    }
     _process = process;
     _stderrTail = '';
     _stdoutSubscription = process.stdout
@@ -73,6 +91,7 @@ class EngineClient implements EngineTransport {
         .transform(const LineSplitter())
         .listen(_handleStderrLine);
     process.exitCode.then((exitCode) {
+      log('exit code=$exitCode');
       if (!identical(_process, process)) return;
       _process = null;
       _stdoutSubscription = null;
@@ -87,7 +106,6 @@ class EngineClient implements EngineTransport {
         ),
       );
       if (!_disposedIntentionally) {
-        _logUnexpectedExit(exitCode, detail);
         onUnexpectedExit?.call(exitCode, detail);
       }
     });
@@ -122,11 +140,13 @@ class EngineClient implements EngineTransport {
       _timeoutFor(command),
       onTimeout: () {
         _pending.remove(requestId);
+        log('$command timed out');
         throw EngineException('ENGINE_TIMEOUT', '请求处理超时：$command');
       },
     );
     if (response['ok'] != true) {
       final error = response['error'];
+      log('$command failed: ${jsonEncode(error)}');
       if (error is Map) {
         throw EngineException('${error['code']}', '${error['message']}');
       }
@@ -190,30 +210,23 @@ class EngineClient implements EngineTransport {
   }
 
   void _handleStderrLine(String line) {
+    log('stderr: $line');
     final next = _stderrTail.isEmpty ? line : '$_stderrTail\n$line';
     _stderrTail = next.length <= 4000
         ? next
         : next.substring(next.length - 4000);
   }
 
-  /// 尽力把引擎意外退出时的证据写入临时目录日志,便于离线诊断。
-  /// 超过 512KB 时截断保留尾部,避免无限增长。
-  void _logUnexpectedExit(int exitCode, String stderrTail) {
+  void log(String message) {
+    final file = logFile;
+    if (file == null) return;
     try {
-      final file = File(
-        '${Directory.systemTemp.path}${Platform.pathSeparator}bhe_engine_exit.log',
-      );
-      const maxSize = 512 * 1024;
-      if (file.existsSync() && file.lengthSync() > maxSize) {
-        final tail = file.readAsStringSync();
-        file.writeAsStringSync(
-          tail.substring(tail.length - maxSize ~/ 2),
-          flush: true,
-        );
+      file.parent.createSync(recursive: true);
+      if (file.existsSync() && file.lengthSync() > 2 * 1024 * 1024) {
+        file.renameSync('${file.path}.1');
       }
-      final timestamp = DateTime.now().toIso8601String();
       file.writeAsStringSync(
-        '[$timestamp] exitCode=$exitCode\n$stderrTail\n\n',
+        '[${DateTime.now().toIso8601String()}] $message\n',
         mode: FileMode.append,
       );
     } on Object {

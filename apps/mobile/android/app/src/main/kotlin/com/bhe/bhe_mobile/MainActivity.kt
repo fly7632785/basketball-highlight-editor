@@ -10,6 +10,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.core.content.FileProvider
 import android.provider.MediaStore
 import android.util.Log
 import android.view.WindowManager
@@ -54,6 +57,7 @@ class MainActivity : FlutterActivity() {
     private val mediaChannelName = "com.bhe.bhe/mobile_media"
     private val analysisChannelName = "com.bhe.bhe/mobile_analysis"
     private val progressChannelName = "com.bhe.bhe/mobile_analysis_progress"
+    private val updateChannelName = "com.bhe.bhe/mobile_update"
     private val mainHandler = Handler(Looper.getMainLooper())
     private val exportCancelled = ConcurrentHashMap<String, AtomicBoolean>()
     private var progressSink: EventChannel.EventSink? = null
@@ -94,6 +98,13 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, updateChannelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "installApk" -> installApk(call, result)
+                    else -> result.notImplemented()
+                }
+            }
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, progressChannelName)
             .setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
@@ -104,6 +115,29 @@ class MainActivity : FlutterActivity() {
                     progressSink = null
                 }
         })
+    }
+
+    /// 交给系统安装器；没有「安装未知应用」权限时先打开设置页让用户允许。
+    private fun installApk(call: MethodCall, result: MethodChannel.Result) {
+        val path = call.argument<String>("path")
+        if (path.isNullOrEmpty() || !File(path).isFile) {
+            result.error("UPDATE_FILE_MISSING", "安装包不存在", null)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+            )
+            result.success("permission_required")
+            return
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.update_provider", File(path))
+        startActivity(
+            Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        result.success("started")
     }
 
     private fun getAnalysisState(result: MethodChannel.Result) {

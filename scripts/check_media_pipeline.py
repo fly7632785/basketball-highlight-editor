@@ -45,10 +45,10 @@ def main() -> None:
         ], check=True)
         validate_media_file(proxy)
         candidates = [
-            {"event_time_ms": 500, "review_start_ms": 0, "review_end_ms": 1000},
-            {"event_time_ms": 1500, "review_start_ms": 1000, "review_end_ms": 2000},
+            {"source_path": str(source), "event_time_ms": 500, "review_start_ms": 0, "review_end_ms": 1000},
+            {"source_path": str(source), "event_time_ms": 1500, "review_start_ms": 1000, "review_end_ms": 2000},
         ]
-        result = export_goal_clips(source, candidates, work / "export", "merge")
+        result = export_goal_clips(candidates, work / "export", "merge")
         for path in [*result["clip_files"], *result["files"]]:
             validate_media_file(Path(path))
     print("media-pipeline-check: PASS (bundled proxy, clips, merged export)")

@@ -275,6 +275,38 @@ def test_run_pipeline_drains_large_child_output_without_deadlocking(tmp_path: Pa
     assert result["logs"]
 
 
+def test_run_pipeline_keeps_reading_utf8_and_undecodable_child_output(tmp_path: Path):
+    # 中文 Windows 上 ffmpeg 输出的 UTF-8 中文路径曾让读取线程崩掉，
+    # 管道写满后 ffmpeg 卡死，界面停在 1%。
+    import threading
+
+    refined = tmp_path / "refined.json"
+    script = (
+        "import json, sys; "
+        "sys.stderr.buffer.write(\"from 'C:/视频/篮球赛.mp4':\\n\".encode('utf-8') + b'\\xff\\n'); "
+        "sys.stderr.write('x' * 200000); sys.stderr.flush(); "
+        "print('progress=0.5', flush=True); "
+        "open(%r, 'w', encoding='utf-8').write(json.dumps({'results': []}))"
+    ) % str(refined)
+    output = []
+    finished = {}
+
+    def run():
+        finished["result"] = run_pipeline(
+            [[sys.executable, "-c", script]],
+            refined,
+            output_callback=lambda stage, line: output.append(line),
+        )
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(20)
+    assert "result" in finished, "流水线卡住了"
+    assert finished["result"]["refined"] == {"results": []}
+    assert "from 'C:/视频/篮球赛.mp4':" in output
+    assert "progress=0.5" in output
+
+
 def test_run_pipeline_streams_child_output_to_progress_callback(tmp_path: Path):
     refined = tmp_path / "refined.json"
     script = (
@@ -423,3 +455,35 @@ def test_run_pipeline_ignores_manifest_from_another_algorithm_version(tmp_path: 
 
     assert result["cache_hits"] == 0
     assert result["refined"] == {"results": []}
+
+
+def test_pipeline_commands_forward_inference_device(tmp_path: Path):
+    """DirectML 只是换推理后端,引擎需要把 device 透传给三个阶段。"""
+    commands = build_pipeline_commands(
+        repo_root=tmp_path,
+        source_video=Path("source.mp4"),
+        proxy_video=Path("proxy.mp4"),
+        model_path=Path("model.pt"),
+        coarse_detections=Path("coarse.json"),
+        coarse_candidates=Path("candidates.json"),
+        refined_output=Path("refined.json"),
+        proxy_roi=[10, 20, 100, 200],
+        source_roi=[20, 40, 200, 400],
+        cache_dir=Path("cache"),
+        device="dml",
+    )
+    for index in (1, 3):
+        assert commands[index][commands[index].index("--device") + 1] == "dml"
+    # 代理生成与候选生成不吃 device。
+    assert "--device" not in commands[0]
+    assert "--device" not in commands[2]
+
+
+def test_rim_check_command_forwards_inference_device(tmp_path: Path):
+    from engine.python.basketball_engine.adapters.analysis import build_rim_check_command
+
+    command = build_rim_check_command(
+        tmp_path, Path("source.mp4"), Path("model.pt"),
+        Path("in.json"), Path("out.json"), device="dml",
+    )
+    assert command[command.index("--device") + 1] == "dml"

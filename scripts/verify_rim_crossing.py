@@ -16,6 +16,11 @@ import cv2
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from basketball_highlight.net_motion import motion_box, net_motion_series, prepare  # noqa: E402
+from basketball_highlight.inference import (  # noqa: E402
+    current_device,
+    load_detector,
+    select_device as resolve_device,
+)
 from basketball_highlight.rim_check import (  # noqa: E402
     MIN_RIM_WIDTH_PX,
     RIM_CHECK_VERSION,
@@ -36,22 +41,25 @@ def parse_args():
     parser.add_argument("--output", required=True)
     parser.add_argument("--conf", type=float, default=0.05)
     parser.add_argument("--batch", type=int, default=16)
-    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda"))
+    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda", "dml"))
     return parser.parse_args()
 
 
 # CPU 上一次推理 16 张比 4-12 张慢约 5 倍(M1 Pro 实测);GPU 上 16 张最快。
 CPU_BATCH = 8
+# DirectML 的 dynamic shape 路径在小批量上会退化(实测 batch=2 比 batch=1 慢 4 倍),
+# 所以 DML 固定单张;真正的批量合并交给 ORT 内部,这里不攒批。
+DML_BATCH = 1
 
 
 def select_device(requested):
-    if requested != "auto":
-        return requested
-    import torch
+    """解析推理设备;`auto` 会按 cuda > dml > mps > cpu 选,详见 inference.py。"""
+    return resolve_device(requested)
 
-    if torch.cuda.is_available():
-        return "cuda"
-    return "mps" if torch.backends.mps.is_available() else "cpu"
+
+def load_yolo_model(model_path):
+    """按当前设备加载检测器:DirectML 走 ORT,其余走 ultralytics。"""
+    return load_detector(model_path)
 
 
 def valid_rim(rim):
@@ -146,11 +154,15 @@ def main(args):
     device = None
     model = None
     if groups:
-        from ultralytics import YOLO
-
         device = select_device(args.device)
-        model = YOLO(str(args.model))
-    batch = min(args.batch, CPU_BATCH) if device == "cpu" else args.batch
+        model = load_yolo_model(args.model)
+        # 实际后端可能回落(onnx 缺失 / DML 不可用),以模型为准。
+        device = current_device()
+    batch = args.batch
+    if device == "cpu":
+        batch = min(args.batch, CPU_BATCH)
+    elif device == "dml":
+        batch = DML_BATCH
     pending = []
     for group_number, group in enumerate(groups, 1):
         cap.set(cv2.CAP_PROP_POS_FRAMES, group["first"])

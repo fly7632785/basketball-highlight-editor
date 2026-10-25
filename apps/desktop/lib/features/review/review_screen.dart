@@ -10,9 +10,11 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
 
+import '../feedback/feedback_dialog.dart';
 import '../../components/cs_button.dart';
 import '../../components/cs_empty_state.dart';
 import '../../components/cs_progress_track.dart';
+import '../../providers/player_groups_provider.dart';
 import '../../providers/project_state.dart';
 import '../../providers/playback_coordinator.dart';
 import '../../theme/app_colors.dart';
@@ -43,6 +45,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   String _candidateFilter = 'all';
   String _playerFilter = 'all';
   String _rimFilter = 'all';
+  String _segmentFilter = 'all';
   final _VideoPaneController _videoController = _VideoPaneController();
   int _videoSourceSwitchToken = 0;
   final FocusNode _shortcutFocusNode = FocusNode(
@@ -64,9 +67,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     List<Map<String, dynamic>> candidates,
   ) {
     final ordered = [...candidates];
-    ordered.sort(
-      (left, right) => _candidateTime(left).compareTo(_candidateTime(right)),
-    );
+    ordered.sort((left, right) {
+      final bySegment = _candidateSegment(left).compareTo(_candidateSegment(right));
+      return bySegment != 0
+          ? bySegment
+          : _candidateTime(left).compareTo(_candidateTime(right));
+    });
     return ordered;
   }
 
@@ -135,6 +141,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       _candidateFilter,
       playerFilter: _playerFilter,
       rimFilter: _rimFilter,
+      segmentFilter: _segmentFilter,
     );
     await notifier.setCandidatePlayer(candidate['id'].toString(), playerId);
     _keepSelectionVisibleAfterEdit(candidate['id'].toString(), before);
@@ -163,6 +170,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       _candidateFilter,
       playerFilter: _playerFilter,
       rimFilter: _rimFilter,
+      segmentFilter: _segmentFilter,
     );
     await notifier.createPlayer(
       name,
@@ -171,16 +179,23 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     _keepSelectionVisibleAfterEdit(candidate['id'].toString(), before);
   }
 
-  void _changeFilters({String? status, String? player, String? rim}) {
+  void _changeFilters({
+    String? status,
+    String? player,
+    String? rim,
+    String? segment,
+  }) {
     setState(() {
       _candidateFilter = status ?? _candidateFilter;
       _playerFilter = player ?? _playerFilter;
       _rimFilter = rim ?? _rimFilter;
+      _segmentFilter = segment ?? _segmentFilter;
       final candidates = _filterCandidates(
         _orderedCandidates(ref.read(projectProvider).candidates),
         _candidateFilter,
         playerFilter: _playerFilter,
         rimFilter: _rimFilter,
+        segmentFilter: _segmentFilter,
       );
       _selectedCandidateId = _selectedCandidate(candidates)?['id']?.toString();
     });
@@ -198,8 +213,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     List<Map<String, dynamic>> candidates,
   ) async {
     if (candidates.isEmpty) return;
-    final beforeController = TextEditingController(text: '6');
-    final afterController = TextEditingController(text: '3');
+    final beforeController = TextEditingController(text: '3');
+    final afterController = TextEditingController(text: '1');
     var overwriteManual = false;
     final result =
         await showDialog<({int before, int after, bool overwrite})>(
@@ -378,20 +393,19 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     } else if (key == LogicalKeyboardKey.arrowDown) {
       _moveCandidate(candidates, 1);
     } else if (key == LogicalKeyboardKey.arrowLeft) {
-      _seekBySeconds(-2);
+      _seekBySeconds(keyboard.isShiftPressed ? -0.1 : -2);
     } else if (key == LogicalKeyboardKey.arrowRight) {
-      _seekBySeconds(2);
+      _seekBySeconds(keyboard.isShiftPressed ? 0.1 : 2);
     } else if (key == LogicalKeyboardKey.space) {
       _togglePlayback();
     } else if (key == LogicalKeyboardKey.keyA) {
       _videoController.toggleAnnotations();
-    } else if (key == LogicalKeyboardKey.keyR) {
-      _requestReplay();
     } else if (key == LogicalKeyboardKey.keyL) {
       _toggleCandidateLoop();
     } else if (key == LogicalKeyboardKey.keyZ && commandPressed) {
       if (!reviewLocked) unawaited(notifier.undoReview());
     } else if (key == LogicalKeyboardKey.keyX ||
+        key == LogicalKeyboardKey.backquote ||
         key == LogicalKeyboardKey.backspace) {
       final id = selected?['id']?.toString();
       if (!reviewLocked && id != null) {
@@ -404,7 +418,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         unawaited(_setCandidateStatus(id, 'included'));
       }
     } else if (_playerShortcutIndex(key) case final int index) {
-      // 0 clears the tag; 1-9 follow the player order shown in the tag menu.
+      // 0 clears the tag; the other keys follow the player order shown in the tag menu.
       final players = ref.read(projectProvider).players;
       if (index > players.length) return KeyEventResult.ignored;
       if (!reviewLocked && selected != null) {
@@ -430,6 +444,17 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     (LogicalKeyboardKey.digit7, LogicalKeyboardKey.numpad7),
     (LogicalKeyboardKey.digit8, LogicalKeyboardKey.numpad8),
     (LogicalKeyboardKey.digit9, LogicalKeyboardKey.numpad9),
+    // 第 10 个以后用 Q 到 P 这一排字母。
+    (LogicalKeyboardKey.keyQ, LogicalKeyboardKey.keyQ),
+    (LogicalKeyboardKey.keyW, LogicalKeyboardKey.keyW),
+    (LogicalKeyboardKey.keyE, LogicalKeyboardKey.keyE),
+    (LogicalKeyboardKey.keyR, LogicalKeyboardKey.keyR),
+    (LogicalKeyboardKey.keyT, LogicalKeyboardKey.keyT),
+    (LogicalKeyboardKey.keyY, LogicalKeyboardKey.keyY),
+    (LogicalKeyboardKey.keyU, LogicalKeyboardKey.keyU),
+    (LogicalKeyboardKey.keyI, LogicalKeyboardKey.keyI),
+    (LogicalKeyboardKey.keyO, LogicalKeyboardKey.keyO),
+    (LogicalKeyboardKey.keyP, LogicalKeyboardKey.keyP),
   ];
 
   int? _playerShortcutIndex(LogicalKeyboardKey key) {
@@ -573,6 +598,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       _candidateFilter,
       playerFilter: _playerFilter,
       rimFilter: _rimFilter,
+      segmentFilter: _segmentFilter,
     );
     final future = ref
         .read(projectProvider.notifier)
@@ -594,6 +620,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       _candidateFilter,
       playerFilter: _playerFilter,
       rimFilter: _rimFilter,
+      segmentFilter: _segmentFilter,
     );
     if (mounted &&
         _selectedCandidateId == id &&
@@ -669,9 +696,18 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       'all',
       playerFilter: _playerFilter,
       rimFilter: _rimFilter,
+      segmentFilter: _segmentFilter,
     );
     final selected = _selectedCandidate(candidates);
     final selectedId = selected?['id']?.toString();
+    final selectedVideoId = selected?['video_id']?.toString();
+    if (state.multiVideo &&
+        selectedVideoId != null &&
+        selectedVideoId != state.video?['id']?.toString()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) notifier.activateVideo(selectedVideoId);
+      });
+    }
     final job = state.job;
     final jobState = job?['state']?.toString() ?? '';
     final recoveryState = job?['recovery_state']?.toString();
@@ -682,7 +718,11 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         .clamp(0.0, 1.0)
         .toDouble();
     final originalVideoPath = _resolveOriginalVideoPath(state);
-    final reviewVideoPath = state.reviewVideoPath ?? state.previewPath;
+    final reviewVideoPath = resolveReviewPlaybackPath(
+      multiVideo: state.multiVideo,
+      originalVideoPath: originalVideoPath,
+      reviewVideoPath: state.reviewVideoPath,
+    );
     final showingOriginalVideo =
         _showOriginalVideo ||
         reviewVideoPath == null ||
@@ -832,6 +872,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     filter: _candidateFilter,
                     playerFilter: _playerFilter,
                     rimFilter: _rimFilter,
+                    segmentFilter: _segmentFilter,
                     statusCandidates: statusCandidates,
                     busy: reviewLocked,
                     busyMessage: state.busyMessage,
@@ -862,10 +903,18 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     onPlayerFilterChanged: (value) =>
                         _changeFilters(player: value),
                     onRimFilterChanged: (value) => _changeFilters(rim: value),
+                    segments: [
+                      if (state.multiVideo)
+                        for (final (index, video) in state.videos.indexed)
+                          (video['id'].toString(), index + 1),
+                    ],
+                    onSegmentFilterChanged: (value) =>
+                        _changeFilters(segment: value),
                     onClearFilters: () => _changeFilters(
                       status: 'all',
                       player: 'all',
                       rim: 'all',
+                      segment: 'all',
                     ),
                     onReanalyze: !analyzing && !state.busy && !state.hydrating
                         ? reanalyze
@@ -981,6 +1030,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       _candidateFilter,
       playerFilter: _playerFilter,
       rimFilter: _rimFilter,
+      segmentFilter: _segmentFilter,
     );
     final index = candidates.indexWhere(
       (candidate) => candidate['id']?.toString() == id,
@@ -1011,7 +1061,11 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   }
 
   void _syncPreviewScope(ProjectState state) {
-    final key = '${state.video?['id'] ?? ''}|${state.videoPath ?? ''}';
+    // 多段项目里选中候选会切换当前段，不能因此清空审核状态。
+    final key = state.multiVideo
+        ? ([for (final video in state.videos) video['id'].toString()]..sort())
+              .join('|')
+        : '${state.video?['id'] ?? ''}|${state.videoPath ?? ''}';
     if (_previewScopeKey == key) return;
     _previewScopeKey = key;
     _previewGeneration++;
@@ -1021,6 +1075,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     _candidateFilter = 'all';
     _playerFilter = 'all';
     _rimFilter = 'all';
+    _segmentFilter = 'all';
     _showOriginalVideo = false;
     _videoSourceSwitchToken++;
   }
@@ -1212,6 +1267,13 @@ class _AnalysisBar extends StatelessWidget {
               icon: Icons.stop_circle_outlined,
               onPressed: onCancel!,
             ),
+          if (failed)
+            _SmallAction(
+              label: l10n?.text('反馈问题') ?? '反馈问题',
+              icon: Icons.feedback_outlined,
+              onPressed: () =>
+                  showFeedbackDialog(context, error: errorMessage),
+            ),
           if (onRetry != null && !attached)
             _SmallAction(
               label: l10n?.text('重试分析') ?? '重试分析',
@@ -1252,6 +1314,11 @@ class _CompletedLine extends StatelessWidget {
     final duration = _formatCompletedDuration(startedAt, finishedAt);
     final modeLabel = mode == 'fast' ? '快速分析 · 可能漏检' : '标准分析';
     final detail = _analysisDetailLabel(checkpoint, l10n);
+    final status = context.bheText(
+      '$modeLabel · $candidateCount 个候选${duration.isEmpty ? '' : ' · 用时 $duration'}',
+    );
+    // GPU 标记拼在 bheText 外面：整串翻译依赖固定文案，后缀不能进正则。
+    final badge = _inferenceAccelerated(checkpoint) ? ' · GPU' : '';
     return Container(
       width: double.infinity,
       height: 34,
@@ -1266,9 +1333,7 @@ class _CompletedLine extends StatelessWidget {
           const SizedBox(width: Spacing.xs),
           Flexible(
             child: Text(
-              context.bheText(
-                '$modeLabel · $candidateCount 个候选${duration.isEmpty ? '' : ' · 用时 $duration'}',
-              ),
+              '$status$badge',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(
@@ -1660,6 +1725,14 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
     _playbackToken++;
     return _enqueueMediaAction(() async {
       if (!_isCurrent(generation)) return;
+      if (path != null && path.isNotEmpty && !File(path).existsSync()) {
+        setState(() {
+          _ready = false;
+          _loading = false;
+          _error = '源视频找不到，请到导入页重新定位视频';
+        });
+        return;
+      }
       // 复用 Player/VideoController:视频纹理渲染期间调用 player.dispose
       // 会触发原生 ~VideoOutput 析构,在 Windows 上与光栅线程死锁,
       // 整个应用无响应。切换片源只 stop + open,不销毁。
@@ -1920,7 +1993,11 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
     await _queuePlayerAction(
       generation: _mediaGeneration,
       playbackToken: _playbackToken,
-      action: (player) => player.setRate(rate),
+      action: (player) async {
+        await player.setRate(rate);
+        // 从高倍速切回来时画面会落后于声音，原地 seek 一次让音画重新对齐。
+        await player.seek(player.state.position);
+      },
     );
   }
 
@@ -2924,7 +3001,7 @@ class _VideoControlsState extends State<_VideoControls> {
           final extras = <Widget>[
             if (event != null) ...[
               IconButton(
-                tooltip: '${context.bheText('重播当前片段')} (R)',
+                tooltip: context.bheText('重播当前片段'),
                 onPressed: widget.enabled
                     ? () => unawaited(widget.onReplayCandidate())
                     : null,
@@ -2973,7 +3050,7 @@ class _VideoControlsState extends State<_VideoControls> {
                   onSelected: (next) =>
                       unawaited(widget.onSetPlaybackRate(next)),
                   itemBuilder: (context) => [
-                    for (final option in const [1.0, 1.25, 1.5, 2.0])
+                    for (final option in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
                       PopupMenuItem<double>(
                         value: option,
                         child: Row(
@@ -3166,7 +3243,9 @@ class _CandidateInspector extends StatelessWidget {
           children: [
             Flexible(
               child: Text(
-                context.bheText('候选 ${_formatMs(_candidateTime(candidate))}'),
+                _candidateSegment(candidate) > 0
+                    ? '${context.bheText('第 ${_candidateSegment(candidate)} 段')} · ${_formatMs(_candidateTime(candidate))}'
+                    : context.bheText('候选 ${_formatMs(_candidateTime(candidate))}'),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleLarge?.copyWith(
@@ -4632,6 +4711,7 @@ class _CandidatePanel extends StatelessWidget {
     required this.filter,
     required this.playerFilter,
     required this.rimFilter,
+    required this.segmentFilter,
     required this.statusCandidates,
     required this.busy,
     required this.busyMessage,
@@ -4654,6 +4734,8 @@ class _CandidatePanel extends StatelessWidget {
     required this.onFilterChanged,
     required this.onPlayerFilterChanged,
     required this.onRimFilterChanged,
+    required this.segments,
+    required this.onSegmentFilterChanged,
     required this.onClearFilters,
     required this.onReanalyze,
     required this.onRetryHydration,
@@ -4673,6 +4755,7 @@ class _CandidatePanel extends StatelessWidget {
   final String filter;
   final String playerFilter;
   final String rimFilter;
+  final String segmentFilter;
   final List<Map<String, dynamic>> statusCandidates;
   final bool busy;
   final String? busyMessage;
@@ -4695,6 +4778,10 @@ class _CandidatePanel extends StatelessWidget {
   final ValueChanged<String> onFilterChanged;
   final ValueChanged<String> onPlayerFilterChanged;
   final ValueChanged<String> onRimFilterChanged;
+
+  /// 多段项目的 (视频 id, 段号)，单段项目为空。
+  final List<(String, int)> segments;
+  final ValueChanged<String> onSegmentFilterChanged;
   final VoidCallback onClearFilters;
   final VoidCallback? onReanalyze;
   final VoidCallback? onRetryHydration;
@@ -4763,7 +4850,7 @@ class _CandidatePanel extends StatelessWidget {
                 ),
                 Tooltip(
                   message: context.bheText(
-                    '快捷键\nSpace  播放/暂停\nR  重播当前\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒\nC / Enter  保留\nX / Backspace  排除\n1–9  设置球员标签 · 0  清除\nCmd/Ctrl+Z  撤销',
+                    '快捷键\nSpace  播放/暂停\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒 · 加 Shift 每次 0.1 秒\nC / Enter  保留\nX / ` / Backspace  排除\n1–9、Q–P  设置球员标签 · 0  清除\nCmd/Ctrl+Z  撤销',
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(8),
@@ -4853,9 +4940,19 @@ class _CandidatePanel extends StatelessWidget {
               onChanged: onRimFilterChanged,
             ),
           ],
+          if (segments.isNotEmpty) ...[
+            const SizedBox(height: Spacing.sm),
+            _SegmentChips(
+              value: segmentFilter,
+              segments: segments,
+              candidates: statusCandidates,
+              onChanged: onSegmentFilterChanged,
+            ),
+          ],
           if (filter != 'all' ||
               playerFilter != 'all' ||
-              rimFilter != 'all') ...[
+              rimFilter != 'all' ||
+              segmentFilter != 'all') ...[
             const SizedBox(height: Spacing.sm),
             Container(
               key: const Key('review-filter-banner'),
@@ -4910,7 +5007,8 @@ class _CandidatePanel extends StatelessWidget {
                     onClearFilter:
                         filter == 'all' &&
                             playerFilter == 'all' &&
-                            rimFilter == 'all'
+                            rimFilter == 'all' &&
+                            segmentFilter == 'all'
                         ? null
                         : onClearFilters,
                     onReanalyze: onReanalyze,
@@ -5150,6 +5248,95 @@ class _RowContextAnchorState extends State<_RowContextAnchor> {
 
   @override
   Widget build(BuildContext context) => widget.child;
+}
+
+class _SegmentChips extends StatelessWidget {
+  const _SegmentChips({
+    required this.value,
+    required this.segments,
+    required this.candidates,
+    required this.onChanged,
+  });
+
+  final String value;
+  final List<(String, int)> segments;
+  final List<Map<String, dynamic>> candidates;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final counts = <String, int>{'all': candidates.length};
+    for (final candidate in candidates) {
+      counts.update(
+        candidate['video_id']?.toString() ?? '',
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    final options = <(String, String)>[
+      ('all', context.bheText('全部')),
+      for (final (id, segment) in segments)
+        (id, context.bheText('第 $segment 段')),
+    ];
+    return Semantics(
+      container: true,
+      label: context.bheText('按视频段筛选'),
+      child: SizedBox(
+        key: const Key('review-segment-filter'),
+        height: 30,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              Text(
+                context.bheText('视频段'),
+                style: TextStyle(color: c.textTertiary, fontSize: 12),
+              ),
+              for (final (key, label) in options) ...[
+                const SizedBox(width: 6),
+                Semantics(
+                  button: true,
+                  selected: value == key,
+                  child: Material(
+                    key: ValueKey('review-segment-option-$key'),
+                    color: value == key ? c.surface3 : Colors.transparent,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(CsRadius.full),
+                      side: BorderSide(
+                        color: value == key ? c.borderStrong : c.border,
+                      ),
+                    ),
+                    child: InkWell(
+                      onTap: () => onChanged(key),
+                      customBorder: const StadiumBorder(),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        child: Text(
+                          '$label ${counts[key] ?? 0}',
+                          style: TextStyle(
+                            color: value == key
+                                ? c.textPrimary
+                                : c.textSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _RimCheckChips extends StatelessWidget {
@@ -5817,6 +6004,16 @@ class _CandidateRow extends StatelessWidget {
                                                 fontWeight: FontWeight.w500,
                                               ),
                                             ),
+                                            if (_candidateSegment(candidate) > 0)
+                                              TextSpan(
+                                                text:
+                                                    '${context.bheText('第 ${_candidateSegment(candidate)} 段')} ',
+                                                style: TextStyle(
+                                                  color: c.textSecondary,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
                                             TextSpan(
                                               text: _formatMs(
                                                 _candidateTime(candidate),
@@ -5917,7 +6114,7 @@ class _CandidateRow extends StatelessWidget {
                     ),
                     const SizedBox(width: 3),
                     _DecisionButton(
-                      tooltip: context.bheText('排除片段 (X / Backspace)'),
+                      tooltip: context.bheText('排除片段 (X / ` / Backspace)'),
                       icon: Icons.close_rounded,
                       active: excluded,
                       color: c.error,
@@ -6027,6 +6224,15 @@ class _PlayerChipState extends State<_PlayerChip> {
               _menuController.close();
               widget.onCreate();
             },
+            onManageGroups: () {
+              _menuController.close();
+              unawaited(
+                showDialog<void>(
+                  context: context,
+                  builder: (_) => const _PlayerGroupsDialog(),
+                ),
+              );
+            },
             onDelete: (playerId, playerName) async {
               _menuController.close();
               await widget.onDelete(playerId, playerName);
@@ -6076,23 +6282,29 @@ class _PlayerPickerMenuContent extends StatelessWidget {
     required this.players,
     required this.onSelected,
     required this.onCreate,
+    required this.onManageGroups,
     required this.onDelete,
   });
 
   final List<Map<String, dynamic>> players;
   final ValueChanged<String?> onSelected;
   final VoidCallback onCreate;
+  final VoidCallback onManageGroups;
   final Future<void> Function(String, String)? onDelete;
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    // 标题、未标记、新建和分组这几行约 156，每个球员一行 34；人多时撑高到窗口的 80%。
+    final fitted = 156 + 34.0 * (players.isEmpty ? 1 : players.length);
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.8;
+    final height = fitted.clamp(330.0, maxHeight < 330 ? 330.0 : maxHeight);
     return Material(
       color: c.surface,
       borderRadius: BorderRadius.circular(CsRadius.sm),
       child: SizedBox(
         width: 276,
-        height: 330,
+        height: height,
         child: Padding(
           padding: const EdgeInsets.all(10),
           child: Column(
@@ -6127,7 +6339,7 @@ class _PlayerPickerMenuContent extends StatelessWidget {
                           return _PlayerPickerOption(
                             label: name,
                             color: _playerColor(c, id, index),
-                            shortcut: index < 9 ? '${index + 1}' : null,
+                            shortcut: playerShortcutLabel(index),
                             onTap: id == null ? null : () => onSelected(id),
                             trailing: onDelete == null || id == null
                                 ? null
@@ -6164,10 +6376,116 @@ class _PlayerPickerMenuContent extends StatelessWidget {
                 color: c.orange,
                 onTap: onCreate,
               ),
+              _PlayerPickerOption(
+                label: context.bheText('球员分组'),
+                icon: Icons.groups_outlined,
+                color: c.textSecondary,
+                onTap: onManageGroups,
+              ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _PlayerGroupsDialog extends ConsumerWidget {
+  const _PlayerGroupsDialog();
+
+  Future<void> _saveCurrent(BuildContext context, WidgetRef ref) async {
+    final players = [
+      for (final player in ref.read(projectProvider).players)
+        player['name'].toString(),
+    ];
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => _TextEntryDialog(
+        title: context.bheText('存为分组'),
+        hintText: context.bheText('例如：周六球队'),
+        confirmLabel: context.bheText('保存'),
+      ),
+    );
+    if (name == null || name.trim().isEmpty) return;
+    await ref.read(playerGroupsProvider.notifier).save(name.trim(), players);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = AppColors.of(context);
+    final groups = ref.watch(playerGroupsProvider);
+    final hasPlayers = ref.watch(
+      projectProvider.select((state) => state.players.isNotEmpty),
+    );
+    return AlertDialog(
+      backgroundColor: c.surface,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(CsRadius.md),
+        side: BorderSide(color: c.borderStrong),
+      ),
+      title: Text(context.bheText('球员分组')),
+      content: SizedBox(
+        width: 380,
+        child: groups.isEmpty
+            ? Text(
+                context.bheText('还没有分组。把当前项目的球员存为分组后，其他项目可以一键导入。'),
+                style: TextStyle(color: c.textSecondary, fontSize: 13),
+              )
+            : ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final group in groups)
+                    ListTile(
+                      key: ValueKey('player-group-${group.name}'),
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(group.name),
+                      subtitle: Text(
+                        group.players.join('、'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: c.textTertiary, fontSize: 12),
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextButton(
+                            onPressed: () {
+                              Navigator.of(context).pop();
+                              unawaited(
+                                ref
+                                    .read(projectProvider.notifier)
+                                    .importPlayers(group.players),
+                              );
+                            },
+                            child: Text(context.bheText('导入')),
+                          ),
+                          IconButton(
+                            tooltip: '${context.bheText('删除')}${group.name}',
+                            onPressed: () => unawaited(
+                              ref
+                                  .read(playerGroupsProvider.notifier)
+                                  .delete(group.name),
+                            ),
+                            icon: const Icon(Icons.delete_outline, size: 18),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: hasPlayers ? () => _saveCurrent(context, ref) : null,
+          child: Text(context.bheText('把当前球员存为分组')),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(context.bheText('完成')),
+        ),
+      ],
     );
   }
 }
@@ -6432,8 +6750,13 @@ List<Map<String, dynamic>> _filterCandidates(
   String filter, {
   String playerFilter = 'all',
   String rimFilter = 'all',
+  String segmentFilter = 'all',
 }) {
   return candidates.where((candidate) {
+    if (segmentFilter != 'all' &&
+        candidate['video_id']?.toString() != segmentFilter) {
+      return false;
+    }
     if (filter == 'included' && _isExcluded(candidate)) return false;
     if (filter == 'excluded' && !_isExcluded(candidate)) return false;
     if (rimFilter != 'all' && _rimCheckStatus(candidate) != rimFilter) {
@@ -6447,6 +6770,11 @@ List<Map<String, dynamic>> _filterCandidates(
       _ => playerFilter == 'player:$id',
     };
   }).toList();
+}
+
+int _candidateSegment(Map<String, dynamic> candidate) {
+  final value = candidate['segment'];
+  return value is num ? value.toInt() : 0;
 }
 
 int _candidateTime(Map<String, dynamic> candidate) {
@@ -6691,6 +7019,14 @@ String _formatDuration(Duration duration) {
       '${seconds.toString().padLeft(2, '0')}';
 }
 
+/// 标签菜单里第 [index] 个球员的快捷键：1–9，然后 Q W E R T Y U I O P。
+String? playerShortcutLabel(int index) {
+  const letters = ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'];
+  if (index < 9) return '${index + 1}';
+  if (index < 9 + letters.length) return letters[index - 9];
+  return null;
+}
+
 String _playbackRateLabel(double rate) {
   final text = rate == rate.roundToDouble()
       ? rate.toStringAsFixed(0)
@@ -6702,6 +7038,20 @@ String? _resolveOriginalVideoPath(ProjectState state) {
   final path = state.video?['source_path']?.toString();
   if (path == null || path.isEmpty) return null;
   return path;
+}
+
+/// 审核播放源：多段项目用当前段原视频；单段项目优先用引擎返回的审核视频，
+/// 缺失时回退原视频。`previewPath` 是导入页的静帧截图，绝不能作为播放源。
+String? resolveReviewPlaybackPath({
+  required bool multiVideo,
+  required String? originalVideoPath,
+  required String? reviewVideoPath,
+}) {
+  if (multiVideo) return originalVideoPath;
+  if (reviewVideoPath == null || reviewVideoPath.isEmpty) {
+    return originalVideoPath;
+  }
+  return reviewVideoPath;
 }
 
 /// Returns the seek/playback bounds for the review timeline.
@@ -6745,6 +7095,25 @@ Map<String, dynamic> _decodeJobCheckpoint(Map<String, dynamic>? job) {
   }
 }
 
+/// checkpoint 里的推理后端 → 展示名；旧任务没有该字段时返回 null。
+String? _inferenceDeviceName(Map<String, dynamic> checkpoint) {
+  final raw = checkpoint['inference_device']?.toString().trim().toLowerCase();
+  if (raw == null || raw.isEmpty) return null;
+  return switch (raw) {
+    'dml' => 'DirectML',
+    'cuda' => 'CUDA',
+    'mps' => 'Metal',
+    'cpu' => 'CPU',
+    _ => raw.toUpperCase(),
+  };
+}
+
+/// 这次分析是否真的跑在 GPU 上；后端未知或回落 CPU 都不算。
+bool _inferenceAccelerated(Map<String, dynamic> checkpoint) {
+  final raw = checkpoint['inference_device']?.toString().trim().toLowerCase();
+  return raw == 'dml' || raw == 'cuda' || raw == 'mps';
+}
+
 String _analysisDetailLabel(
   Map<String, dynamic> checkpoint,
   BheLocalizations? l10n,
@@ -6769,6 +7138,10 @@ String _analysisDetailLabel(
         '${l10n?.text(entry.value) ?? entry.value} ${l10n?.text(_formatSeconds(value / 1000)) ?? _formatSeconds(value / 1000)}',
       );
     }
+  }
+  final deviceName = _inferenceDeviceName(checkpoint);
+  if (deviceName != null) {
+    parts.add('${l10n?.text('推理') ?? '推理'} $deviceName');
   }
   final cacheHits = checkpoint['cache_hits'];
   if (cacheHits is num) {

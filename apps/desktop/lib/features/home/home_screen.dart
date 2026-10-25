@@ -16,6 +16,8 @@ import '../../providers/pending_import_provider.dart';
 import '../../providers/project_state.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
+import 'project_name_dialog.dart';
+import 'project_info_dialog.dart';
 
 /// Home 屏:Hero slogan + 主 CTA / 当前项目 metrics / 最近项目网格 / 工作流指示。
 ///
@@ -67,8 +69,9 @@ class HomeScreen extends ConsumerWidget {
       }
     }
 
-    Future<void> startFromDroppedVideo(String path) async {
-      if (!isImportableVideo(path)) {
+    Future<void> startFromDroppedVideos(List<String> dropped) async {
+      final paths = dropped.where(isImportableVideo).toList();
+      if (paths.isEmpty) {
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(
           SnackBar(
             content: Text(
@@ -80,7 +83,7 @@ class HomeScreen extends ConsumerWidget {
         return;
       }
       if (await notifier.startNewProject() && context.mounted) {
-        ref.read(pendingImportProvider.notifier).set(path);
+        ref.read(pendingImportProvider.notifier).set(paths);
         context.go('/import');
       }
     }
@@ -133,6 +136,8 @@ class HomeScreen extends ConsumerWidget {
     final source = state.video?['source_path']?.toString() ?? state.videoPath;
     final currentVideoName = source == null || source.isEmpty
         ? null
+        : state.multiVideo
+        ? '${source.split(RegExp(r'[/\\]')).last} · ${context.bheText('共 ${state.videos.length} 段')}'
         : source.split(RegExp(r'[/\\]')).last;
     final hasCurrent = state.video != null;
     final currentStatus = state.analysisRunning
@@ -145,13 +150,13 @@ class HomeScreen extends ConsumerWidget {
 
     final newProjectCard = _NewProjectCard(
       onTap: busy ? null : startNewProject,
-      onDropFile: busy ? null : (path) => unawaited(startFromDroppedVideo(path)),
-      dropHint: l10n?.homeDropHint ?? '也可以把视频拖到这里',
+      onDropFile: busy ? null : (paths) => unawaited(startFromDroppedVideos(paths)),
+      dropHint: l10n?.homeDropHint ?? '也可以把一段或多段视频拖到这里',
       dropActiveLabel: l10n?.homeDropActive ?? '松开即可新建项目',
       title: l10n?.newProject ?? '新建项目',
       description:
           l10n?.startFromVideoDescription ??
-          '选择一段固定机位录像，系统会优先自动定位篮筐，随后生成候选进球片段供你审核与导出。',
+          '选择固定机位录像，同一场比赛的多段视频可以一起选。系统会自动定位篮筐，按顺序生成候选进球片段供你审核与导出。',
       formats:
           l10n?.homeSupportedFormats ??
           'MP4 · MOV · M4V · AVI · MKV · 原始视频不会被修改',
@@ -160,7 +165,8 @@ class HomeScreen extends ConsumerWidget {
         .where(
           (item) =>
               state.video?['id'] != null &&
-              _map(item['video'])['id'] == state.video?['id'],
+              _map(item['video'])['id'] ==
+                  (state.videos.firstOrNull ?? state.video)?['id'],
         )
         .map((item) => item['cover_path']?.toString())
         .firstOrNull;
@@ -188,13 +194,38 @@ class HomeScreen extends ConsumerWidget {
                     ],
                   ),
                   const SizedBox(height: Spacing.sm),
-                  Text(
-                    currentName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          currentName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: Spacing.xs),
+                      IconButton(
+                        icon: const Icon(LucideIcons.info, size: 16),
+                        tooltip: l10n?.projectInfo ?? '项目信息',
+                        visualDensity: VisualDensity.compact,
+                        color: c.textTertiary,
+                        onPressed: () => ProjectInfoDialog.show(
+                          context,
+                          name: currentName,
+                          statistics: statistics,
+                          videos: state.videos,
+                          candidates: state.candidates,
+                          onRename: (name) => notifier.renameProject(name),
+                        ),
+                      ),
+                      _RenameProjectButton(
+                        name: currentName,
+                        onRename: (name) => notifier.renameProject(name),
+                      ),
+                    ],
                   ),
                   if (currentVideoName != null) ...[
                     const SizedBox(height: 2),
@@ -383,6 +414,8 @@ class HomeScreen extends ConsumerWidget {
                 onOpen: openRecentProject,
                 onDelete: deleteRecentProject,
                 onCreate: busy ? () {} : startNewProject,
+                onRename: (root, name) =>
+                    notifier.renameProject(name, projectRoot: root),
               ),
               const SizedBox(height: Spacing.xl),
             ],
@@ -405,7 +438,7 @@ class _NewProjectCard extends StatefulWidget {
   });
 
   final VoidCallback? onTap;
-  final ValueChanged<String>? onDropFile;
+  final ValueChanged<List<String>>? onDropFile;
   final String title;
   final String description;
   final String formats;
@@ -430,7 +463,9 @@ class _NewProjectCardState extends State<_NewProjectCard> {
       onDragExited: (_) => setState(() => _dragging = false),
       onDragDone: (details) {
         setState(() => _dragging = false);
-        if (details.files.isNotEmpty) onDropFile?.call(details.files.first.path);
+        if (details.files.isNotEmpty) {
+          onDropFile?.call([for (final file in details.files) file.path]);
+        }
       },
       child: Semantics(
         button: true,
@@ -619,6 +654,30 @@ class _StatusBadge extends StatelessWidget {
   }
 }
 
+/// 项目名旁的小铅笔按钮：点开重命名对话框。
+class _RenameProjectButton extends StatelessWidget {
+  const _RenameProjectButton({required this.name, required this.onRename});
+
+  final String name;
+  final Future<bool> Function(String name) onRename;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return IconButton(
+      icon: const Icon(LucideIcons.pencil, size: 16),
+      tooltip: '重命名项目',
+      visualDensity: VisualDensity.compact,
+      color: c.textTertiary,
+      onPressed: () => showProjectNameDialog(
+        context,
+        initialName: name,
+        onSubmit: onRename,
+      ),
+    );
+  }
+}
+
 class _HomeStat extends StatelessWidget {
   const _HomeStat({required this.label, required this.value, this.color});
 
@@ -659,6 +718,7 @@ class _RecentProjects extends StatelessWidget {
     required this.onOpen,
     required this.onDelete,
     required this.onCreate,
+    this.onRename,
   });
 
   final ProjectState state;
@@ -666,6 +726,7 @@ class _RecentProjects extends StatelessWidget {
   final Future<void> Function(String root) onOpen;
   final Future<void> Function(Map<String, dynamic> item) onDelete;
   final VoidCallback onCreate;
+  final Future<bool> Function(String root, String name)? onRename;
 
   @override
   Widget build(BuildContext context) {
@@ -692,6 +753,7 @@ class _RecentProjects extends StatelessWidget {
       projects: state.recentProjects,
       onOpen: busy ? null : onOpen,
       onDelete: busy ? null : onDelete,
+      onRename: busy ? null : onRename,
     );
   }
 }
@@ -701,11 +763,13 @@ class _RecentGrid extends StatelessWidget {
     required this.projects,
     required this.onOpen,
     required this.onDelete,
+    this.onRename,
   });
 
   final List<Map<String, dynamic>> projects;
   final Future<void> Function(String root)? onOpen;
   final Future<void> Function(Map<String, dynamic> item)? onDelete;
+  final Future<bool> Function(String root, String name)? onRename;
 
   @override
   Widget build(BuildContext context) {
@@ -731,6 +795,7 @@ class _RecentGrid extends StatelessWidget {
                     item: projects[index],
                     onOpen: onOpen,
                     onDelete: onDelete,
+                    onRename: onRename,
                   ),
                 ),
               );
@@ -764,11 +829,13 @@ class _ProjectCard extends StatelessWidget {
     required this.item,
     required this.onOpen,
     required this.onDelete,
+    this.onRename,
   });
 
   final Map<String, dynamic> item;
   final Future<void> Function(String root)? onOpen;
   final Future<void> Function(Map<String, dynamic> item)? onDelete;
+  final Future<bool> Function(String root, String name)? onRename;
 
   @override
   Widget build(BuildContext context) {
@@ -784,11 +851,19 @@ class _ProjectCard extends StatelessWidget {
         ? _int(statistics['goal_count'])
         : _int(statistics['included_count']);
     final candidates = _int(statistics['candidate_count']);
-    final duration = _int(video['duration_ms']);
+    final parts = (item['videos'] as List?)?.length ?? 1;
+    final duration = parts > 1
+        ? [
+            for (final part in item['videos'] as List) _int(_map(part)['duration_ms']),
+          ].fold<int>(0, (sum, value) => sum + value)
+        : _int(video['duration_ms']);
     final source = video['source_path']?.toString();
-    final videoName = (source == null || source.isEmpty)
+    final firstName = (source == null || source.isEmpty)
         ? null
         : source.split('/').last;
+    final videoName = firstName == null || parts < 2
+        ? firstName
+        : '$firstName · ${context.bheText('共 $parts 段')}';
 
     final missing = video['source_status']?.toString() == 'missing';
     final status = missing
@@ -880,8 +955,26 @@ class _ProjectCard extends StatelessWidget {
                             size: 18,
                             color: c.textSecondary,
                           ),
-                          onSelected: (_) => onDelete!(item),
+                          onSelected: (value) {
+                            if (value == 'rename') {
+                              showProjectNameDialog(
+                                context,
+                                initialName: name,
+                                onSubmit: (next) => onRename == null
+                                    ? Future<bool>.value(false)
+                                    : onRename!(root, next),
+                              );
+                            } else {
+                              onDelete!(item);
+                            }
+                          },
                           itemBuilder: (context) => [
+                            PopupMenuItem(
+                              value: 'rename',
+                              child: Text(
+                                l10n?.renameProject ?? '重命名项目',
+                              ),
+                            ),
                             PopupMenuItem(
                               value: 'delete',
                               child: Text(l10n?.deleteProject ?? '删除项目'),

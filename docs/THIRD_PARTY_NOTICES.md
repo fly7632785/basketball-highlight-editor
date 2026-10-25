@@ -10,6 +10,7 @@
 | `ultralytics` / PyTorch | 桌面检测与推理 | `requirements.txt` 和实际安装环境 | 锁定版本并核验许可证 |
 | OpenCV / NumPy / pandas / psutil | 视频采样、数据处理和运行时监控 | `requirements.txt` | 锁定版本并核验许可证 |
 | `ort` / ONNX Runtime | 移动端 Rust 推理路径 | `packages/bhe_runtime/Cargo.toml` 和 Android/iOS 原生库 | 核对 crate、动态库和 XCFramework 条款 |
+| `onnxruntime-directml` | Windows 桌面 GPU 推理（DirectML EP，可选；缺省时回落 CPU） | `requirements-dml.txt` | 核对 wheel 内 ONNX Runtime 与 DirectML 条款，确认可随安装包再分发 |
 | 高通 QNN Runtime | Android NPU 推理（`libQnnHtp*.so`、`libQnnSystem.so`） | `.github/workflows/release-packages.yml` 中的 `QNN_RUNTIME_VERSION` | 随 APK 附上 Maven 包内 `LICENSE.pdf` 的条款 |
 | `fast_image_resize` | 移动端 Rust 画面缩放 | `packages/bhe_runtime/Cargo.toml` | 核对 crate 许可证 |
 | FFmpeg / FFprobe | 元数据、代理、预览和导出 | 系统或发布运行时 | 核对构建配置、LGPL/GPL 边界和 notices |

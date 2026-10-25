@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'bhe_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -39,6 +40,59 @@ class BheLocalizationsZh extends BheLocalizations {
 
   @override
   String get deleteProject => '删除当前项目';
+
+  @override
+  String get renameProject => '重命名项目';
+
+  @override
+  String get projectName => '项目名称';
+
+  @override
+  String get projectNameHint => '例如：10 月 24 日 训练赛';
+
+  @override
+  String get projectNameEmpty => '项目名称不能为空';
+
+  @override
+  String projectNameTooLong(int max) {
+    return '项目名称最多 $max 个字符';
+  }
+
+  @override
+  String get projectNameSaveFailed => '项目名称保存失败，请重试';
+
+  @override
+  String get projectNameScopeHint => '只修改显示名称，项目文件夹和已导出的视频不受影响。';
+
+  @override
+  String get save => '保存';
+
+  @override
+  String get cancel => '取消';
+
+  @override
+  String get close => '关闭';
+
+  @override
+  String get openFolder => '打开文件夹';
+
+  @override
+  String get projectInfo => '项目信息';
+
+  @override
+  String get projectCreatedAt => '创建时间';
+
+  @override
+  String get projectVideoCount => '视频段数';
+
+  @override
+  String get projectSegmentsUnit => '段';
+
+  @override
+  String get projectGoalsConfirmed => '已确认进球';
+
+  @override
+  String get projectStorageLocation => '存储位置';
 
   @override
   String get more => '更多';
@@ -139,7 +193,7 @@ class BheLocalizationsZh extends BheLocalizations {
 
   @override
   String get startFromVideoDescription =>
-      '选择一段固定机位录像，系统会优先自动定位篮筐，随后生成候选进球片段供你审核与导出。';
+      '选择固定机位录像，同一场比赛的多段视频可以一起选。系统会自动定位篮筐，按顺序生成候选进球片段供你审核与导出。';
 
   @override
   String get videoDuration => '视频时长';
@@ -526,12 +580,6 @@ class BheLocalizationsZh extends BheLocalizations {
   String get confirm => '确认';
 
   @override
-  String get cancel => '取消';
-
-  @override
-  String get close => '关闭';
-
-  @override
   String get rangeEditorHint =>
       '播放片段会在范围内循环；拖动两端、拖到边缘可继续延长，或用 I / O 把当前位置设为开始 / 结束。原视频不会被修改。';
 
@@ -792,7 +840,7 @@ class BheLocalizationsZh extends BheLocalizations {
   String get reviewUnreviewed => '未审核';
 
   @override
-  String get homeDropHint => '也可以把视频拖到这里';
+  String get homeDropHint => '也可以把一段或多段视频拖到这里';
 
   @override
   String get homeDropActive => '松开即可新建项目';
