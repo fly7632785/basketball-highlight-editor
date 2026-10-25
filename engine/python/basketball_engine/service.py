@@ -29,7 +29,7 @@ from .adapters.analysis import (
     scale_roi_to_proxy,
     terminate_process,
 )
-from .adapters.export import export_goal_clips
+from .adapters.export import export_goal_clips, merge_existing_videos
 from .protocol import ProtocolError
 from .storage import ProjectStore, new_id
 from .media_tools import resolve_media_tool
@@ -130,6 +130,7 @@ class EngineService:
             "update_clip_range": self.update_clip_range,
             "update_clip_ranges": self.update_clip_ranges,
             "start_export": self.start_export,
+            "merge_existing_videos": self.merge_existing_videos,
             "list_exports": self.list_exports,
             "get_statistics": self.get_statistics,
             "set_telemetry_consent": self.set_telemetry_consent,
@@ -141,6 +142,24 @@ class EngineService:
         if not handler:
             raise ProtocolError("INVALID_REQUEST", f"不支持的 command: {command}")
         return handler(payload)
+
+    def merge_existing_videos(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        raw_inputs = payload.get("input_paths")
+        raw_output = payload.get("output_path")
+        if (
+            not isinstance(raw_inputs, list)
+            or not raw_inputs
+            or not all(isinstance(path, str) and path.strip() for path in raw_inputs)
+        ):
+            raise ProtocolError("INVALID_REQUEST", "input_paths 必须是非空字符串列表")
+        if not isinstance(raw_output, str) or not raw_output.strip():
+            raise ProtocolError("INVALID_REQUEST", "缺少 output_path")
+        try:
+            return merge_existing_videos(
+                [Path(path) for path in raw_inputs], Path(raw_output)
+            )
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            raise ProtocolError("MERGE_FAILED", f"视频合并失败: {exc}") from exc
 
     def hello(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return {

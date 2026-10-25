@@ -2576,3 +2576,45 @@ def test_replace_candidates_refreshes_untouched_auto_exclusions(tmp_path: Path):
     assert candidate["review_status"] == "pending"
     assert candidate["review_reason"] is None
     assert candidate["note"] == "看过"
+
+
+def test_merge_existing_videos_forwards_ordered_paths(monkeypatch, tmp_path: Path):
+    service = EngineService()
+    first = tmp_path / "first.mp4"
+    second = tmp_path / "second.mp4"
+    output = tmp_path / "merged.mp4"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    received = {}
+
+    def fake_merge(paths, target):
+        received["paths"] = paths
+        received["target"] = target
+        return {"files": [str(target)]}
+
+    monkeypatch.setattr(
+        "engine.python.basketball_engine.service.merge_existing_videos",
+        fake_merge,
+        raising=False,
+    )
+
+    result = service.handle(
+        "merge_existing_videos",
+        {"input_paths": [str(first), str(second)], "output_path": str(output)},
+    )
+
+    assert received["paths"] == [first.resolve(), second.resolve()]
+    assert received["target"] == output.resolve()
+    assert result == {"files": [str(output.resolve())]}
+
+
+def test_merge_existing_videos_requires_input_list_and_output_path():
+    service = EngineService()
+
+    with pytest.raises(ProtocolError, match="input_paths"):
+        service.handle(
+            "merge_existing_videos",
+            {"input_paths": "not-a-list", "output_path": "out.mp4"},
+        )
+    with pytest.raises(ProtocolError, match="output_path"):
+        service.handle("merge_existing_videos", {"input_paths": ["one.mp4"]})
