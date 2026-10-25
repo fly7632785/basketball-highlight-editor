@@ -11,11 +11,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/engine_session.dart';
 import '../core/engine_client.dart';
 import '../core/project_session.dart';
+import '../core/roi_geometry.dart';
+import '../core/video_segments.dart';
 import 'notice_provider.dart';
 import 'session_provider.dart';
 import 'sidebar_provider.dart';
 
 const _recentProjectRootsKey = 'basketball_recent_project_roots';
+
+/// 项目显示名的长度上限。只约束数据库里的 name，不影响磁盘目录名。
+const projectNameMaxLength = 60;
 
 ({String title, String? description}) userFacingNotice(Object error) {
   final raw = error.toString();
@@ -30,6 +35,23 @@ const _recentProjectRootsKey = 'basketball_recent_project_roots';
   }
   if (raw.contains('ENGINE_TIMEOUT')) {
     return (title: '处理时间较长', description: '请稍候查看任务状态，原始视频不会被修改。');
+  }
+  final missing = RegExp(r'FILE_NOT_FOUND: (.+)$').firstMatch(raw);
+  if (missing != null) {
+    return (
+      title: '找不到文件或文件夹：${missing.group(1)}',
+      description: '视频或项目文件夹可能被移动、改名或删除。请确认它还在原来的位置，必要时到导入页重新定位视频。',
+    );
+  }
+  final denied = RegExp(r'FILE_ACCESS_DENIED: (.+)$').firstMatch(raw);
+  if (denied != null) {
+    return (
+      title: '没有权限访问：${denied.group(1)}',
+      description: '请确认文件没有被其它程序占用，或者换一个有读写权限的文件夹。',
+    );
+  }
+  if (raw.contains('DISK_FULL')) {
+    return (title: '磁盘空间不足', description: '请清理磁盘空间后再试。');
   }
   return (title: raw, description: null);
 }
@@ -77,6 +99,12 @@ class ProjectState {
     this.knownProjectsRoot,
     this.workflowDraft,
     this.analysisMode = 'standard',
+    this.videos = const <JsonMap>[],
+    this.analysisQueue = const <String>[],
+    this.queueBeforeSeconds = 3,
+    this.queueAfterSeconds = 1,
+    this.queuePaused = false,
+    this.exportQueued = false,
   });
 
   final JsonMap? video;
@@ -108,6 +136,27 @@ class ProjectState {
   final String? knownProjectsRoot;
   final JsonMap? workflowDraft;
   final String analysisMode;
+
+  /// 项目里按顺序排列的视频段；`video` 是当前正在操作的那一段。
+  final List<JsonMap> videos;
+
+  /// 等待依次分析的视频 id，第一个是正在分析或下一个要分析的。
+  final List<String> analysisQueue;
+  final double queueBeforeSeconds;
+  final double queueAfterSeconds;
+  final bool queuePaused;
+
+  /// 队列分析时点了导出：等当前这段分析完先导出，再继续排队。
+  final bool exportQueued;
+
+  bool get multiVideo => videos.length > 1;
+
+  /// 视频在项目里的段号，从 1 开始；单段项目返回 null。
+  int? segmentOf(String? videoId) {
+    if (!multiVideo) return null;
+    final index = videos.indexWhere((video) => video['id'] == videoId);
+    return index < 0 ? null : index + 1;
+  }
 
   bool get exportRunning {
     final jobState = exportJob?['state']?.toString();
@@ -146,6 +195,12 @@ class ProjectState {
     Object? knownProjectsRoot = _unset,
     Object? workflowDraft = _unset,
     Object? analysisMode = _unset,
+    List<JsonMap>? videos,
+    List<String>? analysisQueue,
+    double? queueBeforeSeconds,
+    double? queueAfterSeconds,
+    bool? queuePaused,
+    bool? exportQueued,
     List<JsonMap>? candidates,
     List<JsonMap>? players,
     List<JsonMap>? recentProjects,
@@ -216,6 +271,12 @@ class ProjectState {
       analysisMode: identical(analysisMode, _unset)
           ? this.analysisMode
           : analysisMode as String,
+      videos: videos ?? this.videos,
+      analysisQueue: analysisQueue ?? this.analysisQueue,
+      queueBeforeSeconds: queueBeforeSeconds ?? this.queueBeforeSeconds,
+      queueAfterSeconds: queueAfterSeconds ?? this.queueAfterSeconds,
+      queuePaused: queuePaused ?? this.queuePaused,
+      exportQueued: exportQueued ?? this.exportQueued,
     );
   }
 }
@@ -422,8 +483,13 @@ class ProjectNotifier extends Notifier<ProjectState> {
           roiConfidence: roiConfidence,
           roiSuggestionError: roiSuggestionError,
           roiDetecting: false,
+          videos: const <JsonMap>[],
+          analysisQueue: const <String>[],
+          queuePaused: false,
+          exportQueued: false,
         );
         _reviewHistory.clear();
+        await refreshVideos();
       },
       busyMessage: '正在准备视频…',
       successMessage: '视频已加载，已优先尝试自动识别篮筐区域',
@@ -895,6 +961,18 @@ class ProjectNotifier extends Notifier<ProjectState> {
           ? null
           : _normalizeRoi(storedNetRoi.cast<String, dynamic>(), video);
       final restoredRoiSource = calibration?['source']?.toString() ?? 'manual';
+      _applyVideoContext(payload);
+      if (((payload['orientation_corrected'] as List?) ?? const []).isNotEmpty) {
+        ref
+            .read(noticeProvider.notifier)
+            .push(
+              NoticeMessage(
+                id: 'orientation-${DateTime.now().microsecondsSinceEpoch}',
+                severity: NoticeSeverity.warning,
+                title: '视频横竖方向已修正，篮筐和候选需要重新确认并分析',
+              ),
+            );
+      }
       state = state.copyWith(
         knownProjectsRoot: Directory(canonicalProjectPath(root)).parent.path,
         video: video,
@@ -920,6 +998,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
         analysisMode: payload['analysis_mode']?.toString() == 'fast'
             ? 'fast'
             : 'standard',
+        exportQueued: false,
+        // 重开项目时队列先暂停，正在跑的那段由下面的任务恢复接上后自动继续。
+        queuePaused: state.analysisQueue.isNotEmpty,
       );
       await _rememberProjectsRoot(
         Directory(canonicalProjectPath(root)).parent.path,
@@ -1022,7 +1103,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
         final latestAnalysisJob = jobs[2] as JsonMap?;
         final latestExportJob = jobs[3] as JsonMap?;
         state = state.copyWith(
-          job: analysisJob ?? latestAnalysisJob,
+          // 加载期间用户可能已经开始排队分析，不能用旧结果覆盖正在跑的任务。
+          job: state.analysisRunning ? state.job : analysisJob ?? latestAnalysisJob,
           exportJob: activeExportJob ?? latestExportJob,
           analysisMode:
               _jobAnalysisMode(analysisJob ?? latestAnalysisJob) ??
@@ -1031,6 +1113,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
         final analysisId = analysisJob?['id'];
         if (analysisJob?['recovery_state'] == 'worker_attached' &&
             analysisId is String) {
+          if (analysisJob?['video_id'] == state.analysisQueue.firstOrNull) {
+            state = state.copyWith(queuePaused: false);
+          }
           unawaited(pollJob(analysisId, scope: scope));
         }
         final exportId = activeExportJob?['id'];
@@ -1102,6 +1187,368 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   /// 等价 app.dart:_saveRoi(404)。
+  void _applyVideoContext(JsonMap payload) {
+    final queue = (payload['analysis_queue'] as Map?)?.cast<String, dynamic>();
+    state = state.copyWith(
+      videos: ((payload['videos'] as List?) ?? const <dynamic>[])
+          .whereType<Map>()
+          .map((item) => item.cast<String, dynamic>())
+          .toList(),
+      analysisQueue: [
+        for (final id in (queue?['video_ids'] as List?) ?? const <dynamic>[])
+          id.toString(),
+      ],
+      queueBeforeSeconds: (queue?['before_seconds'] as num?)?.toDouble() ?? 3,
+      queueAfterSeconds: (queue?['after_seconds'] as num?)?.toDouble() ?? 1,
+    );
+  }
+
+  /// 重新读取各段视频的篮筐、分析状态和排队记录，不改变当前操作的视频段。
+  Future<void> refreshVideos() async {
+    final session = ref.read(projectSessionProvider);
+    final root = session.projectRoot;
+    if (root == null) return;
+    final generation = _projectLoadGeneration;
+    final payload = await session.engine.openProject(projectRoot: root);
+    if (_disposed || generation != _projectLoadGeneration) return;
+    _applyVideoContext(payload);
+  }
+
+  /// 切换当前操作的视频段：导入页设置它的篮筐，审核页播放它的原视频。
+  void activateVideo(String videoId) {
+    if (state.video?['id']?.toString() == videoId) return;
+    final summary = state.videos.cast<JsonMap?>().firstWhere(
+      (video) => video?['id']?.toString() == videoId,
+      orElse: () => null,
+    );
+    if (summary == null) return;
+    ref.read(projectSessionProvider).setActiveVideo(videoId);
+    final video = <String, dynamic>{
+      for (final entry in summary.entries)
+        if (!const {'roi', 'analysis_job', 'candidate_count'}.contains(entry.key))
+          entry.key: entry.value,
+    };
+    final roi = (summary['roi'] as Map?)?.cast<String, dynamic>();
+    final calibration = (roi?['calibration'] as Map?)?.cast<String, dynamic>();
+    final net = calibration?['net_roi'];
+    final hoop = calibration?['hoop_bbox'];
+    state = state.copyWith(
+      video: video,
+      videoPath: summary['source_exists'] == false
+          ? null
+          : _playbackVideoPath(video),
+      reviewVideoPath: null,
+      previewPath: null,
+      previewTimeMs: _previewTimeForVideo(video),
+      previewRefreshing: false,
+      suggestedRoi: roi == null ? null : _normalizeRoi(roi, video),
+      netRoi: net is Map ? _normalizeRoi(net.cast<String, dynamic>(), video) : null,
+      hoopBbox: hoop is List ? _normalizeBbox(hoop, video) : null,
+      roiSource: roi == null ? null : calibration?['source']?.toString() ?? 'manual',
+      roiConfidence: (calibration?['confidence'] as num?)?.toDouble(),
+      roiSuggestionError: null,
+    );
+  }
+
+  /// 用多段视频新建一个项目：最早录制的一段建项目，其余按顺序追加。
+  Future<void> createProjectFromVideos(List<String> paths) async {
+    if (paths.length < 2) {
+      if (paths.isNotEmpty) await selectVideo(paths.single);
+      return;
+    }
+    final session = ref.read(projectSessionProvider);
+    final inspected = <JsonMap>[];
+    try {
+      await ref.read(engineBootstrapProvider.notifier).ensure();
+      for (final path in paths) {
+        final payload = await session.inspectVideo(videoPath: path);
+        inspected.add((payload['video'] as Map?)?.cast<String, dynamic>() ?? payload);
+      }
+    } catch (error) {
+      _pushNotice(error.toString(), NoticeSeverity.error);
+      return;
+    }
+    inspected.sort(compareByRecordingTime);
+    final ordered = [for (final video in inspected) video['source_path'].toString()];
+    await selectVideo(ordered.first);
+    final first = state.videos.firstOrNull;
+    if (first == null) return;
+    await _runBusy(() async {
+      await _calibrateAddedVideo(first, null);
+      await refreshVideos();
+    }, busyMessage: '正在识别第 1 段的篮筐…');
+    await addVideos(ordered.skip(1).toList());
+  }
+
+  /// 把多段视频追加到当前项目，按录制时间排序；每段自动设置篮筐：
+  /// 和上一段连续录制的沿用上一段，否则自动识别，可信度不够的留给用户确认。
+  Future<void> addVideos(List<String> paths) async {
+    var added = 0;
+    await _runBusy(() async {
+      final session = ref.read(projectSessionProvider);
+      final existing = {
+        for (final video in state.videos) video['source_path']?.toString(),
+      };
+      final inspected = <JsonMap>[];
+      for (final path in paths) {
+        final payload = await session.inspectVideo(videoPath: path);
+        final metadata = (payload['video'] as Map?)?.cast<String, dynamic>() ?? payload;
+        final source = metadata['source_path']?.toString();
+        if (existing.add(source)) inspected.add(metadata);
+      }
+      inspected.sort(compareByRecordingTime);
+      for (final (index, metadata) in inspected.indexed) {
+        state = state.copyWith(
+          busyMessage: '正在添加第 ${index + 1}/${inspected.length} 段视频…',
+        );
+        final previous = state.videos.isEmpty ? null : state.videos.last;
+        final linked = await session.addVideo(metadata['source_path'].toString());
+        final video = (linked['video'] as Map).cast<String, dynamic>();
+        await _calibrateAddedVideo(video, previous);
+        await refreshVideos();
+        added++;
+      }
+    }, busyMessage: '正在添加视频…');
+    if (added > 0) _pushNotice('已添加 $added 段视频', NoticeSeverity.success);
+  }
+
+  Future<void> _calibrateAddedVideo(JsonMap video, JsonMap? previous) async {
+    final session = ref.read(projectSessionProvider);
+    final videoId = video['id'].toString();
+    final previousRoi = (previous?['roi'] as Map?)?.cast<String, dynamic>();
+    if (previous != null && previousRoi != null && continuesRecording(previous, video)) {
+      await session.saveRoi(
+        videoId: videoId,
+        x1: previousRoi['x1'] as num,
+        y1: previousRoi['y1'] as num,
+        x2: previousRoi['x2'] as num,
+        y2: previousRoi['y2'] as num,
+        calibration: {
+          ...?(previousRoi['calibration'] as Map?)?.cast<String, dynamic>(),
+          'source': 'reused',
+          'reused_from': previous['id'],
+        },
+      );
+      return;
+    }
+    final JsonMap suggestion;
+    try {
+      suggestion = await session.suggestRoi(
+        videoId: videoId,
+        startMs: 0,
+        duration: 20,
+        sampleFps: 1,
+        maxSamples: 12,
+        confidence: 0.05,
+      );
+    } catch (_) {
+      // 自动识别失败的段留给用户手动框选。
+      return;
+    }
+    final roi = (suggestion['roi'] as Map?)?.cast<String, dynamic>();
+    final calibration = (suggestion['calibration'] as Map?)?.cast<String, dynamic>();
+    if (roi == null || calibration == null) return;
+    final width = (video['width'] as num?)?.toDouble() ?? 0;
+    final height = (video['height'] as num?)?.toDouble() ?? 0;
+    final hoop = calibration['hoop_bbox'];
+    final net = recommendedNetRoi(
+      _normalizeRoi(roi, video),
+      hoop is List ? _normalizeBbox(hoop, video) : null,
+    );
+    await session.saveRoi(
+      videoId: videoId,
+      x1: roi['x1'] as num,
+      y1: roi['y1'] as num,
+      x2: roi['x2'] as num,
+      y2: roi['y2'] as num,
+      // 可信度不够的识别结果也先存下，打开确认时框已画好，但不参与排队。
+      calibration: {
+        ...calibration,
+        'source': reliableRoiSuggestion(calibration) ? 'auto' : 'suggested',
+        if (net != null)
+          'net_roi': {
+            'x1': net.left * width,
+            'y1': net.top * height,
+            'x2': net.right * width,
+            'y2': net.bottom * height,
+          },
+      },
+    );
+  }
+
+  /// 确认某段的篮筐后，后面连续录制、还没确认过的段沿用这一段的篮筐。
+  Future<void> propagateHoopToFollowingParts(String videoId) async {
+    await refreshVideos();
+    final videos = state.videos;
+    final index = videos.indexWhere((video) => video['id'] == videoId);
+    if (index < 0) return;
+    final session = ref.read(projectSessionProvider);
+    var previous = videos[index];
+    for (final next in videos.skip(index + 1)) {
+      final source = ((next['roi'] as Map?)?['calibration'] as Map?)?['source'];
+      final replaceable =
+          next['roi'] == null || source == 'suggested' || source == 'reused';
+      final roi = (previous['roi'] as Map?)?.cast<String, dynamic>();
+      if (roi == null || !replaceable || !continuesRecording(previous, next)) {
+        break;
+      }
+      final calibration = {
+        ...?(roi['calibration'] as Map?)?.cast<String, dynamic>(),
+        'source': 'reused',
+        'reused_from': previous['id'],
+      };
+      await session.saveRoi(
+        videoId: next['id'].toString(),
+        x1: roi['x1'] as num,
+        y1: roi['y1'] as num,
+        x2: roi['x2'] as num,
+        y2: roi['y2'] as num,
+        calibration: calibration,
+      );
+      previous = {...next, 'roi': {...roi, 'calibration': calibration}};
+    }
+    await refreshVideos();
+  }
+
+  Future<void> reorderVideos(List<String> videoIds) async {
+    await _runBusy(() async {
+      final generation = _projectLoadGeneration;
+      await ref.read(projectSessionProvider).reorderVideos(videoIds);
+      await refreshVideos();
+      await refreshCandidates(generation: generation);
+    }, busyMessage: '正在调整视频顺序…');
+  }
+
+  /// 把篮筐已设置、还没分析完成的视频段按顺序排队，依次分析。
+  Future<void> startAnalysisQueue({
+    required double beforeSeconds,
+    required double afterSeconds,
+  }) async {
+    final videoIds = [
+      for (final video in state.videos)
+        if (!needsHoopConfirmation(video) &&
+            (video['analysis_job'] as Map?)?['state'] != 'completed')
+          video['id'].toString(),
+    ];
+    if (videoIds.isEmpty) {
+      _pushNotice('没有需要分析的视频段', NoticeSeverity.info);
+      return;
+    }
+    await _saveAnalysisQueue(
+      videoIds,
+      beforeSeconds: beforeSeconds,
+      afterSeconds: afterSeconds,
+    );
+    state = state.copyWith(queuePaused: false);
+    await _startNextQueued();
+  }
+
+  Future<void> pauseAnalysisQueue() async {
+    state = state.copyWith(queuePaused: true);
+  }
+
+  Future<void> resumeAnalysisQueue() async {
+    state = state.copyWith(queuePaused: false);
+    await _startNextQueued();
+  }
+
+  /// 从队列移除还没开始的视频段；正在分析的那段需要先取消。
+  Future<void> removeFromAnalysisQueue(String videoId) async {
+    if (state.analysisRunning && state.analysisQueue.firstOrNull == videoId) return;
+    await _saveAnalysisQueue([
+      for (final id in state.analysisQueue)
+        if (id != videoId) id,
+    ]);
+  }
+
+  Future<void> _saveAnalysisQueue(
+    List<String> videoIds, {
+    double? beforeSeconds,
+    double? afterSeconds,
+  }) async {
+    final before = beforeSeconds ?? state.queueBeforeSeconds;
+    final after = afterSeconds ?? state.queueAfterSeconds;
+    await ref.read(projectSessionProvider).setAnalysisQueue(
+      videoIds,
+      beforeSeconds: before,
+      afterSeconds: after,
+    );
+    state = state.copyWith(
+      analysisQueue: videoIds,
+      queueBeforeSeconds: before,
+      queueAfterSeconds: after,
+    );
+  }
+
+  Future<void> _startNextQueued() async {
+    if (_disposed ||
+        state.queuePaused ||
+        state.analysisQueue.isEmpty ||
+        state.analysisRunning ||
+        _isActiveJob(state.exportJob)) {
+      return;
+    }
+    final videoId = state.analysisQueue.first;
+    final segment = state.segmentOf(videoId);
+    var started = false;
+    await _runBusy(() async {
+      await ref.read(engineBootstrapProvider.notifier).ensure();
+      final session = ref.read(projectSessionProvider);
+      // 关掉应用再打开时，中断的那段只剩一条待恢复的任务，取消后重新开始。
+      for (final job in await session.getActiveJobs()) {
+        if (job['recovery_state'] == 'worker_attached') {
+          state = state.copyWith(job: job);
+          started = true;
+          return;
+        }
+        await session.cancelJob(jobId: job['id'].toString());
+      }
+      final result = await session.startAnalysis(
+        videoId: videoId,
+        mode: state.analysisMode,
+        sampleFps: 10,
+        beforeSeconds: state.queueBeforeSeconds,
+        afterSeconds: state.queueAfterSeconds,
+      );
+      state = state.copyWith(
+        job: {
+          ...?(result['job'] as Map?)?.cast<String, dynamic>(),
+          'video_id': videoId,
+        },
+      );
+      started = true;
+    }, busyMessage: segment == null ? '正在启动分析…' : '正在启动第 $segment 段分析…');
+    if (!started) {
+      state = state.copyWith(queuePaused: true);
+      return;
+    }
+    final jobId = state.job?['id'];
+    if (jobId is String) unawaited(pollJob(jobId));
+  }
+
+  /// 一段分析结束后推进队列：完成或失败都移出队列继续下一段，取消则暂停。
+  Future<void> _advanceAnalysisQueue(JsonMap? job) async {
+    final videoId = job?['video_id']?.toString();
+    if (videoId == null || state.analysisQueue.firstOrNull != videoId) return;
+    if (job?['state'] == 'cancelled') {
+      state = state.copyWith(queuePaused: true);
+    } else {
+      await _saveAnalysisQueue(state.analysisQueue.skip(1).toList());
+    }
+    await refreshVideos();
+    if (state.exportQueued) {
+      final export = _queuedExport;
+      _queuedExport = null;
+      state = state.copyWith(exportQueued: false);
+      if (export != null) await export();
+      return;
+    }
+    if (state.analysisQueue.isEmpty) {
+      _pushNotice('全部视频段分析完成', NoticeSeverity.success);
+    }
+    await _startNextQueued();
+  }
+
   Future<bool> saveRoi(
     Rect normalized, {
     Rect? netRoi,
@@ -1223,8 +1670,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
       final result = await session.startAnalysis(
         mode: requestedMode,
         sampleFps: 10,
-        beforeSeconds: beforeSeconds ?? 6,
-        afterSeconds: afterSeconds ?? 3,
+        beforeSeconds: beforeSeconds ?? 3,
+        afterSeconds: afterSeconds ?? 1,
       );
       state = state.copyWith(
         job: (result['job'] as Map?)?.cast<String, dynamic>(),
@@ -1293,8 +1740,14 @@ class ProjectNotifier extends Notifier<ProjectState> {
           );
           refreshed = true;
         }
+        if (terminal && nextState != previousState) {
+          unawaited(_advanceAnalysisQueue(nextJob));
+        }
         if (nextState != previousState) {
-          if (nextState == 'completed') {
+          final segment = state.segmentOf(nextJob?['video_id']?.toString());
+          if (nextState == 'completed' && segment != null) {
+            _pushNotice('第 $segment 段分析完成', NoticeSeverity.success);
+          } else if (nextState == 'completed') {
             _pushNotice('分析完成，候选片段已准备好', NoticeSeverity.success);
           } else if (nextState == 'cancelled') {
             _pushNotice('分析已取消', NoticeSeverity.success);
@@ -1488,13 +1941,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   Future<String?> loadCandidatePreview(String candidateId, int timeMs) async {
-    final cachedPath = state.candidates
-        .cast<JsonMap?>()
-        .firstWhere(
-          (candidate) => candidate?['id']?.toString() == candidateId,
-          orElse: () => null,
-        )?['preview_path']
-        ?.toString();
+    final candidate = state.candidates.cast<JsonMap?>().firstWhere(
+      (candidate) => candidate?['id']?.toString() == candidateId,
+      orElse: () => null,
+    );
+    final cachedPath = candidate?['preview_path']?.toString();
     if (cachedPath != null &&
         cachedPath.isNotEmpty &&
         File(cachedPath).existsSync()) {
@@ -1502,7 +1953,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
     }
     final preview = await ref
         .read(projectSessionProvider)
-        .extractPreview(timeMs: timeMs);
+        .extractPreview(
+          timeMs: timeMs,
+          videoId: candidate?['video_id']?.toString(),
+        );
     return preview['path']?.toString();
   }
 
@@ -1525,6 +1979,73 @@ class ProjectNotifier extends Notifier<ProjectState> {
       );
     } catch (_) {
       // 统计是辅助展示，旧版 Engine 不支持时不阻塞审核流程。
+    }
+  }
+
+  /// 改项目显示名。只改数据库里的 name，不动磁盘目录：
+  /// 目录名被最近项目列表和导出路径引用，重命名会让已保存的路径失效。
+  /// 返回 false 表示名字不合法或保存失败，未改动任何数据。
+  ///
+  /// [projectRoot] 为空时改当前打开的项目；首页最近项目卡片传入各自的 root。
+  Future<bool> renameProject(String name, {String? projectRoot}) async {
+    if (_disposed) return false;
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || trimmed.length > projectNameMaxLength) return false;
+    final target = projectRoot?.trim() ?? '';
+    final isCurrent =
+        target.isEmpty ||
+        target == ref.read(projectSessionProvider).projectRoot;
+    if (isCurrent) {
+      final current =
+          (state.statistics?['project'] as Map?)?['name']?.toString();
+      if (current == trimmed) return true;
+    }
+    try {
+      final engine = ref.read(projectSessionProvider).engine;
+      await engine.updateProjectSettings(
+        projectRoot: isCurrent
+            ? ref.read(projectSessionProvider).projectRoot!
+            : target,
+        name: trimmed,
+      );
+      if (_disposed) return false;
+      if (!isCurrent) {
+        // 改的不是当前项目：同步最近项目列表里的名字，不必重开项目。
+        state = state.copyWith(
+          recentProjects: [
+            for (final item in state.recentProjects)
+              if (item['project_root']?.toString() == target)
+                {
+                  ...item,
+                  'project': {
+                    ...?((item['project'] as Map?)?.cast<String, dynamic>()),
+                    'name': trimmed,
+                  },
+                }
+              else
+                item,
+          ],
+        );
+        return true;
+      }
+      final statistics = state.statistics;
+      if (statistics != null) {
+        final project = statistics['project'];
+        state = state.copyWith(
+          statistics: {
+            ...statistics,
+            if (project is Map)
+              'project': {...project, 'name': trimmed}
+            else
+              'project': {'name': trimmed},
+          },
+        );
+      }
+      unawaited(refreshStatistics());
+      return true;
+    } catch (error) {
+      if (!_disposed) _pushNotice('项目名称保存失败：$error', NoticeSeverity.error);
+      return false;
     }
   }
 
@@ -1843,6 +2364,27 @@ class ProjectNotifier extends Notifier<ProjectState> {
     return playerId;
   }
 
+  Future<void> importPlayers(List<String> names) async {
+    await _runPlayerChange(
+      (generation) async {
+        final session = ref.read(projectSessionProvider);
+        for (final name in names) {
+          if (state.players.any((player) => player['name'] == name)) continue;
+          final created = await session.createPlayer(name);
+          if (_disposed || generation != _projectLoadGeneration) return;
+          state = state.copyWith(
+            players: [
+              ...state.players,
+              Map<String, dynamic>.from(created['player'] as Map),
+            ],
+          );
+        }
+      },
+      successMessage: '球员已导入',
+      busyMessage: '正在导入球员…',
+    );
+  }
+
   Future<bool> deletePlayer(String playerId) async {
     var deleted = false;
     await _runPlayerChange(
@@ -1932,14 +2474,30 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   /// 等价 app.dart:_export(623)。
+  Future<void> Function()? _queuedExport;
+
   Future<void> export(
     String mode, {
     String? outputDir,
     String? outputPath,
     List<String>? playerIds,
     bool? includeUnassigned,
+    String effect = 'none',
   }) async {
     if (state.busy || _isActiveJob(state.exportJob)) return;
+    if (state.analysisRunning && state.analysisQueue.isNotEmpty) {
+      _queuedExport = () => export(
+        mode,
+        outputDir: outputDir,
+        outputPath: outputPath,
+        playerIds: playerIds,
+        includeUnassigned: includeUnassigned,
+        effect: effect,
+      );
+      state = state.copyWith(exportQueued: true);
+      _pushNotice('导出会在当前这段分析完成后开始，之后继续排队', NoticeSeverity.info);
+      return;
+    }
     state = state.copyWith(busy: true);
     try {
       await flushReviewQueue();
@@ -1951,6 +2509,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
             outputPath: outputPath,
             playerIds: playerIds,
             includeUnassigned: includeUnassigned,
+            effect: effect,
           );
       if (_disposed) return;
       final job = (result['job'] as Map?)?.cast<String, dynamic>();
@@ -1996,6 +2555,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         scope: requestScope,
       );
       final jobState = state.exportJob?['state']?.toString();
+      unawaited(_startNextQueued());
       if (jobState == 'completed') {
         _pushNotice('导出完成', NoticeSeverity.success);
       } else if (jobState == 'cancelled') {

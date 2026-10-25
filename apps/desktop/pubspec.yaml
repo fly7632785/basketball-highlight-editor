@@ -30,6 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  bhe_core:
+    path: ../../packages/bhe_core
   bhe_l10n:
     path: ../../packages/bhe_l10n
   desktop_drop: 0.8.4
@@ -49,6 +51,8 @@ dependencies:
   window_manager: ^0.5.2
 
 dev_dependencies:
+  crypto: ^3.0.7
+  cryptography: ^2.7.0
   flutter_test:
     sdk: flutter
 

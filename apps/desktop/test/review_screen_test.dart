@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'package:bhe_l10n/bhe_l10n.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:desktop/features/review/review_screen.dart';
 import 'package:desktop/features/review/media_readiness.dart';
@@ -178,6 +179,70 @@ void main() {
     expect(find.text('已审核 1 / 2'), findsOneWidget);
     expect(find.byKey(const ValueKey('unreviewed-new')), findsOneWidget);
     expect(find.byKey(const ValueKey('unreviewed-seen')), findsNothing);
+  });
+
+  test('players after the ninth get the Q to P letter row', () {
+    expect(playerShortcutLabel(0), '1');
+    expect(playerShortcutLabel(8), '9');
+    expect(playerShortcutLabel(9), 'Q');
+    expect(playerShortcutLabel(12), 'R');
+    expect(playerShortcutLabel(18), 'P');
+    expect(playerShortcutLabel(19), isNull);
+  });
+
+  testWidgets('letter keys tag players beyond the ninth', (tester) async {
+    final notifier = _TagReviewNotifier(
+      _tagReviewState().copyWith(
+        players: [
+          for (var i = 1; i <= 10; i++) {'id': 'p$i', 'name': '球员$i'},
+        ],
+      ),
+    );
+    await _pumpReview(tester, notifier.initialState, notifier: notifier);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyQ);
+    await tester.pumpAndSettle();
+
+    final tagged = notifier.lastTaggedIds;
+    expect(tagged, isNotNull);
+    expect(
+      notifier.current.candidates.firstWhere((c) => c['id'] == tagged!.single)['player_id'],
+      'p10',
+    );
+  });
+
+  testWidgets('R tags a player instead of replaying', (tester) async {
+    final notifier = _TagReviewNotifier(
+      _tagReviewState().copyWith(
+        players: [
+          for (var i = 1; i <= 13; i++) {'id': 'p$i', 'name': '球员$i'},
+        ],
+      ),
+    );
+    await _pumpReview(tester, notifier.initialState, notifier: notifier);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+    await tester.pumpAndSettle();
+
+    final tagged = notifier.lastTaggedIds;
+    expect(tagged, isNotNull);
+    expect(
+      notifier.current.candidates.firstWhere((c) => c['id'] == tagged!.single)['player_id'],
+      'p13',
+    );
+  });
+
+  testWidgets('the key left of 1 excludes the selected clip', (tester) async {
+    final notifier = _TagReviewNotifier(_tagReviewState());
+    await _pumpReview(tester, notifier.initialState, notifier: notifier);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.backquote);
+    await tester.pumpAndSettle();
+
+    expect(
+      notifier.current.candidates.where((c) => c['selection_status'] == 'excluded'),
+      hasLength(1),
+    );
   });
 
   testWidgets('number keys tag the selected clip in player menu order', (
@@ -521,6 +586,47 @@ void main() {
     );
   });
 
+  testWidgets('marks GPU acceleration and names the inference backend', (
+    tester,
+  ) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {
+          'state': 'completed',
+          'started_at': '2026-08-11T10:00:00.000+00:00',
+          'finished_at': '2026-08-11T10:12:30.000+00:00',
+          'checkpoint_json':
+              '{"stage_timings_ms":{"prepare_proxy":1250},"inference_device":"dml"}',
+        },
+      ),
+    );
+
+    expect(find.text('标准分析 · 0 个候选 · 用时 12:30 · GPU'), findsOneWidget);
+    expect(
+      find.byTooltip('分析详情：代理 1.3 秒 · 推理 DirectML'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('reports a CPU fallback without the GPU badge', (tester) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {
+          'state': 'completed',
+          'started_at': '2026-08-11T10:00:00.000+00:00',
+          'finished_at': '2026-08-11T10:12:30.000+00:00',
+          'checkpoint_json':
+              '{"stage_timings_ms":{"prepare_proxy":1250},"inference_device":"cpu"}',
+        },
+      ),
+    );
+
+    expect(find.text('标准分析 · 0 个候选 · 用时 12:30'), findsOneWidget);
+    expect(find.byTooltip('分析详情：代理 1.3 秒 · 推理 CPU'), findsOneWidget);
+  });
+
   testWidgets('explains standard reanalysis for an empty fast result', (
     tester,
   ) async {
@@ -722,7 +828,7 @@ void main() {
     expect(find.text('会导出'), findsOneWidget);
     expect(find.text('9 秒'), findsOneWidget);
     expect(find.byTooltip('保留片段 (C / Enter)'), findsOneWidget);
-    expect(find.byTooltip('排除片段 (X / Backspace)'), findsOneWidget);
+    expect(find.byTooltip('排除片段 (X / ` / Backspace)'), findsOneWidget);
   });
 
   testWidgets('opens the player picker next to the candidate row', (
@@ -754,6 +860,119 @@ void main() {
     expect(find.text('选择球员'), findsOneWidget);
     expect(find.text('科比'), findsOneWidget);
     expect(find.text('新建球员'), findsOneWidget);
+  });
+
+  testWidgets('player groups save the roster and import it into a project', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'bhe.player_groups': jsonEncode([
+        {
+          'name': '周六队',
+          'players': ['科比', '罗斯'],
+        },
+      ]),
+    });
+    final notifier = _TagReviewNotifier(
+      const ProjectState(
+        job: {'state': 'completed'},
+        players: [
+          {'id': 'player-1', 'name': '科比'},
+        ],
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+          },
+        ],
+      ),
+    );
+    await _pumpReview(tester, notifier.initialState, notifier: notifier);
+
+    await tester.tap(find.byKey(const ValueKey('player-chip-candidate-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('球员分组'));
+    await tester.pumpAndSettle();
+    expect(find.text('周六队'), findsOneWidget);
+    expect(find.text('科比、罗斯'), findsOneWidget);
+
+    await tester.tap(find.text('把当前球员存为分组'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '新队');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    final saved = jsonDecode(
+      (await SharedPreferences.getInstance()).getString('bhe.player_groups')!,
+    );
+    expect(saved, [
+      {
+        'name': '周六队',
+        'players': ['科比', '罗斯'],
+      },
+      {
+        'name': '新队',
+        'players': ['科比'],
+      },
+    ]);
+
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('player-group-周六队')),
+        matching: find.text('导入'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(notifier.importedNames, ['科比', '罗斯']);
+    expect(find.byType(AlertDialog), findsNothing);
+  });
+
+  testWidgets('a multi-part project reviews parts in order and follows the part', (
+    tester,
+  ) async {
+    Map<String, dynamic> candidate(String id, String videoId, int segment, int ms) => {
+      'id': id,
+      'video_id': videoId,
+      'segment': segment,
+      'event_time_ms': ms,
+      'default_start_ms': ms - 3000,
+      'default_end_ms': ms + 1000,
+    };
+    final notifier = _TagReviewNotifier(
+      ProjectState(
+        job: const {'state': 'completed'},
+        video: const {'id': 'v1', 'source_path': '/v/part1.mp4', 'duration_ms': 300000},
+        videoPath: '/v/part1.mp4',
+        previewPath: '/v/part1_frame.jpg',
+        videos: const [
+          {'id': 'v1', 'source_path': '/v/part1.mp4', 'duration_ms': 300000},
+          {'id': 'v2', 'source_path': '/v/part2.mp4', 'duration_ms': 300000},
+        ],
+        candidates: [
+          candidate('late', 'v2', 2, 5000),
+          candidate('early', 'v1', 1, 200000),
+        ],
+      ),
+    );
+    await _pumpReview(tester, notifier.initialState, notifier: notifier);
+    await tester.pumpAndSettle();
+
+    expect(find.text('第 1 段 · 03:20'), findsOneWidget);
+    final pane = find.byWidgetPredicate(
+      (widget) => widget.runtimeType.toString() == '_VideoPane',
+    );
+    expect((tester.widget(pane) as dynamic).videoPath, '/v/part1.mp4');
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('player-chip-early'))).dy,
+      lessThan(tester.getTopLeft(find.byKey(const ValueKey('player-chip-late'))).dy),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('review-segment-option-v2')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-chip-early')), findsNothing);
+    expect(find.text('第 2 段 · 00:05'), findsOneWidget);
+    expect(notifier.activated, ['v2']);
   });
 
   testWidgets('keeps player chips in a fixed aligned column', (tester) async {
@@ -852,6 +1071,41 @@ void main() {
     expect(find.text('候选预览'), findsOneWidget);
     expect(find.text('原视频'), findsOneWidget);
     expect(find.byTooltip('切换视频来源'), findsOneWidget);
+  });
+
+  test('review playback never falls back to the import preview image', () {
+    expect(
+      resolveReviewPlaybackPath(
+        multiVideo: false,
+        originalVideoPath: '/tmp/original.mp4',
+        reviewVideoPath: null,
+      ),
+      '/tmp/original.mp4',
+    );
+    expect(
+      resolveReviewPlaybackPath(
+        multiVideo: false,
+        originalVideoPath: '/tmp/original.mp4',
+        reviewVideoPath: '',
+      ),
+      '/tmp/original.mp4',
+    );
+    expect(
+      resolveReviewPlaybackPath(
+        multiVideo: false,
+        originalVideoPath: '/tmp/original.mp4',
+        reviewVideoPath: '/tmp/review.mp4',
+      ),
+      '/tmp/review.mp4',
+    );
+    expect(
+      resolveReviewPlaybackPath(
+        multiVideo: true,
+        originalVideoPath: '/tmp/segment.mp4',
+        reviewVideoPath: '/tmp/review.mp4',
+      ),
+      '/tmp/segment.mp4',
+    );
   });
 
   testWidgets(
@@ -1115,7 +1369,7 @@ void main() {
 
     expect(
       find.byTooltip(
-        '快捷键\nSpace  播放/暂停\nR  重播当前\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒\nC / Enter  保留\nX / Backspace  排除\n1–9  设置球员标签 · 0  清除\nCmd/Ctrl+Z  撤销',
+        '快捷键\nSpace  播放/暂停\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒 · 加 Shift 每次 0.1 秒\nC / Enter  保留\nX / ` / Backspace  排除\n1–9、Q–P  设置球员标签 · 0  清除\nCmd/Ctrl+Z  撤销',
       ),
       findsOneWidget,
     );
@@ -1205,6 +1459,32 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('#1 00:03'), findsOneWidget);
     expect(find.text('#2 00:15'), findsOneWidget);
+  });
+
+  testWidgets('says so when the source video file is missing', (tester) async {
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        video: {
+          'id': 'v1',
+          'source_path': '/tmp/bhe-widget-source-gone.mp4',
+          'duration_ms': 60000,
+        },
+        videoPath: '/tmp/bhe-widget-source-gone.mp4',
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+          },
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('源视频找不到，请到导入页重新定位视频'), findsOneWidget);
   });
 
   testWidgets('exposes direct candidate editing actions below the video', (
@@ -1326,7 +1606,7 @@ void main() {
     );
 
     expect(find.text('候选 00:03'), findsOneWidget);
-    await tester.tap(find.byTooltip('排除片段 (X / Backspace)').first);
+    await tester.tap(find.byTooltip('排除片段 (X / ` / Backspace)').first);
     await tester.pump();
 
     expect(find.text('候选 00:03'), findsOneWidget);
@@ -1457,7 +1737,22 @@ class _TagReviewNotifier extends _ReviewNotifier {
   _TagReviewNotifier(super.initialState);
   List<String>? lastTaggedIds;
   List<String>? rangeIds;
+  List<String>? importedNames;
+  final activated = <String>[];
   ProjectState get current => state;
+
+  @override
+  void activateVideo(String videoId) {
+    activated.add(videoId);
+    state = state.copyWith(
+      video: state.videos.firstWhere((video) => video['id'] == videoId),
+    );
+  }
+
+  @override
+  Future<void> importPlayers(List<String> names) async {
+    importedNames = names;
+  }
   void replaceState(ProjectState value) => state = value;
 
   @override

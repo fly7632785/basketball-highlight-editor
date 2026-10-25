@@ -237,12 +237,13 @@ def build_rim_check_command(
     candidates_path: Path,
     output_path: Path,
     batch: int = 16,
+    device: str = "auto",
 ) -> list[str]:
     return [
         sys.executable, _script(repo_root, "verify_rim_crossing.py"),
         "--video", str(source_video), "--model", str(model_path),
         "--candidates", str(candidates_path), "--output", str(output_path),
-        "--batch", str(batch),
+        "--batch", str(batch), "--device", device,
     ]
 
 
@@ -275,6 +276,7 @@ def build_pipeline_commands(
     analysis_end_ms: int | None = None,
     net_roi: Iterable[float] | None = None,
     include_refinement: bool = True,
+    device: str = "auto",
 ) -> list[list[str]]:
     proxy_roi_args = [str(round(float(value))) for value in proxy_roi]
     source_roi_args = [str(round(float(value))) for value in source_roi]
@@ -301,6 +303,7 @@ def build_pipeline_commands(
             "--scale", str(coarse_scale), "--batch", str(batch),
             "--conf", str(conf), "--cache-dir", str(cache_dir / "coarse"),
             "--time-offset", str(analysis_start_seconds),
+            "--device", device,
             "--output", str(coarse_detections),
         ],
         [
@@ -317,6 +320,7 @@ def build_pipeline_commands(
             "--window", str(window_seconds),
             "--scale", str(refine_scale), "--conf", str(conf),
             "--batch", str(batch), "--cache-dir", str(cache_dir / "refine"),
+            "--device", device,
             *( ["--net-roi", *net_roi_args] if net_roi_args else [] ),
             "--output", str(refined_output),
         ])
@@ -435,6 +439,8 @@ def run_pipeline(
             "stdout": subprocess.PIPE,
             "stderr": subprocess.PIPE,
             "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
         }
         if os.name == "nt":
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP

@@ -23,6 +23,7 @@
 | 查看篮筐复核的准确率样本 | [`benchmarks/RIM_CHECK_RECALL_BENCHMARK_20261021.md`](benchmarks/RIM_CHECK_RECALL_BENCHMARK_20261021.md)、[`benchmarks/RIM_CHECK_BENCHMARK_20261020.md`](benchmarks/RIM_CHECK_BENCHMARK_20261020.md) |
 | 核对模型、数据和依赖授权 | [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md) 和 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) |
 | 发布前检查源码树 | [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md) |
+| 写宣传文案、核对对外数据 | [`promo/README.md`](promo/README.md) |
 
 ## 用户文档
 
@@ -56,6 +57,7 @@
 
 - [`RELEASE.md`](RELEASE.md)：源码预览发布、桌面/Android 运行时、签名、公证和许可证检查。
 - [`OPEN_SOURCE_AUDIT.md`](OPEN_SOURCE_AUDIT.md)：当前源码树的公开阻塞项。
+- [`promo/README.md`](promo/README.md)：对外宣传用过的口播稿、平台文案和每个数字的出处。
 - [`MODEL_AND_DATA_LICENSES.md`](MODEL_AND_DATA_LICENSES.md)：模型、训练数据、视频和推理依赖的授权边界。
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)：运行时依赖和研究参考的集中清单。
 - 根目录 [`CONTRIBUTING.md`](../CONTRIBUTING.md)、[`SECURITY.md`](../SECURITY.md)、[`CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md)、[`CHANGELOG.md`](../CHANGELOG.md) 和 [`LICENSE`](../LICENSE)。

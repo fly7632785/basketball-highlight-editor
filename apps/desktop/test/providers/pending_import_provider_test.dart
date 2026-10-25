@@ -12,12 +12,12 @@ void main() {
     }
   });
 
-  test('a dropped path is handed over once', () {
+  test('dropped paths are handed over once', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     final notifier = container.read(pendingImportProvider.notifier);
-    notifier.set('/v/game.mp4');
-    expect(notifier.take(), '/v/game.mp4');
+    notifier.set(['/v/part1.mp4', '/v/part2.mp4']);
+    expect(notifier.take(), ['/v/part1.mp4', '/v/part2.mp4']);
     expect(notifier.take(), isNull);
     expect(container.read(pendingImportProvider), isNull);
   });

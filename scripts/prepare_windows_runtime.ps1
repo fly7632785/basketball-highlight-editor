@@ -48,4 +48,26 @@ Copy-Item -Force "$Root\docs\architecture\SQLITE_SCHEMA_V1.sql" "$Out\docs\archi
 Copy-Item -Force $Ffmpeg "$Out\bin\ffmpeg.exe"
 Copy-Item -Force $Ffprobe "$Out\bin\ffprobe.exe"
 
+# 桌面端 DirectML 走 ONNX Runtime;它需要动态 batch 的模型,和移动端的
+# 固定 batch 模型不是同一个文件。仓库里没有就现场导出,导出失败只告警:
+# 没有 onnx 时引擎会自动回落到 CPU,不影响功能。
+# 注意:本文件没有 BOM,PowerShell 5.1 会按 ANSI 读,输出串只用 ASCII。
+$OnnxPath = "$Out\models\bball_model.onnx"
+if (-not (Test-Path $OnnxPath)) {
+    $RuntimePython = "$Out\python\python.exe"
+    Write-Host "Exporting dynamic-batch ONNX for DirectML..."
+    & $RuntimePython "$Out\scripts\export_mobile_model.py" `
+        --model "$Out\models\bball_model.pt" `
+        --output $OnnxPath --dynamic
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $OnnxPath)) {
+        Write-Warning "ONNX export failed; runtime will use CPU. Install requirements-dml.txt and rebuild to enable DirectML."
+    }
+}
+if (Test-Path $OnnxPath) {
+    Write-Host "runtime includes DirectML model: models/bball_model.onnx"
+    if (Test-Path "$OnnxPath.names.json") {
+        Write-Host "runtime includes class names: models/bball_model.onnx.names.json"
+    }
+}
+
 Write-Host "runtime ready: $Out"

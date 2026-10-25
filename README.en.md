@@ -65,6 +65,7 @@ You can keep or exclude candidates, change their boundaries, add notes, tag play
 - Show analysis stages, progress, and elapsed time; support cancellation, retry, and interrupted-job discovery after restart.
 - Review the source video, navigate candidates, keep or exclude them, add notes, adjust ranges, and add manual candidates.
 - Candidates are included by default; only excluded candidates are left out of export, so users do not have to confirm every item individually.
+- Put several videos of the same game into one project: they are ordered by recording time, analyzed one after another in a queue, and reviewed and exported together.
 - Export clips separately or merge them in event-time order; persist export history and statistics.
 - Use SQLite on desktop for project, ROI, candidate, review, job, and export state.
 
@@ -145,6 +146,8 @@ BHE is actively maintained, with new releases roughly every week. See [`CHANGELO
 
 | Version | Date | Highlights |
 |---|---|---|
+| v0.1.11 | 2026-10-23 | Desktop and Android check for updates in the app and verify the package before installing; Feedback copies diagnostics in one step and errors can be reported directly; engine logs record the environment, video specs, stage timings and failure reasons; Android packages are now signed with a fixed certificate so later versions install over the old one; fixed video playback in multi-part project review |
+| v0.1.10 | 2026-10-23 | One desktop project can hold several videos of the same game, ordered by recording time, analyzed in a queue, and reviewed and exported together; separately exported clips include the player name in the file name; save player lists as groups and import them into other projects; desktop writes engine logs to a fixed folder you can open from About; fixed analysis stuck at 1% on Chinese-locale Windows and export failures on iPhone spatial-audio videos |
 | v0.1.9 | 2026-10-22 | Android analyzes on the NPU on Snapdragon 8 Elite Gen 5 phones (about 4.5 minutes for a 10-minute video); Android adds the frame-by-frame rim check and coarse fallback candidates, matching desktop results; a camera that drifts mid-game no longer loses goals in the second half; mobile review adds rim-check and player filters, the timeline range editor, and project covers |
 | v0.1.8 | 2026-10-21 | The rim check only excludes on evidence it actually saw, cutting missed goals on three reviewed videos from 47 to 0; review list can filter by rim-check result; Windows decodes proxies and encodes exports on the GPU; fixed black borders on non-16:9 videos on Windows and unreadable text in the light theme |
 | v0.1.7 | 2026-10-20 | Standard analysis adds a frame-by-frame rim check that auto-excludes missed shots; drag a video onto the home screen to create a project, with project covers; redesigned clip range editing and number-key player tags; fixed a batch of review and export freezes and state bugs |

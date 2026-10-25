@@ -12,8 +12,9 @@ import '../providers/sidebar_provider.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/tokens.dart';
-import '../core/contact_actions.dart';
 import '../features/about/about_dialog.dart';
+import '../features/feedback/feedback_dialog.dart';
+import '../features/feedback/feedback_guide.dart';
 import 'cs_bottom_nav.dart';
 import 'cs_sidebar_shell.dart';
 
@@ -40,32 +41,36 @@ class _CsScaffoldState extends ConsumerState<CsScaffold> {
         if (wide) {
           final sidebarExtended = ref.watch(sidebarExtendedProvider);
           return Scaffold(
-            body: Row(
-              children: <Widget>[
-                CsSidebarShell(
-                  shell: shell,
-                  extended: sidebarExtended,
-                  onToggle: () =>
-                      ref.read(sidebarExtendedProvider.notifier).toggle(),
-                ),
-                Expanded(
-                  child: Column(
-                    children: <Widget>[
-                      CsTopBar(shell: shell),
-                      Expanded(child: shell),
-                    ],
+            body: FeedbackGuideHost(
+              child: Row(
+                children: <Widget>[
+                  CsSidebarShell(
+                    shell: shell,
+                    extended: sidebarExtended,
+                    onToggle: () =>
+                        ref.read(sidebarExtendedProvider.notifier).toggle(),
                   ),
-                ),
-              ],
+                  Expanded(
+                    child: Column(
+                      children: <Widget>[
+                        CsTopBar(shell: shell),
+                        Expanded(child: shell),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           );
         }
         return Scaffold(
-          body: Column(
-            children: <Widget>[
-              CsTopBar(shell: shell, compact: true),
-              Expanded(child: shell),
-            ],
+          body: FeedbackGuideHost(
+            child: Column(
+              children: <Widget>[
+                CsTopBar(shell: shell, compact: true),
+                Expanded(child: shell),
+              ],
+            ),
           ),
           bottomNavigationBar: CsBottomNav(shell: shell),
         );
@@ -135,6 +140,7 @@ class CsTopBar extends ConsumerWidget {
             const SizedBox(width: Spacing.md),
           ],
           PopupMenuButton<String>(
+            key: feedbackMenuKey,
             tooltip: l10n?.more ?? '更多',
             icon: Icon(
               LucideIcons.moreHorizontal,
@@ -207,20 +213,7 @@ class CsTopBar extends ConsumerWidget {
       await showCourtsideAboutDialog(context);
       return;
     }
-    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
-    final opened = await openExternalUri(
-      feedbackMailto(english: l10n?.localeName.startsWith('en') == true),
-    );
-    if (!opened && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            l10n?.feedbackMailClientMissing ??
-                '未找到可用的邮件客户端，请手动联系反馈邮箱。',
-          ),
-        ),
-      );
-    }
+    await showFeedbackDialog(context);
   }
 }
 

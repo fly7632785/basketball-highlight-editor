@@ -2268,6 +2268,48 @@ def test_list_candidates_returns_original_video_for_review(tmp_path: Path):
     assert result["review_video_path"] == str(source.resolve())
 
 
+def test_list_candidates_without_video_id_uses_single_project_video(tmp_path: Path):
+    project_root = tmp_path / "project"
+    source = tmp_path / "source.mp4"
+    service = EngineService()
+    service.handle("create_project", {"name": "单段审核源", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    store.link_video({
+        "source_path": str(source),
+        "source_size_bytes": 1,
+        "source_mtime_ns": 1,
+        "duration_ms": 20_000,
+        "width": 960,
+        "height": 720,
+    })
+
+    result = service.handle("list_candidates", {"project_root": str(project_root)})
+
+    assert result["review_video_path"] == str(source.resolve())
+
+
+def test_list_candidates_without_video_id_omits_review_source_for_multi_video(
+    tmp_path: Path,
+):
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "多段审核源", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    for index in range(2):
+        store.link_video({
+            "source_path": str(tmp_path / f"source-{index}.mp4"),
+            "source_size_bytes": 1,
+            "source_mtime_ns": 1,
+            "duration_ms": 20_000,
+            "width": 960,
+            "height": 720,
+        })
+
+    result = service.handle("list_candidates", {"project_root": str(project_root)})
+
+    assert result["review_video_path"] is None
+
+
 def test_start_export_uses_only_goal_reviews(tmp_path: Path):
     source = tmp_path / "source.mp4"
     subprocess.run(
@@ -2576,3 +2618,57 @@ def test_replace_candidates_refreshes_untouched_auto_exclusions(tmp_path: Path):
     assert candidate["review_status"] == "pending"
     assert candidate["review_reason"] is None
     assert candidate["note"] == "看过"
+
+
+def test_inference_device_reads_actual_backend_from_stage_outputs(tmp_path: Path):
+    """checkpoint 要记录脚本实际用的后端，而不是请求里的 auto。"""
+    coarse = tmp_path / "coarse.json"
+    coarse.write_text(json.dumps({"device": "DML", "records": []}), encoding="utf-8")
+    refined = tmp_path / "refined.json"
+    refined.write_text(json.dumps({"device": "dml", "results": []}), encoding="utf-8")
+
+    assert EngineService._inference_device(coarse, refined) == "dml"
+
+
+def test_inference_device_reports_cpu_when_any_stage_fell_back(tmp_path: Path):
+    coarse = tmp_path / "coarse.json"
+    coarse.write_text(json.dumps({"device": "dml"}), encoding="utf-8")
+    refined = tmp_path / "refined.json"
+    refined.write_text(json.dumps({"device": "cpu"}), encoding="utf-8")
+
+    assert EngineService._inference_device(coarse, refined) == "cpu"
+
+
+def test_inference_device_ignores_missing_or_unreadable_outputs(tmp_path: Path):
+    malformed = tmp_path / "bad.json"
+    malformed.write_text("{not json", encoding="utf-8")
+
+    # fast 模式没有 refined.json，坏文件也不能让分析收尾失败。
+    assert EngineService._inference_device(tmp_path / "missing.json", malformed, None) is None
+
+
+def test_inference_device_reads_actual_backend_from_stage_outputs(tmp_path: Path):
+    """checkpoint 要记录脚本实际用的后端，而不是请求里的 auto。"""
+    coarse = tmp_path / "coarse.json"
+    coarse.write_text(json.dumps({"device": "DML", "records": []}), encoding="utf-8")
+    refined = tmp_path / "refined.json"
+    refined.write_text(json.dumps({"device": "dml", "results": []}), encoding="utf-8")
+
+    assert EngineService._inference_device(coarse, refined) == "dml"
+
+
+def test_inference_device_reports_cpu_when_any_stage_fell_back(tmp_path: Path):
+    coarse = tmp_path / "coarse.json"
+    coarse.write_text(json.dumps({"device": "dml"}), encoding="utf-8")
+    refined = tmp_path / "refined.json"
+    refined.write_text(json.dumps({"device": "cpu"}), encoding="utf-8")
+
+    assert EngineService._inference_device(coarse, refined) == "cpu"
+
+
+def test_inference_device_ignores_missing_or_unreadable_outputs(tmp_path: Path):
+    malformed = tmp_path / "bad.json"
+    malformed.write_text("{not json", encoding="utf-8")
+
+    # fast 模式没有 refined.json，坏文件也不能让分析收尾失败。
+    assert EngineService._inference_device(tmp_path / "missing.json", malformed, None) is None

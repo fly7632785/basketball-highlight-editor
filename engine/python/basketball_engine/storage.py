@@ -120,6 +120,8 @@ class ProjectStore:
             ("source_fingerprint", "TEXT"),
             ("analysis_start_ms", "INTEGER NOT NULL DEFAULT 0"),
             ("analysis_end_ms", "INTEGER"),
+            ("sort_index", "INTEGER NOT NULL DEFAULT 0"),
+            ("recorded_at", "TEXT"),
         ):
             if name not in video_columns:
                 connection.execute(f"ALTER TABLE videos ADD COLUMN {name} {definition}")
@@ -267,12 +269,72 @@ class ProjectStore:
             raise LookupError("PROJECT_NOT_FOUND")
         return project
 
-    def latest_video(self) -> Dict[str, Any] | None:
+    def list_videos(self) -> list[Dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM videos ORDER BY sort_index, created_at"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def reorder_videos(self, video_ids: list[str]) -> list[Dict[str, Any]]:
+        if sorted(video_ids) != sorted(video["id"] for video in self.list_videos()):
+            raise ValueError("VIDEO_ORDER_INVALID")
+        timestamp = now_iso()
+        with self.connect() as connection:
+            for index, video_id in enumerate(video_ids):
+                connection.execute(
+                    "UPDATE videos SET sort_index = ?, updated_at = ? WHERE id = ?",
+                    (index, timestamp, video_id),
+                )
+        return self.list_videos()
+
+    def analysis_queue(self) -> Dict[str, Any]:
+        project = self.project()
+        if not project:
+            raise LookupError("PROJECT_NOT_FOUND")
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM videos ORDER BY created_at DESC LIMIT 1"
+                "SELECT value_json FROM settings WHERE key = ?",
+                (f"project:{project['id']}:analysis_queue",),
             ).fetchone()
-        return dict(row) if row else None
+        empty = {"video_ids": [], "before_seconds": 3, "after_seconds": 1}
+        if not row:
+            return empty
+        try:
+            value = json.loads(row["value_json"])
+        except (TypeError, json.JSONDecodeError):
+            return empty
+        if not isinstance(value, dict) or not isinstance(value.get("video_ids"), list):
+            return empty
+        return {**empty, **value}
+
+    def set_analysis_queue(
+        self,
+        video_ids: list[str],
+        before_seconds: float = 3,
+        after_seconds: float = 1,
+    ) -> Dict[str, Any]:
+        project = self.project()
+        if not project:
+            raise LookupError("PROJECT_NOT_FOUND")
+        known = {video["id"] for video in self.list_videos()}
+        if any(video_id not in known for video_id in video_ids) or len(set(video_ids)) != len(video_ids):
+            raise ValueError("ANALYSIS_QUEUE_INVALID")
+        queue = {
+            "video_ids": video_ids,
+            "before_seconds": before_seconds,
+            "after_seconds": after_seconds,
+        }
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO settings (key, value_json, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json,
+                                                updated_at = excluded.updated_at
+                """,
+                (f"project:{project['id']}:analysis_queue", json.dumps(queue), now_iso()),
+            )
+        return queue
 
     def video_source_paths(self) -> list[str]:
         with self.connect() as connection:
@@ -285,23 +347,46 @@ class ProjectStore:
         project = self.project()
         if not project:
             raise ValueError("PROJECT_NOT_FOUND")
-        video = self.latest_video()
-        if video:
-            video = dict(video)
-            source = Path(video["source_path"])
-            video["source_exists"] = source.is_file()
-            video["source_status"] = "linked" if source.is_file() else "missing"
-        roi = self.active_roi(video["id"]) if video else None
+        videos = self.video_summaries(project["id"])
+        video = videos[0] if videos else None
         return {
             "database_path": str(self.db_path),
             "project_root": str(self.root),
             "project": project,
             "analysis_mode": self.analysis_mode(),
             "workflow_draft": self.workflow_draft(),
-            "video": video,
-            "roi": roi,
+            "video": {key: value for key, value in video.items() if key not in {"roi", "analysis_job", "candidate_count"}} if video else None,
+            "roi": video["roi"] if video else None,
+            "videos": videos,
+            "analysis_queue": self.analysis_queue(),
             "statistics": self.statistics(),
         }
+
+    def video_summaries(self, project_id: str) -> list[Dict[str, Any]]:
+        with self.connect() as connection:
+            counts = {
+                row["video_id"]: row["count"]
+                for row in connection.execute(
+                    "SELECT video_id, COUNT(*) AS count FROM candidates GROUP BY video_id"
+                ).fetchall()
+            }
+        summaries = []
+        for video in self.list_videos():
+            source = Path(video["source_path"])
+            jobs = self.list_jobs(project_id, "analysis", video_id=video["id"], descending=True)
+            job = jobs[0] if jobs else None
+            summaries.append({
+                **video,
+                "source_exists": source.is_file(),
+                "source_status": "linked" if source.is_file() else "missing",
+                "roi": self.active_roi(video["id"]),
+                "analysis_job": {
+                    key: job.get(key)
+                    for key in ("id", "state", "stage", "progress", "error_code", "error_message", "finished_at")
+                } if job else None,
+                "candidate_count": counts.get(video["id"], 0),
+            })
+        return summaries
 
     @staticmethod
     def _source_fingerprint(path: str | Path) -> str | None:
@@ -336,6 +421,7 @@ class ProjectStore:
             metadata.get("audio_codec"),
             0,
             metadata.get("duration_ms"),
+            metadata.get("recorded_at"),
             timestamp,
             timestamp,
         )
@@ -345,13 +431,14 @@ class ProjectStore:
                 INSERT INTO videos (
                     id, project_id, source_path, source_size_bytes, source_mtime_ns,
                     source_fingerprint, duration_ms, width, height, fps, video_codec, audio_codec,
-                    analysis_start_ms, analysis_end_ms,
+                    analysis_start_ms, analysis_end_ms, recorded_at, sort_index,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                          (SELECT COALESCE(MAX(sort_index), -1) + 1 FROM videos), ?, ?)
                 """,
                 values,
             )
-        return {"id": video_id, **metadata}
+        return {**metadata, **(self.video(video_id) or {})}
 
     def video(self, video_id: str) -> Dict[str, Any] | None:
         with self.connect() as connection:
@@ -516,12 +603,13 @@ class ProjectStore:
             FROM candidates c
             LEFT JOIN candidate_reviews r ON r.candidate_id = c.id
             LEFT JOIN players p ON p.id = r.player_id
+            JOIN videos v ON v.id = c.video_id
         """
         params: Iterable[Any] = ()
         if video_id:
             query += " WHERE c.video_id = ?"
             params = (video_id,)
-        query += " ORDER BY c.event_time_ms"
+        query += " ORDER BY v.sort_index, v.created_at, c.event_time_ms"
         with self.connect() as connection:
             return [dict(row) for row in connection.execute(query, tuple(params)).fetchall()]
 
@@ -752,7 +840,7 @@ class ProjectStore:
             raise ValueError("PROJECT_NOT_INITIALIZED")
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM players WHERE project_id = ? ORDER BY name COLLATE NOCASE, created_at",
+                "SELECT * FROM players WHERE project_id = ? ORDER BY created_at, rowid",
                 (project["id"],),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -1209,7 +1297,7 @@ class ProjectStore:
     def statistics(self) -> Dict[str, Any]:
         with self.connect() as connection:
             project = connection.execute("SELECT * FROM projects LIMIT 1").fetchone()
-            video = connection.execute("SELECT * FROM videos ORDER BY created_at DESC LIMIT 1").fetchone()
+            video = connection.execute("SELECT * FROM videos ORDER BY sort_index, created_at LIMIT 1").fetchone()
             review_rows = connection.execute(
                 """
                 SELECT COALESCE(r.status, 'pending') AS status,

@@ -27,7 +27,7 @@ if ($Ffprobe) { $prepareArgs.Ffprobe = $Ffprobe }
 
 Push-Location "$Root\apps\desktop"
 try {
-    & $Flutter build windows --release
+    & $Flutter build windows --release --dart-define "BHE_VERSION=$Version"
     if ($LASTEXITCODE -ne 0) { Write-Error "flutter build windows failed" }
 } finally {
     Pop-Location

@@ -65,6 +65,8 @@
 | `inspect_video` | 读取视频元数据和磁盘需求 |
 | `link_video` | 引用原始视频 |
 | `relink_video` | 原始视频被移动后，更新已有视频的引用路径并重新读取元数据 |
+| `reorder_videos` | 调整项目内多段视频的先后顺序 |
+| `set_analysis_queue` | 保存项目内等待依次分析的视频顺序，供重开项目后继续排队 |
 | `extract_preview` | 从原始视频提取 ROI 页面预览帧 |
 | `save_roi` | 保存篮筐区域和校准数据 |
 | `start_analysis` | 异步启动代理、粗扫、候选生成和精筛任务 |
@@ -73,7 +75,7 @@
 | `get_latest_job` | 查询指定项目/视频最近一条分析或导出任务，用于重开项目恢复终态信息 |
 | `retry_analysis` | 结束已中断的分析任务并从头重新开始，不覆盖原始视频 |
 | `cancel_job` | 请求取消任务 |
-| `list_candidates` | 按事件时间查询候选、保留/排除语义和审核用代理视频路径 |
+| `list_candidates` | 按事件时间查询候选、保留/排除语义和审核用代理视频路径；不传 `video_id` 时按视频顺序返回整个项目的候选 |
 | `create_manual_candidate` | 从原视频当前时间段创建手动候选，默认保留并可导出 |
 | `delete_player` | 删除项目球员，并将已关联候选置为未标记 |
 | `start_review` | 记录开始审核某个候选的时间 |
@@ -81,7 +83,7 @@
 | `list_review_history` | 查询候选的审核操作历史 |
 | `update_clip_range` | 修改片段起止时间 |
 | `update_clip_ranges` | 按进球前后秒数批量修改候选片段范围，可保留或覆盖手动调整 |
-| `start_export` | 异步导出所有未排除的候选，返回可由 `get_job` 查询的任务 |
+| `start_export` | 异步导出所有未排除的候选，返回可由 `get_job` 查询的任务；不传 `video_id` 时导出整个项目的多段视频 |
 | `retry_export` | 使用上次导出参数重新启动失败或取消的导出任务 |
 | `list_exports` | 查询项目最近的导出记录和耗时统计 |
 | `cleanup_artifacts` | 清理可重建中间文件 |
@@ -200,9 +202,15 @@ JOB_CANCELLED
   "project": {},
   "video": {},
   "roi": {},
+  "videos": [],
+  "analysis_queue": {"video_ids": [], "before_seconds": 6, "after_seconds": 3},
   "statistics": {}
 }
 ```
+
+一个项目可以包含多段视频（同一场比赛被相机切成的多个文件）。`videos` 按 `sort_index` 排序，每项是视频记录加上 `source_exists`、`source_status`、`roi`（该段生效的篮筐区域）、`analysis_job`（该段最近一次分析任务的 `id`、`state`、`stage`、`progress`、`error_code`、`error_message`、`finished_at`）和 `candidate_count`。`video` 和 `roi` 是排在第一段的视频，单段项目与旧版含义相同。`analysis_queue` 是 `set_analysis_queue` 保存的排队记录 `{ "video_ids": [...], "before_seconds": 6, "after_seconds": 3 }`；引擎同一时间只运行一个重型任务，调用方按队列顺序逐段调用 `start_analysis`，完成一段后更新队列。
+
+`link_video` 把新视频追加到项目末尾；`inspect_video` 和视频记录里的 `recorded_at` 取自容器元数据 `creation_time`，没有时为 `null`。`reorder_videos` 的 payload 为 `{ "project_root": "...", "video_ids": [...] }`，必须包含项目里的全部视频。
 
 该命令只打开包含有效 `project.db` 和项目记录的目录，不会为不存在或无效的目录创建数据库或目录。
 
@@ -230,16 +238,26 @@ JOB_CANCELLED
 
 ### `list_candidates`
 
-成功响应除 `candidates` 外，可返回最近一次完整分析生成且仍存在的审核代理视频：
+成功响应除 `candidates` 外，可返回审核播放使用的视频源：
 
 ```json
 {
   "candidates": [],
-  "review_video_path": "/path/to/project/artifacts/proxies/video_key.mp4"
+  "review_video_path": "/path/to/source/video.mp4"
 }
 ```
 
-`review_video_path` 仅用于审核播放；原始视频路径仍由 `videos.source_path` 保存并只用于精确导出。代理不存在时该字段为 `null`，调用方应回退到原始视频或提示重新生成分析。
+`review_video_path` 仅用于审核播放，当前实现返回所选视频 `videos.source_path` 的绝对路径（尚未生成代理视频）；原始视频路径仍由 `videos.source_path` 保存并只用于精确导出。该字段是可选优化：
+
+- 传 `video_id` 时，返回该视频的审核播放源；
+- 不传 `video_id` 且项目只有一段视频时，返回该唯一视频的审核播放源；
+- 不传 `video_id` 且项目有多段视频时返回 `null`，调用方应按当前段使用对应的 `videos.source_path`。
+
+字段为 `null` 或为空时，调用方必须回退到当前视频的 `source_path`。`preview_path` 是审核封面用的单帧图片，不是视频，任何情况下都不能作为播放源。
+
+不传 `video_id` 时，候选先按视频顺序、再按事件时间排列，每条候选的 `video_id` 指明所属视频，项目有多段视频时还带 `segment`（从 1 开始的段号），`preview_path` 来自各自的视频。
+
+整个项目导出（`start_export` 不传 `video_id`）时，导出快照里每条候选带上 `video_id`，项目有多段视频时还带 `segment`（从 1 开始的段号）。每个片段从各自的原始视频剪切；分辨率与第一个片段不同的视频会缩放并加黑边到第一个片段的画面尺寸，保证合并导出可以直接拼接。单独导出的文件名带段号，例如 `goal_001_s2_42.00s_科比.mp4`。导出记录的 `video_id` 为 `null`。
 
 每个候选都返回 `selection_status`：`included` 表示默认保留，`excluded` 表示用户已打叉剔除。手动候选的 `detector_version` 为 `manual-v1`，`confidence` 为 `manual`，证据中的 `source` 为 `manual`。
 旧版 `review_status` 仍保留用于兼容历史项目；导出以 `selection_status` 为准，未排除候选都会进入输出。
@@ -287,4 +305,4 @@ JOB_CANCELLED
 
 安全边界：`roots` 必须由调用方显式提供；Engine 只检查每个 root 自身及其一级子目录中的 `project.db`，不递归扫描用户目录，也不跟随一级子目录中的符号链接。结果按项目数据库最近修改时间倒序排列。
 
-当前已可运行的最小闭环命令：`hello`、`create_project`、`update_project_settings`、`open_project`、`delete_project`、`list_recent_projects`、`inspect_video`、`link_video`、`relink_video`、`extract_preview`、`save_roi`、`start_analysis`、`retry_analysis`、`cancel_job`、`get_job`、`get_active_jobs`、`get_latest_job`、`list_candidates`、`create_manual_candidate`、`delete_player`、`start_review`、`review_candidate`、`list_review_history`、`update_clip_range`、`update_clip_ranges`、`start_export`、`retry_export`、`get_statistics`、`set_telemetry_consent`、`cleanup_artifacts`。
+当前已可运行的最小闭环命令：`hello`、`create_project`、`update_project_settings`、`open_project`、`delete_project`、`list_recent_projects`、`inspect_video`、`link_video`、`relink_video`、`reorder_videos`、`set_analysis_queue`、`extract_preview`、`save_roi`、`start_analysis`、`retry_analysis`、`cancel_job`、`get_job`、`get_active_jobs`、`get_latest_job`、`list_candidates`、`create_manual_candidate`、`delete_player`、`start_review`、`review_candidate`、`list_review_history`、`update_clip_range`、`update_clip_ranges`、`start_export`、`retry_export`、`get_statistics`、`set_telemetry_consent`、`cleanup_artifacts`。

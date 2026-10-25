@@ -41,6 +41,7 @@ apps/desktop/assets/fonts/
 apps/mobile/assets/models/
 apps/mobile/android/app/src/main/jniLibs/**/*.so
 models/*.onnx
+models/*.onnx.names.json
 /bin/
 /.zcode/
 .worktrees/

@@ -10,11 +10,14 @@ from pathlib import Path
 import sys
 
 import cv2
-import torch
-from ultralytics import YOLO
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from basketball_highlight.inference import (
+    current_device,
+    load_detector,
+    select_device as resolve_device,
+)
 from basketball_highlight.roi import hoop_bbox_to_rim_roi, select_stable_hoop
 from basketball_highlight.sampling import canonical_sample_times, first_frame_index
 
@@ -49,14 +52,18 @@ def parse_args() -> argparse.Namespace:
     # bundled mobile ONNX model. PT and ONNX can now be compared without an
     # unrecorded 1280-vs-640 preprocessing change.
     parser.add_argument("--imgsz", type=int, default=640)
-    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps"))
+    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda", "dml"))
     return parser.parse_args()
 
 
 def select_device(requested: str) -> str:
-    if requested != "auto":
-        return requested
-    return "mps" if torch.backends.mps.is_available() else "cpu"
+    """解析推理设备;`auto` 会按 cuda > dml > mps > cpu 选,详见 inference.py。"""
+    return resolve_device(requested)
+
+
+def load_yolo_model(model_path: Path):
+    """按当前设备加载检测器:DirectML 走 ORT,其余走 ultralytics。"""
+    return load_detector(model_path)
 
 
 def _is_hoop(name: object) -> bool:
@@ -132,8 +139,10 @@ def detect(args: argparse.Namespace) -> dict:
         cap.release()
         raise ValueError("VIDEO_DIMENSION_INVALID")
 
-    model = YOLO(str(model_path))
     device = select_device(args.device)
+    model = load_yolo_model(model_path)
+    # 实际后端可能回落(onnx 缺失 / DML 不可用),以模型为准。
+    device = current_device()
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     end_seconds = min(start_seconds + args.duration, total_frames / fps)
     sample_times = canonical_sample_times(start_seconds, end_seconds, args.sample_fps)

@@ -27,6 +27,31 @@ void main() {
     );
   });
 
+  test('文件找不到、没有权限、磁盘满时给出明确说明', () {
+    final missing = userFacingNotice(
+      const EngineException(
+        'FILE_NOT_FOUND',
+        r'D:\Videos\BasketballProjects',
+      ),
+    );
+    expect(missing.title, r'找不到文件或文件夹：D:\Videos\BasketballProjects');
+    expect(missing.description, contains('重新定位视频'));
+
+    final wrapped = userFacingNotice(
+      Exception('视频预览加载失败：FILE_NOT_FOUND: /movies/game.mp4'),
+    );
+    expect(wrapped.title, '找不到文件或文件夹：/movies/game.mp4');
+
+    expect(
+      userFacingNotice(const EngineException('FILE_ACCESS_DENIED', '/data/project.db')).title,
+      '没有权限访问：/data/project.db',
+    );
+    expect(
+      userFacingNotice(const EngineException('DISK_FULL', '[Errno 28] No space left on device')),
+      (title: '磁盘空间不足', description: '请清理磁盘空间后再试。'),
+    );
+  });
+
   group('ProjectNotifier.selectVideo', () {
     test(
       '更新 videoPath/previewPath,自动 ROI 失败时记录 roiSuggestionError,push 成功 notice',
@@ -807,6 +832,22 @@ void main() {
       expect(session.resetCalls, 1);
     });
 
+    test('导入分组只新建项目里还没有的球员', () async {
+      final session = _FakeProjectSession();
+      final container = playerContainer(session);
+      final notifier = container.read(projectProvider.notifier);
+      await notifier.createPlayer('科比');
+      await notifier.importPlayers(['科比', '罗斯', '小夏']);
+      expect(
+        [
+          for (final player in container.read(projectProvider).players)
+            player['name'],
+        ],
+        ['科比', '罗斯', '小夏'],
+      );
+      expect(container.read(projectProvider).busy, isFalse);
+    });
+
     test('删除标签只清除关联标签，不重新拉取全部候选', () async {
       final session = _FakeProjectSession()
         ..players = [
@@ -1087,7 +1128,7 @@ class _FakeProjectSession extends ProjectSession {
   };
 
   @override
-  Future<JsonMap> extractPreview({int timeMs = 1000}) async {
+  Future<JsonMap> extractPreview({int timeMs = 1000, String? videoId}) async {
     await previewGate?.future;
     if (previewDelay > Duration.zero) await Future<void>.delayed(previewDelay);
     return <String, dynamic>{'path': '/tmp/preview.jpg'};
@@ -1095,6 +1136,7 @@ class _FakeProjectSession extends ProjectSession {
 
   @override
   Future<JsonMap> suggestRoi({
+    String? videoId,
     String? modelPath,
     int? startMs,
     double? sampleFps,
@@ -1121,6 +1163,7 @@ class _FakeProjectSession extends ProjectSession {
     required num y2,
     String? name,
     JsonMap? calibration,
+    String? videoId,
   }) async {
     if (throwOnSaveRoi) throw StateError('save_roi failed');
     return <String, dynamic>{};
@@ -1128,6 +1171,7 @@ class _FakeProjectSession extends ProjectSession {
 
   @override
   Future<JsonMap> startAnalysis({
+    String? videoId,
     String? mode,
     double? sampleFps,
     double? windowSeconds,
@@ -1273,6 +1317,7 @@ class _FakeProjectSession extends ProjectSession {
     String? outputPath,
     List<String>? playerIds,
     bool? includeUnassigned,
+    String effect = 'none',
   }) async => <String, dynamic>{
     'job': <String, dynamic>{'id': 'export-1', 'state': 'running'},
   };

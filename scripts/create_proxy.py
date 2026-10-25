@@ -36,6 +36,8 @@ def probe_duration(ffprobe, video):
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=15,
     )
     return float(result.stdout.strip())
@@ -131,7 +133,7 @@ def build_proxy_command(
 
 
 def run_proxy_command(command, source_duration):
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     assert process.stdout is not None
     for line in process.stdout:
         progress = progress_from_ffmpeg_line(line, source_duration)

@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
+import 'app_updater.dart';
 import 'clip_range_editor.dart';
 import 'mobile_app_state.dart';
 import 'mobile_theme.dart';
@@ -31,6 +32,10 @@ class BheMobileApp extends StatefulWidget {
 
 class _BheMobileAppState extends State<BheMobileApp> {
   final state = MobileAppState();
+  final updater = AppUpdater();
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  final _messengerKey = GlobalKey<ScaffoldMessengerState>();
+  Timer? _updateCheckTimer;
   _WorkspaceSection section = _WorkspaceSection.project;
   bool dark = true;
   Locale _locale = BheLocale.fromSystem(
@@ -47,6 +52,30 @@ class _BheMobileAppState extends State<BheMobileApp> {
     super.initState();
     state.addListener(_handleStateChange);
     unawaited(_loadLocale());
+    _updateCheckTimer = Timer(const Duration(seconds: 5), _autoCheckUpdate);
+  }
+
+  Future<void> _autoCheckUpdate() async {
+    if (!await updater.autoCheck() || !mounted) return;
+    final context = _navigatorKey.currentContext;
+    final version = updater.manifest?.version;
+    if (context == null || version == null || !context.mounted) return;
+    _messengerKey.currentState?.showSnackBar(
+      SnackBar(
+        content: Text(context.bheText('发现新版本 v$version')),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: context.bheText('查看'),
+          onPressed: () {
+            final sheetContext = _navigatorKey.currentContext;
+            if (sheetContext != null) {
+              unawaited(_showUpdateSheet(sheetContext, updater, state));
+            }
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _loadLocale() async {
@@ -166,6 +195,8 @@ class _BheMobileAppState extends State<BheMobileApp> {
 
   @override
   void dispose() {
+    _updateCheckTimer?.cancel();
+    updater.dispose();
     state.removeListener(_handleStateChange);
     state.dispose();
     super.dispose();
@@ -206,6 +237,8 @@ class _BheMobileAppState extends State<BheMobileApp> {
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
     title: 'BHE',
+    navigatorKey: _navigatorKey,
+    scaffoldMessengerKey: _messengerKey,
     locale: _locale,
     localizationsDelegates: BheLocalizations.localizationsDelegates,
     supportedLocales: BheLocalizations.supportedLocales,
@@ -229,6 +262,8 @@ class _BheMobileAppState extends State<BheMobileApp> {
             onSectionChanged: (value) => setState(() => section = value),
             onCreateProject: () =>
                 unawaited(state.createNewProjectAndPickVideo()),
+            onCheckUpdate: () =>
+                unawaited(_showUpdateSheet(context, updater, state)),
           ),
         ),
       ),
@@ -245,6 +280,7 @@ class _AppShell extends StatelessWidget {
     required this.section,
     required this.onSectionChanged,
     required this.onCreateProject,
+    required this.onCheckUpdate,
   });
 
   final MobileAppState state;
@@ -254,6 +290,7 @@ class _AppShell extends StatelessWidget {
   final _WorkspaceSection section;
   final ValueChanged<_WorkspaceSection> onSectionChanged;
   final VoidCallback onCreateProject;
+  final VoidCallback onCheckUpdate;
 
   @override
   Widget build(BuildContext context) {
@@ -292,6 +329,7 @@ class _AppShell extends StatelessWidget {
                   ? null
                   : () => onSectionChanged(_WorkspaceSection.export),
               onCreateProject: onCreateProject,
+              onCheckUpdate: onCheckUpdate,
             ),
             Expanded(child: page),
           ],
@@ -311,6 +349,7 @@ class _TopBar extends StatelessWidget {
     required this.onOpenProject,
     required this.onOpenExport,
     required this.onCreateProject,
+    required this.onCheckUpdate,
   });
 
   final MobileAppState state;
@@ -321,6 +360,7 @@ class _TopBar extends StatelessWidget {
   final VoidCallback onOpenProject;
   final VoidCallback? onOpenExport;
   final VoidCallback onCreateProject;
+  final VoidCallback onCheckUpdate;
 
   @override
   Widget build(BuildContext context) {
@@ -429,6 +469,9 @@ class _TopBar extends StatelessWidget {
                 case 'delete':
                   await _confirmDelete(context, state);
                   break;
+                case 'update':
+                  onCheckUpdate();
+                  break;
               }
             },
             itemBuilder: (context) => [
@@ -447,6 +490,10 @@ class _TopBar extends StatelessWidget {
               PopupMenuItem(
                 value: 'delete',
                 child: Text(l10n?.deleteProject ?? '删除当前项目'),
+              ),
+              PopupMenuItem(
+                value: 'update',
+                child: Text(context.bheText('检查更新')),
               ),
             ],
           ),
@@ -4580,6 +4627,7 @@ Future<void> _showPlayerPicker(
     isScrollControlled: true,
     useSafeArea: true,
     builder: (_) => _PlayerTagSheet(
+      state: state,
       players: state.project.players,
       initialPlayer: candidate.player,
       onRemovePlayer: state.removePlayer,
@@ -4597,10 +4645,12 @@ Future<void> _showPlayerPicker(
 
 class _PlayerTagSheet extends StatefulWidget {
   const _PlayerTagSheet({
+    required this.state,
     required this.players,
     required this.onRemovePlayer,
     this.initialPlayer,
   });
+  final MobileAppState state;
   final List<String> players;
   final String? initialPlayer;
   final ValueChanged<String> onRemovePlayer;
@@ -4640,6 +4690,16 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
       if (_selected == player) _selected = null;
     });
     widget.onRemovePlayer(player);
+  }
+
+  Future<void> _openGroups() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _PlayerGroupsSheet(state: widget.state),
+    );
+    if (mounted) setState(() => _players = [...widget.state.project.players]);
   }
 
   @override
@@ -4714,10 +4774,22 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
               onSubmitted: (value) => _close(value.trim()),
             )
           else
-            OutlinedButton.icon(
-              onPressed: () => setState(() => _creating = true),
-              icon: const Icon(LucideIcons.plus, size: 17),
-              label: Text(context.bheText('新建球员标签')),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => setState(() => _creating = true),
+                    icon: const Icon(LucideIcons.plus, size: 17),
+                    label: Text(context.bheText('新建球员标签')),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                OutlinedButton.icon(
+                  onPressed: _openGroups,
+                  icon: const Icon(LucideIcons.users, size: 17),
+                  label: Text(context.bheText('球员分组')),
+                ),
+              ],
             ),
           const SizedBox(height: 16),
           Row(
@@ -4736,6 +4808,97 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _PlayerGroupsSheet extends StatelessWidget {
+  const _PlayerGroupsSheet({required this.state});
+  final MobileAppState state;
+
+  Future<void> _saveCurrent(BuildContext context) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(context.bheText('存为分组')),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: context.bheText('例如：周六球队'),
+          ),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(context.bheText('取消')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: Text(context.bheText('保存')),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.trim().isEmpty) return;
+    await state.savePlayerGroup(name.trim());
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: state,
+    builder: (context, _) => _SheetFrame(
+      title: context.bheText('球员分组'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (state.playerGroups.isEmpty)
+            Text(
+              context.bheText('还没有分组。把当前项目的球员存为分组后，其他项目可以一键导入。'),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          for (final group in state.playerGroups)
+            ListTile(
+              key: ValueKey('player-group-${group.name}'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(group.name),
+              subtitle: Text(
+                group.players.join('、'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextButton(
+                    onPressed: () {
+                      state.importPlayers(group.players);
+                      Navigator.pop(context);
+                    },
+                    child: Text(context.bheText('导入')),
+                  ),
+                  IconButton(
+                    tooltip: '${context.bheText('删除')}${group.name}',
+                    onPressed: () =>
+                        unawaited(state.deletePlayerGroup(group.name)),
+                    icon: const Icon(LucideIcons.trash2, size: 17),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            onPressed: state.project.players.isEmpty
+                ? null
+                : () => _saveCurrent(context),
+            icon: const Icon(LucideIcons.save, size: 17),
+            label: Text(context.bheText('把当前球员存为分组')),
           ),
         ],
       ),
@@ -6037,3 +6200,176 @@ String _formatSeekStep(int milliseconds) {
 }
 
 String _formatSpeed(double value) => '${value.toString()}x';
+
+Future<void> _showUpdateSheet(
+  BuildContext context,
+  AppUpdater updater,
+  MobileAppState state,
+) {
+  if (updater.status == UpdateStatus.idle ||
+      updater.status == UpdateStatus.upToDate ||
+      updater.status == UpdateStatus.failed && updater.manifest == null) {
+    unawaited(updater.check(manual: true));
+  }
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (context) => AnimatedBuilder(
+      animation: Listenable.merge([updater, state]),
+      builder: (context, _) => _UpdateSheet(updater: updater, state: state),
+    ),
+  );
+}
+
+class _UpdateSheet extends StatelessWidget {
+  const _UpdateSheet({required this.updater, required this.state});
+
+  final AppUpdater updater;
+  final MobileAppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+    final english = l10n?.localeName.startsWith('en') == true;
+    final manifest = updater.manifest;
+    final package = updater.package;
+    final status = updater.status;
+    final hasUpdate = manifest != null &&
+        package != null &&
+        status != UpdateStatus.checking &&
+        status != UpdateStatus.upToDate;
+    final busy = state.analysing || state.exporting;
+    String megabytes(int bytes) => (bytes / 1024 / 1024).toStringAsFixed(0);
+
+    final children = <Widget>[];
+    if (status == UpdateStatus.idle || status == UpdateStatus.checking) {
+      children.add(
+        Row(
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 10),
+            Text(context.bheText('正在检查更新…')),
+          ],
+        ),
+      );
+    } else if (status == UpdateStatus.upToDate) {
+      children.add(
+        Text(context.bheText('已经是最新版本（v${updater.currentVersion}）')),
+      );
+    } else if (!hasUpdate) {
+      children.addAll([
+        Text(
+          context.bheText(updater.error ?? ''),
+          style: theme.textTheme.bodySmall?.copyWith(color: BhePalette.error),
+        ),
+        const SizedBox(height: 16),
+        FilledButton(
+          onPressed: () => updater.check(manual: true),
+          child: Text(context.bheText('重新检查')),
+        ),
+      ]);
+    }
+
+    if (hasUpdate) {
+      children.addAll([
+        Text(
+          context.bheText('新版本 v${manifest.version}'),
+          style: theme.textTheme.titleMedium,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '${context.bheText('当前版本')} v${updater.currentVersion} · ${megabytes(package.size)} MB',
+          style: theme.textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        for (final line in manifest
+            .notesFor(english: english)
+            .split(RegExp('[；;]'))
+            .map((line) => line.trim())
+            .where((line) => line.isNotEmpty))
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text('· $line', style: theme.textTheme.bodySmall),
+          ),
+        const SizedBox(height: 16),
+      ]);
+      switch (status) {
+        case UpdateStatus.available:
+          children.addAll([
+            FilledButton.icon(
+              onPressed: updater.download,
+              icon: const Icon(LucideIcons.download, size: 17),
+              label: Text(context.bheText('下载更新')),
+            ),
+            TextButton(
+              onPressed: () async {
+                await updater.skip();
+                if (context.mounted) Navigator.pop(context);
+              },
+              child: Text(context.bheText('跳过这个版本')),
+            ),
+          ]);
+        case UpdateStatus.downloading:
+          children.addAll([
+            LinearProgressIndicator(value: updater.received / package.size),
+            const SizedBox(height: 6),
+            Text(
+              context.bheText(
+                '已下载 ${megabytes(updater.received)} / ${megabytes(package.size)} MB',
+              ),
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: updater.cancelDownload,
+              child: Text(context.bheText('取消')),
+            ),
+          ]);
+        case UpdateStatus.failed:
+          children.addAll([
+            Text(
+              context.bheText(updater.error ?? ''),
+              style: theme.textTheme.bodySmall?.copyWith(color: BhePalette.error),
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: updater.download,
+              child: Text(context.bheText('继续下载')),
+            ),
+          ]);
+        case UpdateStatus.ready:
+          children.addAll([
+            Text(
+              context.bheText(
+                busy
+                    ? '现在有分析或导出在进行，等它完成再安装，安装时 BHE 会被关闭。'
+                    : '下载完成。安装时 BHE 会被关闭，项目会保留。第一次安装需要允许 BHE「安装未知应用」。',
+              ),
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: busy ? null : updater.install,
+              icon: const Icon(LucideIcons.packageOpen, size: 17),
+              label: Text(context.bheText('安装更新')),
+            ),
+          ]);
+        default:
+          break;
+      }
+    }
+
+    return _SheetFrame(
+      title: context.bheText('检查更新'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      ),
+    );
+  }
+}

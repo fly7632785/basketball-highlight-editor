@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
 
 import '../../components/cs_button.dart';
@@ -15,6 +16,7 @@ import '../../providers/playback_coordinator.dart';
 import '../../providers/export_output_picker.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
+import 'game_stats.dart';
 
 /// Export 屏:汇总当前保留片段 + 合并/分别导出 CTA + 历史。
 ///
@@ -34,7 +36,26 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
   (String?, String?)? _playerFilterScope;
   bool _showFastRisk = true;
   bool _choosingOutput = false;
-  bool _mergeMode = true;
+  String _mode = 'merge';
+  String _effect = 'none';
+
+  static const _effectKey = 'export_goal_effect';
+
+  @override
+  void initState() {
+    super.initState();
+    SharedPreferences.getInstance().then((prefs) {
+      final saved = prefs.getString(_effectKey);
+      if (mounted && saved != null && saved != _effect && _kEffects.contains(saved)) {
+        setState(() => _effect = saved);
+      }
+    });
+  }
+
+  void _setEffect(String value) {
+    setState(() => _effect = value);
+    SharedPreferences.getInstance().then((prefs) => prefs.setString(_effectKey, value));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -45,9 +66,16 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     final c = AppColors.of(context);
     final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
 
+    // 标签全删了以后，「按标签导出」的卡片不再显示，回到合并导出。
+    final mode = state.players.isEmpty && _mode == 'merge_by_player'
+        ? 'merge'
+        : _mode;
     final includedCandidates = _filteredCandidates(state);
     final includedCount = includedCandidates.length;
-    final durationMs = includedCandidates.fold<int>(0, _clipDuration);
+    final durationMs = includedCandidates.fold<int>(
+      0,
+      (total, item) => _effectDuration(total, item, _effect),
+    );
     final exportRunning = state.exportRunning;
     final exportRecoverable =
         state.exportJob?['recoverable'] == true && !exportRunning;
@@ -161,8 +189,8 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                 title: l10n?.exportMergeTitle ?? '合并成一个视频',
                 description:
                     l10n?.exportMergeDescription ?? '按时间顺序拼接为一个 MP4，适合直接分享。',
-                selected: _mergeMode,
-                onTap: () => setState(() => _mergeMode = true),
+                selected: mode == 'merge',
+                onTap: () => setState(() => _mode = 'merge'),
               ),
             ),
             const SizedBox(width: Spacing.sm),
@@ -173,13 +201,45 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                 description:
                     l10n?.exportSeparateDescription ??
                     '每段一个文件，放进同一个文件夹，适合二次剪辑。',
-                selected: !_mergeMode,
-                onTap: () => setState(() => _mergeMode = false),
+                selected: mode == 'separate',
+                onTap: () => setState(() => _mode = 'separate'),
               ),
             ),
+            if (state.players.isNotEmpty) ...[
+              const SizedBox(width: Spacing.sm),
+              Expanded(
+                child: _ModeCard(
+                  key: const Key('export-mode-by-player'),
+                  title: context.bheText('每个标签各合成一个视频'),
+                  description: context.bheText(
+                    '只导出选中的标签，每个标签一个 MP4，文件名就是标签名，放进同一个文件夹。',
+                  ),
+                  selected: mode == 'merge_by_player',
+                  onTap: () => setState(() => _mode = 'merge_by_player'),
+                ),
+              ),
+            ],
           ],
         ),
         const SizedBox(height: Spacing.md),
+        _ExportSection(
+          title: context.bheText('进球效果'),
+          hint: context.bheText('可选，导出时作用于每个进球片段'),
+          child: Column(
+            key: const Key('export-goal-effect'),
+            children: [
+              for (final option in _effectOptions(context))
+                _EffectOption(
+                  key: Key('export-effect-${option.value}'),
+                  title: option.title,
+                  description: option.description,
+                  selected: _effect == option.value,
+                  onTap: busy ? null : () => _setEffect(option.value),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: Spacing.sm),
         CsCard(
           child: Row(
             children: [
@@ -264,7 +324,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               size: CsButtonSize.lg,
               isLoading: busy,
               onPressed: includedCount > 0 && !busy
-                  ? () => _chooseOutput(notifier, merge: _mergeMode)
+                  ? () => _chooseOutput(notifier, mode: mode)
                   : null,
             ),
             ConstrainedBox(
@@ -283,6 +343,12 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
             ),
           ],
         ),
+        if (state.candidates.isNotEmpty) ...[
+          const SizedBox(height: Spacing.xl),
+          _GameStatsSection(
+            stats: computeGameStats(state.candidates, state.players),
+          ),
+        ],
       ],
     );
 
@@ -407,8 +473,9 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
 
   Future<void> _chooseOutput(
     ProjectNotifier notifier, {
-    required bool merge,
+    required String mode,
   }) async {
+    final merge = mode == 'merge';
     if (_choosingOutput) return;
     setState(() => _choosingOutput = true);
     final videoId = ref.read(projectProvider).video?['id'];
@@ -433,7 +500,8 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
         return;
       }
       await notifier.export(
-        merge ? 'merge' : 'separate',
+        mode,
+        effect: _effect,
         outputPath: merge ? path : null,
         outputDir: merge ? null : path,
         playerIds: playerIds,
@@ -496,6 +564,169 @@ class _ExportSection extends StatelessWidget {
           child,
         ],
       ),
+    );
+  }
+}
+
+class _GameStatsSection extends StatelessWidget {
+  const _GameStatsSection({required this.stats});
+
+  final GameStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final theme = Theme.of(context);
+    final hitRate = stats.estimatedHitRate;
+    final playerRows = [
+      for (final item in stats.playerCounts)
+        (label: item.name, count: item.count, color: c.player(item.index)),
+      if (stats.unassignedCount > 0)
+        (
+          label: context.bheText('未标记'),
+          count: stats.unassignedCount,
+          color: c.textTertiary,
+        ),
+    ];
+    final timeRows = [
+      for (final bucket in stats.timeBuckets)
+        (
+          label: context.bheText(
+            bucket.segment == null
+                ? '${bucket.startMinute}–${bucket.endMinute} 分钟'
+                : '第 ${bucket.segment} 段 ${bucket.startMinute}–${bucket.endMinute} 分钟',
+          ),
+          count: bucket.count,
+          color: c.orange,
+        ),
+    ];
+    return _ExportSection(
+      title: context.bheText('比赛数据'),
+      hint: context.bheText('按当前审核结果统计'),
+      child: Column(
+        key: const Key('export-game-stats'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _ExportStat(
+                  label: context.bheText('候选'),
+                  value: '${stats.candidateCount}',
+                ),
+              ),
+              Expanded(
+                child: _ExportStat(
+                  label: context.bheText('进球（保留）'),
+                  value: '${stats.madeCount}',
+                ),
+              ),
+              Expanded(
+                child: _ExportStat(
+                  label: context.bheText('其中未审核'),
+                  value: '${stats.unreviewedCount}',
+                ),
+              ),
+              Expanded(
+                child: _ExportStat(
+                  label: context.bheText('你排除的'),
+                  value: '${stats.manuallyExcludedCount}',
+                ),
+              ),
+              Expanded(
+                child: _ExportStat(
+                  label: context.bheText('复核判定没进'),
+                  value: '${stats.rimRejectedCount}',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: Spacing.md),
+          _ExportStat(
+            label: context.bheText('命中率（估算）'),
+            value: hitRate == null
+                ? '—'
+                : '${(hitRate * 100).round()}%  ·  ${stats.madeCount} / ${stats.candidateCount}',
+          ),
+          const SizedBox(height: 4),
+          Text(
+            context.bheText('保留的进球 ÷ 全部疑似片段。疑似片段里也有不是投篮的，没碰到篮筐的投篮也不在里面，只是粗略估算。'),
+            style: theme.textTheme.labelSmall?.copyWith(color: c.textTertiary),
+          ),
+          if (playerRows.isNotEmpty) ...[
+            const SizedBox(height: Spacing.md),
+            Text(context.bheText('每人进球'), style: theme.textTheme.labelMedium),
+            const SizedBox(height: Spacing.xs),
+            _CountBars(rows: playerRows),
+          ],
+          if (timeRows.isNotEmpty) ...[
+            const SizedBox(height: Spacing.md),
+            Text(context.bheText('进球时间分布'), style: theme.textTheme.labelMedium),
+            const SizedBox(height: Spacing.xs),
+            _CountBars(rows: timeRows),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CountBars extends StatelessWidget {
+  const _CountBars({required this.rows});
+
+  final List<({String label, int count, Color color})> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final theme = Theme.of(context);
+    final most = rows.fold<int>(1, (value, row) => row.count > value ? row.count : value);
+    return Column(
+      children: [
+        for (final row in rows)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 140,
+                  child: Text(
+                    row.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall,
+                  ),
+                ),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: FractionallySizedBox(
+                      widthFactor: row.count / most,
+                      child: Container(
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: row.color.withValues(alpha: 0.75),
+                          borderRadius: BorderRadius.circular(CsRadius.full),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  width: 36,
+                  child: Text(
+                    '${row.count}',
+                    textAlign: TextAlign.right,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: c.textSecondary,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }
@@ -812,7 +1043,11 @@ class _ExportHistoryCard extends StatelessWidget {
     final theme = Theme.of(context);
     final c = AppColors.of(context);
     final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
-    final mode = item['mode'] == 'merge' ? '合并导出' : '分别导出';
+    final mode = switch (item['mode']) {
+      'merge' => '合并导出',
+      'merge_by_player' => '按标签导出',
+      _ => '分别导出',
+    };
     final count = (item['candidate_count'] as num?)?.toInt() ?? 0;
     final duration = (item['duration_ms'] as num?)?.toInt() ?? 0;
     final processing = (item['processing_ms'] as num?)?.toInt() ?? 0;
@@ -1010,6 +1245,119 @@ int _clipDuration(int total, Map<String, dynamic> item) {
       (item['default_end_ms'] as num?)?.toInt() ??
       0;
   return total + (end > start ? end - start : 0);
+}
+
+const _kEffects = ['none', 'approach', 'replay'];
+
+class _EffectChoice {
+  const _EffectChoice(this.value, this.title, this.description);
+
+  final String value;
+  final String title;
+  final String description;
+}
+
+List<_EffectChoice> _effectOptions(BuildContext context) => [
+  _EffectChoice(
+    'none',
+    context.bheText('不加效果'),
+    context.bheText('每个片段原样导出。'),
+  ),
+  _EffectChoice(
+    'approach',
+    context.bheText('临门慢动作'),
+    context.bheText('进球前 1 秒放慢到一半速度，球进框后正常速度。人和球都在原画面里，像电影里的慢镜头。每个进球多约 1.3 秒。'),
+  ),
+  _EffectChoice(
+    'replay',
+    context.bheText('慢放特写回放'),
+    context.bheText('片段播完后，重播入框前后约 0.8 秒的画面：放慢一倍，取景框住篮筐和球的飞行路线，方便看清球进没进。每个进球多约 1.6 秒。'),
+  ),
+];
+
+/// 导出总时长，和引擎一致：手动片段不加效果；取不到的片段按原样计。
+int _effectDuration(int total, Map<String, dynamic> item, String effect) {
+  if (effect == 'none') return _clipDuration(total, item);
+  final base = _clipDuration(total, item);
+  if (item['detector_version']?.toString().startsWith('manual') == true) return base;
+  final event = (item['event_time_ms'] as num?)?.toInt();
+  if (event == null) return base;
+  final start =
+      (item['review_start_ms'] as num?)?.toInt() ??
+      (item['default_start_ms'] as num?)?.toInt() ??
+      0;
+  final end =
+      (item['review_end_ms'] as num?)?.toInt() ??
+      (item['default_end_ms'] as num?)?.toInt() ??
+      0;
+  if (effect == 'approach') {
+    final window =
+        (end < event + 300 ? end : event + 300) -
+        (start > event - 1000 ? start : event - 1000);
+    return window >= 300 ? base + window : base;
+  }
+  final window =
+      (end < event + 300 ? end : event + 300) -
+      (start > event - 500 ? start : event - 500);
+  return window >= 300 ? base + window * 2 : base;
+}
+
+class _EffectOption extends StatelessWidget {
+  const _EffectOption({
+    super.key,
+    required this.title,
+    required this.description,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String description;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(CsRadius.sm),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: Spacing.xs),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Icon(
+                selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                size: 18,
+                color: selected ? c.orange : c.textTertiary,
+              ),
+            ),
+            const SizedBox(width: Spacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: theme.textTheme.labelLarge),
+                  const SizedBox(height: 2),
+                  Text(
+                    description,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: c.textSecondary,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 String _formatMs(int milliseconds) {

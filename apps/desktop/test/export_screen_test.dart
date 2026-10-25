@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:desktop/components/cs_button.dart';
 import 'package:desktop/features/export/export_screen.dart';
@@ -11,6 +12,130 @@ import 'package:desktop/providers/export_output_picker.dart';
 import 'package:desktop/theme/app_theme.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets('the goal effect picks one option and the total follows it', (
+    tester,
+  ) async {
+    final notifier = _FilterExportNotifier(
+      const ProjectState(
+        video: {'id': 'A'},
+        candidates: [
+          {
+            'id': 'goal',
+            'event_time_ms': 3000,
+            'review_start_ms': 0,
+            'review_end_ms': 4000,
+            'detector_version': 'python-v2',
+          },
+          {
+            'id': 'manual',
+            'event_time_ms': 12000,
+            'review_start_ms': 10000,
+            'review_end_ms': 14000,
+            'detector_version': 'manual-v1',
+          },
+        ],
+      ),
+    );
+    final picker = _TestOutputPicker();
+    await _pumpFilterExport(tester, notifier, picker: picker);
+    expect(find.text('00:08'), findsOneWidget);
+
+    // 临门慢动作：进球那个片段多出 1.3 秒，手动片段不加。
+    final approach = find.byKey(const Key('export-effect-approach'));
+    await tester.ensureVisible(approach);
+    await tester.tap(approach);
+    await tester.pumpAndSettle();
+    expect(find.text('00:09'), findsOneWidget);
+
+    // 慢放特写回放：多出 1.6 秒。
+    final replay = find.byKey(const Key('export-effect-replay'));
+    await tester.ensureVisible(replay);
+    await tester.tap(replay);
+    await tester.pumpAndSettle();
+    expect(find.text('00:09'), findsOneWidget);
+
+    final start = find.byKey(const Key('export-start'));
+    await tester.ensureVisible(start);
+    await tester.tap(start);
+    await tester.pump();
+    picker.result.complete('/tmp/game.mp4');
+    await tester.pumpAndSettle();
+    expect(notifier.exportedEffect, 'replay');
+    expect(
+      (await SharedPreferences.getInstance()).getString('export_goal_effect'),
+      'replay',
+    );
+  });
+
+  testWidgets('one video per tag asks for a folder and exports per tag', (
+    tester,
+  ) async {
+    final notifier = _FilterExportNotifier(_filterState());
+    final picker = _TestOutputPicker();
+    await _pumpFilterExport(tester, notifier, picker: picker);
+
+    final byTag = find.byKey(const Key('export-mode-by-player'));
+    await tester.ensureVisible(byTag);
+    await tester.tap(byTag);
+    await tester.pumpAndSettle();
+    final start = find.byKey(const Key('export-start'));
+    await tester.ensureVisible(start);
+    await tester.tap(start);
+    await tester.pump();
+    picker.result.complete('/tmp/by-tag');
+    await tester.pumpAndSettle();
+
+    expect(notifier.exportedMode, 'merge_by_player');
+    expect(notifier.exportedOutputDir, '/tmp/by-tag');
+    expect(notifier.exportedOutputPath, isNull);
+  });
+
+  testWidgets('the per-tag option only appears when the project has tags', (
+    tester,
+  ) async {
+    final notifier = _FilterExportNotifier(
+      const ProjectState(
+        video: {'id': 'A'},
+        candidates: [
+          {'id': 'a', 'default_start_ms': 0, 'default_end_ms': 4000},
+        ],
+      ),
+    );
+    await _pumpFilterExport(tester, notifier);
+
+    expect(find.byKey(const Key('export-mode-by-player')), findsNothing);
+  });
+
+  testWidgets('shows game stats from the current review', (tester) async {
+    final notifier = _FilterExportNotifier(
+      const ProjectState(
+        video: {'id': 'A'},
+        players: [
+          {'id': 'p1', 'name': 'Alice'},
+        ],
+        candidates: [
+          {'id': 'a', 'event_time_ms': 60000, 'player_id': 'p1', 'review_status': 'included'},
+          {'id': 'b', 'event_time_ms': 720000, 'review_status': 'pending'},
+          {
+            'id': 'c',
+            'event_time_ms': 90000,
+            'review_status': 'excluded',
+            'selection_status': 'excluded',
+            'review_reason': 'auto_rim_check',
+          },
+        ],
+      ),
+    );
+    await _pumpFilterExport(tester, notifier);
+
+    expect(find.byKey(const Key('export-game-stats')), findsOneWidget);
+    expect(find.text('67%  ·  2 / 3'), findsOneWidget);
+    expect(find.text('0–10 分钟'), findsOneWidget);
+    expect(find.text('10–20 分钟'), findsOneWidget);
+  });
+
   testWidgets('cached export resets player filters when the video changes', (
     tester,
   ) async {
@@ -347,6 +472,10 @@ class _FilterExportNotifier extends _ExportNotifier {
 
   List<String>? exportedPlayerIds;
   bool? exportedIncludeUnassigned;
+  String? exportedMode;
+  String? exportedEffect;
+  String? exportedOutputDir;
+  String? exportedOutputPath;
 
   void replace(ProjectState value) => state = value;
 
@@ -357,7 +486,12 @@ class _FilterExportNotifier extends _ExportNotifier {
     String? outputPath,
     List<String>? playerIds,
     bool? includeUnassigned,
+    String effect = 'none',
   }) async {
+    exportedMode = mode;
+    exportedEffect = effect;
+    exportedOutputDir = outputDir;
+    exportedOutputPath = outputPath;
     exportedPlayerIds = playerIds;
     exportedIncludeUnassigned = includeUnassigned;
   }
@@ -458,6 +592,7 @@ class _TrackingExportNotifier extends _ExportNotifier {
     String? outputPath,
     List<String>? playerIds,
     bool? includeUnassigned,
+    String effect = 'none',
   }) async {
     exports.add('$mode:${outputPath ?? outputDir}');
   }

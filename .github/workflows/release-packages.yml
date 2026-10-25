@@ -308,7 +308,12 @@ jobs:
           $python = Join-Path $env:PYTHON_ROOT "python.exe"
           & $python -m pip install --no-cache-dir --upgrade pip
           & $python -m pip install --no-cache-dir -r requirements.txt
+          # DirectML 加速包(24MB):让桌面端在有独显/核显的机器上走 ONNX Runtime。
+          # 装不上不应该阻断整条发布链路,CPU 路径仍然可用。
+          & $python -m pip install --no-cache-dir -r requirements-dml.txt
+          if ($LASTEXITCODE -ne 0) { Write-Warning "onnxruntime-directml install failed; DML will fall back to CPU" }
           & $python -c "import cv2, numpy, pandas, psutil, torch, ultralytics; print('runtime imports: OK')"
+          & $python -c "import onnxruntime; print('onnxruntime', onnxruntime.__version__, onnxruntime.get_available_providers())"
 
       - name: Download self-contained FFmpeg
         id: ffmpeg
@@ -437,6 +442,15 @@ jobs:
         working-directory: apps/mobile
         run: flutter pub get
 
+      - name: Restore Android signing keystore
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.BHE_ANDROID_DEBUG_KEYSTORE }}
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_KEYSTORE"
+          mkdir -p "$HOME/.android"
+          (umask 077; printf '%s' "$ANDROID_KEYSTORE" | base64 --decode > "$HOME/.android/debug.keystore")
+
       - name: Build Android package
         working-directory: apps/mobile
         run: |
@@ -444,8 +458,13 @@ jobs:
           version="${TAG_NAME#v}"
           flutter build apk --release \
             --build-name="$version" \
-            --build-number="${GITHUB_RUN_NUMBER}"
+            --build-number="${GITHUB_RUN_NUMBER}" \
+            --dart-define=BHE_VERSION="$version"
           apk="build/app/outputs/flutter-apk/app-release.apk"
+          # 用固定证书显式签一次，避免依赖 Gradle 在 CI 里选中的调试密钥。
+          apksigner_bin="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
+          "$apksigner_bin" sign --ks "$HOME/.android/debug.keystore" --ks-key-alias androiddebugkey \
+            --ks-pass pass:android --key-pass pass:android "$apk"
           for library in libbhe_runtime.so libbhe_runtime_jni.so libonnxruntime.so libQnnHtp.so libQnnHtpV81Skel.so; do
             unzip -p "$apk" "lib/arm64-v8a/$library" > "$RUNNER_TEMP/$library"
             test -s "$RUNNER_TEMP/$library"
@@ -455,6 +474,10 @@ jobs:
           readelf --dynamic --wide "$RUNNER_TEMP/libbhe_runtime_jni.so" \
             | grep -q 'Shared library: \[libbhe_runtime.so\]'
           unzip -l "$apk" assets/models/bball_model_qnn_v81.onnx | grep -q bball_model_qnn_v81.onnx
+          # 每个版本必须用同一个证书签名，用户才能覆盖安装升级。
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
+          certs="$("$apksigner" verify --print-certs "$apk")"
+          grep -q 'SHA-256 digest: 14f6d1117b858058f730afd96b880dff0fd8ecff2ebc10e387a5d89c10c0084e' <<< "$certs"
           mkdir -p "$GITHUB_WORKSPACE/dist"
           cp "$apk" \
             "$GITHUB_WORKSPACE/dist/BHE-android-arm64-v8a-v${version}-debug-signed.apk"
@@ -656,4 +679,42 @@ jobs:
           done
           for source in "$RUNNER_TEMP/bhe-release-assets"/BHE-android-arm64-v8a-v*-debug-signed.apk; do
             publish_alias "$source" "BHE-android-arm64-v8a-latest.apk" "$OSS_ANDROID_KEY"
+          done
+
+      - name: Check out release notes
+        if: env.RELEASE_PLATFORM == 'all'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG_NAME }}
+          path: source
+
+      - name: Publish signed update manifest
+        if: env.RELEASE_PLATFORM == 'all'
+        shell: bash
+        env:
+          OSSUTIL_CONFIG: ${{ runner.temp }}/ossutilconfig
+          UPDATE_SIGNING_KEY: ${{ secrets.BHE_UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$UPDATE_SIGNING_KEY"
+          manifest_dir="$RUNNER_TEMP/bhe-update-manifest"
+          mkdir -p "$manifest_dir"
+          python3 source/scripts/build_update_manifest.py \
+            --tag "$TAG_NAME" \
+            --assets-dir "$RUNNER_TEMP/bhe-release-assets" \
+            --base-url "https://shengshengniannian.oss-cn-beijing.aliyuncs.com/$OSS_PREFIX" \
+            --android-base-url "https://oss.shengshengniannian.com/$OSS_PREFIX" \
+            --readme-zh source/README.md \
+            --readme-en source/README.en.md \
+            --out "$manifest_dir/latest.json"
+          key="$RUNNER_TEMP/update_signing_key.pem"
+          (umask 077; printf '%s\n' "$UPDATE_SIGNING_KEY" > "$key")
+          openssl pkeyutl -sign -rawin -inkey "$key" \
+            -in "$manifest_dir/latest.json" -out "$manifest_dir/latest.json.sig"
+          rm -f "$key"
+          for name in latest.json latest.json.sig; do
+            ossutil \
+              --config-file "$OSSUTIL_CONFIG" \
+              cp -f --meta "Cache-Control:no-cache" \
+              "$manifest_dir/$name" "$OSS_BUCKET/$OSS_PREFIX/$name"
           done

@@ -11,7 +11,11 @@ import '../core/project_session.dart';
 final Provider<EngineClient> engineClientProvider = Provider<EngineClient>((
   ref,
 ) {
-  final client = EngineClient();
+  final client = EngineClient(
+    logFile: File(
+      '${engineLogDirectory(Platform.environment)}${Platform.pathSeparator}engine.log',
+    ),
+  );
   ref.onDispose(client.dispose);
   return client;
 });
@@ -164,12 +168,12 @@ class EngineBootstrapNotifier extends Notifier<AsyncValue<bool>> {
       _restartAttempts = 0;
       return true;
     });
+    if (state.hasError) client.log('startup failed: ${state.error}');
   }
 
   /// 引擎意外退出时自动重启,带次数上限避免崩溃循环。
   ///
-  /// 死因证据(exitCode + stderr 尾部)已由 EngineClient 写入
-  /// 系统临时目录的 bhe_engine_exit.log。
+  /// 死因证据(exitCode + stderr)已由 EngineClient 写入 engine.log。
   ///
   /// 上限按时间窗口计:距上次意外退出超过 10 分钟视为新一轮,计数
   /// 重置,避免长会话中偶发崩溃累计到上限后不再自愈。

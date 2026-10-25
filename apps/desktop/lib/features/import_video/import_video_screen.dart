@@ -16,6 +16,8 @@ import '../../components/cs_button.dart';
 import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../core/engine_session.dart';
+import '../../core/roi_geometry.dart';
+import '../../core/video_segments.dart';
 import '../../providers/notice_provider.dart';
 import '../../providers/pending_import_provider.dart';
 import '../../providers/project_state.dart';
@@ -58,8 +60,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   int _analysisStartMs = 0;
   bool _rangeTouched = false;
   int _analysisEndMs = 0;
-  int _beforeSeconds = 6;
-  int _afterSeconds = 3;
+  int _beforeSeconds = 3;
+  int _afterSeconds = 1;
   String _analysisMode = 'standard';
   Timer? _previewPlaybackTimer;
   bool _previewPlaying = false;
@@ -75,8 +77,13 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
 
   void _takePendingImport() {
     if (!mounted || ref.read(pendingImportProvider) == null) return;
-    final path = ref.read(pendingImportProvider.notifier).take();
-    if (path != null) unawaited(_importVideoPath(path));
+    final paths = ref.read(pendingImportProvider.notifier).take();
+    if (paths == null || paths.isEmpty) return;
+    unawaited(
+      paths.length == 1
+          ? _importVideoPath(paths.single)
+          : _importVideoPaths(paths),
+    );
   }
 
   @override
@@ -117,7 +124,12 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     if (currentState.video != null) {
       _syncFromState(currentState);
     }
-    if (draft != null && draft.isNotEmpty && currentState.video != null) {
+    final draftVideoId = draft?['video_id']?.toString();
+    if (draft != null &&
+        draft.isNotEmpty &&
+        currentState.video != null &&
+        (draftVideoId == null ||
+            draftVideoId == currentState.video?['id']?.toString())) {
       _applyDraftLocally(draft);
       setState(() => _showExistingDraft = true);
       return;
@@ -129,14 +141,14 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     if (video == null) return;
     final autoRoi = state.suggestedRoi;
     final autoHoopBbox = state.hoopBbox;
-    final autoNetRoi = _recommendedNetRoi(autoRoi, autoHoopBbox);
+    final autoNetRoi = recommendedNetRoi(autoRoi, autoHoopBbox);
     if (autoRoi != null) {
       _autoRoi = autoRoi;
       _autoNetRoi = autoNetRoi;
       _autoHoopBbox = autoHoopBbox;
     }
     _roi = state.suggestedRoi;
-    _netRoi = state.netRoi ?? _recommendedNetRoi(_roi, state.hoopBbox);
+    _netRoi = state.netRoi ?? recommendedNetRoi(_roi, state.hoopBbox);
     _netUserEdited = state.netRoi != null;
     _hoopBbox = state.hoopBbox;
     _editingNet = false;
@@ -146,10 +158,10 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       _analysisStartMs = _analysisStart(state);
       _analysisEndMs = _analysisEnd(state);
     }
-    _beforeSeconds = 6;
-    _afterSeconds = 3;
+    _beforeSeconds = 3;
+    _afterSeconds = 1;
     _analysisMode = state.analysisMode;
-    if (_step == 0) _step = 1;
+    if (_step == 0 && !state.multiVideo) _step = 1;
   }
 
   void _applyDraftLocally(JsonMap draft) {
@@ -193,6 +205,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
 
   JsonMap _draft({int? step}) => {
     'version': 4,
+    'video_id': ref.read(projectProvider).video?['id'],
     'step': step ?? _step,
     'analysis_range': {'start_ms': _analysisStartMs, 'end_ms': _analysisEndMs},
     'analysis_mode': _analysisMode,
@@ -210,6 +223,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   JsonMap _backendDraft({int? step}) {
     return {
       'version': 4,
+      'video_id': ref.read(projectProvider).video?['id'],
       'step': step ?? _step,
       'analysis_range': {
         'start_ms': _analysisStartMs,
@@ -289,9 +303,104 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
         'com.apple.quicktime-movie',
       ],
     );
+    if (existingVideo == null) {
+      final files = await openFiles(acceptedTypeGroups: [group]);
+      if (files.isEmpty || !mounted) return;
+      if (files.length > 1) {
+        await _importVideoPaths([for (final file in files) file.path]);
+      } else {
+        await _importVideoPath(files.single.path);
+      }
+      return;
+    }
     final file = await openFile(acceptedTypeGroups: [group]);
     if (file == null || !mounted) return;
     await _importVideoPath(file.path);
+  }
+
+  /// 同一场比赛的多段视频建成一个项目，导入后停在视频列表。
+  Future<void> _importVideoPaths(List<String> paths) async {
+    setState(() {
+      _step = 0;
+      _showExistingDraft = false;
+    });
+    _rangeTouched = false;
+    await ref.read(projectProvider.notifier).createProjectFromVideos(paths);
+    if (!mounted) return;
+    _draftLoaded = true;
+    setState(() => _step = 0);
+  }
+
+  Future<void> _addVideos() async {
+    final files = await openFiles(
+      acceptedTypeGroups: [
+        XTypeGroup(
+          label: context.bheText('视频'),
+          extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
+          mimeTypes: ['video/*'],
+          uniformTypeIdentifiers: ['public.movie'],
+        ),
+      ],
+    );
+    if (files.isEmpty || !mounted) return;
+    await ref
+        .read(projectProvider.notifier)
+        .addVideos([for (final file in files) file.path]);
+    if (mounted) setState(() => _step = 0);
+  }
+
+  String? _editingVideoId;
+
+  void _editSegment(String videoId) {
+    _stopPreviewPlayback();
+    _editingVideoId = videoId;
+    if (ref.read(projectProvider).video?['id']?.toString() == videoId) {
+      _syncFromState(ref.read(projectProvider));
+      setState(() => _step = 1);
+      return;
+    }
+    ref.read(projectProvider.notifier).activateVideo(videoId);
+  }
+
+  void _moveSegment(String videoId, int offset) {
+    final ids = [
+      for (final video in ref.read(projectProvider).videos)
+        video['id'].toString(),
+    ];
+    final index = ids.indexOf(videoId);
+    final target = index + offset;
+    if (index < 0 || target < 0 || target >= ids.length) return;
+    ids
+      ..removeAt(index)
+      ..insert(target, videoId);
+    unawaited(ref.read(projectProvider.notifier).reorderVideos(ids));
+  }
+
+  /// 多段项目在最后一步只保存这一段的范围和篮筐，统一在视频列表排队分析。
+  Future<void> _saveSegment() async {
+    if (_roi == null || _applying) return;
+    setState(() => _applying = true);
+    try {
+      final notifier = ref.read(projectProvider.notifier);
+      final applied = await notifier.applyWorkflowDraft(
+        _backendDraft(step: _step),
+      );
+      if (!mounted || !applied) return;
+      final videoId = ref.read(projectProvider).video?['id']?.toString();
+      if (videoId != null) await notifier.propagateHoopToFollowingParts(videoId);
+      if (mounted) setState(() => _step = 0);
+    } finally {
+      if (mounted) setState(() => _applying = false);
+    }
+  }
+
+  void _startQueue() {
+    unawaited(
+      ref.read(projectProvider.notifier).startAnalysisQueue(
+        beforeSeconds: _beforeSeconds.toDouble(),
+        afterSeconds: _afterSeconds.toDouble(),
+      ),
+    );
   }
 
   /// Runs the import after a path is chosen, from the picker or a drop.
@@ -510,7 +619,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(projectProvider);
-    ref.listen<String?>(pendingImportProvider, (_, next) {
+    ref.listen<List<String>?>(pendingImportProvider, (_, next) {
       if (next == null) return;
       // Let the project-change handling below settle before importing.
       WidgetsBinding.instance.addPostFrameCallback((_) => _takePendingImport());
@@ -550,7 +659,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       _editingNet = false;
       _rangeTouched = false;
       _syncFromState(next);
-      setState(() => _step = 1);
+      final editing = _editingVideoId == nextVideoId;
+      _editingVideoId = null;
+      setState(() => _step = next.multiVideo && !editing ? 0 : 1);
     });
     final c = AppColors.of(context);
     final theme = Theme.of(context);
@@ -591,7 +702,14 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           ? context.bheText(_analysisMode == 'fast' ? '快速分析' : '标准分析')
           : null,
     ];
-    final replacesCandidates = state.candidates.isNotEmpty;
+    final replacesCandidates = state.candidates.isNotEmpty && !state.multiVideo;
+    final pendingSegments = state.videos
+        .where(
+          (video) =>
+              !needsHoopConfirmation(video) &&
+              (video['analysis_job'] as Map?)?['state'] != 'completed',
+        )
+        .length;
 
     return Column(
       children: [
@@ -634,7 +752,10 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                           ],
                         ),
                       ),
-                      if (hasVideo)
+                      if (hasVideo &&
+                          (!state.multiVideo ||
+                              state.videoPath == null ||
+                              state.videoPath!.isEmpty))
                         TextButton.icon(
                           onPressed: busy
                               ? null
@@ -769,7 +890,47 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                         : const SizedBox.shrink(),
                   ),
                   const SizedBox(width: Spacing.md),
-                  if (_step < _stepCount - 1)
+                  if (state.multiVideo && _step == 0)
+                    Flexible(
+                      flex: 2,
+                      child: CsButton(
+                        key: const Key('import-analyze-all'),
+                        label: Flexible(
+                          child: Text(
+                            '${context.bheText('分析全部')}（$pendingSegments）',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        icon: LucideIcons.play,
+                        onPressed:
+                            busy ||
+                                state.analysisQueue.isNotEmpty ||
+                                pendingSegments == 0
+                            ? null
+                            : _startQueue,
+                      ),
+                    )
+                  else if (state.multiVideo && _step == _stepCount - 1)
+                    Flexible(
+                      flex: 2,
+                      child: CsButton(
+                        key: const Key('import-save-segment'),
+                        label: Flexible(
+                          child: Text(
+                            context.bheText('保存这一段的设置'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        icon: LucideIcons.check,
+                        isLoading: _applying,
+                        onPressed: state.busy || _roi == null
+                            ? null
+                            : _saveSegment,
+                      ),
+                    )
+                  else if (_step < _stepCount - 1)
                     Flexible(
                       flex: 2,
                       child: CsButton(
@@ -828,9 +989,30 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   Widget _buildStep(BuildContext context, ProjectState state, bool busy) {
     switch (_step) {
       case 0:
+        if (state.multiVideo) {
+          return _VideoSegmentList(
+            state: state,
+            busy: state.busy || _applying,
+            beforeSeconds: _beforeSeconds,
+            afterSeconds: _afterSeconds,
+            onBeforeChanged: (seconds) => setState(() => _beforeSeconds = seconds),
+            onAfterChanged: (seconds) => setState(() => _afterSeconds = seconds),
+            onAddVideos: state.busy ? null : _addVideos,
+            onEdit: _editSegment,
+            onMove: _moveSegment,
+            onRemoveFromQueue: (videoId) => unawaited(
+              ref.read(projectProvider.notifier).removeFromAnalysisQueue(videoId),
+            ),
+            onPauseQueue: () =>
+                unawaited(ref.read(projectProvider.notifier).pauseAnalysisQueue()),
+            onResumeQueue: () =>
+                unawaited(ref.read(projectProvider.notifier).resumeAnalysisQueue()),
+          );
+        }
         return _VideoStep(
           video: state.video,
           onSelect: busy ? null : _selectVideo,
+          onAddVideos: busy ? null : _addVideos,
         );
       case 1:
         final duration = (state.video?['duration_ms'] as num?)?.toInt() ?? 0;
@@ -887,7 +1069,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
               } else {
                 _roi = value;
                 if (!_netUserEdited) {
-                  _netRoi = _recommendedNetRoi(value, hoopBbox);
+                  _netRoi = recommendedNetRoi(value, hoopBbox);
                 }
               }
             });
@@ -898,11 +1080,11 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
               if (_editingNet) {
                 _netRoi =
                     _autoNetRoi ??
-                    _recommendedNetRoi(
+                    recommendedNetRoi(
                       _autoRoi ?? _roi,
                       _autoHoopBbox ?? state.hoopBbox,
                     ) ??
-                    _recommendedNetRoi(_roi, state.hoopBbox);
+                    recommendedNetRoi(_roi, state.hoopBbox);
                 _netUserEdited = false;
               } else if (_autoRoi != null) {
                 _roi = _autoRoi;
@@ -910,7 +1092,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                 if (!_netUserEdited) {
                   _netRoi =
                       _autoNetRoi ??
-                      _recommendedNetRoi(_autoRoi, _autoHoopBbox);
+                      recommendedNetRoi(_autoRoi, _autoHoopBbox);
                 }
               }
             });
@@ -1117,9 +1299,14 @@ class _DraftBanner extends StatelessWidget {
 }
 
 class _VideoStep extends StatelessWidget {
-  const _VideoStep({required this.video, required this.onSelect});
+  const _VideoStep({
+    required this.video,
+    required this.onSelect,
+    required this.onAddVideos,
+  });
   final JsonMap? video;
   final VoidCallback? onSelect;
+  final VoidCallback? onAddVideos;
 
   @override
   Widget build(BuildContext context) {
@@ -1135,7 +1322,7 @@ class _VideoStep extends StatelessWidget {
             Text(context.bheText('选择原始视频'), style: theme.textTheme.titleLarge),
             const SizedBox(height: Spacing.xs),
             Text(
-              context.bheText('支持 MP4、MOV、M4V、AVI、MKV。原始视频不会被修改或上传。'),
+              context.bheText('支持 MP4、MOV、M4V、AVI、MKV。同一场比赛的多段视频可以一起选，会建成一个项目。原始视频不会被修改或上传。'),
               style: theme.textTheme.bodySmall?.copyWith(
                 color: c.textSecondary,
               ),
@@ -1163,6 +1350,13 @@ class _VideoStep extends StatelessWidget {
           ),
           const SizedBox(height: Spacing.md),
           _VideoProcessingHint(video: video!),
+          const SizedBox(height: Spacing.md),
+          CsButton(
+            label: Text(context.bheText('添加同一场的其他视频')),
+            icon: LucideIcons.plus,
+            variant: CsButtonVariant.secondary,
+            onPressed: onAddVideos,
+          ),
         ],
       ),
     );
@@ -2582,35 +2776,6 @@ int _analysisStart(ProjectState state) =>
 int _analysisEnd(ProjectState state) =>
     (state.video?['analysis_end_ms'] as num?)?.toInt() ??
     ((state.video?['duration_ms'] as num?)?.toInt() ?? 0);
-
-Rect? _recommendedNetRoi(Rect? analysisRoi, Rect? hoopBbox) {
-  if (analysisRoi == null) return null;
-  if (hoopBbox == null) {
-    return Rect.fromLTRB(
-      (analysisRoi.left + analysisRoi.width * 0.30).clamp(0.0, 1.0),
-      (analysisRoi.top + analysisRoi.height * 0.38).clamp(0.0, 1.0),
-      (analysisRoi.right - analysisRoi.width * 0.30).clamp(0.0, 1.0),
-      (analysisRoi.top + analysisRoi.height * 0.74).clamp(0.0, 1.0),
-    );
-  }
-  final rimY = hoopBbox.center.dy - hoopBbox.height * 0.28;
-  final rimHeight = hoopBbox.height * 0.45;
-  final width = (hoopBbox.width * 1.5)
-      .clamp(analysisRoi.width * 0.08, analysisRoi.width * 0.34)
-      .toDouble();
-  final left = (hoopBbox.center.dx - width / 2)
-      .clamp(analysisRoi.left, analysisRoi.right - width)
-      .toDouble();
-  // Start at the physical rim's upper edge so the net region touches the
-  // hoop; keep the previous lower boundary for the same detection coverage.
-  final top = (rimY - rimHeight / 2)
-      .clamp(analysisRoi.top, analysisRoi.bottom)
-      .toDouble();
-  final bottom = (top + rimHeight * 4.5)
-      .clamp(top, analysisRoi.bottom)
-      .toDouble();
-  return Rect.fromLTRB(left, top, left + width, bottom);
-}
 
 String _formatPreviewTime(int milliseconds) {
   final safe = milliseconds.clamp(0, 24 * 60 * 60 * 1000).toInt();
@@ -4051,4 +4216,378 @@ class _RoiPainter extends CustomPainter {
       oldDelegate.color != color ||
       oldDelegate.label != label ||
       oldDelegate.viewportScale != viewportScale;
+}
+
+/// 一个项目里多段视频的列表：逐段确认篮筐、调整顺序、看排队分析进度。
+class _VideoSegmentList extends StatelessWidget {
+  const _VideoSegmentList({
+    required this.state,
+    required this.busy,
+    required this.beforeSeconds,
+    required this.afterSeconds,
+    required this.onBeforeChanged,
+    required this.onAfterChanged,
+    required this.onAddVideos,
+    required this.onEdit,
+    required this.onMove,
+    required this.onRemoveFromQueue,
+    required this.onPauseQueue,
+    required this.onResumeQueue,
+  });
+
+  final ProjectState state;
+  final bool busy;
+  final int beforeSeconds;
+  final int afterSeconds;
+  final ValueChanged<int> onBeforeChanged;
+  final ValueChanged<int> onAfterChanged;
+  final VoidCallback? onAddVideos;
+  final ValueChanged<String> onEdit;
+  final void Function(String videoId, int offset) onMove;
+  final ValueChanged<String> onRemoveFromQueue;
+  final VoidCallback onPauseQueue;
+  final VoidCallback onResumeQueue;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final theme = Theme.of(context);
+    final videos = state.videos;
+    final totalMs = videos.fold<int>(
+      0,
+      (sum, video) => sum + ((video['duration_ms'] as num?)?.toInt() ?? 0),
+    );
+    final queueActive = state.analysisQueue.isNotEmpty;
+    final reorderLocked = busy || state.analysisRunning;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _InfoPanel(
+          title:
+              '${context.bheText('这场比赛的视频')} · ${videos.length} · ${_formatDuration(totalMs)}',
+          icon: LucideIcons.listVideo,
+          subtitle: context.bheText(
+            '每段都设置好篮筐后，点「分析全部」会按顺序逐段分析，分析完的段可以先去审核。',
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (index, video) in videos.indexed) ...[
+                if (index > 0) Divider(height: 1, color: c.border),
+                _VideoSegmentRow(
+                  key: ValueKey('video-segment-${video['id']}'),
+                  segment: index + 1,
+                  video: video,
+                  state: state,
+                  active: video['id'] == state.video?['id'],
+                  onEdit: busy ? null : () => onEdit(video['id'].toString()),
+                  onMoveUp: reorderLocked || index == 0
+                      ? null
+                      : () => onMove(video['id'].toString(), -1),
+                  onMoveDown: reorderLocked || index == videos.length - 1
+                      ? null
+                      : () => onMove(video['id'].toString(), 1),
+                  onRemoveFromQueue: () =>
+                      onRemoveFromQueue(video['id'].toString()),
+                ),
+              ],
+              const SizedBox(height: Spacing.sm),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: CsButton(
+                  label: Text(context.bheText('添加视频')),
+                  icon: LucideIcons.plus,
+                  variant: CsButtonVariant.secondary,
+                  onPressed: onAddVideos,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: Spacing.md),
+        _InfoPanel(
+          title: context.bheText('分析设置'),
+          icon: LucideIcons.slidersHorizontal,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _ClipWindowSelector(
+                beforeSeconds: beforeSeconds,
+                afterSeconds: afterSeconds,
+                onBeforeChanged: onBeforeChanged,
+                onAfterChanged: onAfterChanged,
+              ),
+              if (queueActive) ...[
+                const SizedBox(height: Spacing.md),
+                Row(
+                  children: [
+                    Icon(
+                      state.queuePaused
+                          ? LucideIcons.pauseCircle
+                          : LucideIcons.loader,
+                      size: 16,
+                      color: state.queuePaused ? c.warning : c.orange,
+                    ),
+                    const SizedBox(width: Spacing.sm),
+                    Expanded(
+                      child: Text(
+                        state.queuePaused
+                            ? '${context.bheText('队列已暂停')} · ${context.bheText('还有')} ${state.analysisQueue.length} ${context.bheText('段待分析')}'
+                            : '${context.bheText('正在排队分析')} · ${context.bheText('还有')} ${state.analysisQueue.length} ${context.bheText('段待分析')}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: c.textSecondary,
+                        ),
+                      ),
+                    ),
+                    if (state.exportQueued)
+                      Padding(
+                        padding: const EdgeInsets.only(right: Spacing.sm),
+                        child: Text(
+                          context.bheText('导出排在这段之后'),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: c.textSecondary,
+                          ),
+                        ),
+                      ),
+                    CsButton(
+                      label: Text(
+                        context.bheText(state.queuePaused ? '继续排队' : '暂停队列'),
+                      ),
+                      icon: state.queuePaused
+                          ? LucideIcons.play
+                          : LucideIcons.pause,
+                      variant: CsButtonVariant.secondary,
+                      onPressed: busy
+                          ? null
+                          : state.queuePaused
+                          ? onResumeQueue
+                          : onPauseQueue,
+                    ),
+                  ],
+                ),
+                if (!state.queuePaused)
+                  Padding(
+                    padding: const EdgeInsets.only(top: Spacing.xs),
+                    child: Text(
+                      context.bheText('暂停后，正在分析的这段会继续完成，之后不再开始新的一段。'),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: c.textTertiary,
+                      ),
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _VideoSegmentRow extends StatelessWidget {
+  const _VideoSegmentRow({
+    required this.segment,
+    required this.video,
+    required this.state,
+    required this.active,
+    required this.onEdit,
+    required this.onMoveUp,
+    required this.onMoveDown,
+    required this.onRemoveFromQueue,
+    super.key,
+  });
+
+  final int segment;
+  final JsonMap video;
+  final ProjectState state;
+  final bool active;
+  final VoidCallback? onEdit;
+  final VoidCallback? onMoveUp;
+  final VoidCallback? onMoveDown;
+  final VoidCallback onRemoveFromQueue;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final theme = Theme.of(context);
+    final id = video['id']?.toString();
+    final name = (video['source_path']?.toString() ?? '')
+        .split(RegExp(r'[/\\]'))
+        .last;
+    final roi = (video['roi'] as Map?)?.cast<String, dynamic>();
+    final roiSource = (roi?['calibration'] as Map?)?['source']?.toString();
+    final needsConfirmation = needsHoopConfirmation(video);
+    final (roiLabel, roiColor) = roi == null
+        ? ('需要设置篮筐', c.warning)
+        : switch (roiSource) {
+            'suggested' => ('请确认自动识别的篮筐', c.warning),
+            'reused' => ('沿用上一段的篮筐', c.success),
+            'auto' => ('自动识别篮筐', c.success),
+            _ => ('篮筐已设置', c.success),
+          };
+    final job = (video['analysis_job'] as Map?)?.cast<String, dynamic>();
+    final liveJob = state.job?['video_id'] == id ? state.job : job;
+    final jobState = liveJob?['state']?.toString();
+    final queueIndex = state.analysisQueue.indexOf(id ?? '');
+    final running =
+        state.analysisRunning && state.job?['video_id'] == id;
+    final progress = ((liveJob?['progress'] as num?)?.toDouble() ?? 0)
+        .clamp(0.0, 1.0);
+    final candidateCount = (video['candidate_count'] as num?)?.toInt() ?? 0;
+    final String analysisLabel;
+    final Color analysisColor;
+    if (running) {
+      analysisLabel = '${context.bheText('分析中')} ${(progress * 100).round()}%';
+      analysisColor = c.orange;
+    } else if (queueIndex >= 0) {
+      analysisLabel = context.bheText('排队中');
+      analysisColor = c.textSecondary;
+    } else if (jobState == 'completed') {
+      analysisLabel =
+          '${context.bheText('已完成')} · $candidateCount ${context.bheText('个候选')}';
+      analysisColor = c.success;
+    } else if (jobState == 'failed') {
+      analysisLabel = context.bheText('分析失败');
+      analysisColor = c.error;
+    } else if (jobState == 'cancelled') {
+      analysisLabel = context.bheText('已取消');
+      analysisColor = c.textSecondary;
+    } else {
+      analysisLabel = context.bheText('未分析');
+      analysisColor = c.textTertiary;
+    }
+    final missing = video['source_exists'] == false;
+    return Container(
+      color: active ? c.surface2 : Colors.transparent,
+      padding: const EdgeInsets.symmetric(
+        horizontal: Spacing.sm,
+        vertical: Spacing.sm,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: c.surface3,
+              borderRadius: BorderRadius.circular(CsRadius.sm),
+            ),
+            child: Text(
+              '$segment',
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: Spacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Wrap(
+                  spacing: Spacing.md,
+                  runSpacing: 2,
+                  children: [
+                    Text(
+                      _formatDuration(
+                        (video['duration_ms'] as num?)?.toInt() ?? 0,
+                      ),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: c.textTertiary,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    if (missing)
+                      Text(
+                        context.bheText('原视频已移动'),
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: c.error,
+                        ),
+                      ),
+                    Text(
+                      context.bheText(roiLabel),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: roiColor,
+                      ),
+                    ),
+                    Text(
+                      analysisLabel,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: analysisColor,
+                      ),
+                    ),
+                  ],
+                ),
+                if (jobState == 'failed' &&
+                    !running &&
+                    liveJob?['error_message'] != null)
+                  Text(
+                    context.bheText(liveJob!['error_message'].toString()),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: c.textSecondary,
+                    ),
+                  ),
+                if (running) ...[
+                  const SizedBox(height: 4),
+                  LinearProgressIndicator(
+                    value: progress.toDouble(),
+                    minHeight: 3,
+                    color: c.orange,
+                    backgroundColor: c.surface3,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: Spacing.sm),
+          if (queueIndex >= 0 && !running)
+            IconButton(
+              tooltip: context.bheText('移出队列'),
+              onPressed: onRemoveFromQueue,
+              icon: const Icon(LucideIcons.x, size: 16),
+              visualDensity: VisualDensity.compact,
+            ),
+          IconButton(
+            tooltip: context.bheText('上移'),
+            onPressed: onMoveUp,
+            icon: const Icon(LucideIcons.arrowUp, size: 16),
+            visualDensity: VisualDensity.compact,
+          ),
+          IconButton(
+            tooltip: context.bheText('下移'),
+            onPressed: onMoveDown,
+            icon: const Icon(LucideIcons.arrowDown, size: 16),
+            visualDensity: VisualDensity.compact,
+          ),
+          const SizedBox(width: Spacing.xs),
+          CsButton(
+            key: ValueKey('video-segment-edit-$id'),
+            label: Text(
+              context.bheText(
+                roi == null ? '设置篮筐' : needsConfirmation ? '确认篮筐' : '调整',
+              ),
+            ),
+            icon: needsConfirmation ? LucideIcons.target : LucideIcons.pencil,
+            variant: needsConfirmation
+                ? CsButtonVariant.primary
+                : CsButtonVariant.secondary,
+            size: CsButtonSize.sm,
+            onPressed: onEdit,
+          ),
+        ],
+      ),
+    );
+  }
 }

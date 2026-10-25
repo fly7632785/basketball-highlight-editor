@@ -10,6 +10,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 
 import 'media_bridge.dart';
@@ -19,7 +20,10 @@ class MobileAppState extends ChangeNotifier {
   MobileAppState({MobileAnalysisEngine? analysisEngine})
     : analysisEngine = analysisEngine ?? NativeAnalysisEngine() {
     unawaited(loadSavedProject());
+    unawaited(_loadPlayerGroups());
   }
+
+  static const playerGroupsPrefsKey = 'bhe.player_groups';
 
   final MobileAnalysisEngine analysisEngine;
   final MobileExportEngine exportEngine = NativeMediaExportEngine();
@@ -30,6 +34,7 @@ class MobileAppState extends ChangeNotifier {
     video: null,
   );
   List<ProjectSnapshot> recentProjects = const [];
+  List<({String name, List<String> players})> playerGroups = const [];
 
   /// Cover image per project id, taken from a shot frame after analysis.
   Map<String, String> coverPaths = const {};
@@ -867,6 +872,61 @@ class MobileAppState extends ChangeNotifier {
           )
           .toList(),
     );
+    unawaited(_queueSave());
+    notifyListeners();
+  }
+
+  Future<void> _loadPlayerGroups() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(playerGroupsPrefsKey);
+      if (raw == null) return;
+      playerGroups = [
+        for (final item in jsonDecode(raw) as List)
+          (
+            name: (item as Map)['name'].toString(),
+            players: [for (final name in item['players'] as List) '$name'],
+          ),
+      ];
+      notifyListeners();
+    } on Object catch (error) {
+      developer.log('player groups unreadable: $error', name: 'BHE-Project');
+    }
+  }
+
+  Future<void> _persistPlayerGroups() async {
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      playerGroupsPrefsKey,
+      jsonEncode([
+        for (final group in playerGroups)
+          {'name': group.name, 'players': group.players},
+      ]),
+    );
+  }
+
+  Future<void> savePlayerGroup(String name) async {
+    playerGroups = [
+      for (final group in playerGroups)
+        if (group.name != name) group,
+      (name: name, players: [...project.players]),
+    ];
+    await _persistPlayerGroups();
+  }
+
+  Future<void> deletePlayerGroup(String name) async {
+    playerGroups = [
+      for (final group in playerGroups)
+        if (group.name != name) group,
+    ];
+    await _persistPlayerGroups();
+  }
+
+  void importPlayers(List<String> players) {
+    final missing = players.where((item) => !project.players.contains(item));
+    if (missing.isEmpty) return;
+    project = project.copyWith(players: [...project.players, ...missing]);
     unawaited(_queueSave());
     notifyListeners();
   }

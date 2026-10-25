@@ -71,6 +71,43 @@ extension BheBuildContextText on BuildContext {
 }
 
 String? _translateDynamic(String source) {
+  final minutes = RegExp(r'^(?:第 (\d+) 段 )?(\d+)–(\d+) 分钟$').firstMatch(source);
+  if (minutes != null) {
+    final range = '${minutes.group(2)}–${minutes.group(3)} min';
+    return minutes.group(1) == null ? range : 'Part ${minutes.group(1)} $range';
+  }
+  final missingFile = RegExp(r'^找不到文件或文件夹：(.+)$').firstMatch(source);
+  if (missingFile != null) return 'File or folder not found: ${missingFile.group(1)}';
+  final accessDenied = RegExp(r'^没有权限访问：(.+)$').firstMatch(source);
+  if (accessDenied != null) return 'Access denied: ${accessDenied.group(1)}';
+  final newVersion = RegExp(r'^(发现新版本|新版本) v(.+)$').firstMatch(source);
+  if (newVersion != null) {
+    return '${newVersion.group(1) == '发现新版本' ? 'New version available' : 'New version'}: v${newVersion.group(2)}';
+  }
+  final latest = RegExp(r'^已经是最新版本（v(.+)）$').firstMatch(source);
+  if (latest != null) return 'You are on the latest version (v${latest.group(1)})';
+  final downloaded = RegExp(r'^已下载 (\d+) / (\d+) MB$').firstMatch(source);
+  if (downloaded != null) {
+    return 'Downloaded ${downloaded.group(1)} / ${downloaded.group(2)} MB';
+  }
+  final httpFailure = RegExp(r'^(获取更新信息失败|下载失败)（HTTP (\d+)）$').firstMatch(source);
+  if (httpFailure != null) {
+    return '${httpFailure.group(1) == '下载失败' ? 'Download failed' : 'Could not get update information'} (HTTP ${httpFailure.group(2)})';
+  }
+  final segment = RegExp(r'^第 (\d+) 段$').firstMatch(source);
+  if (segment != null) return 'Part ${segment.group(1)}';
+  final partCount = RegExp(r'^共 (\d+) 段$').firstMatch(source);
+  if (partCount != null) return '${partCount.group(1)} parts';
+  final segmentDone = RegExp(r'^第 (\d+) 段分析完成$').firstMatch(source);
+  if (segmentDone != null) return 'Part ${segmentDone.group(1)} analysed';
+  final segmentStart = RegExp(r'^正在启动第 (\d+) 段分析…$').firstMatch(source);
+  if (segmentStart != null) return 'Starting part ${segmentStart.group(1)}…';
+  final adding = RegExp(r'^正在添加第 (\d+)/(\d+) 段视频…$').firstMatch(source);
+  if (adding != null) {
+    return 'Adding part ${adding.group(1)} of ${adding.group(2)}…';
+  }
+  final added = RegExp(r'^已添加 (\d+) 段视频$').firstMatch(source);
+  if (added != null) return 'Added ${added.group(1)} videos';
   final allCandidates = RegExp(r'^全部 (\d+) 个候选片段$').firstMatch(source);
   if (allCandidates != null)
     return 'All ${allCandidates.group(1)} candidate clips';
@@ -182,12 +219,14 @@ String? _translateDynamic(String source) {
     return 'Analysis runs locally. Time depends mainly on video length, resolution, and bitrate.';
   }
   final exportSummary = RegExp(
-    r'^(合并导出|分别导出) · (\d+) 个片段$',
+    r'^(合并导出|分别导出|按标签导出) · (\d+) 个片段$',
   ).firstMatch(source);
   if (exportSummary != null) {
-    final mode = exportSummary.group(1) == '合并导出'
-        ? 'Merged export'
-        : 'Separate exports';
+    final mode = switch (exportSummary.group(1)) {
+      '合并导出' => 'Merged export',
+      '按标签导出' => 'Per-tag export',
+      _ => 'Separate exports',
+    };
     return '$mode · ${exportSummary.group(2)} clips';
   }
   final exportProcessing = RegExp(r'^(?:(.+) · )?处理 (.+)$').firstMatch(source);
@@ -337,6 +376,7 @@ const _englishText = <String, String>{
   '我在用 BHE 整理篮球比赛集锦，推荐你看看：':
       'I use BHE to put together basketball highlights. Take a look:',
   '分析完成': 'Analysis complete',
+  '推理': 'Inference',
   '退出 BHE？': 'Exit BHE?',
   '分析失败': 'Analysis failed',
   '添加球员': 'Add player',
@@ -411,7 +451,7 @@ const _englishText = <String, String>{
   '重新配置': 'Reconfigure',
   '去导入视频': 'Import a video',
   '保留片段 (C / Enter)': 'Include clip (C / Enter)',
-  '排除片段 (X / Backspace)': 'Exclude clip (X / Backspace)',
+  '排除片段 (X / ` / Backspace)': 'Exclude clip (X / ` / Backspace)',
   '设置球员标签': 'Set player tag',
   '未标记': 'Untagged',
   '上次分析没有完成': 'The previous analysis did not finish',
@@ -654,8 +694,8 @@ const _englishText = <String, String>{
       'Orange: ball trajectory, current position, or estimated crossing point',
   '最终是否保留由你审核决定，算法结果只是候选建议。':
       'You decide whether to keep the clip; algorithm results are only suggestions.',
-  '快捷键\nSpace  播放/暂停\nR  重播当前\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒\nC / Enter  保留\nX / Backspace  排除\n1–9  设置球员标签 · 0  清除\nCmd/Ctrl+Z  撤销':
-      'Shortcuts\nSpace  Play/pause\nR  Replay current\nL  Loop current\nA  Show/hide annotations\n↑ / ↓  Switch candidates\n← / →  Rewind/forward 2 sec\nC / Enter  Include\nX / Backspace  Exclude\n1–9  Set player tag · 0  Clear\nCmd/Ctrl+Z  Undo',
+  '快捷键\nSpace  播放/暂停\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒 · 加 Shift 每次 0.1 秒\nC / Enter  保留\nX / ` / Backspace  排除\n1–9、Q–P  设置球员标签 · 0  清除\nCmd/Ctrl+Z  撤销':
+      'Shortcuts\nSpace  Play/pause\nL  Loop current\nA  Show/hide annotations\n↑ / ↓  Switch candidates\n← / →  Rewind/forward 2 sec · with Shift 0.1 sec\nC / Enter  Include\nX / ` / Backspace  Exclude\n1–9, Q–P  Set player tag · 0  Clear\nCmd/Ctrl+Z  Undo',
   '未命名项目': 'Untitled project',
   '新建项目': 'New project',
   '原始视频不可用，无法预览片段范围':
@@ -803,6 +843,61 @@ const _englishText = <String, String>{
       'Check the task status in a moment. The source video will not be modified.',
   '暂无球员': 'No players yet',
   '新建球员': 'New player',
+  '球员分组': 'Player groups',
+  '这场比赛的视频': 'Videos of this game',
+  '每段都设置好篮筐后，点「分析全部」会按顺序逐段分析，分析完的段可以先去审核。':
+      'Once every part has its hoop set, “Analyse all” runs the parts one after another. You can review a part as soon as it finishes.',
+  '添加视频': 'Add videos',
+  '分析设置': 'Analysis settings',
+  '队列已暂停': 'Queue paused',
+  '还有': '',
+  '段待分析': 'parts left',
+  '正在排队分析': 'Analysing in order',
+  '导出排在这段之后': 'Export runs after this part',
+  '继续排队': 'Resume queue',
+  '暂停队列': 'Pause queue',
+  '暂停后，正在分析的这段会继续完成，之后不再开始新的一段。':
+      'Pausing lets the current part finish and then stops before the next one.',
+  '需要设置篮筐': 'Hoop not set',
+  '请确认自动识别的篮筐': 'Confirm detected hoop',
+  '确认篮筐': 'Confirm hoop',
+  '沿用上一段的篮筐': 'Hoop from previous part',
+  '自动识别篮筐': 'Hoop detected',
+  '篮筐已设置': 'Hoop set',
+  '分析中': 'Analysing',
+  '排队中': 'Queued',
+  '个候选': 'candidates',
+  '已取消': 'Cancelled',
+  '未分析': 'Not analysed',
+  '原视频已移动': 'Source video moved',
+  '移出队列': 'Remove from queue',
+  '上移': 'Move up',
+  '下移': 'Move down',
+  '设置篮筐': 'Set hoop',
+  '调整': 'Adjust',
+  '分析全部': 'Analyse all',
+  '保存这一段的设置': 'Save this part',
+  '支持 MP4、MOV、M4V、AVI、MKV。同一场比赛的多段视频可以一起选，会建成一个项目。原始视频不会被修改或上传。':
+      'MP4, MOV, M4V, AVI and MKV are supported. Pick several parts of one game together to make one project. Source videos are never modified or uploaded.',
+  '添加同一场的其他视频': 'Add more parts of this game',
+  '正在添加视频…': 'Adding videos…',
+  '正在识别第 1 段的篮筐…': 'Detecting the hoop in part 1…',
+  '正在调整视频顺序…': 'Reordering videos…',
+  '没有需要分析的视频段': 'No parts need analysis',
+  '全部视频段分析完成': 'All parts analysed',
+  '导出会在当前这段分析完成后开始，之后继续排队':
+      'The export starts after the current part, then the queue continues',
+  '视频段': 'Parts',
+  '按视频段筛选': 'Filter by part',
+  '运行日志': 'Logs',
+  '打开日志目录': 'Open log folder',
+  '存为分组': 'Save as group',
+  '例如：周六球队': 'e.g. Saturday team',
+  '还没有分组。把当前项目的球员存为分组后，其他项目可以一键导入。':
+      'No groups yet. Save this project\'s players as a group to import them into other projects in one tap.',
+  '把当前球员存为分组': 'Save current players as a group',
+  '球员已导入': 'Players imported',
+  '正在导入球员…': 'Importing players…',
   '标注': 'Annotations',
   '标注会显示轨迹与判定点 · 按 A 可开关':
       'Annotations show the trajectory and decision points · press A to toggle',
@@ -1044,4 +1139,86 @@ const _englishText = <String, String>{
   '重新定位视频': 'Relink video',
   '有数值但信号弱': 'A value is available, but the signal is weak',
   '请检查视频后重试': 'Check the video and try again',
+  '反馈问题': 'Report a problem',
+  '遇到问题或想提建议，两步就行：': 'Found a problem or have an idea? Two steps:',
+  '复制诊断信息': 'Copy diagnostics',
+  '会带上版本、系统和最近的运行日志，用户名会自动隐藏，不包含视频内容。':
+      'Includes the version, system and recent logs. Your user name is hidden and no video content is included.',
+  '发给我': 'Send it to me',
+  '贴到交流群、小红书私信或邮件都可以，顺便说一下你做了什么操作。':
+      'Paste it into the community group, a direct message or an email, and tell me what you were doing.',
+  '错误详情': 'Error details',
+  '已复制，可以粘贴发给我了': 'Copied. Paste it to me',
+  '进交流群（官网扫码）': 'Community (website)',
+  '发邮件': 'Email',
+  'GitHub 提交': 'GitHub issue',
+  '反馈这个问题': 'Report this problem',
+  '遇到问题？点这里反馈': 'Something wrong? Report it here',
+  '刚才出错了？点这里反馈': 'Just hit an error? Report it here',
+  '点「反馈」可以一键复制诊断信息（版本、系统和运行日志），发到交流群或邮件给我，排查会快很多。':
+      'Click Feedback to copy diagnostics (version, system and logs) in one step, then send them to me. It makes problems much faster to fix.',
+  '现在反馈': 'Report now',
+  '版本': 'Version',
+  '检查更新': 'Check for updates',
+  '正在检查更新…': 'Checking for updates…',
+  '重新检查': 'Check again',
+  '当前版本': 'Current version',
+  '跳过这个版本': 'Skip this version',
+  '稍后': 'Later',
+  '下载更新': 'Download update',
+  '后台下载': 'Download in background',
+  '继续下载': 'Resume download',
+  '打开安装包': 'Open installer',
+  '打开所在文件夹': 'Show in folder',
+  '下载完成。退出 BHE，把压缩包解压后替换原来的 BHE 文件夹，再重新打开。项目保存在别的位置，不会丢。':
+      'Download complete. Quit BHE, unzip the package, replace the old BHE folder and open it again. Your projects are stored elsewhere and will not be lost.',
+  '下载完成。退出 BHE，打开安装包把 BHE 拖进「应用程序」替换旧版本，再重新打开。项目保存在别的位置，不会丢。':
+      'Download complete. Quit BHE, open the installer, drag BHE into Applications to replace the old version and open it again. Your projects are stored elsewhere and will not be lost.',
+  '现在有分析或导出在进行，等它完成再退出替换。':
+      'An analysis or export is running. Wait for it to finish before quitting to replace the app.',
+  '点「查看」了解更新内容': 'Click View to see what is new',
+  '查看': 'View',
+  '连不上更新服务器，请检查网络': 'Cannot reach the update server. Check your network.',
+  '更新信息签名校验失败': 'The update information failed its signature check.',
+  '更新信息格式无效': 'The update information is invalid.',
+  '下载中断，请检查网络后继续': 'The download was interrupted. Check your network and resume.',
+  '安装包校验失败，请重新下载': 'The package failed its checksum. Download it again.',
+  '安装更新': 'Install update',
+  '视频或项目文件夹可能被移动、改名或删除。请确认它还在原来的位置，必要时到导入页重新定位视频。':
+      'The video or project folder may have been moved, renamed or deleted. Check that it is still there, and relink the video on the import page if needed.',
+  '请确认文件没有被其它程序占用，或者换一个有读写权限的文件夹。':
+      'Make sure no other program is using the file, or choose a folder you can read and write.',
+  '磁盘空间不足': 'Not enough disk space',
+  '请清理磁盘空间后再试。': 'Free up some disk space and try again.',
+  '每个标签各合成一个视频': 'One video per tag',
+  '只导出选中的标签，每个标签一个 MP4，文件名就是标签名，放进同一个文件夹。':
+      'Exports only the selected tags: one MP4 per tag, named after the tag, in one folder.',
+  '按标签导出': 'Per-tag export',
+  '进球效果': 'Goal effect',
+  '可选，导出时作用于每个进球片段': 'Optional. Applied to each goal clip when exporting.',
+  '不加效果': 'No effect',
+  '每个片段原样导出。': 'Clips are exported as they are.',
+  '临门慢动作': 'Slow-motion approach',
+  '进球前 1 秒放慢到一半速度，球进框后正常速度。人和球都在原画面里，像电影里的慢镜头。每个进球多约 1.3 秒。':
+      'Slows down to half speed for the second before the goal, then back to normal once the ball is through. Players and ball stay in the frame, like a film slow-motion shot. Adds about 1.3 s per goal.',
+  '慢放特写回放': 'Slow-motion close-up replay',
+  '片段播完后，重播入框前后约 0.8 秒的画面：放慢一倍，取景框住篮筐和球的飞行路线，方便看清球进没进。每个进球多约 1.6 秒。':
+      'After each clip, replays about 0.8 s around the goal at half speed, framed on the hoop and the ball path so you can see whether it went in. Adds about 1.6 s per goal.',
+  '比赛数据': 'Game stats',
+  '按当前审核结果统计': 'Based on the current review',
+  '进球（保留）': 'Made (kept)',
+  '其中未审核': 'Not reviewed yet',
+  '你排除的': 'Excluded by you',
+  '复核判定没进': 'Rim check: missed',
+  '命中率（估算）': 'Hit rate (estimate)',
+  '保留的进球 ÷ 全部疑似片段。疑似片段里也有不是投篮的，没碰到篮筐的投篮也不在里面，只是粗略估算。':
+      'Kept goals ÷ all suspected clips. Some suspected clips are not shots, and shots that never reach the rim are missing, so this is only a rough estimate.',
+  '每人进球': 'Made shots per player',
+  '进球时间分布': 'Made shots over time',
+  '源视频找不到，请到导入页重新定位视频': 'The source video cannot be found. Relink it on the import page.',
+  '视频横竖方向已修正，篮筐和候选需要重新确认并分析': 'The video orientation was corrected. Re-confirm the hoop and candidates, then analyse again.',
+  '现在有分析或导出在进行，等它完成再安装，安装时 BHE 会被关闭。':
+      'An analysis or export is running. Wait for it to finish; installing closes BHE.',
+  '下载完成。安装时 BHE 会被关闭，项目会保留。第一次安装需要允许 BHE「安装未知应用」。':
+      'Download complete. Installing closes BHE and keeps your projects. The first time, allow BHE to install unknown apps.',
 };

@@ -23,7 +23,7 @@ class _CsNoticeState extends State<CsNotice>
 
   Duration get _effectiveDuration =>
       widget.message.severity == NoticeSeverity.error
-      ? const Duration(seconds: 6)
+      ? const Duration(seconds: 10)
       : widget.message.duration;
 
   @override

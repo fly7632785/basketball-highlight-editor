@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'bhe_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -40,6 +41,61 @@ class BheLocalizationsEn extends BheLocalizations {
 
   @override
   String get deleteProject => 'Delete current project';
+
+  @override
+  String get renameProject => 'Rename project';
+
+  @override
+  String get projectName => 'Project name';
+
+  @override
+  String get projectNameHint => 'e.g. Oct 24 practice game';
+
+  @override
+  String get projectNameEmpty => 'Project name cannot be empty';
+
+  @override
+  String projectNameTooLong(int max) {
+    return 'Project name is limited to $max characters';
+  }
+
+  @override
+  String get projectNameSaveFailed =>
+      'Could not save the project name. Try again.';
+
+  @override
+  String get projectNameScopeHint =>
+      'Only the display name changes. The project folder and exported videos are untouched.';
+
+  @override
+  String get save => 'Save';
+
+  @override
+  String get cancel => 'Cancel';
+
+  @override
+  String get close => 'Close';
+
+  @override
+  String get openFolder => 'Open folder';
+
+  @override
+  String get projectInfo => 'Project info';
+
+  @override
+  String get projectCreatedAt => 'Created';
+
+  @override
+  String get projectVideoCount => 'Video segments';
+
+  @override
+  String get projectSegmentsUnit => 'segments';
+
+  @override
+  String get projectGoalsConfirmed => 'Confirmed goals';
+
+  @override
+  String get projectStorageLocation => 'Storage location';
 
   @override
   String get more => 'More';
@@ -145,7 +201,7 @@ class BheLocalizationsEn extends BheLocalizations {
 
   @override
   String get startFromVideoDescription =>
-      'Choose a fixed-camera recording. BHE first locates the hoop, then creates scoring candidates for review and export.';
+      'Choose fixed-camera recordings; pick several parts of one game together. BHE locates the hoop and creates scoring candidates in order for review and export.';
 
   @override
   String get videoDuration => 'Video duration';
@@ -547,12 +603,6 @@ class BheLocalizationsEn extends BheLocalizations {
   String get confirm => 'Confirm';
 
   @override
-  String get cancel => 'Cancel';
-
-  @override
-  String get close => 'Close';
-
-  @override
   String get rangeEditorHint =>
       'Clip playback loops inside the range. Drag either end (hold it at the edge to keep extending), or press I / O to set the start / end at the current position. The source video is not modified.';
 
@@ -821,7 +871,7 @@ class BheLocalizationsEn extends BheLocalizations {
   String get reviewUnreviewed => 'Not reviewed';
 
   @override
-  String get homeDropHint => 'Or drop a video here';
+  String get homeDropHint => 'Or drop one or more videos here';
 
   @override
   String get homeDropActive => 'Release to create a project';

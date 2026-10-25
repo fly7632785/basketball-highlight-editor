@@ -338,3 +338,15 @@ a { color: inherit; }
   border-top: 1px solid var(--line-ink); padding-top: .7rem;
 }
 .dl-tip strong { color: var(--t-ink); }
+
+.community {
+  display: flex; align-items: center; gap: 1.4rem;
+  max-width: 34rem; margin: 2.2rem auto 0; padding: 1.2rem 1.4rem;
+  border: 1px solid var(--line-ink); border-radius: 12px;
+}
+.community img { width: 150px; height: auto; border-radius: 8px; flex: none; }
+.community h3 { font-size: 1.02rem; color: var(--t-ink); }
+.community p { margin-top: .4rem; font-size: .9rem; color: var(--t-ink-dim); line-height: 1.7; }
+@media (max-width: 620px) {
+  .community { flex-direction: column; text-align: center; }
+}

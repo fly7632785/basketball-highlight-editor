@@ -64,6 +64,41 @@ def _check_binary(path: str | None, expected_name: str) -> tuple[bool, str]:
     return True, str(Path(path).resolve())
 
 
+def _acceleration_report(python_path: str, model: Path) -> dict[str, object]:
+    """报告加速后端可用性。只是信息,不参与 OK/FAILED 判定。
+
+    桌面端 DirectML 需要两件事同时成立:装了 onnxruntime-directml,且
+    ``models/bball_model.onnx``(动态 batch)存在。缺任一项都会回落 CPU。
+    """
+    onnx_model = model.with_suffix(".onnx")
+    probe = (
+        "import json\n"
+        "try:\n"
+        "    import onnxruntime as ort\n"
+        "    providers = ort.get_available_providers()\n"
+        "    version = ort.__version__\n"
+        "except Exception as exc:\n"
+        "    providers, version = [], None\n"
+        "print(json.dumps({'onnxruntime': version, 'providers': providers}))\n"
+    )
+    try:
+        result = subprocess.run(
+            [python_path, "-c", probe],
+            check=True, capture_output=True, text=True, timeout=60,
+        )
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+    except (OSError, subprocess.CalledProcessError, ValueError, IndexError):
+        payload = {"onnxruntime": None, "providers": []}
+    providers = list(payload.get("providers") or [])
+    return {
+        "onnxruntime": payload.get("onnxruntime"),
+        "providers": providers,
+        "dml_provider": "DmlExecutionProvider" in providers,
+        "onnx_model": str(onnx_model) if onnx_model.is_file() else None,
+        "dml_ready": "DmlExecutionProvider" in providers and onnx_model.is_file(),
+    }
+
+
 def main() -> int:
     args = _parse_args()
     root = args.root.expanduser().resolve()
@@ -95,17 +130,35 @@ def main() -> int:
     ffprobe_ok, ffprobe_detail = _check_binary(args.ffprobe, "ffprobe")
     checks["ffmpeg"] = {"ok": ffmpeg_ok, "detail": ffmpeg_detail}
     checks["ffprobe"] = {"ok": ffprobe_ok, "detail": ffprobe_detail}
+    # 可选能力:只报告,不参与判定(缺了就是 CPU 推理,不算运行时故障)。
+    checks["acceleration"] = {
+        "ok": True,
+        "optional": True,
+        **_acceleration_report(args.python_path, model),
+    }
 
-    ok = all(bool(item["ok"]) for item in checks.values())
+    ok = all(bool(item["ok"]) for item in checks.values() if not item.get("optional"))
     result = {"ok": ok, "root": str(root), "checks": checks}
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print(f"runtime: {'OK' if ok else 'FAILED'}")
         for name, item in checks.items():
+            if item.get("optional"):
+                continue
             print(f"- {name}: {'OK' if item['ok'] else 'FAILED'}")
             if not item["ok"]:
                 print(f"  {item}")
+        accel = checks["acceleration"]
+        if accel.get("dml_ready"):
+            print("- acceleration: DirectML ready")
+        else:
+            print(
+                "- acceleration: CPU only "
+                f"(onnxruntime={accel.get('onnxruntime')}, "
+                f"dml_provider={accel.get('dml_provider')}, "
+                f"onnx_model={'yes' if accel.get('onnx_model') else 'no'})"
+            )
     return 0 if ok else 1
 
 

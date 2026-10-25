@@ -610,7 +610,7 @@ List<EvidencePoint> _pointList(Object? value) {
 
 @immutable
 class ClipSettings {
-  const ClipSettings({this.beforeSeconds = 6, this.afterSeconds = 3});
+  const ClipSettings({this.beforeSeconds = 3, this.afterSeconds = 1});
 
   final int beforeSeconds;
   final int afterSeconds;
@@ -621,8 +621,8 @@ class ClipSettings {
   };
 
   factory ClipSettings.fromJson(Map<String, dynamic> json) => ClipSettings(
-    beforeSeconds: (json['before_seconds'] as num?)?.toInt() ?? 6,
-    afterSeconds: (json['after_seconds'] as num?)?.toInt() ?? 3,
+    beforeSeconds: (json['before_seconds'] as num?)?.toInt() ?? 3,
+    afterSeconds: (json['after_seconds'] as num?)?.toInt() ?? 1,
   );
 }
 

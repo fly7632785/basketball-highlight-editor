@@ -69,6 +69,38 @@ for line in sys.stdin:
     },
   );
 
+  test('writes start, stderr, failed requests and exit to the log file', () async {
+    final directory = await Directory.systemTemp.createTemp('bhe-engine-');
+    addTearDown(() => directory.delete(recursive: true));
+    _writeFakeEngine(directory, '''
+import json, sys
+print("ffmpeg not found", file=sys.stderr, flush=True)
+request = json.loads(sys.stdin.readline())
+print(json.dumps({"request_id": request["request_id"], "ok": False,
+                  "error": {"code": "MEDIA_TOOL_MISSING", "message": "ffmpeg"}}), flush=True)
+''');
+    final logFile = File('${directory.path}/logs/engine.log');
+    final client = EngineClient(logFile: logFile);
+    addTearDown(client.dispose);
+    await client.start(
+      workingDirectory: directory.path,
+      enginePythonPath: directory.path,
+      pythonExecutable: _resolvePython(),
+    );
+    await expectLater(
+      client.request('inspect_video', {}),
+      throwsA(isA<EngineException>()),
+    );
+    while (client.isRunning) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    final log = logFile.readAsStringSync();
+    expect(log, contains('start python='));
+    expect(log, contains('stderr: ffmpeg not found'));
+    expect(log, contains('inspect_video failed: {"code":"MEDIA_TOOL_MISSING"'));
+    expect(log, contains('exit code=0'));
+  });
+
   test('clears running state when the engine process exits', () async {
     final directory = await Directory.systemTemp.createTemp('bhe-engine-');
     addTearDown(() => directory.delete(recursive: true));

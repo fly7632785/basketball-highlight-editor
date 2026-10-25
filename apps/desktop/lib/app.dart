@@ -9,9 +9,12 @@ import 'package:bhe_l10n/bhe_l10n.dart';
 import 'components/cs_notice_overlay.dart';
 import 'core/windows_caption_bar.dart';
 import 'core/windows_title_bar.dart';
+import 'features/update/update_dialog.dart';
+import 'providers/notice_provider.dart';
 import 'providers/project_state.dart';
 import 'providers/locale_provider.dart';
 import 'providers/theme_provider.dart';
+import 'providers/update_provider.dart';
 import 'router/app_router.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
@@ -27,6 +30,7 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
     with WindowListener {
   bool _confirmingClose = false;
   late final ProviderSubscription<ThemeMode> _themeSubscription;
+  Timer? _updateCheckTimer;
 
   @override
   void initState() {
@@ -37,6 +41,34 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
       themeModeProvider,
       (_, next) => unawaited(_syncNativeWindowBrightness(next)),
       fireImmediately: true,
+    );
+    _updateCheckTimer = Timer(const Duration(seconds: 5), _autoCheckUpdate);
+  }
+
+  Future<void> _autoCheckUpdate() async {
+    final found = await ref.read(updateProvider.notifier).autoCheck();
+    final version = ref.read(updateProvider).manifest?.version;
+    if (!found || !mounted || version == null) return;
+    final id = 'update-$version';
+    ref.read(noticeProvider.notifier).push(
+      NoticeMessage(
+        id: id,
+        severity: NoticeSeverity.info,
+        title: '发现新版本 v$version',
+        description: '点「查看」了解更新内容',
+        actionLabel: '查看',
+        duration: const Duration(seconds: 10),
+        action: () {
+          final context = ref
+              .read(appRouterProvider)
+              .routerDelegate
+              .navigatorKey
+              .currentContext;
+          if (context == null) return;
+          ref.read(noticeProvider.notifier).dismiss(id);
+          showUpdateDialog(context);
+        },
+      ),
     );
   }
 
@@ -72,6 +104,7 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
 
   @override
   void dispose() {
+    _updateCheckTimer?.cancel();
     _themeSubscription.close();
     windowManager.removeListener(this);
     super.dispose();

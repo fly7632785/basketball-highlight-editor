@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS videos (
     audio_codec TEXT,
     analysis_start_ms INTEGER NOT NULL DEFAULT 0,
     analysis_end_ms INTEGER,
+    sort_index INTEGER NOT NULL DEFAULT 0,
+    recorded_at TEXT,
     status TEXT NOT NULL DEFAULT 'linked',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

@@ -78,10 +78,7 @@ class ProjectSessionScope {
   }
 
   Future<JsonMap> listCandidates() {
-    return engine.listCandidates(
-      projectRoot: projectRoot,
-      videoId: _requireVideoId(),
-    );
+    return engine.listCandidates(projectRoot: projectRoot);
   }
 
   Future<JsonMap> listPlayers() {
@@ -132,7 +129,6 @@ class ProjectSessionScope {
   Future<List<JsonMap>> getActiveJobs({String jobType = 'analysis'}) async {
     final payload = await engine.getActiveJobs(
       projectRoot: projectRoot,
-      videoId: videoId,
       jobType: jobType,
     );
     return _mapList(payload['jobs']);
@@ -141,7 +137,6 @@ class ProjectSessionScope {
   Future<JsonMap?> getLatestJob({String jobType = 'analysis'}) async {
     final payload = await engine.getLatestJob(
       projectRoot: projectRoot,
-      videoId: videoId,
       jobType: jobType,
     );
     final job = payload['job'];
@@ -312,6 +307,37 @@ class ProjectSession {
     return engine.inspectVideo(videoPath: videoPath);
   }
 
+  /// 切换当前操作的视频段，项目内的多段视频共用一个会话。
+  void setActiveVideo(String videoId) => _videoId = videoId;
+
+  /// 把视频追加到项目末尾，不改变当前操作的视频段。
+  Future<JsonMap> addVideo(String videoPath) {
+    return engine.linkVideo(
+      projectRoot: _requireProjectRoot(),
+      videoPath: videoPath,
+    );
+  }
+
+  Future<JsonMap> reorderVideos(List<String> videoIds) {
+    return engine.reorderVideos(
+      projectRoot: _requireProjectRoot(),
+      videoIds: videoIds,
+    );
+  }
+
+  Future<JsonMap> setAnalysisQueue(
+    List<String> videoIds, {
+    double beforeSeconds = 3,
+    double afterSeconds = 1,
+  }) {
+    return engine.setAnalysisQueue(
+      projectRoot: _requireProjectRoot(),
+      videoIds: videoIds,
+      beforeSeconds: beforeSeconds,
+      afterSeconds: afterSeconds,
+    );
+  }
+
   Future<JsonMap> linkVideo(String videoPath) async {
     final root = _requireProjectRoot();
     final payload = await engine.linkVideo(
@@ -332,10 +358,10 @@ class ProjectSession {
     );
   }
 
-  Future<JsonMap> extractPreview({int timeMs = 1000}) {
+  Future<JsonMap> extractPreview({int timeMs = 1000, String? videoId}) {
     return engine.extractPreview(
       projectRoot: _requireProjectRoot(),
-      videoId: _requireVideoId(),
+      videoId: videoId ?? _requireVideoId(),
       timeMs: timeMs,
     );
   }
@@ -365,6 +391,7 @@ class ProjectSession {
   }
 
   Future<JsonMap> suggestRoi({
+    String? videoId,
     String? modelPath,
     int? startMs,
     double? sampleFps,
@@ -374,7 +401,7 @@ class ProjectSession {
   }) {
     return engine.suggestRoi(
       projectRoot: _requireProjectRoot(),
-      videoId: _requireVideoId(),
+      videoId: videoId ?? _requireVideoId(),
       modelPath: modelPath,
       startMs: startMs,
       sampleFps: sampleFps,
@@ -391,10 +418,11 @@ class ProjectSession {
     required num y2,
     String? name,
     JsonMap? calibration,
+    String? videoId,
   }) {
     return engine.saveRoi(
       projectRoot: _requireProjectRoot(),
-      videoId: _requireVideoId(),
+      videoId: videoId ?? _requireVideoId(),
       x1: x1,
       y1: y1,
       x2: x2,
@@ -405,6 +433,7 @@ class ProjectSession {
   }
 
   Future<JsonMap> startAnalysis({
+    String? videoId,
     double? sampleFps,
     double? windowSeconds,
     double? beforeSeconds,
@@ -417,7 +446,7 @@ class ProjectSession {
   }) {
     return engine.startAnalysis(
       projectRoot: _requireProjectRoot(),
-      videoId: _requireVideoId(),
+      videoId: videoId ?? _requireVideoId(),
       sampleFps: sampleFps,
       windowSeconds: windowSeconds,
       beforeSeconds: beforeSeconds,
@@ -489,10 +518,7 @@ class ProjectSession {
   }
 
   Future<JsonMap> listCandidates() {
-    return engine.listCandidates(
-      projectRoot: _requireProjectRoot(),
-      videoId: _requireVideoId(),
-    );
+    return engine.listCandidates(projectRoot: _requireProjectRoot());
   }
 
   Future<JsonMap> createManualCandidate({
@@ -610,15 +636,16 @@ class ProjectSession {
     String? outputPath,
     List<String>? playerIds,
     bool? includeUnassigned,
+    String effect = 'none',
   }) {
     return engine.startExport(
       projectRoot: _requireProjectRoot(),
-      videoId: _requireVideoId(),
       mode: mode,
       outputDir: outputDir,
       outputPath: outputPath,
       playerIds: playerIds,
       includeUnassigned: includeUnassigned,
+      effect: effect,
     );
   }
 
@@ -629,7 +656,6 @@ class ProjectSession {
   Future<List<JsonMap>> getActiveJobs() async {
     final payload = await engine.getActiveJobs(
       projectRoot: _requireProjectRoot(),
-      videoId: _videoId,
     );
     final jobs = payload['jobs'];
     if (jobs is! List) return <JsonMap>[];
@@ -642,7 +668,6 @@ class ProjectSession {
   Future<List<JsonMap>> getActiveExportJobs() async {
     final payload = await engine.getActiveJobs(
       projectRoot: _requireProjectRoot(),
-      videoId: _videoId,
       jobType: 'export',
     );
     final jobs = payload['jobs'];
