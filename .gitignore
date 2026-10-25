@@ -43,3 +43,4 @@ apps/mobile/android/app/src/main/jniLibs/**/*.so
 models/*.onnx
 /bin/
 /.zcode/
+.worktrees/
