@@ -276,3 +276,4 @@ def test_export_snapshot_filters_by_player_and_unassigned(tmp_path: Path, monkey
     checkpoint = store.get_job(result["job"]["id"])["checkpoint_json"]
     snapshot = json.loads(checkpoint)["candidate_snapshot"]
     assert [item["id"] for item in snapshot] == [rows[0]["id"]]
+    assert snapshot[0]["player_name"] == "罗斯"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -64,6 +65,21 @@ def available_output_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
     raise OSError(f"无法生成不冲突的导出文件名: {path}")
+
+
+# Characters Windows rejects in file names. Player names come from user input,
+# so one entry must never make the whole export fail.
+_INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def player_filename_prefix(player_name: Any, max_length: int = 48) -> str:
+    """Return ``"<player>_"`` for use before ``goal_…``, or ``""`` if unusable."""
+    if not isinstance(player_name, str):
+        return ""
+    name = _INVALID_FILENAME_CHARS.sub("_", player_name.strip())
+    name = re.sub(r"\s+", "_", name).strip(" ._")
+    name = name[:max_length].rstrip(" ._")
+    return f"{name}_" if name else ""
 
 
 def build_clip_command(
@@ -171,8 +187,10 @@ def export_goal_clips(
     codecs = video_codecs()
     try:
         for index, candidate in enumerate(candidates, 1):
+            player_prefix = player_filename_prefix(candidate.get("player_name"))
             path = available_output_path(
-                output_dir / f"goal_{index:03d}_{candidate['event_time_ms'] / 1000:.2f}s.mp4"
+                output_dir
+                / f"{player_prefix}goal_{index:03d}_{candidate['event_time_ms'] / 1000:.2f}s.mp4"
             )
             codec = run_encoded_ffmpeg(
                 lambda codec: build_clip_command(

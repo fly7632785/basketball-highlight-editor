@@ -2140,6 +2140,7 @@ class EngineService:
                 "event_time_ms": int(candidate["event_time_ms"]),
                 "review_start_ms": int(candidate["review_start_ms"]),
                 "review_end_ms": int(candidate["review_end_ms"]),
+                "player_name": candidate.get("player_name"),
             }
             for candidate in store.list_candidates(video_id)
             if candidate.get("selection_status") != "excluded"

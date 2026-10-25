@@ -127,6 +127,62 @@ def test_export_surfaces_error_when_all_encoders_fail(tmp_path, monkeypatch):
     assert not list((tmp_path / "export").glob("*.mp4"))
 
 
+def test_export_clip_name_starts_with_player_name(tmp_path, monkeypatch):
+    def fake_ffmpeg(command, output_path, **kwargs):
+        output_path.write_bytes(b"video")
+
+    monkeypatch.setattr(export, "run_atomic_ffmpeg", fake_ffmpeg)
+    result = export.export_goal_clips(
+        tmp_path / "source.mp4",
+        [
+            {
+                "event_time_ms": 500,
+                "review_start_ms": 0,
+                "review_end_ms": 1000,
+                "player_name": "ye",
+            }
+        ],
+        tmp_path / "export", "separate",
+    )
+    assert Path(result["clip_files"][0]).name == "ye_goal_001_0.50s.mp4"
+
+
+def test_export_clip_name_without_player_is_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        export,
+        "run_atomic_ffmpeg",
+        lambda command, output_path, **kwargs: output_path.write_bytes(b"video"),
+    )
+    result = export.export_goal_clips(
+        tmp_path / "source.mp4",
+        [{"event_time_ms": 500, "review_start_ms": 0, "review_end_ms": 1000}],
+        tmp_path / "export", "separate",
+    )
+    assert Path(result["clip_files"][0]).name == "goal_001_0.50s.mp4"
+
+
+@pytest.mark.parametrize(
+    ("player_name", "expected"),
+    [
+        ("ye", "ye_"),
+        ("  张三  ", "张三_"),
+        ("a/b:c*d", "a_b_c_d_"),
+        ("first last", "first_last_"),
+        ("   ", ""),
+        ("", ""),
+        (None, ""),
+        ("...", ""),
+    ],
+)
+def test_player_filename_prefix(player_name, expected):
+    assert export.player_filename_prefix(player_name) == expected
+
+
+def test_player_filename_prefix_is_bounded():
+    prefix = export.player_filename_prefix("x" * 200)
+    assert prefix == f"{'x' * 48}_"
+
+
 def test_run_atomic_ffmpeg_validates_and_renames_output(tmp_path: Path, monkeypatch):
     output = tmp_path / "clip.mp4"
 
