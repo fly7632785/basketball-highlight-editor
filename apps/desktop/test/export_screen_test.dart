@@ -308,6 +308,25 @@ void main() {
     expect(find.byKey(const Key('export-mode-merge')), findsOneWidget);
     expect(find.byKey(const Key('export-mode-separate')), findsOneWidget);
   });
+
+  testWidgets('Export screen opens the existing video merge dialog', (
+    tester,
+  ) async {
+    await _pumpExport(
+      tester,
+      PlaybackCoordinator(),
+      _TestOutputPicker(),
+      _TrackingExportNotifier(),
+    );
+
+    await tester.tap(find.byKey(const Key('existing-video-merge-open')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('existing-video-merge-start')),
+      findsOneWidget,
+    );
+  });
 }
 
 class _ExportNotifier extends ProjectNotifier {

@@ -10,6 +10,7 @@ import '../../components/cs_button.dart';
 import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../components/cs_progress_track.dart';
+import 'existing_video_merge_dialog.dart';
 import '../../providers/project_state.dart';
 import '../../providers/playback_coordinator.dart';
 import '../../providers/export_output_picker.dart';
@@ -84,6 +85,15 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                 ],
               ),
             ),
+            CsButton(
+              key: const Key('existing-video-merge-open'),
+              label: Text(l10n?.text('合并已有视频') ?? '合并已有视频'),
+              icon: LucideIcons.merge,
+              variant: CsButtonVariant.secondary,
+              size: CsButtonSize.sm,
+              onPressed: _openExistingVideoMerge,
+            ),
+            const SizedBox(width: Spacing.xs),
             CsButton(
               label: Text(l10n?.text('返回审核') ?? '返回审核'),
               icon: LucideIcons.arrowLeft,
@@ -215,8 +225,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
           const SizedBox(height: Spacing.sm),
           _ExportNotice(
             color: c.warning,
-            text:
-                l10n?.analysisStillRunning ?? '视频仍在分析，分析完成后才能导出新的候选结果。',
+            text: l10n?.analysisStillRunning ?? '视频仍在分析，分析完成后才能导出新的候选结果。',
           ),
         ],
         if (state.analysisMode == 'fast' && _showFastRisk) ...[
@@ -328,8 +337,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               icon: LucideIcons.history,
               title: l10n?.text('还没有导出记录') ?? '还没有导出记录',
               description:
-                  l10n?.text('完成一次导出后，历史记录会出现在这里。') ??
-                  '完成一次导出后，历史记录会出现在这里。',
+                  l10n?.text('完成一次导出后，历史记录会出现在这里。') ?? '完成一次导出后，历史记录会出现在这里。',
             ),
           ),
       ],
@@ -367,18 +375,27 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     );
   }
 
-  int _playerCount(ProjectState state, String? playerId) => state.candidates
-      .where(_isIncluded)
-      .where((item) {
+  int _playerCount(ProjectState state, String? playerId) =>
+      state.candidates.where(_isIncluded).where((item) {
         final id = item['player_id']?.toString();
         return playerId == null ? id == null || id.isEmpty : id == playerId;
-      })
-      .length;
+      }).length;
 
   void _resetPlayerFilter() {
     _playerFilterActive = false;
     _selectedPlayerIds.clear();
     _includeUnassigned = true;
+  }
+
+  Future<void> _openExistingVideoMerge() async {
+    final completed = await showDialog<bool>(
+      context: context,
+      builder: (_) => const ExistingVideoMergeDialog(),
+    );
+    if (!mounted || completed != true) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.bheText('视频合并完成'))));
   }
 
   void _syncPlayerFilter(ProjectState state) {
@@ -792,9 +809,7 @@ class _RunningExportCard extends StatelessWidget {
           Text(
             l10n?.text('本次输出使用启动导出时的片段列表，之后的审核修改用于下一次导出。') ??
                 '本次输出使用启动导出时的片段列表，之后的审核修改用于下一次导出。',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: c.textSecondary,
-            ),
+            style: theme.textTheme.labelSmall?.copyWith(color: c.textSecondary),
           ),
         ],
       ),
