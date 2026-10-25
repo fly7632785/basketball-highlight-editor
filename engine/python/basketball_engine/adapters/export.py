@@ -56,6 +56,59 @@ def concat_manifest_entry(path: Path) -> str:
     return f"file '{normalized}'\n"
 
 
+def merge_existing_videos(
+    input_paths: list[Path],
+    output_path: Path,
+    *,
+    cancel_check=None,
+    process_callback=None,
+) -> Dict[str, Any]:
+    """Merge local video files in their supplied order into one MP4."""
+    if not input_paths:
+        raise ValueError("NO_MERGE_INPUTS")
+    inputs = [path.expanduser().resolve() for path in input_paths]
+    if any(not path.is_file() or path.stat().st_size <= 0 for path in inputs):
+        raise OSError("MERGE_INPUT_NOT_FOUND")
+    output = output_path.expanduser().resolve()
+    if output in inputs:
+        raise ValueError("MERGE_OUTPUT_CONFLICT")
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    manifest = output.with_name(f".{output.stem}.{uuid4().hex}.concat.txt")
+    manifest.write_text(
+        "".join(concat_manifest_entry(path) for path in inputs), encoding="utf-8"
+    )
+    try:
+        copy_command = [
+            resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "concat", "-safe", "0", "-i", str(manifest),
+            "-c", "copy", str(output),
+        ]
+        try:
+            run_atomic_ffmpeg(
+                copy_command,
+                output,
+                cancel_check=cancel_check,
+                process_callback=process_callback,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            run_encoded_ffmpeg(
+                lambda codec: [
+                    resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
+                    "-f", "concat", "-safe", "0", "-i", str(manifest),
+                    *video_codec_options(codec), "-c:a", "aac", "-b:a", "128k",
+                    "-movflags", "+faststart", str(output),
+                ],
+                output,
+                video_codecs(),
+                cancel_check=cancel_check,
+                process_callback=process_callback,
+            )
+    finally:
+        manifest.unlink(missing_ok=True)
+    return {"files": [str(output)]}
+
+
 def available_output_path(path: Path) -> Path:
     if not path.exists():
         return path

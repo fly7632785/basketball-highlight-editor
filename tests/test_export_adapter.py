@@ -220,3 +220,64 @@ def test_run_atomic_ffmpeg_stops_running_process_when_cancelled(tmp_path: Path, 
     assert processes[0].returncode == -15
     assert callbacks == [processes[0], None]
     assert not output.exists()
+
+
+def test_merge_existing_videos_keeps_selected_order_and_tries_stream_copy(
+    tmp_path, monkeypatch
+):
+    first = tmp_path / "first.mp4"
+    second = tmp_path / "second.mp4"
+    output = tmp_path / "merged.mp4"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    captured = {}
+
+    def fake_ffmpeg(command, output_path, **_kwargs):
+        manifest = Path(command[command.index("-i") + 1])
+        captured["manifest"] = manifest.read_text(encoding="utf-8")
+        captured["command"] = command
+        output_path.write_bytes(b"merged")
+
+    monkeypatch.setattr(export, "run_atomic_ffmpeg", fake_ffmpeg)
+
+    result = export.merge_existing_videos([first, second], output)
+
+    assert captured["manifest"] == (
+        export.concat_manifest_entry(first) + export.concat_manifest_entry(second)
+    )
+    assert captured["command"][captured["command"].index("-c") + 1] == "copy"
+    assert result["files"] == [str(output)]
+
+
+def test_merge_existing_videos_reencodes_after_stream_copy_failure(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source.mp4"
+    output = tmp_path / "merged.mp4"
+    source.write_bytes(b"source")
+    attempts = []
+
+    def fake_ffmpeg(command, output_path, **_kwargs):
+        attempts.append(command)
+        if "-c" in command and command[command.index("-c") + 1] == "copy":
+            raise subprocess.CalledProcessError(1, command)
+        output_path.write_bytes(b"merged")
+
+    monkeypatch.setattr(export, "run_atomic_ffmpeg", fake_ffmpeg)
+    monkeypatch.setattr(export, "video_codecs", lambda: ["mpeg4"])
+
+    export.merge_existing_videos([source], output)
+
+    assert attempts[1][attempts[1].index("-c:v") + 1] == "mpeg4"
+
+
+def test_merge_existing_videos_rejects_empty_missing_and_output_conflicts(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+
+    with pytest.raises(ValueError, match="NO_MERGE_INPUTS"):
+        export.merge_existing_videos([], tmp_path / "out.mp4")
+    with pytest.raises(OSError, match="MERGE_INPUT_NOT_FOUND"):
+        export.merge_existing_videos([tmp_path / "missing.mp4"], tmp_path / "out.mp4")
+    with pytest.raises(ValueError, match="MERGE_OUTPUT_CONFLICT"):
+        export.merge_existing_videos([source], source)
