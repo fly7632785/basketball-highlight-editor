@@ -363,6 +363,28 @@ void main() {
   });
 
   test(
+    'EngineSession forwards existing video merge inputs and output',
+    () async {
+      final transport = _FakeEngineTransport()
+        ..responses['merge_existing_videos'] = {
+          'files': ['/tmp/merged.mp4'],
+        };
+      final session = EngineSession(transport);
+
+      await session.mergeExistingVideos(
+        inputPaths: const ['/tmp/first.mp4', '/tmp/second.mp4'],
+        outputPath: '/tmp/merged.mp4',
+      );
+
+      expect(transport.commands, ['merge_existing_videos']);
+      expect(transport.payloads.single, {
+        'input_paths': ['/tmp/first.mp4', '/tmp/second.mp4'],
+        'output_path': '/tmp/merged.mp4',
+      });
+    },
+  );
+
+  test(
     'EngineSession forwards start review command and candidate id',
     () async {
       final transport = _FakeEngineTransport()

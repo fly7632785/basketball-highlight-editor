@@ -504,6 +504,16 @@ class EngineSession {
     });
   }
 
+  Future<JsonMap> mergeExistingVideos({
+    required List<String> inputPaths,
+    required String outputPath,
+  }) {
+    return client.request('merge_existing_videos', <String, dynamic>{
+      'input_paths': inputPaths,
+      'output_path': outputPath,
+    });
+  }
+
   Future<JsonMap> listExports({required String projectRoot, int limit = 20}) {
     return client.request('list_exports', <String, dynamic>{
       'project_root': projectRoot,
