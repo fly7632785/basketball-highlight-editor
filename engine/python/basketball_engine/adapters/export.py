@@ -392,6 +392,7 @@ def build_clip_command(
     frame_size: tuple[int, int] | None = None,
     effect: Dict[str, Any] | None = None,
     uniform_audio: bool = False,
+    has_audio: bool = True,
 ) -> list[str]:
     if start_ms < 0 or end_ms <= start_ms:
         raise ValueError("INVALID_CLIP_RANGE")
@@ -406,7 +407,10 @@ def build_clip_command(
         "-t", f"{duration:.3f}",
         # Only the first audio track: iPhone spatial audio (APAC) and similar
         # tracks have no decoder here and would abort the whole export.
-        "-map", "0:v:0?", "-map", "0:a:0?",
+        # An optional map only skips absent streams; an existing track with
+        # an unknown codec still fails. Honor the inspected audio metadata.
+        "-map", "0:v:0?",
+        *(["-map", "0:a:0?"] if has_audio else ["-an"]),
         *(
             [
                 "-vf",
@@ -415,9 +419,10 @@ def build_clip_command(
             ]
             if frame_size else []
         ),
-        *codec_options, "-c:a", "aac", "-b:a", "128k",
+        *codec_options,
+        *(["-c:a", "aac", "-b:a", "128k"] if has_audio else []),
         # 开了慢放时，带回放的片段音频是 48kHz 立体声；没有回放的片段也统一成这样才能直接拼接。
-        *(["-ar", "48000", "-ac", "2"] if uniform_audio else []),
+        *(["-ar", "48000", "-ac", "2"] if uniform_audio and has_audio else []),
         "-movflags", "+faststart", str(output_path),
     ]
     return command
@@ -558,6 +563,7 @@ def export_goal_clips(
                     target_size if None not in target_size and candidate_size != target_size else None,
                     spec,
                     uniform_audio=effect != "none",
+                    has_audio=bool(candidate.get("has_audio", True)),
                 ),
                 path,
                 codecs,

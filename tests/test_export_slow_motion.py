@@ -169,3 +169,38 @@ def test_merge_mixes_effect_and_plain_clips_with_one_audio_format(tmp_path: Path
     assert (audio["sample_rate"], audio["channels"]) == ("48000", 2)
     assert float(info["format"]["duration"]) == pytest.approx(5.3 + 2.0, abs=0.3)
     assert result["duration_ms"] == 5300 + 2000
+
+
+@pytest.mark.parametrize("mode", ["separate", "merge"])
+@pytest.mark.parametrize("effect,manual,duration", [
+    ("none", False, 4.0),
+    ("approach", False, 5.3),
+    ("replay", False, 5.6),
+    ("approach", True, 4.0),
+])
+def test_export_skips_an_unrecognized_audio_track(tmp_path: Path, mode, effect, manual, duration):
+    from engine.python.basketball_engine.service import EngineService
+
+    ffmpeg, ffprobe = _tools_or_skip()
+    source = _source(tmp_path, ffmpeg)
+    # Keep a real audio track, but remove its codec description. Unlike a
+    # video with no audio streams, an optional 0:a:0? map still selects it.
+    data = bytearray(source.read_bytes())
+    audio_tag = data.index(b"mp4a")
+    esds_tag = data.index(b"esds", audio_tag)
+    data[audio_tag:audio_tag + 4] = b"zzzz"
+    data[esds_tag:esds_tag + 4] = b"free"
+    source.write_bytes(data)
+    info = EngineService().inspect_video({"video_path": str(source)})
+    assert info["audio_codec"] is None
+    clip = _clip(
+        source, has_audio=bool(info["audio_codec"]), manual=manual,
+        rim={"x": 160, "y": 100, "width": 20}, trail=[[160.0, 100.0]],
+    )
+
+    result = export.export_goal_clips([clip], tmp_path / "out", mode, effect=effect)
+
+    for path in dict.fromkeys(result["clip_files"] + result["files"]):
+        output = _probe(ffprobe, Path(path))
+        assert [stream["codec_type"] for stream in output["streams"]] == ["video"]
+        assert float(output["format"]["duration"]) == pytest.approx(duration, abs=0.2)
