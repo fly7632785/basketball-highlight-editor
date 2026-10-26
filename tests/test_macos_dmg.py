@@ -6,6 +6,32 @@ import pytest
 
 
 @pytest.mark.skipif(os.name == "nt", reason="macOS packaging uses Bash")
+@pytest.mark.parametrize("version,app_version", [
+    ("0.1.12", "0.1.12"),
+    ("0.1.12-macos.2", "0.1.12+macos.2"),
+])
+def test_macos_hotfix_version_keeps_future_update_checks_working(tmp_path, version, app_version):
+    flutter = tmp_path / "flutter"
+    flutter.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$TEST_FLUTTER_ARGS"\nexit 77\n',
+        encoding="utf-8",
+    )
+    flutter.chmod(0o755)
+    arguments = tmp_path / "arguments"
+    result = subprocess.run(
+        ["bash", str(Path(__file__).resolve().parents[1] / "scripts/build_macos_release.sh")],
+        env={**os.environ, "FLUTTER_BIN": str(flutter), "BHE_BUILD_NAME": version,
+             "BHE_SKIP_RUNTIME_PREPARE": "1", "TEST_FLUTTER_ARGS": str(arguments)},
+        capture_output=True, text=True,
+    )
+    # Stop at Flutter; the test must never copy runtimes or sign a real app.
+    assert result.returncode == 77, result.stderr
+    args = arguments.read_text(encoding="utf-8").splitlines()
+    assert args[args.index("--build-name") + 1] == version
+    assert args[args.index("--dart-define") + 1] == f"BHE_VERSION={app_version}"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="macOS packaging uses Bash")
 @pytest.mark.parametrize(
     "mode,expected_status,expected_attempts",
     [("busy-once", 0, 2), ("busy-always", 16, 5), ("other-error", 7, 1), ("verify-error", 37, 1)],

@@ -24,7 +24,10 @@ fi
   cd "$ROOT/apps/desktop"
   build_args=(build macos --release)
   if [[ -n "$BUILD_NAME" ]]; then
-    build_args+=(--build-name "$BUILD_NAME" --dart-define "BHE_VERSION=$BUILD_NAME")
+    # The updater accepts numeric versions plus build metadata. Keep platform
+    # hotfix tags traceable without making future version comparisons fail.
+    app_version="${BUILD_NAME/-macos./+macos.}"
+    build_args+=(--build-name "$BUILD_NAME" --dart-define "BHE_VERSION=$app_version")
   fi
   if [[ -n "$BUILD_NUMBER" ]]; then
     build_args+=(--build-number "$BUILD_NUMBER")
