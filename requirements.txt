@@ -1,4 +1,6 @@
 ultralytics>=8.4,<9
+# bball_model.pt references dill._dill when loading the checkpoint.
+dill>=0.4.1,<0.5
 opencv-python>=4.8
 numpy>=1.26
 pandas>=2.0

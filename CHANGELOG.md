@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+## [0.1.12-macos.3] - 待定
+
+### Fixed
+
+- 待发布：补齐模型加载所需的 `dill` 依赖，修复部分 Mac（尤其 Intel）分析或自动识别篮筐区域时报 `ModuleNotFoundError: No module named dill`；打包检查缺少该依赖时构建失败。
+- 本补丁基于 v0.1.12-macos.2，仅计划发布 macOS Apple Silicon 和 Intel 安装包。
+
 ## [0.1.12-macos.2] - 2026-10-26
 
 ### Fixed
