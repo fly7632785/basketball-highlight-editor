@@ -41,7 +41,7 @@ Current release: [v0.1.13](https://github.com/fly7632785/basketball-highlight-ed
 
 | System | v0.1.13 package | Notes |
 |---|---|---|
-| macOS | [Apple silicon](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-macos-arm64-v0.1.13-adhoc.dmg) · [Intel](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-macos-x86_64-v0.1.13-adhoc.dmg) | On first launch, right-click and select Open. |
+| macOS | [Apple silicon](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-macos-arm64-v0.1.13-adhoc.dmg) · [Intel](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-macos-x86_64-v0.1.13-adhoc.dmg) | Intel Macs require macOS 13 or later. On first launch, right-click and select Open. |
 | Windows 10 / 11 | [x64 .zip](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-windows-x64-v0.1.13.zip) | Extract the archive; see [setup notes](docs/GETTING_STARTED.en.md). |
 | Android | [arm64-v8a .apk](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-android-arm64-v8a-v0.1.13-debug-signed.apk) | Sideloaded test package; allow installation from unknown sources. |
 

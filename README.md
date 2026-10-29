@@ -41,7 +41,7 @@ BHE 在自己的电脑或安卓手机上分析，先把疑似进球排好队，�
 
 | 系统 | v0.1.13 安装包 | 说明 |
 |---|---|---|
-| macOS | [Apple 芯片](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-macos-arm64-v0.1.13-adhoc.dmg) · [Intel](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-macos-x86_64-v0.1.13-adhoc.dmg) | 首次打开时右键选择「打开」。 |
+| macOS | [Apple 芯片](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-macos-arm64-v0.1.13-adhoc.dmg) · [Intel](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-macos-x86_64-v0.1.13-adhoc.dmg) | Intel Mac 需 macOS 13 及以上；Apple 芯片见现有说明。首次打开时右键选择「打开」。 |
 | Windows 10 / 11 | [x64 .zip](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-windows-x64-v0.1.13.zip) | 下载后解压；安装与兼容性见[说明](docs/GETTING_STARTED.md)。 |
 | Android | [arm64-v8a .apk](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-android-arm64-v8a-v0.1.13-debug-signed.apk) | 侧载测试包，需允许安装未知来源应用。 |
 
