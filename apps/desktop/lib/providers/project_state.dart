@@ -1340,7 +1340,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
     await selectVideo(ordered.first);
     if (_projectLoadGeneration != previousGeneration + 1 ||
         identical(state.video, previousVideo) ||
-        state.video?['source_path']?.toString() != ordered.first) return;
+        state.video?['source_path']?.toString() != ordered.first) {
+      return;
+    }
     final first = state.videos.firstOrNull;
     if (first == null) return;
     await _runBusy(() async {

@@ -1,4 +1,5 @@
 // test/providers/project_state_test.dart
+// ignore_for_file: depend_on_referenced_packages
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -1815,7 +1816,7 @@ class _UnconfirmedExportTransport implements EngineTransport {
 }
 
 class _IntermittentPreferences extends InMemorySharedPreferencesStore {
-  _IntermittentPreferences(Map<String, Object> data) : super.withData(data);
+  _IntermittentPreferences(super.data) : super.withData();
   bool fail = true;
   int attempts = 0;
   @override
