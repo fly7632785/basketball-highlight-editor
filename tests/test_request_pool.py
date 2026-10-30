@@ -251,3 +251,139 @@ def test_link_retry_deduplicates_same_source(running, tmp_path):
     assert second['ok']
     assert first['payload']['video']['id'] == second['payload']['video']['id']
     assert len(service._require_store({'project_root': str(root)}).list_videos()) == 1
+
+
+@pytest.mark.parametrize('interrupt', [False, True])
+def test_input_shutdown_does_not_wait_for_stuck_worker(monkeypatch, interrupt):
+    started, release, shutdown_called = threading.Event(), threading.Event(), threading.Event()
+    service = EngineService()
+    def stalled(payload):
+        started.set()
+        release.wait(5)
+        return {}
+    monkeypatch.setattr(service, 'link_video', stalled)
+    monkeypatch.setattr(service, 'shutdown', lambda: shutdown_called.set())
+    monkeypatch.setattr(server, 'EngineService', lambda: service)
+    monkeypatch.setattr(server, 'environment_summary', lambda: 'test')
+    output = Output()
+    def input_lines():
+        yield json.dumps({'protocol_version': '1.0', 'type': 'request', 'request_id': 'x',
+                          'command': 'link_video', 'payload': {}})
+        assert started.wait(2)
+        if interrupt:
+            raise RuntimeError('input failed')
+    monkeypatch.setattr(server.sys, 'stdin', input_lines())
+    monkeypatch.setattr(server.sys, 'stdout', output)
+    errors = []
+    def invoke():
+        try:
+            server.main()
+        except Exception as exc:
+            errors.append(exc)
+    thread = threading.Thread(target=invoke)
+    thread.start()
+    try:
+        assert shutdown_called.wait(2)
+        thread.join(2)
+        assert not thread.is_alive()
+        assert bool(errors) == interrupt
+    finally:
+        release.set()
+
+
+@pytest.mark.parametrize('command', ['link_video', 'relink_video'])
+def test_source_replaced_after_probe_with_same_size_and_time_is_rejected(tmp_path, monkeypatch, command):
+    import os
+    service = EngineService()
+    root, source = tmp_path/'project', tmp_path/'video.mp4'
+    service.create_project({'root_path': str(root), 'name': 'project'})
+    source.write_bytes(b'original')
+    def metadata(payload):
+        stat = source.stat()
+        return {'source_path': str(source), 'source_size_bytes': stat.st_size,
+                'source_mtime_ns': stat.st_mtime_ns, 'width': 64, 'height': 64, 'duration_ms': 1000}
+    store = service._require_store({'project_root': str(root)})
+    prior = store.link_video(metadata({})) if command == 'relink_video' else None
+    original_video = store.video(prior['id']) if prior else None
+    def inspect(payload):
+        result = metadata(payload)
+        stat = source.stat()
+        replacement = tmp_path/'replacement.mp4'
+        replacement.write_bytes(b'replaced')
+        os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        os.replace(replacement, source)
+        return result
+    monkeypatch.setattr(service, 'inspect_video', inspect)
+    payload = {'project_root': str(root), 'video_path': str(source)}
+    if prior:
+        payload['video_id'] = prior['id']
+    with pytest.raises(ProtocolError) as error:
+        service.handle(command, payload)
+    assert error.value.code == 'VIDEO_SOURCE_CHANGED'
+    if prior:
+        assert store.video(prior['id']) == original_video
+    else:
+        assert store.list_videos() == []
+
+
+def test_stuck_worker_does_not_keep_python_process_alive(tmp_path):
+    import os
+    import subprocess
+    import sys
+    marker = tmp_path/'shutdown'
+    script = '''
+import io, json, sys, threading
+from pathlib import Path
+from engine.python.basketball_engine import server
+from engine.python.basketball_engine.service import EngineService
+service = EngineService()
+started = threading.Event()
+def stalled(payload):
+    started.set()
+    threading.Event().wait()
+service.link_video = stalled
+service.shutdown = lambda: Path(sys.argv[1]).write_text('called')
+server.EngineService = lambda: service
+server.environment_summary = lambda: 'test'
+def lines():
+    yield json.dumps({'protocol_version':'1.0','type':'request','request_id':'x', 'command':'link_video','payload':{}})
+    assert started.wait(2)
+sys.stdin = lines()
+sys.stdout = io.StringIO()
+server.main()
+'''
+    result = subprocess.run([sys.executable, '-c', script, str(marker)],
+                            env=os.environ.copy(), capture_output=True, text=True, timeout=4)
+    assert result.returncode == 0, result.stderr
+    assert marker.read_text() == 'called'
+
+
+def test_eof_signals_running_and_queued_requests(monkeypatch):
+    started, release = threading.Event(), threading.Event()
+    calls = []
+    service = EngineService()
+    def slow(payload):
+        calls.append(payload['name'])
+        started.set()
+        release.wait(5)
+        return {}
+    monkeypatch.setattr(service, 'link_video', slow)
+    monkeypatch.setattr(service, 'shutdown', lambda: None)
+    monkeypatch.setattr(server, 'EngineService', lambda: service)
+    monkeypatch.setattr(server, 'environment_summary', lambda: 'test')
+    output = Output()
+    def lines():
+        yield json.dumps({'protocol_version':'1.0','type':'request','request_id':'a', 'command':'link_video','payload':{'name':'a'}})
+        assert started.wait(2)
+        yield json.dumps({'protocol_version':'1.0','type':'request','request_id':'b', 'command':'link_video','payload':{'name':'b'}})
+    monkeypatch.setattr(server.sys, 'stdin', lines())
+    monkeypatch.setattr(server.sys, 'stdout', output)
+    try:
+        assert server.main() == 0
+        release.set()
+        results = {item['request_id']: item for item in [output.next(), output.next()]}
+        assert results['a']['error']['code'] == 'REQUEST_CANCELLED'
+        assert results['b']['error']['code'] == 'REQUEST_CANCELLED'
+        assert calls == ['a']
+    finally:
+        release.set()

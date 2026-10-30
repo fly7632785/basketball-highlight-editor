@@ -21,6 +21,7 @@ def test_slow_preview_does_not_block_player_creation(tmp_path, monkeypatch):
     service.create_project({"root_path": str(tmp_path), "name": "标签测试"})
     preview_started = threading.Event()
     player_returned = threading.Event()
+    preview_returned = threading.Event()
 
     def slow_preview(payload):
         preview_started.set()
@@ -34,6 +35,8 @@ def test_slow_preview_does_not_block_player_creation(tmp_path, monkeypatch):
             result = super().write(value)
             if json.loads(value)["request_id"] == "create":
                 player_returned.set()
+            if json.loads(value)["request_id"] == "preview":
+                preview_returned.set()
             return result
 
     def requests():
@@ -42,6 +45,7 @@ def test_slow_preview_does_not_block_player_creation(tmp_path, monkeypatch):
         yield _request("create", "create_player", {
             "project_root": str(tmp_path), "name": "第三位",
         })
+        assert preview_returned.wait(2)
 
     output = Output()
     monkeypatch.setattr(service, "extract_preview", slow_preview)
@@ -66,12 +70,22 @@ def test_preview_errors_keep_request_ids_and_do_not_break_other_requests(monkeyp
     def failed_preview(payload):
         raise error
 
-    output = io.StringIO()
+    finished = threading.Event()
+    class Output(io.StringIO):
+        def write(self, value):
+            result = super().write(value)
+            if json.loads(value)["request_id"] == "preview":
+                finished.set()
+            return result
+    output = Output()
+    def requests():
+        yield _request("preview", "extract_preview")
+        yield "not json\n"
+        yield _request("hello", "hello")
+        assert finished.wait(2)
     monkeypatch.setattr(service, "extract_preview", failed_preview)
     monkeypatch.setattr(server, "EngineService", lambda: service)
-    monkeypatch.setattr(server.sys, "stdin", io.StringIO(
-        _request("preview", "extract_preview") + "not json\n" + _request("hello", "hello")
-    ))
+    monkeypatch.setattr(server.sys, "stdin", requests())
     monkeypatch.setattr(server.sys, "stdout", output)
 
     assert server.main() == 0

@@ -848,11 +848,38 @@ class EngineService:
         if self._project_identity(store) != identity:
             raise ProtocolError("PROJECT_CHANGED", "项目已被删除或替换")
 
+    @staticmethod
+    def _source_identity(path: Path) -> tuple:
+        try:
+            stat = path.stat()
+        except OSError as exc:
+            raise ProtocolError("VIDEO_SOURCE_CHANGED", "原视频不存在或读取期间发生变化") from exc
+        return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+
+    @staticmethod
+    def _source_path(payload: Dict[str, Any]) -> Path:
+        raw = payload.get("video_path")
+        if not isinstance(raw, str) or not raw.strip():
+            raise ProtocolError("INVALID_REQUEST", "缺少 video_path")
+        path = Path(raw).expanduser().absolute()
+        if not path.is_file():
+            raise ProtocolError("VIDEO_NOT_FOUND", f"视频不存在: {path}")
+        return path
+
+    def _check_source_identity(self, path: Path, identity: tuple) -> None:
+        check_cancelled()
+        if self._source_identity(path) != identity:
+            raise ProtocolError("VIDEO_SOURCE_CHANGED", "读取期间原视频发生变化，请重试")
+
     def link_video(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         store = self._require_store(payload)
         identity = self._project_identity(store)
+        source = self._source_path(payload)
+        source_identity = self._source_identity(source)
         metadata = self.inspect_video(payload)
+        self._check_source_identity(source, source_identity)
         metadata["source_fingerprint"] = self._source_fingerprint(Path(metadata["source_path"]))
+        self._check_source_identity(source, source_identity)
         source_stat = Path(metadata["source_path"]).stat()
         if (source_stat.st_size, source_stat.st_mtime_ns) != (metadata["source_size_bytes"], metadata["source_mtime_ns"]):
             raise ProtocolError("VIDEO_SOURCE_CHANGED", "读取期间原视频发生变化，请重试")
@@ -862,8 +889,11 @@ class EngineService:
             if Path(video["source_path"]).resolve() == Path(metadata["source_path"]).resolve():
                 if video.get("source_fingerprint") != metadata["source_fingerprint"]:
                     raise ProtocolError("VIDEO_SOURCE_CHANGED", "原视频已变化，请重新定位视频")
+                self._check_source_identity(source, source_identity)
                 begin_commit()
                 return {"video": video}
+        # 外部进程仍可能在最终检查之后（包括提交期间或之后）替换原文件。
+        self._check_source_identity(source, source_identity)
         begin_commit()
         return {"video": store.link_video(metadata)}
 
@@ -921,14 +951,19 @@ class EngineService:
                     "视频仍有分析或导出任务运行，请先取消任务后再重新关联",
                     {"job_ids": [job["id"] for job in active]},
                 )
+        source = self._source_path(payload)
+        source_identity = self._source_identity(source)
         metadata = self.inspect_video({"video_path": raw_path})
+        self._check_source_identity(source, source_identity)
         metadata["source_fingerprint"] = self._source_fingerprint(Path(metadata["source_path"]))
+        self._check_source_identity(source, source_identity)
         source_stat = Path(metadata["source_path"]).stat()
         if (source_stat.st_size, source_stat.st_mtime_ns) != (metadata["source_size_bytes"], metadata["source_mtime_ns"]):
             raise ProtocolError("VIDEO_SOURCE_CHANGED", "读取期间原视频发生变化，请重试")
         self._check_project_identity(store, identity)
         if store.video(video_id) != previous_video:
             raise ProtocolError("PROJECT_CHANGED", "视频已被修改，请重试")
+        self._check_source_identity(source, source_identity)
         begin_commit()
         try:
             video = store.relink_video(video_id, metadata)
