@@ -1052,6 +1052,9 @@ class _ExportHistoryCard extends StatelessWidget {
     final duration = (item['duration_ms'] as num?)?.toInt() ?? 0;
     final mergedOverlapCount =
         ((item['metadata'] as Map?)?['merged_overlap_count'] as num?)?.toInt() ?? 0;
+    final colorWarnings = ((item['metadata'] as Map?)?['color_warnings'] as List?)
+            ?.whereType<String>().toList() ??
+        const <String>[];
     final processing = (item['processing_ms'] as num?)?.toInt() ?? 0;
     final fileSize = (item['file_size_bytes'] as num?)?.toInt() ?? 0;
     final width = (item['width'] as num?)?.toInt();
@@ -1127,6 +1130,16 @@ class _ExportHistoryCard extends StatelessWidget {
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: c.textSecondary,
                     ),
+                  ),
+                for (final warning in colorWarnings)
+                  Text(
+                    l10n?.localeName.startsWith('en') == true
+                        ? (warning == 'HDR 色调映射不可用，画面可能偏亮'
+                            ? 'HDR tone mapping is unavailable; the video may look too bright.'
+                            : 'Video color information is incomplete; HDR tone mapping was not applied.')
+                        : warning,
+                    key: const Key('export-color-warning'),
+                    style: theme.textTheme.labelSmall?.copyWith(color: c.warning),
                   ),
                 const SizedBox(height: 2),
                 SelectableText(

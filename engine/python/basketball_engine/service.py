@@ -41,6 +41,7 @@ from .adapters.export import (
     trajectory_points,
     validate_output_file,
 )
+from .adapters.hdr import color_plan, HDR_UNKNOWN
 from .adapters.runtime_preflight import DetectorPreflight, runtime_error
 from basketball_highlight.runtime_errors import is_runtime_failure
 from .protocol import ProtocolError
@@ -468,8 +469,8 @@ class EngineService:
             "error",
             "-show_entries",
             "format=duration,size:format_tags=creation_time:"
-            "stream=index,codec_type,codec_name,width,height,r_frame_rate:"
-            "stream_side_data=rotation:stream_disposition=attached_pic:"
+            "stream=index,codec_type,codec_name,width,height,r_frame_rate,pix_fmt,color_transfer,color_primaries,color_space:"
+            "stream_side_data=side_data_type,rotation,dv_profile,dv_bl_signal_compatibility_id:stream_disposition=attached_pic:"
             "stream_tags=rotate",
             "-of",
             "json",
@@ -559,6 +560,11 @@ class EngineService:
             # 前端据此自己转画面。宽高已是显示方向，这里是逆时针的旋转角度。
             "rotation": rotation,
             "fps": fps,
+            "pix_fmt": video_stream.get("pix_fmt"),
+            "color_transfer": video_stream.get("color_transfer"),
+            "color_primaries": video_stream.get("color_primaries"),
+            "color_space": video_stream.get("color_space"),
+            "side_data_list": video_stream.get("side_data_list") or [],
             "video_codec": video_stream.get("codec_name"),
             "audio_codec": audio_stream.get("codec_name") if audio_stream else None,
             "recorded_at": (format_data.get("tags") or {}).get("creation_time"),
@@ -2318,6 +2324,17 @@ class EngineService:
         if not candidates:
             raise ProtocolError("NO_EXPORT_CANDIDATES", "没有可导出的候选片段")
         videos = self._export_videos(store, candidates)
+        color_warnings = set()
+        for video in videos.values():
+            try:
+                color_info = self.inspect_video({"video_path": str(video["source"])})
+                video["tonemap"], warning = color_plan(color_info)
+            except (ProtocolError, OSError) as exc:
+                video["tonemap"], warning = False, HDR_UNKNOWN
+                log_diagnostic(f"export HDR probe failed: {exc}")
+            if warning:
+                color_warnings.add(warning)
+                log_diagnostic(f"export color warning: {warning}")
         for candidate in candidates:
             video = videos[candidate["video_id"]]
             candidate["source_path"] = str(video["source"])
@@ -2325,6 +2342,7 @@ class EngineService:
             candidate["height"] = video.get("height")
             candidate["fps"] = video.get("fps")
             candidate["has_audio"] = bool(video.get("audio_codec"))
+            candidate["tonemap"] = video.get("tonemap", False)
         mode = payload.get("mode", "separate")
         effect = payload.get("effect", "none")
         if effect not in EFFECTS:
@@ -2429,6 +2447,7 @@ class EngineService:
                 "files": result["files"],
                 "clip_files": result["clip_files"],
                 "merged_overlap_count": result["merged_overlap_count"],
+                **({"color_warnings": sorted(color_warnings)} if color_warnings else {}),
             },
         })
         return {"export": export, "files": result["files"]}

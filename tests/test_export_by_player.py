@@ -165,3 +165,18 @@ def test_per_player_failure_cleans_completed_groups(tmp_path, tagged_project, ca
         )
     assert not list(out.glob('*.mp4'))
     assert not list((store.root / 'artifacts' / 'exports').rglob('*.*'))
+
+
+def test_unavailable_hdr_warning_is_persisted_for_completed_export(tmp_path, tagged_project, monkeypatch):
+    from engine.python.basketball_engine import service as service_module
+    from engine.python.basketball_engine.adapters.hdr import HDR_UNAVAILABLE
+    service, store, project_root, _, _ = tagged_project
+    monkeypatch.setattr(service_module, 'color_plan', lambda info: (False, HDR_UNAVAILABLE))
+    _, _, snapshot = service._export_candidate_snapshot(store, None, {})
+    result = service._execute_export({
+        'project_root': str(project_root), 'mode': 'separate',
+        'candidate_snapshot': snapshot[:1], 'output_dir': str(tmp_path / 'out'),
+    })
+    assert Path(result['files'][0]).is_file()
+    history = store.list_exports(store.project()['id'])
+    assert history[0]['metadata']['color_warnings'] == [HDR_UNAVAILABLE]

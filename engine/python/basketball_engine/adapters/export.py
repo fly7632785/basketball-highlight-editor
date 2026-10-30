@@ -16,6 +16,7 @@ from uuid import uuid4
 from .analysis import PipelineCancelled, terminate_process
 from ..diagnostics import log_diagnostic, log_failed_command
 from ..media_tools import resolve_media_tool
+from .hdr import TONEMAP_FILTER, SDR_TAGS
 
 
 # NVIDIA, Intel, AMD, then the Windows Media Foundation encoder, which works
@@ -314,6 +315,7 @@ def _effect_command(
     codec_options: list[str],
     frame_size: tuple[int, int] | None,
     spec: Dict[str, Any],
+    tonemap: bool = False,
 ) -> list[str]:
     """一条 ffmpeg 命令完成：切段、慢放、拼接、回放。所有段统一到同一个尺寸和音频格式再拼。"""
     width, height = frame_size or spec["size"]
@@ -321,6 +323,7 @@ def _effect_command(
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
     )
+    color_filter = f"{TONEMAP_FILTER}," if tonemap else ""
     audio = spec["has_audio"]
     duration_ms = end_ms - start_ms
     cuts: list[tuple[float, float, float]] = []
@@ -340,7 +343,7 @@ def _effect_command(
             continue
         pace = "setpts=PTS-STARTPTS" if speed == 1.0 else f"setpts=(PTS-STARTPTS)/{speed}"
         graph.append(
-            f"[0:v:0]setpts=PTS-STARTPTS,trim=start={t0 / 1000:.3f}:end={t1 / 1000:.3f},{pace},{fit}[v{index}]"
+            f"[0:v:0]setpts=PTS-STARTPTS,trim=start={t0 / 1000:.3f}:end={t1 / 1000:.3f},{pace},{color_filter}{fit}[v{index}]"
         )
         if audio:
             tempo = "" if speed == 1.0 else f",atempo={speed}"
@@ -361,7 +364,7 @@ def _effect_command(
             "-ss", f"{replay['start_ms'] / 1000:.3f}", "-t", f"{window_s:.3f}", "-i", str(source_video),
         ]
         graph.append(
-            f"[1:v:0]setpts=(PTS-STARTPTS)/{REPLAY_SPEED},crop={crop_width}:{crop_height}:{crop_x}:{crop_y},"
+            f"[1:v:0]setpts=(PTS-STARTPTS)/{REPLAY_SPEED},{color_filter}crop={crop_width}:{crop_height}:{crop_x}:{crop_y},"
             f"fps={spec['fps']:.6f},{fit}[v{index}]"
         )
         if audio:
@@ -378,7 +381,7 @@ def _effect_command(
         *command_inputs,
         "-filter_complex", ";".join(graph),
         "-map", "[vout]", *(["-map", "[aout]"] if audio else []),
-        *codec_options, *(["-c:a", "aac", "-b:a", "128k"] if audio else []),
+        *codec_options, *(SDR_TAGS if tonemap else []), *(["-c:a", "aac", "-b:a", "128k"] if audio else []),
         "-movflags", "+faststart", str(output_path),
     ]
 
@@ -393,6 +396,7 @@ def build_clip_command(
     effect: Dict[str, Any] | None = None,
     uniform_audio: bool = False,
     has_audio: bool = True,
+    tonemap: bool = False,
 ) -> list[str]:
     if start_ms < 0 or end_ms <= start_ms:
         raise ValueError("INVALID_CLIP_RANGE")
@@ -400,7 +404,7 @@ def build_clip_command(
     codec = video_codec or video_codecs()[0]
     codec_options = video_codec_options(codec)
     if effect:
-        return _effect_command(source_video, start_ms, end_ms, output_path, codec_options, frame_size, effect)
+        return _effect_command(source_video, start_ms, end_ms, output_path, codec_options, frame_size, effect, tonemap)
     command = [
         resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
         "-ss", f"{start_ms / 1000:.3f}", "-i", str(source_video),
@@ -412,14 +416,14 @@ def build_clip_command(
         "-map", "0:v:0?",
         *(["-map", "0:a:0?"] if has_audio else ["-an"]),
         *(
-            [
-                "-vf",
-                f"scale={frame_size[0]}:{frame_size[1]}:force_original_aspect_ratio=decrease,"
-                f"pad={frame_size[0]}:{frame_size[1]}:(ow-iw)/2:(oh-ih)/2,setsar=1",
-            ]
-            if frame_size else []
+            ["-vf", ",".join(filter(None, [
+                TONEMAP_FILTER if tonemap else None,
+                (f"scale={frame_size[0]}:{frame_size[1]}:force_original_aspect_ratio=decrease,"
+                 f"pad={frame_size[0]}:{frame_size[1]}:(ow-iw)/2:(oh-ih)/2,setsar=1") if frame_size else None,
+            ]))] if tonemap or frame_size else []
         ),
         *codec_options,
+        *(SDR_TAGS if tonemap else []),
         *(["-c:a", "aac", "-b:a", "128k"] if has_audio else []),
         # 开了慢放时，带回放的片段音频是 48kHz 立体声；没有回放的片段也统一成这样才能直接拼接。
         *(["-ar", "48000", "-ac", "2"] if uniform_audio and has_audio else []),
@@ -559,6 +563,28 @@ def merge_overlapping_candidates(candidates):
     return merged
 
 
+def _compatible_color_streams(paths: list[Path]) -> bool:
+    """Mixed-source concat must not stream-copy incompatible color streams."""
+    streams = []
+    try:
+        for path in paths:
+            result = subprocess.run(
+                [resolve_media_tool("ffprobe"), "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=codec_name,pix_fmt,width,height,color_space,color_transfer,color_primaries",
+                 "-of", "json", str(path)],
+                check=True, capture_output=True, text=True, timeout=15,
+            )
+            stream = json.loads(result.stdout)["streams"][0]
+            fields = ("codec_name", "pix_fmt", "width", "height", "color_space", "color_transfer", "color_primaries")
+            values = tuple(stream.get(field) for field in fields)
+            if any(value in (None, "unknown", "unspecified") for value in values):
+                return False
+            streams.append(values)
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError, TypeError):
+        return False
+    return bool(streams) and all(item == streams[0] for item in streams)
+
+
 def export_goal_clips(
     candidates: list[Dict[str, Any]],
     output_dir: Path,
@@ -603,6 +629,7 @@ def export_goal_clips(
                     spec,
                     uniform_audio=effect != "none",
                     has_audio=bool(candidate.get("has_audio", True)),
+                    tonemap=bool(candidate.get("tonemap")),
                 ),
                 path,
                 codecs,
@@ -636,6 +663,11 @@ def export_goal_clips(
                 "-c", "copy", str(merged_path),
             ]
             try:
+                mixed_color = any(c.get("tonemap") for c in candidates) and any(
+                    not c.get("tonemap") for c in candidates
+                )
+                if mixed_color and not _compatible_color_streams(files):
+                    raise OSError("mixed color streams require re-encoding")
                 run_atomic_ffmpeg(
                     merge_command,
                     merged_path,

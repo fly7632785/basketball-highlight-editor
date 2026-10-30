@@ -405,6 +405,33 @@ void main() {
     expect(notifier.exports, ['separate:/tmp/clips']);
   });
 
+  for (final locale in ['zh', 'en']) {
+    testWidgets('export color warning is visible $locale', (tester) async {
+      tester.view.physicalSize = const Size(1000, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(ProviderScope(
+        overrides: [projectProvider.overrideWith(() => _ExportNotifier(
+          const ProjectState(exportHistory: [{
+            'mode': 'merge', 'candidate_count': 1, 'output_path': '/tmp/out.mp4',
+            'metadata': {'color_warnings': ['HDR 色调映射不可用，画面可能偏亮']},
+          }]),
+        ))],
+        child: MaterialApp(
+          locale: Locale(locale),
+          localizationsDelegates: BheLocalizations.localizationsDelegates,
+          supportedLocales: BheLocalizations.supportedLocales,
+          home: const Scaffold(body: ExportScreen()),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('export-color-warning')), findsOneWidget);
+      expect(find.text(locale == 'en'
+          ? 'HDR tone mapping is unavailable; the video may look too bright.'
+          : 'HDR 色调映射不可用，画面可能偏亮'), findsOneWidget);
+    });
+  }
+
   testWidgets('导出历史提供打开目录按钮', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
