@@ -58,6 +58,21 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     SharedPreferences.getInstance().then((prefs) => prefs.setString(_effectKey, value));
   }
 
+  Future<void> _confirmUncertainExport(ProjectNotifier notifier) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(context.bheText('允许再次导出？')),
+        content: Text(context.bheText('请先检查导出任务和已生成的文件。上一次导出可能仍在运行或已经完成。')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(context.bheText('取消'))),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(context.bheText('已检查，允许再次导出'))),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) notifier.confirmUncertainExportChecked();
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(projectProvider);
@@ -309,6 +324,24 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
             ),
           ),
         ],
+        if (state.exportStartUnconfirmed) ...[
+          const SizedBox(height: Spacing.sm),
+          _ExportNotice(
+            color: c.warning,
+            text: context.bheText('上一次导出启动结果未确认，请先查看导出任务'),
+          ),
+          Wrap(spacing: Spacing.sm, children: [
+            TextButton(
+              key: const Key('export-check-unknown'),
+              onPressed: state.busy ? null : notifier.checkUnconfirmedExport,
+              child: Text(context.bheText('查看导出任务')),
+            ),
+            TextButton(
+              onPressed: state.busy ? null : () => _confirmUncertainExport(notifier),
+              child: Text(context.bheText('已检查，允许再次导出')),
+            ),
+          ]),
+        ],
         const SizedBox(height: Spacing.lg),
         Wrap(
           spacing: Spacing.md,
@@ -324,7 +357,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               icon: LucideIcons.download,
               size: CsButtonSize.lg,
               isLoading: busy,
-              onPressed: includedCount > 0 && !busy
+              onPressed: includedCount > 0 && !busy && !state.exportStartUnconfirmed
                   ? () => _chooseOutput(notifier, mode: mode)
                   : null,
             ),

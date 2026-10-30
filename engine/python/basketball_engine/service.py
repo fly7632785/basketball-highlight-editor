@@ -2504,104 +2504,109 @@ class EngineService:
                 )
         except (OSError, ValueError, subprocess.CalledProcessError) as exc:
             raise ProtocolError("EXPORT_FAILED", f"导出失败: {exc}") from exc
-        if cancel_check and cancel_check():
-            for path in {
-                *result.get("files", []),
-                *result.get("clip_files", []),
-            }:
-                Path(path).unlink(missing_ok=True)
-            raise PipelineCancelled("JOB_CANCELLED")
         try:
-            if progress_callback:
-                progress_callback("verify_source", 0.99)
-            for key, video in videos.items():
-                self._validated_source(video)
-                self._check_source_identity(video["source"], source_identities[key])
-            if project_identity is not None:
-                self._check_project_identity(store, project_identity)
-        except (ProtocolError, PipelineCancelled):
-            for path in {
-                *result.get("files", []),
-                *result.get("clip_files", []),
-            }:
-                Path(path).unlink(missing_ok=True)
-            raise
-        file_size = sum(Path(path).stat().st_size for path in result["files"] if Path(path).is_file())
-        export_path = result["files"][0] if len(result["files"]) == 1 else str(output_dir)
-        exported_info: Dict[str, Any] = {}
-        if result["files"]:
+            if cancel_check and cancel_check():
+                for path in {
+                    *result.get("files", []),
+                    *result.get("clip_files", []),
+                }:
+                    Path(path).unlink(missing_ok=True)
+                raise PipelineCancelled("JOB_CANCELLED")
             try:
-                exported_info = self.inspect_video({"video_path": result["files"][0]})
-            except ProtocolError:
-                exported_info = {}
-        export_values = {
-            "project_id": project["id"],
-            "video_id": video_id,
-            "output_path": export_path,
-            "mode": mode,
-            "candidate_count": len(candidates),
-            "duration_ms": result["duration_ms"],
-            "file_size_bytes": file_size,
-            "width": exported_info.get("width"),
-            "height": exported_info.get("height"),
-            "video_codec": exported_info.get("video_codec"),
-            "audio_codec": exported_info.get("audio_codec"),
-            "processing_ms": result["processing_ms"],
-            "export_ms": result["processing_ms"],
-            "algorithm_version": ANALYSIS_ALGORITHM_VERSION,
-            "metadata": {
-                "files": result["files"],
-                "clip_files": result["clip_files"],
-                "merged_overlap_count": result["merged_overlap_count"],
-                **({"color_warnings": sorted(color_warnings)} if color_warnings else {}),
-                **({"source_unverified": True} if source_unverified else {}),
-            },
-        }
-        def publish():
-            backup = None
-            published = False
-            try:
-                if final_output is not None and merged_output != final_output and mode == "merge":
-                    if final_output.exists() or final_output.is_symlink():
-                        backup = final_output.with_name(f".{final_output.name}.{new_id('backup')}")
-                        final_output.replace(backup)
-                    merged_output.replace(final_output)
-                    published = True
-                    export_values["output_path"] = str(final_output)
-                    export_values["metadata"]["files"] = [str(final_output)]
-                export = (store.create_export(export_values) if job_id is None else
-                          store.complete_export_job(export_values, job_id, job_checkpoint or {}))
-            except Exception:
-                if published:
-                    final_output.unlink(missing_ok=True)
-                if backup is not None:
-                    backup.replace(final_output)
-                raise
-            if backup is not None:
-                try:
-                    backup.unlink(missing_ok=True)
-                except OSError as exc:
-                    log_diagnostic(f"export backup cleanup failed: {exc}")
-            if published:
-                result["files"] = [str(final_output)]
-            return export
-
-        try:
-            if job_id is None:
-                export = publish()
-            else:
-                with self._job_lock:
-                    if cancel_check and cancel_check():
-                        raise PipelineCancelled("JOB_CANCELLED")
+                if progress_callback:
+                    progress_callback("verify_source", 0.99)
+                for key, video in videos.items():
+                    self._validated_source(video)
+                    self._check_source_identity(video["source"], source_identities[key])
+                if project_identity is not None:
                     self._check_project_identity(store, project_identity)
-                    for key, video in videos.items():
-                        self._check_source_identity(video["source"], source_identities[key])
+            except (ProtocolError, PipelineCancelled):
+                for path in {
+                    *result.get("files", []),
+                    *result.get("clip_files", []),
+                }:
+                    Path(path).unlink(missing_ok=True)
+                raise
+            file_size = sum(Path(path).stat().st_size for path in result["files"] if Path(path).is_file())
+            export_path = result["files"][0] if len(result["files"]) == 1 else str(output_dir)
+            exported_info: Dict[str, Any] = {}
+            if result["files"]:
+                try:
+                    exported_info = self.inspect_video({"video_path": result["files"][0]})
+                except ProtocolError:
+                    exported_info = {}
+            export_values = {
+                "project_id": project["id"],
+                "video_id": video_id,
+                "output_path": export_path,
+                "mode": mode,
+                "candidate_count": len(candidates),
+                "duration_ms": result["duration_ms"],
+                "file_size_bytes": file_size,
+                "width": exported_info.get("width"),
+                "height": exported_info.get("height"),
+                "video_codec": exported_info.get("video_codec"),
+                "audio_codec": exported_info.get("audio_codec"),
+                "processing_ms": result["processing_ms"],
+                "export_ms": result["processing_ms"],
+                "algorithm_version": ANALYSIS_ALGORITHM_VERSION,
+                "metadata": {
+                    "files": result["files"],
+                    "clip_files": result["clip_files"],
+                    "merged_overlap_count": result["merged_overlap_count"],
+                    **({"color_warnings": sorted(color_warnings)} if color_warnings else {}),
+                    **({"source_unverified": True} if source_unverified else {}),
+                },
+            }
+            def publish():
+                backup = None
+                published = False
+                try:
+                    if final_output is not None and merged_output != final_output and mode == "merge":
+                        if final_output.exists() or final_output.is_symlink():
+                            backup = final_output.with_name(f".{final_output.name}.{new_id('backup')}")
+                            final_output.replace(backup)
+                        merged_output.replace(final_output)
+                        published = True
+                        export_values["output_path"] = str(final_output)
+                        export_values["metadata"]["files"] = [str(final_output)]
+                    export = (store.create_export(export_values) if job_id is None else
+                              store.complete_export_job(export_values, job_id, job_checkpoint or {}))
+                except Exception:
+                    if published:
+                        final_output.unlink(missing_ok=True)
+                    if backup is not None:
+                        backup.replace(final_output)
+                    raise
+                if backup is not None:
+                    try:
+                        backup.unlink(missing_ok=True)
+                    except OSError as exc:
+                        log_diagnostic(f"export backup cleanup failed: {exc}")
+                if published:
+                    result["files"] = [str(final_output)]
+                return export
+
+            try:
+                if job_id is None:
                     export = publish()
+                else:
+                    with self._job_lock:
+                        if cancel_check and cancel_check():
+                            raise PipelineCancelled("JOB_CANCELLED")
+                        self._check_project_identity(store, project_identity)
+                        for key, video in videos.items():
+                            self._check_source_identity(video["source"], source_identities[key])
+                        export = publish()
+            except Exception:
+                for path in {*result.get("files", []), *result.get("clip_files", [])}:
+                    Path(path).unlink(missing_ok=True)
+                raise
+            return {"export": export, "files": result["files"]}
         except Exception:
             for path in {*result.get("files", []), *result.get("clip_files", [])}:
                 Path(path).unlink(missing_ok=True)
             raise
-        return {"export": export, "files": result["files"]}
 
     def _export_merged_per_player(
         self,
@@ -2793,36 +2798,44 @@ class EngineService:
                 "candidate_snapshot": candidate_snapshot,
                 "candidate_count": len(candidate_snapshot),
             }
-            job = store.create_job(project["id"], video_id, "export", checkpoint)
-            job_id = job["id"]
-            worker_payload = {
-                **payload,
-                "candidate_snapshot": candidate_snapshot,
-                "_project_identity": self._project_identity(store),
-            }
-            self._export_projects[str(store.root)] = job_id
-            thread = threading.Thread(
-                target=self._run_export,
-                args=(worker_payload, job_id),
-                name=f"export-{job_id}",
-                daemon=True,
-            )
-            self._job_threads[job_id] = thread
-            self._job_cancel_events[job_id] = threading.Event()
+            project_identity = self._project_identity(store)
+            ready = threading.Event()
+            aborted = threading.Event()
+            job_id = None
+            def run_after_commit(worker_payload, new_job_id):
+                ready.wait()
+                if not aborted.is_set():
+                    self._run_export(worker_payload, new_job_id)
             try:
-                thread.start()
-            except RuntimeError as exc:
-                self._job_threads.pop(job_id, None)
-                self._job_cancel_events.pop(job_id, None)
-                self._export_projects.pop(str(store.root), None)
-                store.update_job(
-                    job_id,
-                    state="failed",
-                    stage="export",
-                    error_code="EXPORT_FAILED",
-                    error_message=str(exc),
-                )
+                # The worker waits until this transaction commits; startup failure rolls back the job.
+                with store.connect() as connection:
+                    job = store.create_job(project["id"], video_id, "export", checkpoint, connection=connection)
+                    job_id = job["id"]
+                    worker_payload = {
+                        **payload,
+                        "candidate_snapshot": candidate_snapshot,
+                        "_project_identity": project_identity,
+                    }
+                    self._export_projects[str(store.root)] = job_id
+                    thread = threading.Thread(
+                        target=run_after_commit,
+                        args=(worker_payload, job_id),
+                        name=f"export-{job_id}",
+                        daemon=True,
+                    )
+                    self._job_threads[job_id] = thread
+                    self._job_cancel_events[job_id] = threading.Event()
+                    thread.start()
+            except Exception as exc:
+                aborted.set()
+                ready.set()
+                if job_id is not None:
+                    self._job_threads.pop(job_id, None)
+                    self._job_cancel_events.pop(job_id, None)
+                    if self._export_projects.get(str(store.root)) == job_id:
+                        self._export_projects.pop(str(store.root), None)
                 raise ProtocolError("EXPORT_FAILED", "无法启动导出任务") from exc
+            ready.set()
         return {"job": job}
 
     def _run_export(self, payload: Dict[str, Any], job_id: str) -> None:

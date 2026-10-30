@@ -1189,17 +1189,19 @@ class ProjectStore:
             "total": len(rows),
         }
 
-    def create_job(self, project_id: str, video_id: str | None, job_type: str, checkpoint: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def create_job(self, project_id: str, video_id: str | None, job_type: str, checkpoint: Dict[str, Any] | None = None, *, connection=None) -> Dict[str, Any]:
+        if connection is None:
+            with self.connect() as connection:
+                return self.create_job(project_id, video_id, job_type, checkpoint, connection=connection)
         job_id = new_id("job")
         timestamp = now_iso()
-        with self.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO jobs (id, project_id, video_id, type, state, stage, checkpoint_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'queued', 'validate_input', ?, ?, ?)
-                """,
-                (job_id, project_id, video_id, job_type, json.dumps(checkpoint or {}, ensure_ascii=False), timestamp, timestamp),
-            )
+        connection.execute(
+            """
+            INSERT INTO jobs (id, project_id, video_id, type, state, stage, checkpoint_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'queued', 'validate_input', ?, ?, ?)
+            """,
+            (job_id, project_id, video_id, job_type, json.dumps(checkpoint or {}, ensure_ascii=False), timestamp, timestamp),
+        )
         return {"id": job_id, "state": "queued", "stage": "validate_input", "progress": 0.0}
 
     def get_job(self, job_id: str) -> Dict[str, Any] | None:

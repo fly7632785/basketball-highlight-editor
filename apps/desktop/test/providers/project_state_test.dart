@@ -827,14 +827,71 @@ void main() {
 
   test('export start timeout warns result is unconfirmed', () async {
     final session = _FakeProjectSession()..exportError = const EngineException('ENGINE_TIMEOUT', 'start_export');
+    session.restore(const ProjectSessionCheckpoint(projectRoot: '/project', projectId: 'p', videoId: 'v'));
+    final transport = _UnconfirmedExportTransport();
+    session.testScope = ProjectSessionScope(engine: EngineSession(transport), projectRoot: '/project', projectId: 'p', videoId: 'v');
     final container = ProviderContainer(overrides: [
       projectSessionProvider.overrideWithValue(session),
       engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
     ]);
     addTearDown(container.dispose);
     await container.read(projectProvider.notifier).export('merge');
-    expect(container.read(noticeProvider).last.title, '导出启动结果尚未确认，请重新连接后检查现有任务。');
+    expect(container.read(noticeProvider).last.title, '上一次导出启动结果未确认，请先查看导出任务');
     expect(container.read(projectProvider).busy, isFalse);
+    expect(container.read(projectProvider).exportStartUnconfirmed, isTrue);
+    await container.read(projectProvider.notifier).export('merge');
+    expect(session.exportCalls, 1);
+    await container.read(projectProvider.notifier).checkUnconfirmedExport();
+    expect(container.read(projectProvider).exportStartUnconfirmed, isTrue);
+    transport.latest = {'id':'old-job', 'state':'completed', 'created_at':DateTime.now().toUtc().subtract(const Duration(seconds: 1)).toIso8601String()};
+    await container.read(projectProvider.notifier).checkUnconfirmedExport();
+    expect(container.read(projectProvider).exportStartUnconfirmed, isTrue);
+    transport.latest = {'id':'new-job', 'state':'completed', 'created_at':DateTime.now().toUtc().toIso8601String()};
+    await container.read(projectProvider.notifier).checkUnconfirmedExport();
+    expect(container.read(projectProvider).exportStartUnconfirmed, isFalse);
+    expect(container.read(projectProvider).exportJob?['id'], 'new-job');
+  });
+
+  test('unknown export remains scoped to project after reopening and notifier recreation', () async {
+    final session = _FakeProjectSession()..exportError = const EngineException('ENGINE_TIMEOUT', 'start_export');
+    session.restore(const ProjectSessionCheckpoint(projectRoot: '/project', projectId: 'p', videoId: 'v'));
+    ProviderContainer makeContainer() => ProviderContainer(overrides: [
+      projectSessionProvider.overrideWithValue(session),
+      engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+    ]);
+    final first = makeContainer();
+    await first.read(projectProvider.notifier).export('merge');
+    expect(first.read(projectProvider).exportStartUnconfirmed, isTrue);
+    first.read(projectProvider.notifier).closeProject();
+    session.restore(const ProjectSessionCheckpoint(projectRoot: '/other', projectId: 'other'));
+    await first.read(projectProvider.notifier).openProject('/other');
+    expect(first.read(projectProvider).exportStartUnconfirmed, isFalse);
+    session.restore(const ProjectSessionCheckpoint(projectRoot: '/project', projectId: 'p', videoId: 'v'));
+    await first.read(projectProvider.notifier).openProject('/project');
+    expect(first.read(projectProvider).exportStartUnconfirmed, isTrue);
+    first.dispose();
+    final second = makeContainer();
+    addTearDown(second.dispose);
+    await second.read(projectProvider.notifier).openProject('/project');
+    expect(second.read(projectProvider).exportStartUnconfirmed, isTrue);
+    second.read(projectProvider.notifier).confirmUncertainExportChecked();
+    expect(second.read(projectProvider).exportStartUnconfirmed, isFalse);
+  });
+
+  test('export does not start when its uncertainty guard cannot be saved', () async {
+    final oldStore = SharedPreferencesStorePlatform.instance;
+    SharedPreferencesStorePlatform.instance = _FailingPreferences();
+    addTearDown(() => SharedPreferencesStorePlatform.instance = oldStore);
+    final session = _FakeProjectSession();
+    session.restore(const ProjectSessionCheckpoint(projectRoot: '/project', projectId: 'p', videoId: 'v'));
+    final container = ProviderContainer(overrides: [
+      projectSessionProvider.overrideWithValue(session),
+      engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+    ]);
+    addTearDown(container.dispose);
+    await container.read(projectProvider.notifier).export('merge');
+    expect(session.exportCalls, 0);
+    expect(container.read(noticeProvider).last.title, '无法保存导出任务状态，未开始导出。');
   });
 
   group('ProjectNotifier.saveRoi', () {
@@ -1318,6 +1375,7 @@ class _FakeProjectSession extends ProjectSession {
   final List<EngineException> createProjectErrors = <EngineException>[];
   EngineException? linkError;
   EngineException? exportError;
+  int exportCalls = 0;
   Completer<void>? linkGate;
   int linkCalls = 0;
 
@@ -1574,6 +1632,7 @@ class _FakeProjectSession extends ProjectSession {
     bool? includeUnassigned,
     String effect = 'none',
   }) async {
+    exportCalls++;
     if (exportError != null) throw exportError!;
     return <String, dynamic>{'job': <String, dynamic>{'id': 'export-1', 'state': 'running'}};
   }
@@ -1684,4 +1743,14 @@ class _RaceSession extends ProjectSession {
       double? sampleFps, double? duration, double? confidence, int? maxSamples}) async => {};
   @override
   Future<List<JsonMap>> loadRecentProjects({required String knownRoot, int limit = 20}) async => [];
+}
+
+class _UnconfirmedExportTransport implements EngineTransport {
+  JsonMap? latest;
+  @override
+  Future<JsonMap> request(String command, JsonMap payload) async {
+    if (command == 'get_active_jobs') return {'jobs': []};
+    if (command == 'get_latest_job') return {'job': latest};
+    throw StateError('unexpected $command');
+  }
 }

@@ -106,6 +106,7 @@ class ProjectState {
     this.queueAfterSeconds = 1,
     this.queuePaused = false,
     this.exportQueued = false,
+    this.exportStartUnconfirmed = false,
   });
 
   final JsonMap? video;
@@ -149,6 +150,7 @@ class ProjectState {
 
   /// 队列分析时点了导出：等当前这段分析完先导出，再继续排队。
   final bool exportQueued;
+  final bool exportStartUnconfirmed;
 
   bool get multiVideo => videos.length > 1;
 
@@ -202,6 +204,7 @@ class ProjectState {
     double? queueAfterSeconds,
     bool? queuePaused,
     bool? exportQueued,
+    bool? exportStartUnconfirmed,
     List<JsonMap>? candidates,
     List<JsonMap>? players,
     List<JsonMap>? recentProjects,
@@ -278,6 +281,7 @@ class ProjectState {
       queueAfterSeconds: queueAfterSeconds ?? this.queueAfterSeconds,
       queuePaused: queuePaused ?? this.queuePaused,
       exportQueued: exportQueued ?? this.exportQueued,
+      exportStartUnconfirmed: exportStartUnconfirmed ?? this.exportStartUnconfirmed,
     );
   }
 }
@@ -460,6 +464,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
           video: linkedVideo,
           job: null,
           exportJob: null,
+          exportStartUnconfirmed: false,
           statistics: null,
           candidates: const <JsonMap>[],
           players: const <JsonMap>[],
@@ -965,6 +970,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     await flushReviewQueue();
     await _runBusy(() async {
       final generation = ++_projectLoadGeneration;
+      await _loadUncertainExportStarts();
       await ref.read(engineBootstrapProvider.notifier).ensure();
       final session = ref.read(projectSessionProvider);
       // openProject 失败时不会修改会话，无需恢复旧快照。
@@ -1045,6 +1051,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         roiSuggestionError: null,
         job: null,
         exportJob: null,
+        exportStartUnconfirmed: _uncertainExportStarts.containsKey(_exportProjectKey()),
         candidates: const <JsonMap>[],
         exportHistory: const <JsonMap>[],
         hydrating: video != null && session.videoId != null,
@@ -1162,6 +1169,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
           // 加载期间用户可能已经开始排队分析，不能用旧结果覆盖正在跑的任务。
           job: state.analysisRunning ? state.job : analysisJob ?? latestAnalysisJob,
           exportJob: activeExportJob ?? latestExportJob,
+          exportStartUnconfirmed: _resolveUncertainExport(_exportProjectKey(), activeExportJob ?? latestExportJob)
+              ? false : state.exportStartUnconfirmed,
           analysisMode:
               _jobAnalysisMode(analysisJob ?? latestAnalysisJob) ??
               state.analysisMode,
@@ -2536,6 +2545,91 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   /// 等价 app.dart:_export(623)。
   Future<void> Function()? _queuedExport;
+  final Map<String, ({DateTime startedAt, String? previousId})> _uncertainExportStarts = {};
+  static const _uncertainExportPrefsKey = 'bhe.desktop.uncertain_export_starts';
+  Future<void>? _uncertainLoad;
+  Future<void> _uncertainWrites = Future.value();
+
+  Future<void> _loadUncertainExportStarts() => _uncertainLoad ??= () async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_uncertainExportPrefsKey);
+    if (raw == null) return;
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) throw const FormatException('Invalid export state');
+    for (final entry in decoded.entries) {
+      if (entry.key is! String || entry.value is! Map) throw const FormatException('Invalid export state');
+      final started = DateTime.tryParse(entry.value['startedAt']?.toString() ?? '');
+      if (started == null) throw const FormatException('Invalid export state');
+      _uncertainExportStarts[entry.key as String] = (startedAt: started.toUtc(), previousId: entry.value['previousId']?.toString());
+    }
+  }();
+
+  Future<void> _saveUncertainExportStarts() {
+    final write = _uncertainWrites.then((_) async {
+      final prefs = await SharedPreferences.getInstance();
+      final encoded = jsonEncode({for (final entry in _uncertainExportStarts.entries)
+        entry.key: {'startedAt': entry.value.startedAt.toIso8601String(), 'previousId': entry.value.previousId}});
+      if (!await prefs.setString(_uncertainExportPrefsKey, encoded)) throw StateError('Could not save export state');
+    });
+    _uncertainWrites = write.catchError((_) {});
+    return write;
+  }
+
+  void _persistResolvedExportStart() {
+    unawaited(_saveUncertainExportStarts().catchError((_) {
+      if (!_disposed) _pushNotice('导出任务状态无法保存，请下次打开项目时重新检查。', NoticeSeverity.warning);
+    }));
+  }
+
+  String _exportProjectKey() {
+    final session = ref.read(projectSessionProvider);
+    final root = session.projectRoot;
+    return root == null ? '__unknown_project__' : '${canonicalProjectPath(root)}\u0000${session.projectId ?? ''}';
+  }
+
+  bool _resolveUncertainExport(String key, JsonMap? job) {
+    final pending = _uncertainExportStarts[key];
+    if (pending == null || job == null || job['id'] == null || job['id'] == pending.previousId) return false;
+    final created = DateTime.tryParse(job['created_at']?.toString() ?? '');
+    if (created == null || created.toUtc().isBefore(pending.startedAt.subtract(const Duration(milliseconds: 1)))) return false;
+    _uncertainExportStarts.remove(key);
+    _persistResolvedExportStart();
+    return true;
+  }
+
+  Future<void> checkUnconfirmedExport() async {
+    if (_disposed || !state.exportStartUnconfirmed || state.busy) return;
+    final key = _exportProjectKey();
+    final generation = _projectLoadGeneration;
+    state = state.copyWith(busy: true);
+    try {
+      await ref.read(engineBootstrapProvider.notifier).ensure();
+      final scope = ref.read(projectSessionProvider).snapshot();
+      final active = await scope.getActiveJobs(jobType: 'export');
+      final latest = await scope.getLatestJob(jobType: 'export');
+      if (_disposed || generation != _projectLoadGeneration || key != _exportProjectKey()) return;
+      final found = active.isNotEmpty ? active.last : latest;
+      if (_resolveUncertainExport(key, found)) {
+        state = state.copyWith(exportStartUnconfirmed: false, exportJob: found);
+        if (found?['recovery_state'] == 'worker_attached' && found?['id'] is String) {
+          unawaited(pollExportJob(found!['id'] as String, scope: scope));
+        }
+      } else {
+        _pushNotice('未找到可确认的导出任务，请检查后再决定是否允许重新导出。', NoticeSeverity.warning);
+      }
+    } catch (error) {
+      if (!_disposed && generation == _projectLoadGeneration) _pushNotice('任务状态加载失败：$error', NoticeSeverity.error);
+    } finally {
+      if (!_disposed && generation == _projectLoadGeneration) state = state.copyWith(busy: false);
+    }
+  }
+
+  void confirmUncertainExportChecked() {
+    if (_disposed || state.busy || !state.exportStartUnconfirmed) return;
+    _uncertainExportStarts.remove(_exportProjectKey());
+    _persistResolvedExportStart();
+    state = state.copyWith(exportStartUnconfirmed: false);
+  }
 
   Future<void> export(
     String mode, {
@@ -2545,6 +2639,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
     bool? includeUnassigned,
     String effect = 'none',
   }) async {
+    if (state.exportStartUnconfirmed) {
+      _pushNotice('上一次导出启动结果未确认，请先查看导出任务', NoticeSeverity.warning);
+      return;
+    }
     if (state.busy || _isActiveJob(state.exportJob)) return;
     if (state.analysisRunning && state.analysisQueue.isNotEmpty) {
       _queuedExport = () => export(
@@ -2561,10 +2659,36 @@ class ProjectNotifier extends Notifier<ProjectState> {
     }
     final generation = _projectLoadGeneration;
     final scope = _captureScope();
+    final projectKey = _exportProjectKey();
+    final startedAt = DateTime.now().toUtc();
+    final previousId = state.exportJob?['id']?.toString();
+    var guardSaved = false;
+    var requestSent = false;
     state = state.copyWith(busy: true);
     try {
+      await _loadUncertainExportStarts();
+      if (_disposed || generation != _projectLoadGeneration) return;
+      if (_uncertainExportStarts.containsKey(projectKey)) {
+        state = state.copyWith(busy: false, exportStartUnconfirmed: true);
+        _pushNotice('上一次导出启动结果未确认，请先查看导出任务', NoticeSeverity.warning);
+        return;
+      }
       await flushReviewQueue();
       if (_disposed || generation != _projectLoadGeneration) return;
+      _uncertainExportStarts[projectKey] = (startedAt: startedAt, previousId: previousId);
+      try {
+        await _saveUncertainExportStarts();
+        guardSaved = true;
+      } catch (_) {
+        _uncertainExportStarts.remove(projectKey);
+        throw const SessionStateException('无法保存导出任务状态，未开始导出。');
+      }
+      if (_disposed || generation != _projectLoadGeneration) {
+        _uncertainExportStarts.remove(projectKey);
+        _persistResolvedExportStart();
+        return;
+      }
+      requestSent = true;
       final result = await ref
           .read(projectSessionProvider)
           .startExport(
@@ -2582,14 +2706,28 @@ class ProjectNotifier extends Notifier<ProjectState> {
       if (jobId is! String) {
         throw const SessionStateException('导出任务未返回 id');
       }
+      _uncertainExportStarts.remove(projectKey);
+      _persistResolvedExportStart();
       // 只锁定“启动导出”这一小段时间；实际编码在后台轮询，审核仍可继续。
       state = state.copyWith(busy: false);
       unawaited(pollExportJob(jobId, scope: scope));
     } catch (error) {
       if (_disposed || generation != _projectLoadGeneration) return;
-      if (error is EngineException && const {'ENGINE_TIMEOUT', 'ENGINE_EXITED', 'ENGINE_NOT_RUNNING', 'ENGINE_WRITE_FAILED', 'ENGINE_DISPOSED'}.contains(error.code)) {
-        _pushNotice('导出启动结果尚未确认，请重新连接后检查现有任务。', NoticeSeverity.warning);
+      if ((error is EngineException && const {'ENGINE_TIMEOUT', 'ENGINE_EXITED', 'ENGINE_NOT_RUNNING', 'ENGINE_WRITE_FAILED', 'ENGINE_DISPOSED'}.contains(error.code)) ||
+          (requestSent && error is SessionStateException && error.message == '导出任务未返回 id')) {
+        _uncertainExportStarts[projectKey] = (startedAt: startedAt, previousId: previousId);
+        state = state.copyWith(exportStartUnconfirmed: true);
+        try {
+          await _saveUncertainExportStarts();
+        } catch (_) {
+          _pushNotice('导出任务状态无法保存，请下次打开项目时重新检查。', NoticeSeverity.warning);
+        }
+        _pushNotice('上一次导出启动结果未确认，请先查看导出任务', NoticeSeverity.warning);
       } else {
+        if (guardSaved) {
+          _uncertainExportStarts.remove(projectKey);
+          _persistResolvedExportStart();
+        }
         _pushNotice(error.toString(), NoticeSeverity.error);
       }
       state = state.copyWith(busy: false);

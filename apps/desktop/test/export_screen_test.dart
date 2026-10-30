@@ -111,6 +111,23 @@ void main() {
     }
   }
 
+  testWidgets('unknown export disables start until task check resolves', (tester) async {
+    tester.view.physicalSize = const Size(900, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final notifier = _UnconfirmedExportNotifier();
+    await tester.pumpWidget(ProviderScope(
+      overrides: [projectProvider.overrideWith(() => notifier)],
+      child: const MaterialApp(home: Scaffold(body: ExportScreen())),
+    ));
+    await tester.pumpAndSettle();
+    expect(tester.widget<CsButton>(find.byKey(const Key('export-start'))).onPressed, isNull);
+    expect(find.text('上一次导出启动结果未确认，请先查看导出任务'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('export-check-unknown')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<CsButton>(find.byKey(const Key('export-start'))).onPressed, isNotNull);
+  });
+
   testWidgets('the goal effect picks one option and the total follows it', (
     tester,
   ) async {
@@ -727,4 +744,16 @@ class _CancelExportNotifier extends _ExportNotifier {
   bool cancelled = false;
   @override
   Future<void> cancelExport() async { cancelled = true; }
+}
+
+class _UnconfirmedExportNotifier extends ProjectNotifier {
+  @override
+  ProjectState build() => const ProjectState(
+    exportStartUnconfirmed: true,
+    candidates: [{'id':'c1', 'default_start_ms':0, 'default_end_ms':1000}],
+  );
+  @override
+  Future<void> checkUnconfirmedExport() async {
+    state = state.copyWith(exportStartUnconfirmed: false, exportJob: {'id':'found', 'state':'completed'});
+  }
 }
