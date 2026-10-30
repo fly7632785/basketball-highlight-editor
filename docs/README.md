@@ -18,6 +18,7 @@
 | 理解移动端原生 Runtime | [`architecture/MOBILE_RUNTIME_V1.md`](architecture/MOBILE_RUNTIME_V1.md) |
 | 修改 SQLite 结构 | [`architecture/SQLITE_SCHEMA_V1.sql`](architecture/SQLITE_SCHEMA_V1.sql) |
 | 导出审核数据 | [`REVIEW_DATASET_EXPORT.md`](REVIEW_DATASET_EXPORT.md) |
+| 静态画面快速标注射手 | [`SHOOTER_QUICK_LABEL_V1.md`](SHOOTER_QUICK_LABEL_V1.md) |
 | 了解 Fast/Standard 分析模式 | [`research/ANALYSIS_MODES_V1.md`](research/ANALYSIS_MODES_V1.md) |
 | 查看已记录的性能样本 | [`benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md`](benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md) |
 | 查看篮筐复核的准确率样本 | [`benchmarks/RIM_CHECK_RECALL_BENCHMARK_20261021.md`](benchmarks/RIM_CHECK_RECALL_BENCHMARK_20261021.md)、[`benchmarks/RIM_CHECK_BENCHMARK_20261020.md`](benchmarks/RIM_CHECK_BENCHMARK_20261020.md) |

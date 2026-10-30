@@ -111,6 +111,16 @@ class ProjectStore:
             );
             CREATE INDEX IF NOT EXISTS idx_players_project_name
                 ON players(project_id, name);
+            CREATE TABLE IF NOT EXISTS shooter_review_evidence (
+                candidate_id TEXT PRIMARY KEY REFERENCES candidates(id) ON DELETE CASCADE,
+                video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                generation TEXT NOT NULL,
+                source_fingerprint TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                selection_json TEXT NOT NULL DEFAULT '{}',
+                review_state TEXT NOT NULL DEFAULT 'pending',
+                updated_at TEXT NOT NULL
+            );
             """
         )
         video_columns = {
@@ -704,7 +714,7 @@ class ProjectStore:
         )
         return candidate
 
-    def replace_candidates(self, video_id: str, rows: list[Dict[str, Any]]) -> None:
+    def replace_candidates(self, video_id: str, rows: list[Dict[str, Any]], *, shooter_evidence=None) -> None:
         timestamp = now_iso()
         with self.connect() as connection:
             video_row = connection.execute(
@@ -749,6 +759,9 @@ class ProjectStore:
                     (video_id,),
                 ).fetchall()
             }
+            existing_shooter = [dict(row) for row in connection.execute(
+                "SELECT * FROM shooter_review_evidence WHERE video_id=?", (video_id,)
+            )]
             matches: dict[str, dict[str, Any]] = {}
             used_old: set[str] = set()
             for row in rows:
@@ -853,6 +866,22 @@ class ProjectStore:
                         timestamp,
                     ),
                 )
+
+            # Restore only exact candidate identities, retaining human selection
+            # provenance while the new image generation replaces machine evidence.
+            current = {row["id"]: int(row["event_time_ms"]) for row in rows}
+            for saved in existing_shooter:
+                old = json.loads(saved["evidence_json"])
+                if current.get(saved["candidate_id"]) != old.get("event_time_ms"):
+                    continue
+                connection.execute("""INSERT INTO shooter_review_evidence
+                    (candidate_id,video_id,generation,source_fingerprint,evidence_json,selection_json,review_state,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?)""", tuple(saved[key] for key in (
+                        "candidate_id", "video_id", "generation", "source_fingerprint", "evidence_json",
+                        "selection_json", "review_state", "updated_at")))
+            if shooter_evidence:
+                from .shooter_review import persist_evidence
+                persist_evidence(self, shooter_evidence, connection=connection)
 
     def list_players(self) -> list[Dict[str, Any]]:
         project = self.project()

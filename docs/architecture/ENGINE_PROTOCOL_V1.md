@@ -283,6 +283,30 @@ JOB_CANCELLED
 
 `open_project` 和 `list_recent_projects` 返回的视频对象还包含 `source_exists` 和 `source_status`。当原始视频被移动后，调用方应显示重新定位入口；`relink_video` 只更新视频引用和重新读取的媒体元数据，不删除候选、审核记录或项目数据库。
 
+### 射手快标（桌面端）
+
+三个命令均要求现有项目的 `project_root`：
+
+| 命令 | 请求字段 | 响应 |
+|---|---|---|
+| `list_shooter_review` | 无附加字段 | `candidates`, `players`, `videos`, 最近的 `jobs` |
+| `prepare_shooter_review` | 可选 `video_id` | 可轮询、取消的 `shooter_review` 任务 |
+| `set_candidate_shooter` | `candidate_id`, `generation`, `player_id`, `review_state`；可选 `time_ms` | `updated`, `selection`, `review_state` |
+
+候选增加 `shooter_evidence`、`shooter_evidence_stale`、`shooter_selection` 和
+`shooter_review_state`。证据记录源视频指纹、`generation`、估计出手时间和最多三帧；
+每帧含 `time_ms`、`context_path` 和可选的 `focus_region {bbox,crop_path,kind}`。
+区域使用源视频像素坐标；`image_source`、`proxy_fps`、`proxy_frame_size`、
+`proxy_offset_ms` 记录取帧依据。该路径不执行人物检测或自动身份识别。
+
+`confirmed` 必须指定本项目球员；`pending` / `uncertain` 要求 `player_id:null`。
+保存同时更新独立证据选择与 `candidate_reviews.player_id`，保留进球判断、片段取舍和备注。
+源视频、证据代次或候选变化时拒绝旧请求；重建画面保留人工球员标签和旧选帧出处。
+
+标准分析期间返回 `draft:true` 的只读预览；成功时正式候选和画面在同一事务提交。
+失败或取消保留旧数据。旧项目可单独补齐画面，优先复用匹配的代理，只提取必要静帧。
+常见错误：`SHOOTER_EVIDENCE_CHANGED`、`SHOOTER_CANDIDATES_CHANGED`、`SHOOTER_FRAME_MISSING`。
+
 ### `list_recent_projects`
 
 请求 payload：

@@ -101,6 +101,17 @@ CREATE TABLE IF NOT EXISTS candidate_reviews (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS shooter_review_evidence (
+    candidate_id TEXT PRIMARY KEY REFERENCES candidates(id) ON DELETE CASCADE,
+    video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    generation TEXT NOT NULL,
+    source_fingerprint TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    selection_json TEXT NOT NULL DEFAULT '{}',
+    review_state TEXT NOT NULL DEFAULT 'pending',
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS players (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

@@ -18,6 +18,7 @@ The root [`README.en.md`](../README.en.md) is the project overview and shortest 
 | Understand the mobile native runtime | [`architecture/MOBILE_RUNTIME_V1.md`](architecture/MOBILE_RUNTIME_V1.md) |
 | Change the SQLite schema | [`architecture/SQLITE_SCHEMA_V1.sql`](architecture/SQLITE_SCHEMA_V1.sql) |
 | Export reviewed data | [`REVIEW_DATASET_EXPORT.md`](REVIEW_DATASET_EXPORT.md) |
+| Label shooters from release stills | [`SHOOTER_QUICK_LABEL_V1.md`](SHOOTER_QUICK_LABEL_V1.md) |
 | Understand Fast/Standard analysis | [`research/ANALYSIS_MODES_V1.md`](research/ANALYSIS_MODES_V1.md) |
 | Read the recorded performance sample | [`benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md`](benchmarks/ANALYSIS_MODE_BENCHMARK_20260812.md) |
 | Read the rim check accuracy sample | [`benchmarks/RIM_CHECK_RECALL_BENCHMARK_20261021.md`](benchmarks/RIM_CHECK_RECALL_BENCHMARK_20261021.md), [`benchmarks/RIM_CHECK_BENCHMARK_20261020.md`](benchmarks/RIM_CHECK_BENCHMARK_20261020.md) |

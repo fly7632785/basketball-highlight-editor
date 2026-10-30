@@ -42,5 +42,13 @@ apps/mobile/assets/models/
 apps/mobile/android/app/src/main/jniLibs/**/*.so
 models/*.onnx
 models/*.onnx.names.json
+models/yolo11n.pt
+models/AGPL-3.0.txt
 /bin/
 /.zcode/
+
+# Private shooter-attribution footage and local experiments.
+/test-videos/
+/.codegraph/
+/.ruff_cache/
+/local-review-data/
