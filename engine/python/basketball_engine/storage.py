@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable
 from uuid import uuid4
 
+from .request_control import fingerprint
+
 # Same value as basketball_highlight.rim_check.AUTO_REVIEW_REASON.
 AUTO_REVIEW_REASON = "auto_rim_check"
 
@@ -145,10 +147,8 @@ class ProjectStore:
                 connection.execute(f"ALTER TABLE candidate_reviews ADD COLUMN {name} {definition}")
 
     def connect(self) -> sqlite3.Connection:
-        if not self.db_path.exists():
-            self.initialize()
         connection = sqlite3.connect(
-            self.db_path, timeout=30.0, factory=_ClosingConnection
+            self.db_path.as_uri() + '?mode=rw', uri=True, timeout=30.0, factory=_ClosingConnection
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
@@ -393,11 +393,7 @@ class ProjectStore:
     def _source_fingerprint(path: str | Path) -> str | None:
         source = Path(path)
         try:
-            digest = hashlib.sha256()
-            with source.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            return f"{source.stat().st_size}:{digest.hexdigest()}"
+            return fingerprint(source)
         except OSError:
             return None
 

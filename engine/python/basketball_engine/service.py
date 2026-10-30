@@ -45,6 +45,7 @@ from .adapters.hdr import color_plan, HDR_UNKNOWN
 from .adapters.runtime_preflight import DetectorPreflight, runtime_error
 from basketball_highlight.runtime_errors import is_runtime_failure
 from .protocol import ProtocolError
+from .request_control import fingerprint, check_cancelled, begin_commit
 from .storage import ProjectStore, new_id
 from .media_tools import resolve_media_tool
 from .diagnostics import folder_summary, log_diagnostic, video_summary
@@ -222,6 +223,7 @@ class EngineService:
         if corrected:
             context = store.context()
             context["orientation_corrected"] = corrected
+        begin_commit()
         return context
 
     def _correct_video_orientations(self, store: ProjectStore) -> list[str]:
@@ -231,6 +233,7 @@ class EngineService:
         drawn on the wrongly oriented frame.
         """
         corrected = []
+        identity = self._project_identity(store)
         for video in store.list_videos():
             source = Path(video["source_path"])
             if not source.is_file():
@@ -258,10 +261,17 @@ class EngineService:
             )
             if not orientation_wrong and not missing_rotation:
                 continue
+            source_fingerprint = video.get("source_fingerprint")
+            if orientation_wrong and not source_fingerprint:
+                source_fingerprint = self._source_fingerprint(source)
+            self._check_project_identity(store, identity)
+            if store.video(video["id"]) != video:
+                raise ProtocolError("PROJECT_CHANGED", "视频已被修改，请重试")
+            begin_commit()
             if orientation_wrong:
                 store.relink_video(video["id"], {
                     **probed,
-                    "source_fingerprint": video.get("source_fingerprint"),
+                    "source_fingerprint": source_fingerprint,
                 })
             else:
                 store.set_video_rotation(video["id"], probed["rotation"])
@@ -646,11 +656,7 @@ class EngineService:
 
     @staticmethod
     def _source_fingerprint(path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return f"{path.stat().st_size}:{digest.hexdigest()}"
+        return fingerprint(path)
 
     @classmethod
     def _validated_original_source(cls, video: Dict[str, Any]) -> Path:
@@ -754,6 +760,7 @@ class EngineService:
             "--device",
             str(payload.get("device") or "auto").strip().lower(),
         ]
+        check_cancelled()
         try:
             subprocess.run(
                 command,
@@ -794,6 +801,7 @@ class EngineService:
         }
         duration_ms = video.get("duration_ms")
         duration_limit = int(duration_ms) if duration_ms is not None else 1000
+        begin_commit()
         return {
             "roi": roi,
             "calibration": calibration,
@@ -825,9 +833,38 @@ class EngineService:
             return None
         return ratio if math.isfinite(ratio) and ratio > 0 else None
 
+    def _project_identity(self, store: ProjectStore) -> tuple:
+        try:
+            stat = store.db_path.stat()
+            project = store.project()
+        except (OSError, sqlite3.Error) as exc:
+            raise ProtocolError("PROJECT_NOT_FOUND", "项目已被删除或替换") from exc
+        if not project:
+            raise ProtocolError("PROJECT_INVALID", "项目尚未初始化")
+        return stat.st_dev, stat.st_ino, project["id"]
+
+    def _check_project_identity(self, store: ProjectStore, identity: tuple) -> None:
+        check_cancelled()
+        if self._project_identity(store) != identity:
+            raise ProtocolError("PROJECT_CHANGED", "项目已被删除或替换")
+
     def link_video(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        metadata = self.inspect_video(payload)
         store = self._require_store(payload)
+        identity = self._project_identity(store)
+        metadata = self.inspect_video(payload)
+        metadata["source_fingerprint"] = self._source_fingerprint(Path(metadata["source_path"]))
+        source_stat = Path(metadata["source_path"]).stat()
+        if (source_stat.st_size, source_stat.st_mtime_ns) != (metadata["source_size_bytes"], metadata["source_mtime_ns"]):
+            raise ProtocolError("VIDEO_SOURCE_CHANGED", "读取期间原视频发生变化，请重试")
+        self._check_project_identity(store, identity)
+        # Duplicate sources are not added twice on retry.
+        for video in store.list_videos():
+            if Path(video["source_path"]).resolve() == Path(metadata["source_path"]).resolve():
+                if video.get("source_fingerprint") != metadata["source_fingerprint"]:
+                    raise ProtocolError("VIDEO_SOURCE_CHANGED", "原视频已变化，请重新定位视频")
+                begin_commit()
+                return {"video": video}
+        begin_commit()
         return {"video": store.link_video(metadata)}
 
     def reorder_videos(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -870,6 +907,8 @@ class EngineService:
         project = store.project()
         if not project:
             raise ProtocolError("PROJECT_INVALID", "项目尚未初始化")
+        identity = self._project_identity(store)
+        previous_video = store.video(video_id)
         with self._job_lock:
             active = store.list_jobs(
                 project_id=project["id"],
@@ -883,6 +922,14 @@ class EngineService:
                     {"job_ids": [job["id"] for job in active]},
                 )
         metadata = self.inspect_video({"video_path": raw_path})
+        metadata["source_fingerprint"] = self._source_fingerprint(Path(metadata["source_path"]))
+        source_stat = Path(metadata["source_path"]).stat()
+        if (source_stat.st_size, source_stat.st_mtime_ns) != (metadata["source_size_bytes"], metadata["source_mtime_ns"]):
+            raise ProtocolError("VIDEO_SOURCE_CHANGED", "读取期间原视频发生变化，请重试")
+        self._check_project_identity(store, identity)
+        if store.video(video_id) != previous_video:
+            raise ProtocolError("PROJECT_CHANGED", "视频已被修改，请重试")
+        begin_commit()
         try:
             video = store.relink_video(video_id, metadata)
         except (LookupError, ValueError) as exc:
@@ -891,6 +938,7 @@ class EngineService:
 
     def extract_preview(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         store = self._require_store(payload)
+        identity = self._project_identity(store)
         video_id = payload.get("video_id")
         video = store.video(video_id) if isinstance(video_id, str) else None
         if not video:
@@ -911,7 +959,9 @@ class EngineService:
             output_path = store.root / output_path
         output_path = output_path.resolve()
         if output_path.is_file() and output_path.stat().st_size > 0:
+            begin_commit()
             return {"path": str(output_path), "time_ms": time_ms}
+        self._check_project_identity(store, identity)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = output_path.with_name(
             f".{output_path.stem}.{os.getpid()}.tmp{output_path.suffix}"
@@ -932,7 +982,12 @@ class EngineService:
                 errors="replace",
                 timeout=20,
             )
+            self._check_project_identity(store, identity)
+            begin_commit()
             temporary_path.replace(output_path)
+        except ProtocolError:
+            temporary_path.unlink(missing_ok=True)
+            raise
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             temporary_path.unlink(missing_ok=True)
             raise ProtocolError("VIDEO_OPEN_FAILED", f"无法提取预览帧: {exc}") from exc

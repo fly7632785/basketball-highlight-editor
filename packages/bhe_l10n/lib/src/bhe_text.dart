@@ -1032,6 +1032,8 @@ const _englishText = <String, String>{
   '项目可能已创建；稍后打开检查，请勿重复导入':
       'The project may have been created. Reopen it later to check; do not import it again.',
   '无法记住项目目录': 'Could not remember the project folder',
+  '项目正在读取，请稍后重试': 'The project is being read. Please try again shortly.',
+  '请求队列已满，请稍后重试': 'The request queue is full. Please try again shortly.',
   '导入失败，项目已保留': 'Import failed. The project was kept',
   '导入未确认，项目已保留': 'Import was not confirmed. The project was kept',
   '项目可能已创建': 'The project may have been created',
