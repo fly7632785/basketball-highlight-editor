@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -959,14 +960,49 @@ class _ExportNotice extends StatelessWidget {
   }
 }
 
-class _RunningExportCard extends StatelessWidget {
+class _RunningExportCard extends StatefulWidget {
   const _RunningExportCard({required this.job, required this.onCancel});
 
   final Map<String, dynamic>? job;
   final VoidCallback? onCancel;
 
   @override
+  State<_RunningExportCard> createState() => _RunningExportCardState();
+}
+
+class _RunningExportCardState extends State<_RunningExportCard> {
+  late DateTime _started;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _started = DateTime.tryParse(widget.job?['started_at']?.toString() ?? '') ?? DateTime.now();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void didUpdateWidget(_RunningExportCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.job?['id'] != widget.job?['id']) {
+      _started = DateTime.tryParse(widget.job?['started_at']?.toString() ?? '') ?? DateTime.now();
+    } else {
+      _started = DateTime.tryParse(widget.job?['started_at']?.toString() ?? '') ?? _started;
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final job = widget.job;
+    final onCancel = widget.onCancel;
     final c = AppColors.of(context);
     final theme = Theme.of(context);
     final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
@@ -974,7 +1010,10 @@ class _RunningExportCard extends StatelessWidget {
       0.0,
       1.0,
     );
-    final stage = _exportStageLabel(job?['stage']?.toString() ?? '');
+    final stageKey = job?['stage']?.toString() ?? '';
+    final stage = _exportStageLabel(stageKey);
+    final verifying = stageKey == 'validate_source' || stageKey == 'verify_source' || stageKey == 'cancelling';
+    final elapsed = _formatMs(DateTime.now().difference(_started).inMilliseconds.clamp(0, 1 << 40));
     return Container(
       key: const Key('export-running'),
       padding: const EdgeInsets.all(Spacing.md),
@@ -1000,7 +1039,7 @@ class _RunningExportCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   '${l10n?.exportRunningTitle ?? '正在导出'} · '
-                  '${l10n?.text(stage) ?? stage} · ${(progress * 100).round()}%',
+                  '${l10n?.text(stage) ?? stage}${verifying ? '' : ' · ${(progress * 100).round()}%'}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.titleSmall?.copyWith(
@@ -1018,7 +1057,8 @@ class _RunningExportCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: Spacing.sm),
-          CsProgressTrack(value: progress),
+          CsProgressTrack(value: progress, indeterminate: verifying),
+          if (verifying) Text(context.bheText('已用 $elapsed'), key: const Key('export-elapsed')),
           const SizedBox(height: Spacing.sm),
           Text(
             l10n?.text('本次输出使用启动导出时的片段列表，之后的审核修改用于下一次导出。') ??
@@ -1131,6 +1171,10 @@ class _ExportHistoryCard extends StatelessWidget {
                       color: c.textSecondary,
                     ),
                   ),
+                if (((item['metadata'] as Map?)?['source_unverified']) == true)
+                  Text(context.bheText('原项目没有视频指纹，无法比对原视频内容。'),
+                      key: const Key('export-source-unverified'),
+                      style: theme.textTheme.labelSmall?.copyWith(color: c.warning)),
                 for (final warning in colorWarnings)
                   Text(
                     l10n?.localeName.startsWith('en') == true
@@ -1395,6 +1439,9 @@ String _formatMs(int milliseconds) {
 String _exportStageLabel(String stage) =>
     const <String, String>{
       'validate_input': '准备导出',
+      'validate_source': '校验原视频',
+      'verify_source': '复核原视频',
+      'cancelling': '正在取消导出…',
       'export_clips': '生成片段',
       'merge_clips': '合并片段',
       'persist_export': '保存导出记录',

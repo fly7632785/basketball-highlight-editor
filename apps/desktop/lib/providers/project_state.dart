@@ -2559,9 +2559,12 @@ class ProjectNotifier extends Notifier<ProjectState> {
       _pushNotice('导出会在当前这段分析完成后开始，之后继续排队', NoticeSeverity.info);
       return;
     }
+    final generation = _projectLoadGeneration;
+    final scope = _captureScope();
     state = state.copyWith(busy: true);
     try {
       await flushReviewQueue();
+      if (_disposed || generation != _projectLoadGeneration) return;
       final result = await ref
           .read(projectSessionProvider)
           .startExport(
@@ -2572,7 +2575,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
             includeUnassigned: includeUnassigned,
             effect: effect,
           );
-      if (_disposed) return;
+      if (_disposed || generation != _projectLoadGeneration) return;
       final job = (result['job'] as Map?)?.cast<String, dynamic>();
       state = state.copyWith(exportJob: job);
       final jobId = job?['id'];
@@ -2581,10 +2584,14 @@ class ProjectNotifier extends Notifier<ProjectState> {
       }
       // 只锁定“启动导出”这一小段时间；实际编码在后台轮询，审核仍可继续。
       state = state.copyWith(busy: false);
-      unawaited(pollExportJob(jobId));
+      unawaited(pollExportJob(jobId, scope: scope));
     } catch (error) {
-      if (_disposed) return;
-      _pushNotice(error.toString(), NoticeSeverity.error);
+      if (_disposed || generation != _projectLoadGeneration) return;
+      if (error is EngineException && const {'ENGINE_TIMEOUT', 'ENGINE_EXITED', 'ENGINE_NOT_RUNNING', 'ENGINE_WRITE_FAILED', 'ENGINE_DISPOSED'}.contains(error.code)) {
+        _pushNotice('导出启动结果尚未确认，请重新连接后检查现有任务。', NoticeSeverity.warning);
+      } else {
+        _pushNotice(error.toString(), NoticeSeverity.error);
+      }
       state = state.copyWith(busy: false);
     }
   }

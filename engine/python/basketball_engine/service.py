@@ -45,7 +45,7 @@ from .adapters.hdr import color_plan, HDR_UNKNOWN
 from .adapters.runtime_preflight import DetectorPreflight, runtime_error
 from basketball_highlight.runtime_errors import is_runtime_failure
 from .protocol import ProtocolError
-from .request_control import fingerprint, check_cancelled, begin_commit
+from .request_control import fingerprint, check_cancelled, begin_commit, set_cancel_event
 from .storage import ProjectStore, new_id
 from .media_tools import resolve_media_tool
 from .diagnostics import folder_summary, log_diagnostic, video_summary
@@ -63,6 +63,7 @@ class EngineService:
         self._job_threads: dict[str, threading.Thread] = {}
         self._job_cancel_events: dict[str, threading.Event] = {}
         self._job_processes: dict[str, set[subprocess.Popen]] = {}
+        self._export_projects: dict[str, str] = {}
         self._store_lock = threading.Lock()
         self._job_lock = threading.Lock()
         self._detector_preflight = DetectorPreflight()
@@ -1349,7 +1350,7 @@ class EngineService:
         retry_payload = {
             "project_root": str(store.root),
             "video_id": job.get("video_id"),
-            "mode": checkpoint.get("mode", "standard"),
+            "mode": checkpoint.get("mode", "separate"),
         }
         if checkpoint.get("output_dir") is not None:
             retry_payload["output_dir"] = checkpoint["output_dir"]
@@ -1363,10 +1364,7 @@ class EngineService:
         video_id = retry_payload["video_id"]
         if not store.project() or (video_id is not None and not store.video(video_id)):
             raise ProtocolError("VIDEO_NOT_FOUND", "导出任务缺少有效视频")
-        self._export_videos(
-            store,
-            self._export_candidate_snapshot(store, video_id, retry_payload)[2],
-        )
+        self._export_candidate_snapshot(store, video_id, retry_payload)
         if job.get("state") in {"running", "queued"}:
             store.update_job(
                 job_id,
@@ -2099,6 +2097,9 @@ class EngineService:
         if job["state"] in {"completed", "failed", "cancelled"}:
             return {"job": job}
         with self._job_lock:
+            job = store.get_job(job_id) or job
+            if job["state"] in {"completed", "failed", "cancelled"}:
+                return {"job": job}
             cancel_event = self._job_cancel_events.get(job_id)
             processes = set(self._job_processes.get(job_id, set()))
             if cancel_event:
@@ -2397,6 +2398,9 @@ class EngineService:
         progress_callback=None,
         cancel_check=None,
         process_callback=None,
+        job_id=None,
+        project_identity=None,
+        job_checkpoint=None,
     ) -> Dict[str, Any]:
         store = self._require_store(payload)
         project = store.project()
@@ -2413,7 +2417,11 @@ class EngineService:
         ]
         if not candidates:
             raise ProtocolError("NO_EXPORT_CANDIDATES", "没有可导出的候选片段")
+        if progress_callback:
+            progress_callback("validate_source", 0.01)
         videos = self._export_videos(store, candidates)
+        source_identities = {key: self._source_identity(video["source"]) for key, video in videos.items()}
+        source_unverified = any(not video.get("source_fingerprint") for video in videos.values())
         color_warnings = set()
         for video in videos.values():
             try:
@@ -2468,6 +2476,9 @@ class EngineService:
                 merged_output = validate_output_file(merged_output)
         except OSError as exc:
             raise ProtocolError("EXPORT_PATH_INVALID", str(exc)) from exc
+        final_output = merged_output
+        if merged_output is not None and mode == "merge":
+            merged_output = merged_output.with_name(f".{merged_output.stem}.{new_id('stage')}.mp4")
         try:
             if mode == "merge_by_player":
                 result = self._export_merged_per_player(
@@ -2501,9 +2512,14 @@ class EngineService:
                 Path(path).unlink(missing_ok=True)
             raise PipelineCancelled("JOB_CANCELLED")
         try:
-            for video in videos.values():
+            if progress_callback:
+                progress_callback("verify_source", 0.99)
+            for key, video in videos.items():
                 self._validated_source(video)
-        except ProtocolError:
+                self._check_source_identity(video["source"], source_identities[key])
+            if project_identity is not None:
+                self._check_project_identity(store, project_identity)
+        except (ProtocolError, PipelineCancelled):
             for path in {
                 *result.get("files", []),
                 *result.get("clip_files", []),
@@ -2518,7 +2534,7 @@ class EngineService:
                 exported_info = self.inspect_video({"video_path": result["files"][0]})
             except ProtocolError:
                 exported_info = {}
-        export = store.create_export({
+        export_values = {
             "project_id": project["id"],
             "video_id": video_id,
             "output_path": export_path,
@@ -2538,8 +2554,53 @@ class EngineService:
                 "clip_files": result["clip_files"],
                 "merged_overlap_count": result["merged_overlap_count"],
                 **({"color_warnings": sorted(color_warnings)} if color_warnings else {}),
+                **({"source_unverified": True} if source_unverified else {}),
             },
-        })
+        }
+        def publish():
+            backup = None
+            published = False
+            try:
+                if final_output is not None and merged_output != final_output and mode == "merge":
+                    if final_output.exists() or final_output.is_symlink():
+                        backup = final_output.with_name(f".{final_output.name}.{new_id('backup')}")
+                        final_output.replace(backup)
+                    merged_output.replace(final_output)
+                    published = True
+                    export_values["output_path"] = str(final_output)
+                    export_values["metadata"]["files"] = [str(final_output)]
+                export = (store.create_export(export_values) if job_id is None else
+                          store.complete_export_job(export_values, job_id, job_checkpoint or {}))
+            except Exception:
+                if published:
+                    final_output.unlink(missing_ok=True)
+                if backup is not None:
+                    backup.replace(final_output)
+                raise
+            if backup is not None:
+                try:
+                    backup.unlink(missing_ok=True)
+                except OSError as exc:
+                    log_diagnostic(f"export backup cleanup failed: {exc}")
+            if published:
+                result["files"] = [str(final_output)]
+            return export
+
+        try:
+            if job_id is None:
+                export = publish()
+            else:
+                with self._job_lock:
+                    if cancel_check and cancel_check():
+                        raise PipelineCancelled("JOB_CANCELLED")
+                    self._check_project_identity(store, project_identity)
+                    for key, video in videos.items():
+                        self._check_source_identity(video["source"], source_identities[key])
+                    export = publish()
+        except Exception:
+            for path in {*result.get("files", []), *result.get("clip_files", [])}:
+                Path(path).unlink(missing_ok=True)
+            raise
         return {"export": export, "files": result["files"]}
 
     def _export_merged_per_player(
@@ -2696,6 +2757,8 @@ class EngineService:
     def start_export(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if payload.get("effect", "none") not in EFFECTS:
             raise ProtocolError("INVALID_REQUEST", "effect 必须是 none、approach 或 replay")
+        if payload.get("mode", "separate") not in {"separate", "merge", "merge_by_player"}:
+            raise ProtocolError("INVALID_REQUEST", "导出方式无效")
         store = self._require_store(payload)
         project = store.project()
         video_id = payload.get("video_id")
@@ -2719,7 +2782,6 @@ class EngineService:
             requested_player_ids, include_unassigned, candidate_snapshot = (
                 self._export_candidate_snapshot(store, video_id, payload)
             )
-            self._export_videos(store, candidate_snapshot)
             selected_players = set(requested_player_ids or [])
             checkpoint = {
                 "mode": payload.get("mode", "separate"),
@@ -2736,7 +2798,9 @@ class EngineService:
             worker_payload = {
                 **payload,
                 "candidate_snapshot": candidate_snapshot,
+                "_project_identity": self._project_identity(store),
             }
+            self._export_projects[str(store.root)] = job_id
             thread = threading.Thread(
                 target=self._run_export,
                 args=(worker_payload, job_id),
@@ -2750,6 +2814,7 @@ class EngineService:
             except RuntimeError as exc:
                 self._job_threads.pop(job_id, None)
                 self._job_cancel_events.pop(job_id, None)
+                self._export_projects.pop(str(store.root), None)
                 store.update_job(
                     job_id,
                     state="failed",
@@ -2761,13 +2826,14 @@ class EngineService:
         return {"job": job}
 
     def _run_export(self, payload: Dict[str, Any], job_id: str) -> None:
-        store = self._require_store(payload)
+        store = ProjectStore(payload["project_root"])
         cancel_event = self._job_cancel_events.get(job_id)
-        initial_job = store.get_job(job_id) or {}
-        initial_checkpoint = self._decode_checkpoint(initial_job)
+        set_cancel_event(cancel_event)
+        initial_checkpoint = {}
+        project_identity = payload.get("_project_identity")
         export_started = time.perf_counter()
         label = f"export job={job_id}"
-        last_stage = {"name": "export_clips"}
+        last_stage = {"name": "validate_source"}
 
         def log_end(state: str, code: str, message: str) -> None:
             log_diagnostic(
@@ -2784,6 +2850,7 @@ class EngineService:
                     f"{label} stage={stage} progress={progress:.2f} "
                     f"elapsed={time.perf_counter() - export_started:.1f}s"
                 )
+            self._check_project_identity(store, payload["_project_identity"])
             store.update_job(
                 job_id,
                 state="running",
@@ -2792,21 +2859,30 @@ class EngineService:
             )
 
         try:
+            if project_identity is None:
+                project_identity = self._project_identity(store)
+                payload = {**payload, "_project_identity": project_identity}
             snapshot = payload.get("candidate_snapshot") or []
             log_diagnostic(
                 f"{label} start mode={payload.get('mode')} clips={len(snapshot)} "
                 f"videos={len({item.get('video_id') for item in snapshot if isinstance(item, dict)})}"
             )
-            store.update_job(job_id, state="running", stage="export_clips", progress=0.01)
+            self._check_project_identity(store, payload["_project_identity"])
+            initial_checkpoint = self._decode_checkpoint(store.get_job(job_id) or {})
+            store.update_job(job_id, state="running", stage="validate_source", progress=0.0)
             result = self._execute_export(
                 payload,
                 progress_callback=on_progress,
                 cancel_check=cancel_event.is_set if cancel_event else None,
                 process_callback=lambda process: self._set_job_process(job_id, process),
+                job_id=job_id,
+                project_identity=payload["_project_identity"],
+                job_checkpoint=initial_checkpoint,
             )
-            if cancel_event and cancel_event.is_set():
-                raise PipelineCancelled("JOB_CANCELLED")
-            store.update_job(
+            if (store.get_job(job_id) or {}).get("state") != "completed":
+                if cancel_event and cancel_event.is_set():
+                    raise PipelineCancelled("JOB_CANCELLED")
+                store.update_job(
                 job_id,
                 state="completed",
                 stage="persist_export",
@@ -2825,37 +2901,24 @@ class EngineService:
                 f"duration={(export.get('duration_ms') or 0) / 1000:.1f}s "
                 f"size={(export.get('file_size_bytes') or 0) / 1024 / 1024:.0f}MB"
             )
-        except PipelineCancelled:
-            log_end("cancelled", "JOB_CANCELLED", "任务已取消")
-            store.update_job(
-                job_id,
-                state="cancelled",
-                stage="export",
-                error_code="JOB_CANCELLED",
-                error_message="任务已取消",
-            )
-        except ProtocolError as exc:
-            log_end("failed", exc.code, exc.message)
-            store.update_job(
-                job_id,
-                state="failed",
-                stage="export",
-                error_code=exc.code,
-                error_message=exc.message,
-            )
-        except Exception as exc:
-            log_end("failed", "EXPORT_FAILED", traceback.format_exc(limit=-4))
-            store.update_job(
-                job_id,
-                state="failed",
-                stage="export",
-                error_code="EXPORT_FAILED",
-                error_message=str(exc),
-            )
+        except (PipelineCancelled, ProtocolError, Exception) as exc:
+            cancelled = isinstance(exc, PipelineCancelled) or (isinstance(exc, ProtocolError) and exc.code == "REQUEST_CANCELLED")
+            code = "JOB_CANCELLED" if cancelled else (exc.code if isinstance(exc, ProtocolError) else "EXPORT_FAILED")
+            message = "任务已取消" if cancelled else (exc.message if isinstance(exc, ProtocolError) else str(exc))
+            detail = message if cancelled or isinstance(exc, ProtocolError) else traceback.format_exc(limit=-4)
+            log_end("cancelled" if cancelled else "failed", code, detail)
+            try:
+                if project_identity is not None and self._project_identity(store) == project_identity:
+                    store.update_job(job_id, state="cancelled" if cancelled else "failed", stage="export", error_code=code, error_message=message)
+            except (ProtocolError, OSError, sqlite3.Error, ValueError):
+                log_diagnostic(f"{label} could not persist terminal state in original project")
         finally:
+            set_cancel_event(None)
             with self._job_lock:
                 self._job_threads.pop(job_id, None)
                 self._job_cancel_events.pop(job_id, None)
+                if self._export_projects.get(str(store.root)) == job_id:
+                    self._export_projects.pop(str(store.root), None)
 
     def get_statistics(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"statistics": self._require_store(payload).statistics()}

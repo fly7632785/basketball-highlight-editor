@@ -82,6 +82,10 @@ def main() -> int:
     def admit(request, slow):
         key = project_key(request.get("payload", {}))
         request_id = request.get("request_id")
+        if key is not None and request["command"] in {"open_project", "link_video", "relink_video", "extract_preview", "suggest_roi", "delete_project", "create_project", "start_analysis"}:
+            with service._job_lock:
+                if key in service._export_projects:
+                    raise ProtocolError("PROJECT_BUSY", "项目正在导出，请等待完成或取消")
         if slow and not slots.acquire(blocking=False):
             raise ProtocolError("PROJECT_BUSY", "请求队列已满，请稍后重试")
         with registry_lock:

@@ -57,6 +57,60 @@ void main() {
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  for (final locale in ['zh', 'en']) {
+    testWidgets('legacy source warning appears $locale', (tester) async {
+      tester.view.physicalSize = const Size(760, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(ProviderScope(
+        overrides: [projectProvider.overrideWith(() => _ExportNotifier(ProjectState(
+          exportHistory: [{'mode':'merge', 'output_path':'/tmp/out.mp4', 'metadata':{'source_unverified':true}}],
+        )))],
+        child: MaterialApp(locale: Locale(locale),
+          localizationsDelegates: BheLocalizations.localizationsDelegates,
+          supportedLocales: BheLocalizations.supportedLocales,
+          home: const Scaffold(body: ExportScreen())),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('export-source-unverified')), findsOneWidget);
+      expect(find.text(locale == 'en' ? 'This project has no video fingerprint; the source content cannot be compared.' : '原项目没有视频指纹，无法比对原视频内容。'), findsOneWidget);
+    });
+  }
+
+  for (final locale in ['zh', 'en']) {
+    for (final stage in ['validate_source', 'verify_source']) {
+      testWidgets('export $stage shows elapsed and indeterminate $locale', (tester) async {
+        tester.view.physicalSize = const Size(900, 1000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final notifier = _CancelExportNotifier(ProjectState(
+          exportJob: {'id':'job-1', 'state':'running', 'stage':stage, 'progress':.4},
+        ));
+        await tester.pumpWidget(ProviderScope(
+          overrides: [projectProvider.overrideWith(() => notifier)],
+          child: MaterialApp(locale: Locale(locale),
+            localizationsDelegates: BheLocalizations.localizationsDelegates,
+            supportedLocales: BheLocalizations.supportedLocales,
+            home: const Scaffold(body: ExportScreen())),
+        ));
+        await tester.pump();
+        final stageLabel = stage == 'validate_source'
+            ? (locale == 'en' ? 'Checking source video' : '校验原视频')
+            : (locale == 'en' ? 'Rechecking source video' : '复核原视频');
+        expect(find.textContaining(stageLabel), findsOneWidget);
+        expect(find.byKey(const Key('export-elapsed')), findsOneWidget);
+        expect(tester.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator)).value, isNull);
+        expect(find.textContaining('40%'), findsNothing);
+        final cancel = find.text(locale == 'en' ? 'Cancel export' : '取消导出');
+        await tester.ensureVisible(cancel);
+        await tester.tap(cancel);
+        await tester.pump();
+        expect(notifier.cancelled, isTrue);
+        await tester.pumpWidget(const SizedBox());
+      });
+    }
+  }
+
   testWidgets('the goal effect picks one option and the total follows it', (
     tester,
   ) async {
@@ -666,4 +720,11 @@ class _TrackingExportNotifier extends _ExportNotifier {
   }) async {
     exports.add('$mode:${outputPath ?? outputDir}');
   }
+}
+
+class _CancelExportNotifier extends _ExportNotifier {
+  _CancelExportNotifier(super.initialState);
+  bool cancelled = false;
+  @override
+  Future<void> cancelExport() async { cancelled = true; }
 }

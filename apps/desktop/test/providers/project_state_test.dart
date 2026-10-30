@@ -825,6 +825,18 @@ void main() {
     );
   });
 
+  test('export start timeout warns result is unconfirmed', () async {
+    final session = _FakeProjectSession()..exportError = const EngineException('ENGINE_TIMEOUT', 'start_export');
+    final container = ProviderContainer(overrides: [
+      projectSessionProvider.overrideWithValue(session),
+      engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+    ]);
+    addTearDown(container.dispose);
+    await container.read(projectProvider.notifier).export('merge');
+    expect(container.read(noticeProvider).last.title, '导出启动结果尚未确认，请重新连接后检查现有任务。');
+    expect(container.read(projectProvider).busy, isFalse);
+  });
+
   group('ProjectNotifier.saveRoi', () {
     test('Engine 拒绝保存 ROI 时返回 false', () async {
       final fakeSession = _FakeProjectSession()..throwOnSaveRoi = true;
@@ -1305,6 +1317,7 @@ class _FakeProjectSession extends ProjectSession {
   final List<String> createdProjectRoots = <String>[];
   final List<EngineException> createProjectErrors = <EngineException>[];
   EngineException? linkError;
+  EngineException? exportError;
   Completer<void>? linkGate;
   int linkCalls = 0;
 
@@ -1560,9 +1573,10 @@ class _FakeProjectSession extends ProjectSession {
     List<String>? playerIds,
     bool? includeUnassigned,
     String effect = 'none',
-  }) async => <String, dynamic>{
-    'job': <String, dynamic>{'id': 'export-1', 'state': 'running'},
-  };
+  }) async {
+    if (exportError != null) throw exportError!;
+    return <String, dynamic>{'job': <String, dynamic>{'id': 'export-1', 'state': 'running'}};
+  }
 
   @override
   Future<List<JsonMap>> getActiveJobs({String jobType = 'analysis'}) async =>

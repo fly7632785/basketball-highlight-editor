@@ -1368,40 +1368,57 @@ class ProjectStore:
                 "export_file_size_bytes": exports["file_size_bytes"],
             }
 
-    def create_export(self, values: Dict[str, Any]) -> Dict[str, Any]:
+    def create_export(self, values: Dict[str, Any], *, connection=None) -> Dict[str, Any]:
+        if connection is None:
+            with self.connect() as connection:
+                return self.create_export(values, connection=connection)
         export_id = values.get("id") or new_id("export")
         timestamp = now_iso()
-        with self.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO exports (
-                    id, project_id, video_id, output_path, mode, candidate_count,
-                    duration_ms, file_size_bytes, width, height, video_codec,
-                    audio_codec, processing_ms, export_ms, algorithm_version,
-                    metadata_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    export_id,
-                    values["project_id"],
-                    values.get("video_id"),
-                    values["output_path"],
-                    values["mode"],
-                    int(values.get("candidate_count", 0)),
-                    values.get("duration_ms"),
-                    values.get("file_size_bytes"),
-                    values.get("width"),
-                    values.get("height"),
-                    values.get("video_codec"),
-                    values.get("audio_codec"),
-                    values.get("processing_ms"),
-                    values.get("export_ms"),
-                    values.get("algorithm_version", "python-v1"),
-                    json.dumps(values.get("metadata", {}), ensure_ascii=False),
-                    timestamp,
-                ),
-            )
+        connection.execute(
+            """
+            INSERT INTO exports (
+                id, project_id, video_id, output_path, mode, candidate_count,
+                duration_ms, file_size_bytes, width, height, video_codec,
+                audio_codec, processing_ms, export_ms, algorithm_version,
+                metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                export_id,
+                values["project_id"],
+                values.get("video_id"),
+                values["output_path"],
+                values["mode"],
+                int(values.get("candidate_count", 0)),
+                values.get("duration_ms"),
+                values.get("file_size_bytes"),
+                values.get("width"),
+                values.get("height"),
+                values.get("video_codec"),
+                values.get("audio_codec"),
+                values.get("processing_ms"),
+                values.get("export_ms"),
+                values.get("algorithm_version", "python-v1"),
+                json.dumps(values.get("metadata", {}), ensure_ascii=False),
+                timestamp,
+            ),
+        )
         return {"id": export_id, **values, "created_at": timestamp}
+
+    def complete_export_job(self, values: Dict[str, Any], job_id: str, checkpoint: Dict[str, Any]) -> Dict[str, Any]:
+        """Publish history and completed state together in one database transaction."""
+        with self.connect() as connection:
+            export = self.create_export(values, connection=connection)
+            stamp = now_iso()
+            cursor = connection.execute(
+                "UPDATE jobs SET state='completed', stage='persist_export', progress=1.0, "
+                "checkpoint_json=?, updated_at=?, finished_at=COALESCE(finished_at, ?) "
+                "WHERE id=? AND state IN ('queued','running')",
+                (json.dumps({**checkpoint, 'export': export, 'files': values['metadata']['files']}, ensure_ascii=False), stamp, stamp, job_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("EXPORT_JOB_NOT_ACTIVE")
+            return export
 
     def list_exports(self, project_id: str, limit: int = 20) -> list[Dict[str, Any]]:
         if limit <= 0 or limit > 100:

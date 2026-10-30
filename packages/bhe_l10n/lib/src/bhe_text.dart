@@ -79,6 +79,8 @@ extension BheBuildContextText on BuildContext {
 }
 
 String? _translateDynamic(String source) {
+  final exportElapsed = RegExp(r'^已用 (\d+:\d+(?::\d+)?)$').firstMatch(source);
+  if (exportElapsed != null) return 'Elapsed ${exportElapsed.group(1)}';
   final savedPath = RegExp(r'^项目(可能)?保存在：([\s\S]+)，可在首页「打开项目」选择该文件夹。$').firstMatch(source);
   if (savedPath != null) {
     final prefix = savedPath.group(1) == null ? 'Project saved at' : 'Project may have been saved at';
@@ -1035,6 +1037,11 @@ const _englishText = <String, String>{
   '项目正在读取，请稍后重试': 'The project is being read. Please try again shortly.',
   '请求队列已满，请稍后重试': 'The request queue is full. Please try again shortly.',
   '导入失败，项目已保留': 'Import failed. The project was kept',
+  '校验原视频': 'Checking source video',
+  '复核原视频': 'Rechecking source video',
+  '导出启动结果尚未确认，请重新连接后检查现有任务。': 'Export start is unconfirmed. Reconnect and check existing tasks.',
+  '原项目没有视频指纹，无法比对原视频内容。': 'This project has no video fingerprint; the source content cannot be compared.',
+  '项目正在导出，请等待完成或取消': 'The project is exporting. Wait for it to finish or cancel it.',
   '导入未确认，项目已保留': 'Import was not confirmed. The project was kept',
   '项目可能已创建': 'The project may have been created',
   '复制项目路径': 'Copy project path',
