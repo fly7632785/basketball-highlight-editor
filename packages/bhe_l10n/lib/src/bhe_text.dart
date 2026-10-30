@@ -79,6 +79,11 @@ extension BheBuildContextText on BuildContext {
 }
 
 String? _translateDynamic(String source) {
+  final savedPath = RegExp(r'^项目(可能)?保存在：([\s\S]+)，可在首页「打开项目」选择该文件夹。$').firstMatch(source);
+  if (savedPath != null) {
+    final prefix = savedPath.group(1) == null ? 'Project saved at' : 'Project may have been saved at';
+    return '$prefix: ${savedPath.group(2)}. Select this folder using “Open project” on the home screen.';
+  }
   final historyMore = RegExp(r'^查看全部 (\d+) 条$').firstMatch(source);
   if (historyMore != null) return 'View all ${historyMore.group(1)} entries';
   final labelBatch = RegExp(r'^已完成 (\d+)/(\d+) 个标签$').firstMatch(source);
@@ -1026,6 +1031,11 @@ const _englishText = <String, String>{
       'Import not confirmed. The project is saved; reopen it later to check. Do not import it again.',
   '项目可能已创建；稍后打开检查，请勿重复导入':
       'The project may have been created. Reopen it later to check; do not import it again.',
+  '无法记住项目目录': 'Could not remember the project folder',
+  '导入失败，项目已保留': 'Import failed. The project was kept',
+  '导入未确认，项目已保留': 'Import was not confirmed. The project was kept',
+  '项目可能已创建': 'The project may have been created',
+  '复制项目路径': 'Copy project path',
   '导入失败，项目已保留；稍后可从最近项目打开。':
       'Import failed. The project is saved; you can open it later from recent projects.',
   '无法记住项目目录，请记下项目保存位置。':

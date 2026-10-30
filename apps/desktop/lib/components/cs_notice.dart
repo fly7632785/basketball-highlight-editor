@@ -110,8 +110,8 @@ class _CsNoticeState extends State<CsNotice>
                           Text(
                             l10n?.text(widget.message.description!) ??
                                 widget.message.description!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            maxLines: widget.message.actionLabel == '复制项目路径' ? null : 1,
+                            overflow: widget.message.actionLabel == '复制项目路径' ? null : TextOverflow.ellipsis,
                             style: TextStyle(
                               color: c.textSecondary,
                               fontSize: 11,

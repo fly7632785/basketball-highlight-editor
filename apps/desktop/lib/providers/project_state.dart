@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/widgets.dart' show Rect;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -399,7 +400,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
           if (_disposed || generation != _projectLoadGeneration) return;
           state = state.copyWith(knownProjectsRoot: knownRoot);
           if (!await _rememberProjectsRoot(knownRoot) && !_disposed) {
-            _pushNotice('无法记住项目目录，请记下项目保存位置。', NoticeSeverity.warning);
+            _pushProjectPathNotice('无法记住项目目录', projectRoot);
           }
           if (_disposed || generation != _projectLoadGeneration) return;
           linked = await session.linkVideo(path);
@@ -419,11 +420,16 @@ class ProjectNotifier extends Notifier<ProjectState> {
             projectCreatedForRecent = true;
             state = state.copyWith(knownProjectsRoot: knownRoot);
             if (!await _rememberProjectsRoot(knownRoot) && !_disposed) {
-              _pushNotice('无法记住项目目录，请记下项目保存位置。', NoticeSeverity.warning);
+              _pushProjectPathNotice('无法记住项目目录', projectRoot);
             }
           }
           if (_disposed || generation != _projectLoadGeneration) return;
           if (uncertain) {
+            _pushProjectPathNotice(
+              projectCreated ? '导入未确认，项目已保留' : '项目可能已创建',
+              projectRoot,
+              uncertain: !projectCreated,
+            );
             throw SessionStateException(
               projectCreated
                   ? '导入未确认，项目已保留；稍后打开检查，请勿重复导入'
@@ -431,7 +437,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
             );
           }
           if (projectCreated) {
-            _pushNotice('导入失败，项目已保留；稍后可从最近项目打开。', NoticeSeverity.warning);
+            _pushProjectPathNotice('导入失败，项目已保留', projectRoot);
           }
           rethrow;
         }
@@ -729,9 +735,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
   Future<bool> relinkCurrentVideo(String path) async {
     final video = state.video;
     if (video == null) return false;
-    final generation = ++_projectLoadGeneration;
     var relinked = false;
     await _runBusy(() async {
+      final generation = ++_projectLoadGeneration;
       await ref.read(engineBootstrapProvider.notifier).ensure();
       final session = ref.read(projectSessionProvider);
       final result = await session.relinkVideo(path);
@@ -961,14 +967,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
       final generation = ++_projectLoadGeneration;
       await ref.read(engineBootstrapProvider.notifier).ensure();
       final session = ref.read(projectSessionProvider);
-      final checkpoint = session.checkpoint();
-      late final JsonMap payload;
-      try {
-        payload = await session.openProject(root);
-      } catch (_) {
-        session.restore(checkpoint);
-        rethrow;
-      }
+      // openProject 失败时不会修改会话，无需恢复旧快照。
+      final payload = await session.openProject(root);
       if (generation != _projectLoadGeneration) return;
       var video = (payload['video'] as Map?)?.cast<String, dynamic>();
       var sourceMissing = false;
@@ -2753,6 +2753,21 @@ class ProjectNotifier extends Notifier<ProjectState> {
             description: content.description,
           ),
         );
+  }
+
+  void _pushProjectPathNotice(String title, String path, {bool uncertain = false}) {
+    if (_disposed) return;
+    ref.read(noticeProvider.notifier).push(NoticeMessage(
+      id: 'project-path-${DateTime.now().microsecondsSinceEpoch}-${_noticeCounter++}',
+      severity: NoticeSeverity.warning,
+      title: title,
+      description: uncertain
+          ? '项目可能保存在：$path，可在首页「打开项目」选择该文件夹。'
+          : '项目保存在：$path，可在首页「打开项目」选择该文件夹。',
+      actionLabel: '复制项目路径',
+      action: () => Clipboard.setData(ClipboardData(text: path)),
+      duration: const Duration(seconds: 30),
+    ));
   }
 
   /// 等价 app.dart:_projectsRoot(76)。env BHE_PROJECTS_ROOT > knownProjectsRoot >

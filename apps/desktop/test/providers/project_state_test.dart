@@ -3,8 +3,11 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/widgets.dart' show Rect;
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:bhe_l10n/bhe_l10n.dart';
+import 'package:flutter/widgets.dart' show Rect, Locale;
 
 import 'package:desktop/core/engine_session.dart';
 import 'package:desktop/core/engine_client.dart';
@@ -67,6 +70,84 @@ void main() {
       addTearDown(container.dispose);
       return container;
     }
+
+    test('忙碌拒绝重定位不使新项目导入失效，写入归属新项目', () async {
+      final transport = _RaceTransport();
+      final session = _RaceSession(transport);
+      final container = ProviderContainer(overrides: [
+        projectSessionProvider.overrideWithValue(session),
+        engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+      ]);
+      addTearDown(container.dispose);
+      final notifier = container.read(projectProvider.notifier);
+      await notifier.selectVideo('/path/a.mp4');
+      expect(container.read(projectProvider).videoPath, '/path/a.mp4');
+      transport.createGate = Completer<void>();
+      final pending = notifier.selectVideo('/path/b.mp4');
+      await transport.createStarted.future;
+      expect(await notifier.relinkCurrentVideo('/path/old.mp4'), isFalse);
+      transport.createGate!.complete();
+      await pending;
+      final root = session.projectRoot!;
+      expect(root, contains('/b-'));
+      expect(session.videoId, 'b.mp4');
+      expect(container.read(projectProvider).videoPath, '/path/b.mp4');
+      await session.updateProjectSettings(name: 'renamed');
+      expect(transport.lastWriteRoot, root);
+    });
+
+    test('打开失败迟到不恢复并覆盖新会话', () async {
+      final transport = _RaceTransport()..openGate = Completer<void>();
+      final session = _RaceSession(transport);
+      session.restore(const ProjectSessionCheckpoint(projectRoot: '/old', projectId: 'old'));
+      final container = ProviderContainer(overrides: [
+        projectSessionProvider.overrideWithValue(session),
+        engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+      ]);
+      addTearDown(container.dispose);
+      final pending = container.read(projectProvider.notifier).openProject('/failing');
+      await transport.openStarted.future;
+      session.restore(const ProjectSessionCheckpoint(projectRoot: '/new', projectId: 'new', videoId: 'new-video'));
+      transport.openGate!.completeError(StateError('open failed'));
+      await pending;
+      expect(session.projectRoot, '/new');
+      expect(session.videoId, 'new-video');
+    });
+
+    test('备用目录偏好失败和关联失败提示可复制实际项目路径', () async {
+      final oldStore = SharedPreferencesStorePlatform.instance;
+      SharedPreferencesStorePlatform.instance = _FailingPreferences();
+      addTearDown(() => SharedPreferencesStorePlatform.instance = oldStore);
+      final fake = _FakeProjectSession()
+        ..createProjectErrors.add(const EngineException('FILE_ACCESS_DENIED', 'denied'))
+        ..linkError = const EngineException('VIDEO_INVALID', 'invalid');
+      final container = containerFor(fake);
+      await container.read(projectProvider.notifier).selectVideo('/path/sample.mp4');
+      final path = fake.createdProjectRoots.last;
+      final notices = container.read(noticeProvider);
+      final pathNotices = notices.where((n) => n.actionLabel == '复制项目路径').toList();
+      expect(pathNotices, hasLength(2));
+      for (final notice in pathNotices) {
+        expect(notice.description, contains(path));
+        expect(notice.description, contains('打开项目'));
+        expect(notice.action, isNotNull);
+        expect(notice.description, isNot(contains('最近项目')));
+        final english = lookupBheLocalizations(const Locale('en')).text(notice.description!);
+        expect(english, contains(path));
+        expect(english, contains('Open project'));
+      }
+      String? copied;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') copied = call.arguments['text'] as String;
+        return null;
+      });
+      addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null));
+      pathNotices.last.action!();
+      await Future<void>.delayed(Duration.zero);
+      expect(copied, path);
+    });
 
     test('关联明确失败保留项目、恢复会话并刷新最近列表', () async {
       final fake = _FakeProjectSession()
@@ -1544,4 +1625,49 @@ class _RecoveringTransport implements EngineTransport {
     }
     throw StateError('unexpected engine call: $command');
   }
+}
+
+class _FailingPreferences extends InMemorySharedPreferencesStore {
+  _FailingPreferences() : super.empty();
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) async => false;
+}
+
+class _RaceTransport implements EngineTransport {
+  Completer<void>? createGate;
+  Completer<void>? openGate;
+  final createStarted = Completer<void>();
+  final openStarted = Completer<void>();
+  String? lastWriteRoot;
+  @override
+  Future<JsonMap> request(String command, JsonMap payload) async {
+    if (command == 'create_project') {
+      if (createGate != null) {
+        if (!createStarted.isCompleted) createStarted.complete();
+        await createGate!.future;
+      }
+      return {'project': {'id': payload['name'], 'root_path': payload['root_path']}};
+    }
+    if (command == 'link_video') {
+      return {'video': {'id': payload['video_path'].toString().split('/').last,
+        'source_path': payload['video_path'], 'duration_ms': 5000, 'width': 1920, 'height': 1080}};
+    }
+    if (command == 'open_project') {
+      openStarted.complete();
+      await openGate!.future;
+    }
+    if (command == 'update_project_settings') lastWriteRoot = payload['project_root'] as String;
+    return {};
+  }
+}
+
+class _RaceSession extends ProjectSession {
+  _RaceSession(_RaceTransport transport) : super(EngineSession(transport));
+  @override
+  Future<JsonMap> extractPreview({int timeMs = 1000, String? videoId}) async => {'path': '/tmp/preview.jpg'};
+  @override
+  Future<JsonMap> suggestRoi({String? videoId, String? modelPath, int? startMs,
+      double? sampleFps, double? duration, double? confidence, int? maxSamples}) async => {};
+  @override
+  Future<List<JsonMap>> loadRecentProjects({required String knownRoot, int limit = 20}) async => [];
 }
