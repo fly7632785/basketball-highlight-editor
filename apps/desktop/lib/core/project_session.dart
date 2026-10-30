@@ -203,6 +203,7 @@ class ProjectSession {
   String? _projectRoot;
   String? _projectId;
   String? _videoId;
+  int _sessionRevision = 0;
 
   String? get projectRoot => _projectRoot;
   String? get projectId => _projectId;
@@ -215,6 +216,7 @@ class ProjectSession {
   );
 
   void restore(ProjectSessionCheckpoint checkpoint) {
+    _sessionRevision++;
     _projectRoot = checkpoint.projectRoot;
     _projectId = checkpoint.projectId;
     _videoId = checkpoint.videoId;
@@ -241,12 +243,14 @@ class ProjectSession {
     String? projectId,
     String language = 'zh-CN',
   }) async {
+    final revision = ++_sessionRevision;
     final payload = await engine.createProject(
       name: name,
       rootPath: rootPath,
       projectId: projectId,
       language: language,
     );
+    if (revision != _sessionRevision) return payload;
     _projectRoot = canonicalProjectPath(
       (payload['project'] as Map?)?['root_path']?.toString() ?? rootPath,
     );
@@ -256,7 +260,9 @@ class ProjectSession {
   }
 
   Future<JsonMap> openProject(String projectRoot) async {
+    final revision = ++_sessionRevision;
     final payload = await engine.openProject(projectRoot: projectRoot);
+    if (revision != _sessionRevision) return payload;
     final project = payload['project'];
     final video = payload['video'];
     _projectRoot = canonicalProjectPath(
@@ -316,7 +322,10 @@ class ProjectSession {
   }
 
   /// 切换当前操作的视频段，项目内的多段视频共用一个会话。
-  void setActiveVideo(String videoId) => _videoId = videoId;
+  void setActiveVideo(String videoId) {
+    _sessionRevision++;
+    _videoId = videoId;
+  }
 
   /// 把视频追加到项目末尾，不改变当前操作的视频段。
   Future<JsonMap> addVideo(String videoPath) {
@@ -348,11 +357,14 @@ class ProjectSession {
 
   Future<JsonMap> linkVideo(String videoPath) async {
     final root = _requireProjectRoot();
+    final revision = _sessionRevision;
     final payload = await engine.linkVideo(
       projectRoot: root,
       videoPath: videoPath,
     );
-    _videoId = _nestedId(payload, 'video');
+    if (revision == _sessionRevision && root == _projectRoot) {
+      _videoId = _nestedId(payload, 'video');
+    }
     return payload;
   }
 
@@ -699,9 +711,13 @@ class ProjectSession {
         .toList();
   }
 
-  void clearVideo() => _videoId = null;
+  void clearVideo() {
+    _sessionRevision++;
+    _videoId = null;
+  }
 
   void reset() {
+    _sessionRevision++;
     _projectRoot = null;
     _projectId = null;
     _videoId = null;

@@ -1022,6 +1022,14 @@ const _englishText = <String, String>{
   '投篮分析区太小': 'Shot analysis area is too small',
   '检测区域无法保存': 'Detection region could not be saved',
   '检测区域超出画面': 'Detection region is outside the frame',
+  '导入未确认，项目已保留；稍后打开检查，请勿重复导入':
+      'Import not confirmed. The project is saved; reopen it later to check. Do not import it again.',
+  '项目可能已创建；稍后打开检查，请勿重复导入':
+      'The project may have been created. Reopen it later to check; do not import it again.',
+  '导入失败，项目已保留；稍后可从最近项目打开。':
+      'Import failed. The project is saved; you can open it later from recent projects.',
+  '无法记住项目目录，请记下项目保存位置。':
+      'Could not remember the project folder. Please note where the project was saved.',
   '处理时间较长': 'Processing may take a while',
   '请从左上向右下拖出一个有效矩形，再松开鼠标。':
       'Drag a valid rectangle from top left to bottom right, then release the mouse.',

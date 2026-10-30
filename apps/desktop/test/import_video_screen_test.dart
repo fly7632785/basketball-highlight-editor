@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
+import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:desktop/providers/pending_import_provider.dart';
+import 'package:desktop/components/cs_button.dart';
 import 'package:desktop/providers/project_state.dart';
 
 import 'package:desktop/features/import_video/import_video_screen.dart';
@@ -42,6 +44,28 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('cancelling the file picker does not create a project', (tester) async {
+    final previous = FileSelectorPlatform.instance;
+    final selector = _CancelledSelector();
+    FileSelectorPlatform.instance = selector;
+    addTearDown(() => FileSelectorPlatform.instance = previous);
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final notifier = _DropNotifier();
+    final container = ProviderContainer(overrides: [projectProvider.overrideWith(() => notifier)]);
+    addTearDown(container.dispose);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(home: Scaffold(body: ImportVideoScreen())),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(CsButton, '选择视频'));
+    await tester.pumpAndSettle();
+    expect(selector.calls, 1);
+    expect(notifier.selectedPaths, isEmpty);
+  });
 
   testWidgets('imports a video dropped on the home screen', (tester) async {
     tester.view.physicalSize = const Size(1200, 800);
@@ -254,4 +278,13 @@ class _DropNotifier extends ProjectNotifier {
 
   @override
   Future<void> selectVideo(String path) async => selectedPaths.add(path);
+}
+
+class _CancelledSelector extends FileSelectorPlatform {
+  int calls = 0;
+  @override
+  Future<List<XFile>> openFiles({List<XTypeGroup>? acceptedTypeGroups, String? initialDirectory, String? confirmButtonText}) async {
+    calls++;
+    return [];
+  }
 }

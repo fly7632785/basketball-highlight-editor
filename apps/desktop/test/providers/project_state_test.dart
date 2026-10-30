@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/widgets.dart' show Rect;
 
 import 'package:desktop/core/engine_session.dart';
@@ -13,6 +14,8 @@ import 'package:desktop/providers/project_state.dart';
 import 'package:desktop/providers/session_provider.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   test('将 ROI 后端错误转换成可操作提示', () {
     expect(
       userFacingNotice(
@@ -64,6 +67,98 @@ void main() {
       addTearDown(container.dispose);
       return container;
     }
+
+    test('关联明确失败保留项目、恢复会话并刷新最近列表', () async {
+      final fake = _FakeProjectSession()
+        ..linkError = const EngineException('VIDEO_INVALID', 'invalid video');
+      fake.restore(
+        const ProjectSessionCheckpoint(
+          projectRoot: '/old',
+          projectId: 'old',
+          videoId: 'old-video',
+        ),
+      );
+      final container = containerFor(fake);
+      await container
+          .read(projectProvider.notifier)
+          .selectVideo('/path/sample.mp4');
+      expect(fake.deletedRoots, isEmpty);
+      expect(fake.projectRoot, '/old');
+      expect(fake.videoId, 'old-video');
+      expect(fake.loadRecentProjectsCalls, greaterThan(0));
+      expect(container.read(projectProvider).video, isNull);
+      final notices = container.read(noticeProvider);
+      expect(notices.any((n) => n.title.contains('项目已保留')), isTrue);
+      expect(notices.any((n) => n.title.contains('视频已加载')), isFalse);
+    });
+
+    test('关联超时保留项目并提示结果未确认', () async {
+      final gate = Completer<void>();
+      final fake = _FakeProjectSession()..linkGate = gate;
+      fake.restore(const ProjectSessionCheckpoint(projectRoot: '/old', projectId: 'old'));
+      final container = containerFor(fake);
+      final pending = container.read(projectProvider.notifier).selectVideo('/path/sample.mp4');
+      while (fake.linkCalls == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(container.read(projectProvider).busy, isTrue);
+      gate.completeError(const EngineException('ENGINE_TIMEOUT', 'link_video'));
+      await pending;
+      expect(fake.deletedRoots, isEmpty);
+      expect(fake.projectRoot, '/old');
+      expect(fake.loadRecentProjectsCalls, greaterThan(0));
+      final notices = container.read(noticeProvider);
+      expect(notices.map((n) => n.title), contains('导入未确认，项目已保留；稍后打开检查，请勿重复导入'));
+      expect(notices.any((n) => n.title.contains('视频已加载')), isFalse);
+    });
+
+    test('创建超时提示可能已创建并刷新最近列表', () async {
+      final fake = _FakeProjectSession()
+        ..createProjectErrors.add(
+          const EngineException('ENGINE_TIMEOUT', 'create_project'),
+        );
+      final container = containerFor(fake);
+      await container
+          .read(projectProvider.notifier)
+          .selectVideo('/path/sample.mp4');
+      expect(fake.deletedRoots, isEmpty);
+      expect(fake.loadRecentProjectsCalls, greaterThan(0));
+      expect(
+        container.read(noticeProvider).map((n) => n.title),
+        contains('项目可能已创建；稍后打开检查，请勿重复导入'),
+      );
+    });
+
+    test('备用目录创建后关联失败仍记住目录', () async {
+      final fake = _FakeProjectSession()
+        ..createProjectErrors.add(
+          const EngineException('FILE_ACCESS_DENIED', 'denied'),
+        )
+        ..linkError = const EngineException('VIDEO_INVALID', 'invalid');
+      final container = containerFor(fake);
+      await container
+          .read(projectProvider.notifier)
+          .selectVideo('/path/sample.mp4');
+      final root = fallbackProjectsRoot(Platform.environment);
+      expect(fake.deletedRoots, isEmpty);
+      expect(container.read(projectProvider).knownProjectsRoot, root);
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        prefs.getStringList('basketball_recent_project_roots'),
+        contains(canonicalProjectPath(root)),
+      );
+      expect(fake.loadRecentProjectsCalls, greaterThan(0));
+    });
+
+    test('空选择不创建项目', () async {
+      final fake = _FakeProjectSession();
+      final container = containerFor(fake);
+      await container
+          .read(projectProvider.notifier)
+          .createProjectFromVideos([]);
+      expect(fake.createdProjectRoots, isEmpty);
+      expect(fake.deletedRoots, isEmpty);
+    });
 
     test('默认项目目录建不了项目时改存到应用数据目录', () async {
       final fakeSession = _FakeProjectSession()
@@ -1128,6 +1223,9 @@ class _FakeProjectSession extends ProjectSession {
   List<JsonMap> recentProjects = <JsonMap>[];
   final List<String> createdProjectRoots = <String>[];
   final List<EngineException> createProjectErrors = <EngineException>[];
+  EngineException? linkError;
+  Completer<void>? linkGate;
+  int linkCalls = 0;
 
   void seedCandidates(List<JsonMap> seed) {
     _candidates
@@ -1175,15 +1273,20 @@ class _FakeProjectSession extends ProjectSession {
   }
 
   @override
-  Future<JsonMap> linkVideo(String videoPath) async => <String, dynamic>{
-    'video': <String, dynamic>{
-      'id': 'vid-1',
-      'source_path': videoPath,
-      'duration_ms': 5000,
-      'width': 1920,
-      'height': 1080,
-    },
-  };
+  Future<JsonMap> linkVideo(String videoPath) async {
+    linkCalls++;
+    await linkGate?.future;
+    if (linkError case final error?) throw error;
+    return <String, dynamic>{
+      'video': <String, dynamic>{
+        'id': 'vid-1',
+        'source_path': videoPath,
+        'duration_ms': 5000,
+        'width': 1920,
+        'height': 1080,
+      },
+    };
+  }
 
   @override
   Future<JsonMap> extractPreview({int timeMs = 1000, String? videoId}) async {

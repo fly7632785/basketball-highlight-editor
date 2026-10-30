@@ -357,6 +357,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
       () async {
         final generation = ++_projectLoadGeneration;
         await ref.read(engineBootstrapProvider.notifier).ensure();
+        if (_disposed || generation != _projectLoadGeneration) return;
         final session = ref.read(projectSessionProvider);
         final checkpoint = session.checkpoint();
         final source = File(path).absolute;
@@ -374,8 +375,12 @@ class ProjectNotifier extends Notifier<ProjectState> {
             await session.createProject(name: stem, rootPath: projectRoot);
           } on EngineException catch (error) {
             final fallback = fallbackProjectsRoot(Platform.environment);
-            if (!const {'FILE_NOT_FOUND', 'FILE_ACCESS_DENIED'}.contains(error.code) ||
-                canonicalProjectPath(knownRoot) == canonicalProjectPath(fallback)) {
+            if (!const {
+                  'FILE_NOT_FOUND',
+                  'FILE_ACCESS_DENIED',
+                }.contains(error.code) ||
+                canonicalProjectPath(knownRoot) ==
+                    canonicalProjectPath(fallback)) {
               rethrow;
             }
             // 默认目录被安全软件拦截、或「视频」文件夹失效时建不了项目，改存到应用数据目录。
@@ -390,15 +395,47 @@ class ProjectNotifier extends Notifier<ProjectState> {
             );
           }
           projectCreated = true;
-          linked = await session.linkVideo(path);
           projectCreatedForRecent = true;
-        } catch (_) {
-          if (projectCreated) {
-            await session.deleteProject(projectRoot);
+          if (_disposed || generation != _projectLoadGeneration) return;
+          state = state.copyWith(knownProjectsRoot: knownRoot);
+          if (!await _rememberProjectsRoot(knownRoot) && !_disposed) {
+            _pushNotice('无法记住项目目录，请记下项目保存位置。', NoticeSeverity.warning);
           }
+          if (_disposed || generation != _projectLoadGeneration) return;
+          linked = await session.linkVideo(path);
+        } catch (error) {
+          final uncertain =
+              error is EngineException &&
+              const {
+                'ENGINE_TIMEOUT',
+                'ENGINE_EXITED',
+                'ENGINE_NOT_RUNNING',
+                'ENGINE_WRITE_FAILED',
+                'ENGINE_DISPOSED',
+              }.contains(error.code);
+          if (_disposed || generation != _projectLoadGeneration) return;
           session.restore(checkpoint);
+          if (projectCreated || uncertain) {
+            projectCreatedForRecent = true;
+            state = state.copyWith(knownProjectsRoot: knownRoot);
+            if (!await _rememberProjectsRoot(knownRoot) && !_disposed) {
+              _pushNotice('无法记住项目目录，请记下项目保存位置。', NoticeSeverity.warning);
+            }
+          }
+          if (_disposed || generation != _projectLoadGeneration) return;
+          if (uncertain) {
+            throw SessionStateException(
+              projectCreated
+                  ? '导入未确认，项目已保留；稍后打开检查，请勿重复导入'
+                  : '项目可能已创建；稍后打开检查，请勿重复导入',
+            );
+          }
+          if (projectCreated) {
+            _pushNotice('导入失败，项目已保留；稍后可从最近项目打开。', NoticeSeverity.warning);
+          }
           rethrow;
         }
+        if (_disposed || generation != _projectLoadGeneration) return;
         final linkedVideo = (linked['video'] as Map?)?.cast<String, dynamic>();
         state = state.copyWith(
           knownProjectsRoot: knownRoot,
@@ -423,7 +460,6 @@ class ProjectNotifier extends Notifier<ProjectState> {
           exportHistory: const <JsonMap>[],
           workflowDraft: null,
         );
-        await _rememberProjectsRoot(knownRoot);
         ref.read(sidebarExtendedProvider.notifier).collapseForProjectCreation();
         state = state.copyWith(busyMessage: '正在生成视频预览…');
         final duration = (linkedVideo?['duration_ms'] as num?)?.toInt() ?? 1001;
@@ -508,9 +544,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
         );
         _reviewHistory.clear();
         await refreshVideos();
+        if (!_disposed && generation == _projectLoadGeneration) {
+          _pushNotice('视频已加载，已优先尝试自动识别篮筐区域', NoticeSeverity.success);
+        }
       },
       busyMessage: '正在准备视频…',
-      successMessage: '视频已加载，已优先尝试自动识别篮筐区域',
     );
     if (projectCreatedForRecent && !_disposed) {
       await loadRecentProjects();
@@ -1288,7 +1326,12 @@ class ProjectNotifier extends Notifier<ProjectState> {
     }
     inspected.sort(compareByRecordingTime);
     final ordered = [for (final video in inspected) video['source_path'].toString()];
+    final previousVideo = state.video;
+    final previousGeneration = _projectLoadGeneration;
     await selectVideo(ordered.first);
+    if (_projectLoadGeneration != previousGeneration + 1 ||
+        identical(state.video, previousVideo) ||
+        state.video?['source_path']?.toString() != ordered.first) return;
     final first = state.videos.firstOrNull;
     if (first == null) return;
     await _runBusy(() async {
@@ -2739,7 +2782,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     }
   }
 
-  Future<void> _rememberProjectsRoot(String root) async {
+  Future<bool> _rememberProjectsRoot(String root) async {
     try {
       final canonical = canonicalProjectPath(root);
       final preferences = await SharedPreferences.getInstance().timeout(
@@ -2750,8 +2793,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
         ...preferences.getStringList(_recentProjectRootsKey) ??
             const <String>[],
       }.take(12).toList();
-      await preferences.setStringList(_recentProjectRootsKey, roots);
-    } catch (_) {}
+      return await preferences.setStringList(_recentProjectRootsKey, roots);
+    } catch (_) {
+      return false;
+    }
   }
 
   bool _isActiveJob(JsonMap? job) {
