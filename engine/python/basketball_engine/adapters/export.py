@@ -663,7 +663,10 @@ def export_goal_clips(
                 "-f", "concat", "-safe", "0", "-i", str(concat_file),
                 "-c", "copy", str(merged_path),
             ]
-            normalize_color = len(files) > 1 and not _compatible_color_streams(files)
+            mixed_color = any(c.get("tonemap") for c in candidates) and any(
+                not c.get("tonemap") for c in candidates
+            )
+            normalize_color = mixed_color and not _compatible_color_streams(files)
             try:
                 if normalize_color:
                     raise OSError("incompatible color streams require re-encoding")

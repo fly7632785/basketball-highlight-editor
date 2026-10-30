@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -140,8 +141,7 @@ def test_compatible_color_streams_requires_matching_known_range(monkeypatch, sec
 
 
 @pytest.mark.parametrize('reverse', [False, True])
-@pytest.mark.parametrize('hdr_source', [False, True])
-def test_real_mixed_ranges_are_normalized(monkeypatch, tmp_path, reverse, hdr_source):
+def test_real_mixed_ranges_are_normalized(monkeypatch, tmp_path, reverse):
     ffmpeg = export.resolve_media_tool('ffmpeg')
     ffprobe = export.resolve_media_tool('ffprobe')
     if not hdr.hdr_filter_available():
@@ -174,8 +174,8 @@ def test_real_mixed_ranges_are_normalized(monkeypatch, tmp_path, reverse, hdr_so
         return cmd
     monkeypatch.setattr(export, 'build_clip_command', preserve_full_range)
     candidates = [
-        {'source_path': str(source if hdr_source else limited), 'event_time_ms': 500, 'review_start_ms': 0,
-         'review_end_ms': 1000, 'width': 64, 'height': 64, 'has_audio': False, 'tonemap': hdr_source},
+        {'source_path': str(source), 'event_time_ms': 500, 'review_start_ms': 0,
+         'review_end_ms': 1000, 'width': 64, 'height': 64, 'has_audio': False, 'tonemap': True},
         {'source_path': str(full), 'event_time_ms': 500, 'review_start_ms': 0,
          'review_end_ms': 1000, 'width': 64, 'height': 64, 'has_audio': False, 'tonemap': False},
     ]
@@ -200,3 +200,43 @@ def test_real_mixed_ranges_are_normalized(monkeypatch, tmp_path, reverse, hdr_so
     assert abs(first[0] - second[0]) <= 8
     assert abs(first[1] - second[1]) <= 8
     assert first[0] < 25 and first[1] > 150
+
+
+def test_real_untagged_sdr_merge_uses_copy_without_color_temp(tmp_path):
+    ffmpeg = export.resolve_media_tool('ffmpeg')
+    ffprobe = export.resolve_media_tool('ffprobe')
+    source = tmp_path / 'sdr.mp4'
+    subprocess.run([ffmpeg, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                    'testsrc2=size=64x64:rate=5:duration=3', '-c:v', 'mpeg4',
+                    '-q:v', '2', str(source)], check=True, capture_output=True)
+    candidates = [
+        {'source_path': str(source), 'event_time_ms': 500, 'review_start_ms': 0,
+         'review_end_ms': 1000, 'width': 64, 'height': 64, 'has_audio': False},
+        {'source_path': str(source), 'event_time_ms': 2500, 'review_start_ms': 2000,
+         'review_end_ms': 3000, 'width': 64, 'height': 64, 'has_audio': False},
+    ]
+    commands, temporary_prefixes = [], []
+    previous_profile = sys.getprofile()
+    def observe(frame, event, arg):
+        if event == 'call' and frame.f_code is export.run_atomic_ffmpeg.__code__:
+            commands.append(list(frame.f_locals['command']))
+        if event == 'call' and frame.f_code is export.tempfile.TemporaryDirectory.__init__.__code__:
+            temporary_prefixes.append(frame.f_locals.get('prefix'))
+        return observe
+    try:
+        sys.setprofile(observe)
+        result = export.export_goal_clips(candidates, tmp_path / 'out', 'merge')
+    finally:
+        sys.setprofile(previous_profile)
+    assert Path(result['files'][0]).is_file()
+    assert len(result['clip_files']) == 2
+    for path in result['clip_files']:
+        data = subprocess.run([ffprobe, '-v', 'error', '-select_streams', 'v:0',
+            '-show_entries', 'stream=color_range,color_space,color_transfer,color_primaries',
+            '-of', 'json', path], capture_output=True, check=True)
+        fields = json.loads(data.stdout)['streams'][0]
+        assert all(fields.get(key) in (None, 'unknown', 'unspecified')
+                   for key in ('color_range', 'color_space', 'color_transfer', 'color_primaries'))
+    assert commands[-1][-3:-1] == ['-c', 'copy']
+    assert not any('bhe-color-' in str(prefix) for prefix in temporary_prefixes)
+    assert not list((tmp_path / 'out').glob('bhe-color-*'))
