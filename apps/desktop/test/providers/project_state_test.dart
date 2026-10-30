@@ -1,5 +1,6 @@
 // test/providers/project_state_test.dart
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -878,6 +879,64 @@ void main() {
     expect(second.read(projectProvider).exportStartUnconfirmed, isFalse);
   });
 
+  for (final damaged in ['json', 'record', 'missing_previous']) {
+    test('damaged export guard $damaged does not block opening and is retried', () async {
+      const prefKey = 'bhe.desktop.uncertain_export_starts';
+      final projectKey = '/project${String.fromCharCode(0)}p';
+      final otherKey = '/other${String.fromCharCode(0)}other';
+      final valid = {'startedAt': DateTime.now().toUtc().toIso8601String(), 'previousId': null};
+      final badRecord = damaged == 'missing_previous' ? {'startedAt': valid['startedAt']} : {'previousId': 'x'};
+      final initial = damaged == 'json' ? '{broken' : jsonEncode({'bad': badRecord, otherKey: valid});
+      SharedPreferences.setMockInitialValues({prefKey: initial});
+      final session = _FakeProjectSession();
+      session.restore(const ProjectSessionCheckpoint(projectRoot: '/project', projectId: 'p'));
+      final container = ProviderContainer(overrides: [
+        projectSessionProvider.overrideWithValue(session),
+        engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+      ]);
+      addTearDown(container.dispose);
+      final notifier = container.read(projectProvider.notifier);
+      expect(await notifier.openProject('/project'), isTrue);
+      expect(container.read(projectProvider).exportStartUnconfirmed, isFalse);
+      expect(await notifier.openProject('/project'), isTrue);
+      expect(container.read(noticeProvider).where((n) => n.title == '导出任务保护状态读取失败，已忽略'), hasLength(1));
+      if (damaged != 'json') {
+        session.restore(const ProjectSessionCheckpoint(projectRoot: '/other', projectId: 'other'));
+        expect(await notifier.openProject('/other'), isTrue);
+        expect(container.read(projectProvider).exportStartUnconfirmed, isTrue);
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(prefKey, jsonEncode({projectKey: valid}));
+      session.restore(const ProjectSessionCheckpoint(projectRoot: '/project', projectId: 'p'));
+      expect(await notifier.openProject('/project'), isTrue);
+      expect(container.read(projectProvider).exportStartUnconfirmed, isTrue);
+    });
+  }
+
+  test('temporary preferences initialization failure does not block opening and retries', () async {
+    const prefKey = 'bhe.desktop.uncertain_export_starts';
+    final key = '/project${String.fromCharCode(0)}p';
+    final value = jsonEncode({key: {'startedAt': DateTime.now().toUtc().toIso8601String(), 'previousId': null}});
+    SharedPreferences.setMockInitialValues({});
+    final backend = _IntermittentPreferences({'flutter.$prefKey': value});
+    SharedPreferencesStorePlatform.instance = backend;
+    final session = _FakeProjectSession();
+    session.restore(const ProjectSessionCheckpoint(projectRoot: '/project', projectId: 'p'));
+    final container = ProviderContainer(overrides: [
+      projectSessionProvider.overrideWithValue(session),
+      engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+    ]);
+    addTearDown(container.dispose);
+    final notifier = container.read(projectProvider.notifier);
+    expect(await notifier.openProject('/project'), isTrue);
+    expect(container.read(projectProvider).exportStartUnconfirmed, isFalse);
+    expect(container.read(noticeProvider).where((n) => n.title == '导出任务保护状态读取失败，已忽略'), hasLength(1));
+    backend.fail = false;
+    expect(await notifier.openProject('/project'), isTrue);
+    expect(container.read(projectProvider).exportStartUnconfirmed, isTrue);
+    expect(backend.attempts, greaterThanOrEqualTo(2));
+  });
+
   test('export does not start when its uncertainty guard cannot be saved', () async {
     final oldStore = SharedPreferencesStorePlatform.instance;
     SharedPreferencesStorePlatform.instance = _FailingPreferences();
@@ -1752,5 +1811,17 @@ class _UnconfirmedExportTransport implements EngineTransport {
     if (command == 'get_active_jobs') return {'jobs': []};
     if (command == 'get_latest_job') return {'job': latest};
     throw StateError('unexpected $command');
+  }
+}
+
+class _IntermittentPreferences extends InMemorySharedPreferencesStore {
+  _IntermittentPreferences(Map<String, Object> data) : super.withData(data);
+  bool fail = true;
+  int attempts = 0;
+  @override
+  Future<Map<String, Object>> getAll() async {
+    attempts++;
+    if (fail) throw StateError('temporary preferences failure');
+    return super.getAll();
   }
 }

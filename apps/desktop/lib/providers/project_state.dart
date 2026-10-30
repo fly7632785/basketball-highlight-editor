@@ -2550,19 +2550,55 @@ class ProjectNotifier extends Notifier<ProjectState> {
   Future<void>? _uncertainLoad;
   Future<void> _uncertainWrites = Future.value();
 
-  Future<void> _loadUncertainExportStarts() => _uncertainLoad ??= () async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_uncertainExportPrefsKey);
-    if (raw == null) return;
-    final decoded = jsonDecode(raw);
-    if (decoded is! Map) throw const FormatException('Invalid export state');
-    for (final entry in decoded.entries) {
-      if (entry.key is! String || entry.value is! Map) throw const FormatException('Invalid export state');
-      final started = DateTime.tryParse(entry.value['startedAt']?.toString() ?? '');
-      if (started == null) throw const FormatException('Invalid export state');
-      _uncertainExportStarts[entry.key as String] = (startedAt: started.toUtc(), previousId: entry.value['previousId']?.toString());
-    }
-  }();
+  bool _uncertainLoadWarned = false;
+
+  Future<void> _loadUncertainExportStarts() {
+    final existing = _uncertainLoad;
+    if (existing != null) return existing;
+    final completer = Completer<void>();
+    _uncertainLoad = completer.future;
+    () async {
+      var failed = false;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final raw = prefs.getString(_uncertainExportPrefsKey);
+        if (raw != null) {
+          final decoded = jsonDecode(raw);
+          if (decoded is! Map) throw const FormatException('Invalid export state');
+          for (final entry in decoded.entries) {
+            if (entry.key is! String || entry.value is! Map) {
+              failed = true;
+              continue;
+            }
+            final record = entry.value as Map;
+            final rawStarted = record['startedAt'];
+            final previousId = record['previousId'];
+            final started = rawStarted is String ? DateTime.tryParse(rawStarted) : null;
+            if (started == null || !record.containsKey('previousId') ||
+                (previousId != null && previousId is! String)) {
+              failed = true;
+              continue;
+            }
+            _uncertainExportStarts.putIfAbsent(entry.key as String, () => (
+              startedAt: started.toUtc(), previousId: previousId as String?,
+            ));
+          }
+        }
+      } catch (_) {
+        failed = true;
+      }
+      if (failed) {
+        // 无法读取时按无标记处理，无法保证防止重复导出；联调时需验证。
+        _uncertainLoad = null;
+        if (!_uncertainLoadWarned && !_disposed) {
+          _uncertainLoadWarned = true;
+          _pushNotice('导出任务保护状态读取失败，已忽略', NoticeSeverity.warning);
+        }
+      }
+      completer.complete();
+    }();
+    return completer.future;
+  }
 
   Future<void> _saveUncertainExportStarts() {
     final write = _uncertainWrites.then((_) async {

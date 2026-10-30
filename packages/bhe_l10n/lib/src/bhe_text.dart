@@ -1040,6 +1040,7 @@ const _englishText = <String, String>{
   '校验原视频': 'Checking source video',
   '复核原视频': 'Rechecking source video',
   '导出启动结果尚未确认，请重新连接后检查现有任务。': 'Export start is unconfirmed. Reconnect and check existing tasks.',
+  '导出任务保护状态读取失败，已忽略': 'Could not read export protection status; it was ignored.',
   '上一次导出启动结果未确认，请先查看导出任务': 'The previous export start is unconfirmed. Check export tasks first.',
   '未找到可确认的导出任务，请检查后再决定是否允许重新导出。': 'No matching export task was found. Check before allowing another export.',
   '查看导出任务': 'Check export tasks',
