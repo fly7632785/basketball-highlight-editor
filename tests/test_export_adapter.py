@@ -79,6 +79,8 @@ def test_hardware_encoders_get_a_bitrate():
 @pytest.mark.parametrize("mode", ["separate", "merge"])
 def test_windows_tries_gpu_encoders_and_keeps_the_one_that_works(tmp_path, monkeypatch, mode):
     monkeypatch.setattr(export.platform, "system", lambda: "Windows")
+    # The fake clip bytes below cannot be probed; this test exercises codec fallback.
+    monkeypatch.setattr(export, "_compatible_color_streams", lambda paths: True)
     attempts = []
 
     def fake_ffmpeg(command, output_path, **kwargs):

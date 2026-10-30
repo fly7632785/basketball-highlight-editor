@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 from collections import deque
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict
 from uuid import uuid4
@@ -570,12 +571,12 @@ def _compatible_color_streams(paths: list[Path]) -> bool:
         for path in paths:
             result = subprocess.run(
                 [resolve_media_tool("ffprobe"), "-v", "error", "-select_streams", "v:0",
-                 "-show_entries", "stream=codec_name,pix_fmt,width,height,color_space,color_transfer,color_primaries",
+                 "-show_entries", "stream=codec_name,pix_fmt,width,height,color_space,color_transfer,color_primaries,color_range",
                  "-of", "json", str(path)],
                 check=True, capture_output=True, text=True, timeout=15,
             )
             stream = json.loads(result.stdout)["streams"][0]
-            fields = ("codec_name", "pix_fmt", "width", "height", "color_space", "color_transfer", "color_primaries")
+            fields = ("codec_name", "pix_fmt", "width", "height", "color_space", "color_transfer", "color_primaries", "color_range")
             values = tuple(stream.get(field) for field in fields)
             if any(value in (None, "unknown", "unspecified") for value in values):
                 return False
@@ -662,12 +663,10 @@ def export_goal_clips(
                 "-f", "concat", "-safe", "0", "-i", str(concat_file),
                 "-c", "copy", str(merged_path),
             ]
+            normalize_color = len(files) > 1 and not _compatible_color_streams(files)
             try:
-                mixed_color = any(c.get("tonemap") for c in candidates) and any(
-                    not c.get("tonemap") for c in candidates
-                )
-                if mixed_color and not _compatible_color_streams(files):
-                    raise OSError("mixed color streams require re-encoding")
+                if normalize_color:
+                    raise OSError("incompatible color streams require re-encoding")
                 run_atomic_ffmpeg(
                     merge_command,
                     merged_path,
@@ -679,19 +678,44 @@ def export_goal_clips(
                 # Separate clips use a common encoder, so stream-copy is the
                 # fast path. Re-encode only when timestamps/codecs prevent a
                 # valid concat output.
-                run_encoded_ffmpeg(
-                    lambda codec: [
-                        resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
-                        "-f", "concat", "-safe", "0", "-i", str(concat_file),
-                        *video_codec_options(codec),
-                        "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
-                        str(merged_path),
-                    ],
-                    merged_path,
-                    codecs,
-                    cancel_check=cancel_check,
-                    process_callback=process_callback,
-                )
+                # A concat demuxer exposes the first stream's color range for
+                # the whole sequence, so normalize each input independently.
+                with (tempfile.TemporaryDirectory(prefix="bhe-color-", dir=output_dir)
+                      if normalize_color else nullcontext(None)) as temp:
+                    normalized_manifest = concat_file
+                    color_tags = []
+                    if normalize_color:
+                        normalized = []
+                        for index, path in enumerate(files):
+                            normalized_path = Path(temp) / f"{index}.mp4"
+                            run_encoded_ffmpeg(
+                                lambda codec: [
+                                    resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
+                                    "-i", str(path), "-vf", "scale=in_range=auto:out_range=tv,format=yuv420p",
+                                    *video_codec_options(codec), *SDR_TAGS,
+                                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+                                    str(normalized_path),
+                                ],
+                                normalized_path, codecs, cancel_check=cancel_check,
+                                process_callback=process_callback,
+                            )
+                            normalized.append(normalized_path)
+                        normalized_manifest = Path(temp) / "concat.txt"
+                        normalized_manifest.write_text(
+                            "".join(concat_manifest_entry(path) for path in normalized), encoding="utf-8",
+                        )
+                        color_tags = SDR_TAGS
+                    run_encoded_ffmpeg(
+                        lambda codec: [
+                            resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
+                            "-f", "concat", "-safe", "0", "-i", str(normalized_manifest),
+                            *video_codec_options(codec), *color_tags,
+                            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+                            str(merged_path),
+                        ],
+                        merged_path, codecs, cancel_check=cancel_check,
+                        process_callback=process_callback,
+                    )
             if not merged_existed:
                 created_files.append(merged_path)
             if progress_callback:

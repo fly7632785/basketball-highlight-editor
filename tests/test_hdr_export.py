@@ -127,3 +127,76 @@ def test_encoder_fallback_retains_tonemap(monkeypatch, tmp_path):
 
 def test_missing_metadata_warns():
     assert hdr.color_plan({}) == (False, hdr.HDR_UNKNOWN)
+
+@pytest.mark.parametrize('second_range,compatible', [('tv', True), ('pc', False), (None, False)])
+def test_compatible_color_streams_requires_matching_known_range(monkeypatch, second_range, compatible):
+    stream = {'codec_name': 'h264', 'pix_fmt': 'yuv420p', 'width': 64, 'height': 64,
+              'color_space': 'bt709', 'color_transfer': 'bt709', 'color_primaries': 'bt709'}
+    ranges = iter(['tv', second_range])
+    def probe(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps({'streams': [{**stream, 'color_range': next(ranges)}]}))
+    monkeypatch.setattr(export.subprocess, 'run', probe)
+    assert export._compatible_color_streams([Path('a'), Path('b')]) is compatible
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+@pytest.mark.parametrize('hdr_source', [False, True])
+def test_real_mixed_ranges_are_normalized(monkeypatch, tmp_path, reverse, hdr_source):
+    ffmpeg = export.resolve_media_tool('ffmpeg')
+    ffprobe = export.resolve_media_tool('ffprobe')
+    if not hdr.hdr_filter_available():
+        pytest.skip('zscale and tonemap are unavailable')
+    def run(args):
+        return subprocess.run(args, check=True, capture_output=True)
+    source = tmp_path / 'hdr.mkv'
+    full = tmp_path / 'full.mp4'
+    run([ffmpeg, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+         'color=black:s=64x64:r=5:d=1,drawbox=x=32:y=0:w=32:h=64:color=white:t=fill',
+         '-vf', 'zscale=matrixin=709:transferin=709:primariesin=709:matrix=2020_ncl:transfer=arib-std-b67:primaries=2020,format=yuv420p10le',
+         '-c:v', 'ffv1', '-color_primaries', 'bt2020', '-color_trc', 'arib-std-b67',
+         '-colorspace', 'bt2020nc', str(source)])
+    run([ffmpeg, '-y', '-v', 'error', '-i', str(source), '-vf',
+         hdr.TONEMAP_FILTER + ',scale=in_range=tv:out_range=pc,format=yuvj420p',
+         '-c:v', 'mpeg4', '-q:v', '2', '-color_range', 'pc', '-color_primaries', 'bt709',
+         '-color_trc', 'bt709', '-colorspace', 'bt709', str(full)])
+    limited = tmp_path / 'limited.mp4'
+    run([ffmpeg, '-y', '-v', 'error', '-i', str(source), '-vf', hdr.TONEMAP_FILTER,
+         '-c:v', 'mpeg4', '-q:v', '2', *hdr.SDR_TAGS, str(limited)])
+    assert not export._compatible_color_streams([limited, full])
+    monkeypatch.setattr(export, 'video_codecs', lambda: ['mpeg4'])
+    build = export.build_clip_command
+    def preserve_full_range(*args, **kwargs):
+        cmd = build(*args, **kwargs)
+        if args[0] == full:
+            pos = cmd.index('-c:v')
+            cmd[pos:pos] = ['-vf', 'scale=in_range=auto:out_range=pc,format=yuvj420p']
+            cmd[-1:-1] = ['-color_range', 'pc']
+        return cmd
+    monkeypatch.setattr(export, 'build_clip_command', preserve_full_range)
+    candidates = [
+        {'source_path': str(source if hdr_source else limited), 'event_time_ms': 500, 'review_start_ms': 0,
+         'review_end_ms': 1000, 'width': 64, 'height': 64, 'has_audio': False, 'tonemap': hdr_source},
+        {'source_path': str(full), 'event_time_ms': 500, 'review_start_ms': 0,
+         'review_end_ms': 1000, 'width': 64, 'height': 64, 'has_audio': False, 'tonemap': False},
+    ]
+    if reverse:
+        candidates.reverse()
+    result = export.export_goal_clips(candidates, tmp_path / 'out', 'merge')
+    assert not export._compatible_color_streams([Path(p) for p in result['clip_files']])
+    output = result['files'][0]
+    metadata = json.loads(run([ffprobe, '-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=color_range,color_space,color_transfer,color_primaries',
+        '-of', 'json', output]).stdout)['streams'][0]
+    assert metadata == {'color_range': 'tv', 'color_space': 'bt709',
+                        'color_transfer': 'bt709', 'color_primaries': 'bt709'}
+    def levels(at):
+        raw = run([ffmpeg, '-v', 'error', '-ss', str(at), '-i', output,
+                   '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']).stdout
+        def pixel(x, y):
+            offset = (y * 64 + x) * 3
+            return sum(raw[offset:offset + 3]) / 3
+        return pixel(16, 32), pixel(48, 32)
+    first, second = levels(.4), levels(1.4)
+    assert abs(first[0] - second[0]) <= 8
+    assert abs(first[1] - second[1]) <= 8
+    assert first[0] < 25 and first[1] > 150
