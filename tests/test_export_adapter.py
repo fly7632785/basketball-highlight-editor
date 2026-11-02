@@ -514,3 +514,82 @@ def test_media_command_error_prints_a_signed_windows_exit_code():
     message = str(export.MediaCommandError(4294967274, ["ffmpeg"], "Invalid argument"))
     assert "-22" in message
     assert "4294967274" not in message
+
+
+def _fps_source(tmp_path: Path, name: str, rate: str, timescale: int) -> Path:
+    ffmpeg, _ = _ffmpeg_or_skip()
+    source = tmp_path / f"{name}.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-v", "error", "-y",
+            "-f", "lavfi", "-i", f"testsrc=size=640x360:rate={rate}",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+            "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-video_track_timescale", str(timescale), "-c:a", "aac", str(source),
+        ],
+        check=True,
+    )
+    return source
+
+
+def _stream_durations(path: str) -> dict[str, float]:
+    _, ffprobe = _ffmpeg_or_skip()
+    rows = subprocess.run(
+        [ffprobe, "-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "csv=p=0", path],
+        check=True, capture_output=True, text=True,
+    ).stdout.split()
+    return {row.split(",")[0]: float(row.split(",")[1]) for row in rows}
+
+
+def _mixed_rate_candidates(tmp_path: Path, with_fps: bool):
+    sources = [
+        (_fps_source(tmp_path, "s60a", "60", 600), 60.0),
+        (_fps_source(tmp_path, "s60b", "60", 600), 60.0),
+        (_fps_source(tmp_path, "s5994", "60000/1001", 60000), 59.94),
+    ]
+    return [
+        {
+            "source_path": str(source), "event_time_ms": 600, "review_start_ms": 100, "review_end_ms": 1100,
+            "width": 640, "height": 360, "has_audio": True, **({"fps": fps} if with_fps else {}),
+        }
+        for source, fps in sources
+    ]
+
+
+@pytest.mark.parametrize("with_fps", [True, False])
+def test_merge_of_mixed_frame_rates_keeps_the_summed_duration(tmp_path: Path, with_fps):
+    # 60 + 60 + 59.94 帧各 1 秒：成品必须约 3 秒，不能被拉长（用户反馈 3 秒变 11.75 秒）。
+    candidates = _mixed_rate_candidates(tmp_path, with_fps)
+    result = export.export_goal_clips(
+        candidates, tmp_path / "out", "merge", output_path=tmp_path / "out" / "final.mp4",
+    )
+    durations = _stream_durations(result["files"][0])
+    assert durations["video"] == pytest.approx(3.0, abs=0.1)
+    assert durations["audio"] == pytest.approx(3.0, abs=0.1)
+
+
+def test_merge_of_same_frame_rate_keeps_the_stream_copy_fast_path(tmp_path: Path, monkeypatch):
+    candidates = _mixed_rate_candidates(tmp_path, True)[:2]
+    commands = []
+    real_run = export.run_encoded_ffmpeg
+
+    def spy(builder, output_path, codecs, **kwargs):
+        codec = real_run(builder, output_path, codecs, **kwargs)
+        commands.append(builder(codec))
+        return codec
+
+    monkeypatch.setattr(export, "run_encoded_ffmpeg", spy)
+    export.export_goal_clips(candidates, tmp_path / "out", "merge", output_path=tmp_path / "out" / "final.mp4")
+    assert len(commands) == 2  # 只有逐段编码，没有合并时的重编码
+    assert all("-r" not in command for command in commands)
+
+
+def test_frame_rate_is_unified_only_when_clips_differ():
+    clip = {"fps": 59.94006}
+    assert export._merge_frame_rate([{"fps": 60.0}, clip], {"fps": 60.0}) is None
+    assert export._merge_frame_rate([{"fps": 60.0}, clip], clip) == "60/1"
+    assert export._merge_frame_rate([clip, {"fps": 60.0}], {"fps": 60.0}) == "60000/1001"
+    assert export._merge_frame_rate([{"fps": 60.0}], {}) is None
+    command = build_clip_command(Path("s.mp4"), 0, 1000, Path("o.mp4"), "libx264", frame_rate="60/1")
+    assert command[-3:] == ["-r", "60/1", "o.mp4"]
+    assert "-r" not in build_clip_command(Path("s.mp4"), 0, 1000, Path("o.mp4"), "libx264")
