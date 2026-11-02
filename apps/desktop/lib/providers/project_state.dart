@@ -516,6 +516,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
         }
         if (_disposed || generation != _projectLoadGeneration) return;
         state = state.copyWith(busyMessage: '正在识别篮筐区域…');
+        final roiWatch = Stopwatch()..start();
+        appLog('info', 'import', '自动识别篮筐 开始');
         Rect? suggestedRoi;
         Rect? hoopBbox;
         String? roiSource;
@@ -580,6 +582,15 @@ class ProjectNotifier extends Notifier<ProjectState> {
           analysisQueue: const <String>[],
           queuePaused: false,
           exportQueued: false,
+        );
+        appLog(
+          roiSuggestionError == null ? 'info' : 'warn',
+          'import',
+          '自动识别篮筐 结果=${suggestedRoi == null ? '未识别' : '成功'} '
+              '来源=${roiSource ?? 'manual'} '
+              '置信度=${roiConfidence == null ? '-' : roiConfidence.toStringAsFixed(3)} '
+              '用时=${roiWatch.elapsedMilliseconds}ms'
+              '${roiSuggestionError == null ? '' : ' 错误=$roiSuggestionError'}',
         );
         _reviewHistory.clear();
         await refreshVideos();
@@ -1585,10 +1596,12 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   Future<void> pauseAnalysisQueue() async {
+    appLog('info', 'analysis', '队列 暂停 剩余=${state.analysisQueue.length}');
     state = state.copyWith(queuePaused: true);
   }
 
   Future<void> resumeAnalysisQueue() async {
+    appLog('info', 'analysis', '队列 继续 剩余=${state.analysisQueue.length}');
     state = state.copyWith(queuePaused: false);
     await _startNextQueued();
   }
@@ -1596,6 +1609,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
   /// 从队列移除还没开始的视频段；正在分析的那段需要先取消。
   Future<void> removeFromAnalysisQueue(String videoId) async {
     if (state.analysisRunning && state.analysisQueue.firstOrNull == videoId) return;
+    appLog('info', 'analysis', '队列 移除 id=$videoId 剩余=${state.analysisQueue.length - 1}');
     await _saveAnalysisQueue([
       for (final id in state.analysisQueue)
         if (id != videoId) id,
@@ -1913,6 +1927,15 @@ class ProjectNotifier extends Notifier<ProjectState> {
                 'msg=${nextJob?['error_message']}',
           );
           final segment = state.segmentOf(nextJob?['video_id']?.toString());
+          if (nextState == 'completed') {
+            // 界面侧汇总：引擎已经记了内部阶段耗时，这里只补用户看到的候选数与模式。
+            appLog(
+              'info',
+              'analysis',
+              '分析完成 候选=${state.candidates.length} 模式=${state.analysisMode} '
+                  'job=$jobId segment=${segment ?? '-'}',
+            );
+          }
           if (nextState == 'completed' && segment != null) {
             _pushNotice('第 $segment 段分析完成', NoticeSeverity.success);
           } else if (nextState == 'completed') {
@@ -2780,6 +2803,14 @@ class ProjectNotifier extends Notifier<ProjectState> {
     state = state.copyWith(exportStartUnconfirmed: false);
   }
 
+  /// 导出耗时：用任务创建时间到现在的差值，取不到就算 0（只为日志可读性）。
+  int _exportElapsedMs(String jobId) {
+    final createdAt = state.exportJob?['created_at']?.toString();
+    final started = createdAt == null ? null : DateTime.tryParse(createdAt);
+    if (started == null) return 0;
+    return DateTime.now().toUtc().difference(started.toUtc()).inMilliseconds;
+  }
+
   Future<void> export(
     String mode, {
     String? outputDir,
@@ -2814,7 +2845,20 @@ class ProjectNotifier extends Notifier<ProjectState> {
     var guardSaved = false;
     var requestSent = false;
     state = state.copyWith(busy: true);
-    appLog('info', 'export', '开始导出 mode=$mode effect=$effect');
+    final kept = state.candidates
+        .where((item) => item['selection_status'] != 'excluded')
+        .where(
+          (item) =>
+              playerIds == null || playerIds.contains(item['player_id']?.toString()),
+        )
+        .length;
+    appLog(
+      'info',
+      'export',
+      '开始导出 mode=$mode effect=$effect 候选=${state.candidates.length} '
+          '按球员过滤后=$kept 球员过滤=${playerIds == null ? '无' : '有'} '
+          '含未分配=${includeUnassigned ?? false}',
+    );
     try {
       await _loadUncertainExportStarts();
       if (_disposed || generation != _projectLoadGeneration) return;
@@ -2914,7 +2958,17 @@ class ProjectNotifier extends Notifier<ProjectState> {
         scope: requestScope,
       );
       final jobState = state.exportJob?['state']?.toString();
-      appLog(jobState == 'failed' ? 'error' : 'info', 'export', '导出结束 state=$jobState job=$jobId');
+      final exportedFiles = (state.exportJob?['result_files'] as List?)?.length ??
+          (state.exportJob?['files'] as List?)?.length;
+      final exportedDurationMs = (state.exportJob?['duration_ms'] as num?)?.toInt() ??
+          (state.exportJob?['result_duration_ms'] as num?)?.toInt();
+      appLog(
+        jobState == 'failed' ? 'error' : 'info',
+        'export',
+        '导出结束 state=$jobState job=$jobId 文件数=${exportedFiles ?? '-'} '
+            '总时长=${exportedDurationMs == null ? '-' : '${exportedDurationMs}ms'} '
+            '耗时=${_exportElapsedMs(jobId)}ms',
+      );
       unawaited(_startNextQueued());
       if (jobState == 'completed') {
         _pushNotice('导出完成', NoticeSeverity.success);

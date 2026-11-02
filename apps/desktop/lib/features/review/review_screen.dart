@@ -1772,7 +1772,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
             await player.stop();
           } catch (error) { appLog('warn', 'review_screen', 'dispose 忽略了错误: $error'); }
           try {
-            await player.dispose();
+            await disposeLoggedPlayer(player, '审核页');
           } catch (error) { appLog('warn', 'review_screen', 'dispose 忽略了错误: $error'); }
         }),
       );
@@ -1899,10 +1899,18 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
       await matchPlayerToSourceRotation(player, rotation: widget.rotation);
       await openLoggedMedia(player, '审核页', path);
       if (!_isCurrent(generation)) return;
-      await waitForPlayableDuration(
-        current: player.state.duration,
-        updates: player.stream.duration,
-      );
+      final readyWatch = watchPlayerReadyTimeout(player, '审核页');
+      try {
+        await waitForPlayableDuration(
+          current: player.state.duration,
+          updates: player.stream.duration,
+        );
+      } on Object catch (error) {
+        appLog('warn', 'player', '审核页 等待视频就绪失败: $error');
+        rethrow;
+      } finally {
+        readyWatch.cancel();
+      }
       if (!_isCurrent(generation)) return;
       setState(() {
         _ready = true;
@@ -1966,6 +1974,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
       if (!_isCurrent(generation, playbackToken: playbackToken)) return;
       await player.play();
     } catch (error) {
+      appLog('error', 'player', '审核页 播放片段失败: $error');
       if (_isCurrent(generation)) {
         setState(() => _error = error.toString());
       }
@@ -1997,6 +2006,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
       await player.pause();
       await player.seek(Duration(milliseconds: start));
     } catch (error) {
+      appLog('error', 'player', '审核页 seek 失败 start=${start}ms: $error');
       if (_isCurrent(generation)) {
         setState(() => _error = error.toString());
       }
