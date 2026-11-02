@@ -2930,3 +2930,81 @@ def test_progress_write_keeps_the_cancelling_stage(tmp_path: Path):
     )
     assert updated["stage"] == "cancelling"
     assert updated["progress"] == pytest.approx(0.9)
+
+
+def _demote_analysis_checkpoints_to_legacy(store, video_id):
+    """把已有分析任务的参数降级成 0.1.13 的格式：没有指纹，只有路径/尺寸/时间。"""
+    project = store.project()
+    jobs = store.list_jobs(
+        project_id=project["id"], job_type="analysis", states=("completed",), video_id=video_id,
+    )
+    video = store.video(video_id)
+    assert jobs
+    for job in jobs:
+        checkpoint = json.loads(job["checkpoint_json"])
+        parameters = checkpoint["analysis_parameters"]
+        parameters.pop("source_fingerprint", None)
+        parameters.pop("source_rotation", None)
+        parameters["source_size_bytes"] = video["source_size_bytes"]
+        parameters["source_mtime_ns"] = video["source_mtime_ns"]
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE jobs SET checkpoint_json = ? WHERE id = ?",
+                (json.dumps(checkpoint), job["id"]),
+            )
+
+
+def test_legacy_proxy_is_reused_when_the_source_is_unchanged(tmp_path, monkeypatch):
+    service, root, video, source, proxy = _project_with_proxy(tmp_path, 1000, 7000)
+    store = ProjectStore(root)
+    _demote_analysis_checkpoints_to_legacy(store, video["id"])
+
+    assert service._latest_proxy_video(store, video["id"]) is not None
+    commands = _preview_commands(monkeypatch)
+    result = service.extract_preview({
+        "project_root": str(root), "video_id": video["id"], "time_ms": 3000,
+    })
+
+    assert Path(result["path"]).stat().st_size > 0
+    assert str(Path(proxy).resolve()) in commands[-1]
+
+
+def test_legacy_proxy_is_not_reused_after_the_source_is_replaced_in_place(tmp_path, monkeypatch):
+    service, root, video, source, proxy = _project_with_proxy(tmp_path, 1000, 7000)
+    store = ProjectStore(root)
+    _demote_analysis_checkpoints_to_legacy(store, video["id"])
+    source.write_bytes(source.read_bytes() + b"changed")
+    service.handle("relink_video", {
+        "project_root": str(root), "video_id": video["id"], "video_path": str(source),
+    })
+
+    assert service._latest_proxy_video(store, video["id"]) is None
+    commands = _preview_commands(monkeypatch)
+    result = service.extract_preview({
+        "project_root": str(root), "video_id": video["id"], "time_ms": 3000,
+    })
+
+    assert Path(result["path"]).stat().st_size > 0
+    assert str(Path(source).resolve()) in commands[-1]
+
+
+def test_legacy_proxy_without_recorded_size_or_mtime_is_not_reused(tmp_path):
+    """老任务连尺寸/时间都没记下来时无法证明源没被换过，只能回原片。"""
+    service, root, video, _source, _proxy = _project_with_proxy(tmp_path, 1000, 7000)
+    store = ProjectStore(root)
+    _demote_analysis_checkpoints_to_legacy(store, video["id"])
+    project = store.project()
+    jobs = store.list_jobs(
+        project_id=project["id"], job_type="analysis", states=("completed",), video_id=video["id"],
+    )
+    for job in jobs:
+        checkpoint = json.loads(job["checkpoint_json"])
+        checkpoint["analysis_parameters"].pop("source_size_bytes", None)
+        checkpoint["analysis_parameters"].pop("source_mtime_ns", None)
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE jobs SET checkpoint_json = ? WHERE id = ?",
+                (json.dumps(checkpoint), job["id"]),
+            )
+
+    assert service._latest_proxy_video(store, video["id"]) is None

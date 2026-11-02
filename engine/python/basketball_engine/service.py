@@ -650,15 +650,34 @@ class EngineService:
             video_id=video_id,
         )
         source_path = str(Path(video["source_path"]).resolve())
+        video_size = video.get("source_size_bytes")
+        video_mtime = video.get("source_mtime_ns")
         for job in reversed(jobs):
             checkpoint = self._decode_checkpoint(job)
             parameters = checkpoint.get("analysis_parameters")
             if not isinstance(parameters, dict):
                 parameters = {}
-            if (not video.get("source_fingerprint")
-                or parameters.get("source_path") != source_path
-                or parameters.get("source_fingerprint") != video.get("source_fingerprint")
-                or parameters.get("source_rotation") != int(video.get("rotation") or 0)):
+            recorded_fingerprint = parameters.get("source_fingerprint")
+            if recorded_fingerprint:
+                # 新任务按指纹和方向核对；视频记录没有指纹时不能证明来源一致。
+                trusted = (
+                    bool(video.get("source_fingerprint"))
+                    and recorded_fingerprint == video.get("source_fingerprint")
+                    and parameters.get("source_rotation") == int(video.get("rotation") or 0)
+                )
+            else:
+                # 0.1.13 及更早的任务没存指纹：用路径 + 尺寸 + mtime 证明源没被换过
+                # （口径同 _validated_original_source 判「源未变」，当前文件与视频记录
+                # 已由 _validated_source 核对）。少了任何一项就不复用。
+                trusted = (
+                    parameters.get("source_size_bytes") is not None
+                    and parameters.get("source_mtime_ns") is not None
+                    and video_size is not None
+                    and video_mtime is not None
+                    and parameters.get("source_size_bytes") == video_size
+                    and parameters.get("source_mtime_ns") == video_mtime
+                )
+            if parameters.get("source_path") != source_path or not trusted:
                 continue
             candidate = checkpoint.get("proxy_video")
             if not isinstance(candidate, str) or not candidate:
