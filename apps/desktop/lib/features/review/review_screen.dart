@@ -1452,9 +1452,27 @@ class _TextEntryDialogState extends State<_TextEntryDialog> {
   late final TextEditingController _controller = TextEditingController(
     text: widget.initialText,
   );
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode()..addListener(_logFocus);
+    appLog('info', 'input', '${widget.title} 打开');
+  }
+
+  void _logFocus() {
+    appLog(
+      'info',
+      'input',
+      '${widget.title} ${_focusNode.hasFocus ? '获得焦点' : '失去焦点'}',
+    );
+  }
 
   @override
   void dispose() {
+    _focusNode.removeListener(_logFocus);
+    _focusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -1476,6 +1494,7 @@ class _TextEntryDialogState extends State<_TextEntryDialog> {
       title: Text(widget.title),
       content: TextField(
         controller: _controller,
+        focusNode: _focusNode,
         autofocus: true,
         maxLines: widget.maxLines,
         decoration: InputDecoration(

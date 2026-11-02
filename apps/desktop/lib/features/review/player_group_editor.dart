@@ -20,6 +20,8 @@ class PlayerGroupEditor extends ConsumerStatefulWidget {
 class _PlayerGroupEditorState extends ConsumerState<PlayerGroupEditor> {
   late final _name = TextEditingController(text: widget.group.name);
   final _newPlayer = TextEditingController();
+  late final FocusNode _nameFocus;
+  late final FocusNode _newPlayerFocus;
   late final _players = List<String>.of(widget.group.players);
   String? _error;
   bool _saving = false;
@@ -27,11 +29,25 @@ class _PlayerGroupEditorState extends ConsumerState<PlayerGroupEditor> {
   @override
   void initState() {
     super.initState();
+    _nameFocus = FocusNode()..addListener(_logNameFocus);
+    _newPlayerFocus = FocusNode()..addListener(_logNewPlayerFocus);
     appLog('info', 'input', '打开球员分组输入框');
+  }
+
+  void _logNameFocus() {
+    appLog('info', 'input', '球员分组·分组名称 ${_nameFocus.hasFocus ? '获得焦点' : '失去焦点'}');
+  }
+
+  void _logNewPlayerFocus() {
+    appLog('info', 'input', '球员分组·球员姓名 ${_newPlayerFocus.hasFocus ? '获得焦点' : '失去焦点'}');
   }
 
   @override
   void dispose() {
+    _nameFocus.removeListener(_logNameFocus);
+    _newPlayerFocus.removeListener(_logNewPlayerFocus);
+    _nameFocus.dispose();
+    _newPlayerFocus.dispose();
     _name.dispose();
     _newPlayer.dispose();
     super.dispose();
@@ -103,6 +119,7 @@ class _PlayerGroupEditorState extends ConsumerState<PlayerGroupEditor> {
               TextField(
                 key: const Key('player-group-name'),
                 controller: _name,
+                focusNode: _nameFocus,
                 enabled: !_saving,
                 autofocus: true,
                 decoration: InputDecoration(labelText: context.bheText('分组名称')),
@@ -183,6 +200,7 @@ class _PlayerGroupEditorState extends ConsumerState<PlayerGroupEditor> {
                     child: TextField(
                       key: const Key('player-group-new-player'),
                       controller: _newPlayer,
+                      focusNode: _newPlayerFocus,
                       enabled: !_saving,
                       decoration: InputDecoration(
                         labelText: context.bheText('球员姓名'),

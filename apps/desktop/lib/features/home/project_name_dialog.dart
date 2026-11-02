@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
 
+import '../../core/app_log.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
 import '../../providers/project_state.dart';
@@ -37,11 +38,29 @@ class _ProjectNameDialogState extends ConsumerState<_ProjectNameDialog> {
   late final TextEditingController _controller = TextEditingController(
     text: widget.initialName,
   );
+  late final FocusNode _focusNode;
   bool _saving = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode()..addListener(_logFocus);
+    appLog('info', 'input', '打开项目名称输入框');
+  }
+
+  void _logFocus() {
+    appLog(
+      'info',
+      'input',
+      '项目名称 ${_focusNode.hasFocus ? '获得焦点' : '失去焦点'}',
+    );
+  }
+
+  @override
   void dispose() {
+    _focusNode.removeListener(_logFocus);
+    _focusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -98,6 +117,7 @@ class _ProjectNameDialogState extends ConsumerState<_ProjectNameDialog> {
           children: [
             TextField(
               controller: _controller,
+              focusNode: _focusNode,
               autofocus: true,
               enabled: !_saving,
               maxLength: projectNameMaxLength,
