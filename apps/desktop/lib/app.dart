@@ -18,6 +18,7 @@ import 'providers/update_provider.dart';
 import 'router/app_router.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
+import 'core/app_log.dart';
 
 class CourtsideApp extends ConsumerStatefulWidget {
   const CourtsideApp({super.key});
@@ -86,7 +87,8 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
             ? lightAppColors.background
             : darkAppColors.background,
       );
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'app', '_syncNativeWindowBrightness 忽略了错误: $error');
       // Widget tests and non-desktop hosts do not expose the native channel.
     }
     // window_manager 在 Windows 上按系统主题门控标题栏,可能在上面把
@@ -97,7 +99,8 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
   Future<void> _enableWindowCloseGuard() async {
     try {
       await windowManager.setPreventClose(true);
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'app', '_enableWindowCloseGuard 忽略了错误: $error');
       // Widget tests and non-desktop hosts do not expose the native channel.
     }
   }

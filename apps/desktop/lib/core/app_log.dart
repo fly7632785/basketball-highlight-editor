@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 String engineLogDirectory(Map<String, String> env) {
   final home = env['HOME'] ?? env['USERPROFILE'] ?? Directory.systemTemp.path;
   if (Platform.isMacOS) return '$home/Library/Logs/BHE';
@@ -12,9 +14,14 @@ final _latestEnvironment = <String, String>{};
 bool isEngineEnvironmentLine(String line) =>
     RegExp(r'^\[[^\]]+\] stderr: \[bhe\] environment ').hasMatch(line);
 
+/// 测试时把日志指向临时文件，避免写进真实日志目录。
+@visibleForTesting
+File? appLogFileOverride;
+
 void appendEngineLog(String message, {File? file}) {
   final target =
       file ??
+      appLogFileOverride ??
       File(
         '${engineLogDirectory(Platform.environment)}${Platform.pathSeparator}engine.log',
       );
@@ -36,3 +43,8 @@ void appendEngineLog(String message, {File? file}) {
     // Logging must not interrupt the operation that produced the message.
   }
 }
+
+/// 界面层日志：写进同一个 engine.log（诊断复制已带它的尾部），一行一条，
+/// 格式 `[级别] [模块] 内容`。写失败不抛。
+void appLog(String level, String module, String message) =>
+    appendEngineLog('[$level] [$module] $message');

@@ -1,3 +1,4 @@
+import '../../core/app_log.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,6 +23,12 @@ class _PlayerGroupEditorState extends ConsumerState<PlayerGroupEditor> {
   late final _players = List<String>.of(widget.group.players);
   String? _error;
   bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    appLog('info', 'input', '打开球员分组输入框');
+  }
 
   @override
   void dispose() {

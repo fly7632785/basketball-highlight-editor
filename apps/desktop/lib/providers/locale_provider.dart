@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:bhe_l10n/bhe_l10n.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/app_log.dart';
 
 const String bheLocalePrefsKey = 'bhe.locale';
 
@@ -19,7 +20,8 @@ class LocaleNotifier extends Notifier<Locale> {
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getString(bheLocalePrefsKey);
       if (saved != null) state = BheLocale.fromName(saved);
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'locale_provider', '_load 忽略了错误: $error');
       // 读取失败时保留系统语言，不影响应用启动。
     }
   }
@@ -30,7 +32,8 @@ class LocaleNotifier extends Notifier<Locale> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(bheLocalePrefsKey, normalized.toLanguageTag());
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'locale_provider', 'set 忽略了错误: $error');
       // 持久化失败时仍保留本次运行的语言选择。
     }
   }

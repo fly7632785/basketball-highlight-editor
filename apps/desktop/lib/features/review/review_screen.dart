@@ -25,6 +25,7 @@ import 'clip_range_timeline.dart';
 import 'media_readiness.dart';
 import 'player_group_editor.dart';
 import 'review_video_viewport.dart';
+import '../../core/app_log.dart';
 
 bool _annotationHintSeen = false;
 
@@ -1565,6 +1566,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
           ),
         );
       } catch (error) {
+        appLog('error', 'player', '播放器初始化失败: $error');
         _error = error.toString();
         return;
       }
@@ -1687,10 +1689,10 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
           // 此时 Video 组件已卸载、纹理不再渲染,销毁是安全的。
           try {
             await player.stop();
-          } catch (_) {}
+          } catch (error) { appLog('warn', 'review_screen', 'dispose 忽略了错误: $error'); }
           try {
             await player.dispose();
-          } catch (_) {}
+          } catch (error) { appLog('warn', 'review_screen', 'dispose 忽略了错误: $error'); }
         }),
       );
     }
@@ -1723,7 +1725,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
         if (player != null) {
           try {
             await player.stop();
-          } catch (_) {}
+          } catch (error) { appLog('warn', 'review_screen', '_queueOpen 忽略了错误: $error'); }
         }
       }
       if (!_isCurrent(generation)) return;
@@ -3930,10 +3932,10 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
       if (player == null) return;
       try {
         await player.stop();
-      } catch (_) {}
+      } catch (error) { appLog('warn', 'review_screen', 'dispose 忽略了错误: $error'); }
       try {
         await player.dispose();
-      } catch (_) {}
+      } catch (error) { appLog('warn', 'review_screen', 'dispose 忽略了错误: $error'); }
     }());
     _startController.dispose();
     _endController.dispose();

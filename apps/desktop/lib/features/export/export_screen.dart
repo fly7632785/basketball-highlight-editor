@@ -12,6 +12,7 @@ import '../../components/cs_button.dart';
 import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../components/cs_progress_track.dart';
+import '../../core/app_log.dart';
 import '../../providers/project_state.dart';
 import '../../providers/playback_coordinator.dart';
 import '../../providers/export_output_picker.dart';
@@ -512,6 +513,8 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     final merge = mode == 'merge';
     if (_choosingOutput) return;
     setState(() => _choosingOutput = true);
+    final chooseWatch = Stopwatch()..start();
+    appLog('info', 'export', '选择输出位置开始 mode=$mode');
     try {
       final videoId = ref.read(projectProvider).video?['id'];
       final playerIds = _playerFilterActive ? _selectedPlayerIds.toList() : null;
@@ -525,6 +528,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                 ? picker.mergedPath(typeLabel: context.bheText('视频'))
                 : picker.directory(confirmLabel: context.bheText('选择输出目录'));
           }, onPrepareTimeout: () {
+            appLog('warn', 'export', '准备阶段超过时限，直接弹出选择框');
             if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text(context.bheText('视频画面准备较慢，已直接打开选择窗口'))),
@@ -544,12 +548,14 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
         includeUnassigned: includeUnassigned,
       );
     } catch (error) {
+      appLog('error', 'export', '选择输出位置失败: $error');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(context.bheText('选择输出位置失败：$error'))),
         );
       }
     } finally {
+      appLog('info', 'export', '选择输出位置结束 耗时${chooseWatch.elapsedMilliseconds}ms');
       if (mounted) setState(() => _choosingOutput = false);
     }
   }

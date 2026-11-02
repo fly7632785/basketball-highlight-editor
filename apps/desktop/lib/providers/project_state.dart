@@ -17,6 +17,7 @@ import '../core/video_segments.dart';
 import 'notice_provider.dart';
 import 'session_provider.dart';
 import 'sidebar_provider.dart';
+import '../core/app_log.dart';
 
 const _recentProjectRootsKey = 'basketball_recent_project_roots';
 
@@ -356,6 +357,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   Future<void> selectVideo(String path) async {
+    appLog('info', 'import', '导入开始');
     await flushReviewQueue();
     var projectCreatedForRecent = false;
     await _runBusy(
@@ -967,6 +969,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     String? videoTypeLabel,
   }) async {
     var opened = false;
+    appLog('info', 'project', '打开项目');
     await flushReviewQueue();
     await _runBusy(() async {
       final generation = ++_projectLoadGeneration;
@@ -1109,7 +1112,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
               : 'standard',
         );
       }
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'project_state', '_hydrateOpenedProject 忽略了错误: $error');
       // 旧项目没有模式记录时保持 standard。
     }
     try {
@@ -1232,7 +1236,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
           projects = await ref
               .read(projectSessionProvider)
               .loadRecentProjects(knownRoot: root);
-        } catch (_) {
+        } catch (error) {
+          appLog('warn', 'project_state', 'loadRecentProjects 忽略了错误: $error');
           continue;
         }
         for (final project in projects) {
@@ -1282,6 +1287,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
   /// 切换当前操作的视频段：导入页设置它的篮筐，审核页播放它的原视频。
   void activateVideo(String videoId) {
     if (state.video?['id']?.toString() == videoId) return;
+    appLog('info', 'video', '切换视频 id=$videoId');
     final summary = state.videos.cast<JsonMap?>().firstWhere(
       (video) => video?['id']?.toString() == videoId,
       orElse: () => null,
@@ -1413,7 +1419,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
         maxSamples: 12,
         confidence: 0.05,
       );
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'project_state', '_calibrateAddedVideo 忽略了错误: $error');
       // 自动识别失败的段留给用户手动框选。
       return;
     }
@@ -1863,7 +1870,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
             requestScope,
             preferredJobId: jobId,
           );
-        } catch (_) {}
+        } catch (error) { appLog('warn', 'project_state', 'pollJob 忽略了错误: $error'); }
       }
       if (!resumedAfterTransportError) {
         _markEngineJobRecoverable(error, export: false);
@@ -2049,7 +2056,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
             ? Map<String, dynamic>.from(raw)
             : const <String, dynamic>{},
       );
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'project_state', 'refreshStatistics 忽略了错误: $error');
       // 统计是辅助展示，旧版 Engine 不支持时不阻塞审核流程。
     }
   }
@@ -2586,7 +2594,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
             ));
           }
         }
-      } catch (_) {
+      } catch (error) {
+        appLog('warn', 'project_state', '_loadUncertainExportStarts 忽略了错误: $error');
         failed = true;
       }
       if (failed) {
@@ -2703,6 +2712,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     var guardSaved = false;
     var requestSent = false;
     state = state.copyWith(busy: true);
+    appLog('info', 'export', '开始导出 mode=$mode effect=$effect');
     try {
       await _loadUncertainExportStarts();
       if (_disposed || generation != _projectLoadGeneration) return;
@@ -2717,7 +2727,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
       try {
         await _saveUncertainExportStarts();
         guardSaved = true;
-      } catch (_) {
+      } catch (error) {
+        appLog('warn', 'project_state', 'export 忽略了错误: $error');
         _uncertainExportStarts.remove(projectKey);
         throw const SessionStateException('无法保存导出任务状态，未开始导出。');
       }
@@ -2750,6 +2761,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
       state = state.copyWith(busy: false);
       unawaited(pollExportJob(jobId, scope: scope));
     } catch (error) {
+      appLog('error', 'export', '导出启动失败: $error');
       if (_disposed || generation != _projectLoadGeneration) return;
       if ((error is EngineException && const {'ENGINE_TIMEOUT', 'ENGINE_EXITED', 'ENGINE_NOT_RUNNING', 'ENGINE_WRITE_FAILED', 'ENGINE_DISPOSED'}.contains(error.code)) ||
           (requestSent && error is SessionStateException && error.message == '导出任务未返回 id')) {
@@ -2757,7 +2769,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
         state = state.copyWith(exportStartUnconfirmed: true);
         try {
           await _saveUncertainExportStarts();
-        } catch (_) {
+        } catch (error) {
+          appLog('warn', 'project_state', 'export 忽略了错误: $error');
           _pushNotice('导出任务状态无法保存，请下次打开项目时重新检查。', NoticeSeverity.warning);
         }
         _pushNotice('上一次导出启动结果未确认，请先查看导出任务', NoticeSeverity.warning);
@@ -2799,6 +2812,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         scope: requestScope,
       );
       final jobState = state.exportJob?['state']?.toString();
+      appLog(jobState == 'failed' ? 'error' : 'info', 'export', '导出结束 state=$jobState job=$jobId');
       unawaited(_startNextQueued());
       if (jobState == 'completed') {
         _pushNotice('导出完成', NoticeSeverity.success);
@@ -2811,6 +2825,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         );
       }
     } catch (error) {
+      appLog('error', 'export', '导出轮询出错 job=$jobId: $error');
       if (_disposed || projectGeneration != _projectLoadGeneration) return;
       _markEngineJobRecoverable(error, export: true);
       _pushNotice(error.toString(), NoticeSeverity.error);
@@ -2823,6 +2838,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
   Future<void> cancelExport() async {
     final jobId = state.exportJob?['id'];
     if (jobId is! String) return;
+    appLog('info', 'export', '请求取消导出 job=$jobId');
     final generation = _projectLoadGeneration;
     try {
       final result = await ref
@@ -2914,6 +2930,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         _pushNotice(successMessage, NoticeSeverity.success);
       }
     } catch (error) {
+      appLog('error', 'project', '操作失败: $error');
       if (_disposed) return;
       _pushNotice(error.toString(), NoticeSeverity.error);
     } finally {
@@ -2975,7 +2992,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
       );
       return preferences.getStringList(_recentProjectRootsKey) ??
           const <String>[];
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'project_state', '_recentProjectRoots 忽略了错误: $error');
       return const <String>[];
     }
   }
@@ -2992,7 +3010,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
             const <String>[],
       }.take(12).toList();
       return await preferences.setStringList(_recentProjectRootsKey, roots);
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'project_state', '_rememberProjectsRoot 忽略了错误: $error');
       return false;
     }
   }

@@ -28,6 +28,7 @@ import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
 import '../review/media_readiness.dart';
 import 'player_roster_picker.dart';
+import '../../core/app_log.dart';
 
 const _beforeSecondOptions = <int>[0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15];
 const _afterSecondOptions = <int>[1, 2, 3, 4, 5, 6, 8, 10, 12, 15];
@@ -493,7 +494,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
           return;
         }
       }
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'import_video_screen', '_importVideoPath 忽略了错误: $error');
       // 元数据预检失败时仍交给正式导入流程处理。
     }
     final previousVideoId = existingState.video?['id']?.toString();
@@ -1878,10 +1880,10 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
       if (player == null) return;
       try {
         await player.stop();
-      } catch (_) {}
+      } catch (error) { appLog('warn', 'import_video_screen', 'dispose 忽略了错误: $error'); }
       try {
         await player.dispose();
-      } catch (_) {}
+      } catch (error) { appLog('warn', 'import_video_screen', 'dispose 忽略了错误: $error'); }
     }());
     super.dispose();
   }
@@ -1946,7 +1948,8 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
       if (target > 0) await _player!.seek(Duration(milliseconds: target));
       _lastSyncedMs = target;
       if (mounted) setState(() => _playerReady = true);
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'import_video_screen', '_openVideo 忽略了错误: $error');
       // 打开失败或等媒体就绪超时，回退到引擎抽帧预览。保留播放器实例：重新打开时
       // 复用，组件卸载时由 dispose() 释放；直接置空会让这个实例永远不被释放。
       if (mounted) setState(() => _playerReady = false);
@@ -3090,10 +3093,10 @@ class _AnalysisRangeEditorState extends ConsumerState<_AnalysisRangeEditor> {
       if (player == null) return;
       try {
         await player.stop();
-      } catch (_) {}
+      } catch (error) { appLog('warn', 'import_video_screen', 'dispose 忽略了错误: $error'); }
       try {
         await player.dispose();
-      } catch (_) {}
+      } catch (error) { appLog('warn', 'import_video_screen', 'dispose 忽略了错误: $error'); }
     }());
     super.dispose();
   }

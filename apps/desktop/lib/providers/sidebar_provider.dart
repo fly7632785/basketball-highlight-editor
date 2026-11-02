@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/app_log.dart';
 
 /// 侧栏展开状态。
 ///
@@ -34,7 +35,8 @@ class SidebarStateNotifier extends Notifier<bool> {
       if (_userChanged) return;
       final value = prefs.getBool(_prefsKey);
       if (value != null) state = value;
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'sidebar_provider', '_load 忽略了错误: $error');
       // 读取失败时保持默认展开。
     }
   }
@@ -43,7 +45,8 @@ class SidebarStateNotifier extends Notifier<bool> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_prefsKey, extended);
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'sidebar_provider', '_persist 忽略了错误: $error');
       // 持久化失败时仍保留本次内存状态。
     }
   }

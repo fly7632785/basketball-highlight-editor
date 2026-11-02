@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/app_log.dart';
 
 /// 主题模式持久化。
 ///
@@ -14,7 +15,8 @@ Future<ThemeMode> loadSavedThemeMode() async {
   try {
     final prefs = await SharedPreferences.getInstance();
     return _parseThemeMode(prefs.getString(themeModePrefsKey));
-  } catch (_) {
+  } catch (error) {
+    appLog('warn', 'theme_provider', 'loadSavedThemeMode 忽略了错误: $error');
     return ThemeMode.dark;
   }
 }
@@ -55,7 +57,8 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(themeModePrefsKey, mode.name);
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'theme_provider', 'set 忽略了错误: $error');
       // 持久化失败时仍保留本次 state(内存生效,下次启动回退默认)。
     }
   }

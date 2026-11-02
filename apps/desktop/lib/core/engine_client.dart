@@ -172,7 +172,8 @@ class EngineClient implements EngineTransport {
         try {
           await process.stdin.close().timeout(const Duration(seconds: 6));
           await process.exitCode.timeout(const Duration(seconds: 6));
-        } on Object {
+        } on Object catch (error) {
+          appLog('warn', 'engine_client', '_dispose 忽略了错误: $error');
           process.kill();
           // Returning before exit would let the updater race locked DLLs.
           await process.exitCode.timeout(const Duration(seconds: 6));

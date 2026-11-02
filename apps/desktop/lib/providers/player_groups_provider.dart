@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/app_log.dart';
 
 const String playerGroupsPrefsKey = 'bhe.player_groups';
 const String defaultPlayerGroupPrefsKey = 'bhe.default_player_group';
@@ -46,7 +47,8 @@ class PlayerGroupsNotifier extends Notifier<List<PlayerGroup>> {
         _defaultGroupName = null;
         await prefs.remove(defaultPlayerGroupPrefsKey);
       }
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'player_groups_provider', '_load 忽略了错误: $error');
       // 分组读取失败时按没有分组处理，不影响审核。
     }
   }
@@ -135,7 +137,8 @@ class PlayerGroupsNotifier extends Notifier<List<PlayerGroup>> {
       } else {
         await prefs.setString(defaultPlayerGroupPrefsKey, defaultName);
       }
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'player_groups_provider', '_persist 忽略了错误: $error');
       // 持久化失败时本次运行仍可使用分组。
     }
   }

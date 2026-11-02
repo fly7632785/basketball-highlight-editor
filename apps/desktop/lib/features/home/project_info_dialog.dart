@@ -6,6 +6,7 @@ import 'package:bhe_l10n/bhe_l10n.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
 import 'project_name_dialog.dart';
+import '../../core/app_log.dart';
 
 /// 项目信息面板：一眼看清这个项目是什么、有多大、存在哪。
 ///
@@ -164,7 +165,8 @@ class ProjectInfoDialog extends StatelessWidget {
       } else {
         await Process.run('xdg-open', [path]);
       }
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'project_info_dialog', '_revealInExplorer 忽略了错误: $error');
       // 打不开文件管理器不影响面板本身。
     }
   }

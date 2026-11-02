@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/widgets.dart' show Brightness;
+import 'app_log.dart';
 
 const int _dwmwaUseImmersiveDarkMode = 20;
 const int _dwmwaBorderColor = 34;
@@ -72,7 +73,8 @@ void applyWindowsTitleBarBrightness(Brightness brightness) {
     } finally {
       malloc.free(title);
     }
-  } catch (_) {
+  } catch (error) {
+    appLog('warn', 'windows_title_bar', 'Function 忽略了错误: $error');
     // DWM 不可用(旧版 Windows)或句柄未就绪时静默跳过。
   }
 }

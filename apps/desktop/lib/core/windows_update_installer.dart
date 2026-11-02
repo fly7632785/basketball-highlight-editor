@@ -73,7 +73,8 @@ class WindowsUpdateInstaller {
       await session.waitUntilStarted();
       await session.waitUntilReady();
       return session;
-    } catch (_) {
+    } catch (error) {
+      appLog('warn', 'windows_update_installer', 'prepare 忽略了错误: $error');
       await session.cancel();
       rethrow;
     }

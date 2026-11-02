@@ -11,6 +11,7 @@ import '../core/diagnostics.dart';
 import '../core/windows_update_installer.dart';
 import 'project_state.dart';
 import 'session_provider.dart';
+import '../core/app_log.dart';
 
 const updateLastCheckKey = 'update_last_check_ms';
 const updateSkippedVersionKey = 'update_skipped_version';
@@ -297,11 +298,11 @@ class UpdateNotifier extends Notifier<UpdateState> {
     } catch (error) {
       try {
         await session?.cancel();
-      } catch (_) {}
+      } catch (error) { appLog('warn', 'update_provider', 'install 忽略了错误: $error'); }
       if (preparingExit) {
         try {
           await lifecycle.resume();
-        } catch (_) {}
+        } catch (error) { appLog('warn', 'update_provider', 'install 忽略了错误: $error'); }
       }
       state = UpdateState(
         status: UpdateStatus.ready,
