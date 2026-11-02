@@ -154,6 +154,27 @@ void main() {
       expect(text, contains('已截断'));
     });
 
+    test('绝对路径统一换成占位，只留扩展名，不留用户名', () {
+      final macOs = sanitizeLogText('ffmpeg 退出码 1: /Users/bob/Movies/game.mp4: No such file');
+      expect(macOs, isNot(contains('bob')));
+      expect(macOs, contains('<path>.mp4'));
+      final windows = sanitizeLogText(r'open C:\Users\alice\Videos\clip.mov failed');
+      expect(windows, isNot(contains('alice')));
+      expect(windows, contains('<path>.mov'));
+      final unc = sanitizeLogText(r'cannot read \\nas\share\a.mkv');
+      expect(unc, isNot(contains('nas')));
+      final fileUrl = sanitizeLogText('打开 file:///Users/bob/a.mp4 失败');
+      expect(fileUrl, isNot(contains('bob')));
+      expect(fileUrl, contains('<path>.mp4'));
+      final tmp = sanitizeLogText('写入 "/private/var/folders/xx/T/bhe-cache/x.part" 失败');
+      expect(tmp, isNot(contains('folders')));
+    });
+
+    test('网址、比例、页面路径不被当成文件路径误遮', () {
+      const text = 'GET https://dl.envsystem.top/BHE-latest.dmg 已用 3/4 nav /home → /review';
+      expect(sanitizeLogText(text), text);
+    });
+
     test('超长文本先截断再过正则，耗时有上界且凭据照样被遮', () {
       final watch = Stopwatch()..start();
       final text = sanitizeLogText('password=SECRET1 ${'password ' * 200000}');

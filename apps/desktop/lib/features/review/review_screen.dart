@@ -1619,6 +1619,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
   Future<void> _mediaQueue = Future<void>.value();
   int _playbackToken = 0;
   Timer? _annotationHintTimer;
+  Timer? _readyWatch;
 
   @override
   void initState() {
@@ -1756,6 +1757,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
     _mediaGeneration++;
     _playbackToken++;
     _annotationHintTimer?.cancel();
+    _readyWatch?.cancel();
     final subscription = _positionSubscription;
     _positionSubscription = null;
     unawaited(_playingSubscription?.cancel());
@@ -1899,7 +1901,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
       await matchPlayerToSourceRotation(player, rotation: widget.rotation);
       await openLoggedMedia(player, '审核页', path);
       if (!_isCurrent(generation)) return;
-      final readyWatch = watchPlayerReadyTimeout('审核页');
+      final readyWatch = _readyWatch = watchPlayerReadyTimeout('审核页');
       try {
         await waitForPlayableDuration(
           current: player.state.duration,
@@ -1910,6 +1912,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
         rethrow;
       } finally {
         readyWatch.cancel();
+        if (identical(_readyWatch, readyWatch)) _readyWatch = null;
       }
       if (!_isCurrent(generation)) return;
       setState(() {

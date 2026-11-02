@@ -65,12 +65,29 @@ final _secretPatterns = <(RegExp, String)>[
   (RegExp(r'((?:token|secret|password|passwd|api[_-]?key|authorization)["\s]*[:=]["\s]*)[^\s,;"}&]+', caseSensitive: false), r'$1***'),
 ];
 
+final _pathPatterns = <RegExp>[
+  RegExp(r'file://[^\s"\x27<>]+'),
+  // Windows 盘符路径与 UNC 路径
+  RegExp(r'(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\)[^\s"\x27<>|*?]*'),
+  // 以斜杠开头、至少两段的绝对路径（前面是行首/空白/引号/等号/括号/逗号，避免吃掉网址）
+  RegExp(r'(?<=^|[\s"\x27=(,])/(?:[^\s"\x27<>:/]+/)+[^\s"\x27<>:/]*', multiLine: true),
+];
+
+String _maskPath(Match match) {
+  final path = match.group(0)!;
+  final extension = RegExp(r'\.[A-Za-z0-9]{1,5}$').firstMatch(path)?.group(0) ?? '';
+  return '<path>$extension';
+}
+
 /// 写日志前对文本限长并遮掉常见的凭据样式（URL 查询参数、Bearer、token=…）。
 /// 只是兜底，不能当作脱敏保证；日志里本来就不应该放密钥。
 String sanitizeLogText(String text) {
   // 先按上限截断再跑正则：超长异常文本不会让界面线程在正则上花时间；
   // 最终只保留前 800 个字符，所以 4000 之后的内容本来就不会写出。
   var result = text.length > _maxScanLength ? text.substring(0, _maxScanLength) : text;
+  for (final pattern in _pathPatterns) {
+    result = result.replaceAllMapped(pattern, _maskPath);
+  }
   for (final (pattern, replacement) in _secretPatterns) {
     result = result.replaceAllMapped(pattern, (match) {
       var out = replacement;

@@ -2013,6 +2013,7 @@ class _DetectionStep extends ConsumerStatefulWidget {
 }
 
 class _DetectionStepState extends ConsumerState<_DetectionStep> {
+  Timer? _readyWatch;
   late final _playback = ref.read(playbackCoordinatorProvider);
   bool _routeActive = true;
 
@@ -2053,6 +2054,7 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
 
   @override
   void dispose() {
+    _readyWatch?.cancel();
     // 组件卸载后纹理不再渲染,此时销毁是安全的(见 review 页同类处理)。
     unawaited(_positionSubscription?.cancel());
     unawaited(_playingSubscription?.cancel());
@@ -2123,7 +2125,7 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
       });
       await matchPlayerToSourceRotation(_player!, rotation: widget.rotation);
       await openLoggedMedia(_player!, '导入页', path);
-      final readyWatch = watchPlayerReadyTimeout('导入页');
+      final readyWatch = _readyWatch = watchPlayerReadyTimeout('导入页');
       try {
         await waitForPlayableDuration(
           current: _player!.state.duration,
@@ -2131,6 +2133,7 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
         );
       } finally {
         readyWatch.cancel();
+        if (identical(_readyWatch, readyWatch)) _readyWatch = null;
       }
       final target = widget.state.previewTimeMs;
       if (target > 0) {
