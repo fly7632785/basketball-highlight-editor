@@ -630,7 +630,10 @@ class EngineService:
                 },
             )
 
-    def _latest_proxy_video(self, store: ProjectStore, video_id: str) -> Path | None:
+    def _latest_proxy_video(
+        self, store: ProjectStore, video_id: str
+    ) -> tuple[Path, int, int] | None:
+        """最近一次分析留下的代理文件及其覆盖的原片时间段（毫秒）。"""
         project = store.project()
         video = store.video(video_id)
         if not project or not video:
@@ -645,14 +648,23 @@ class EngineService:
         for job in reversed(jobs):
             checkpoint = self._decode_checkpoint(job)
             parameters = checkpoint.get("analysis_parameters")
-            if isinstance(parameters, dict) and parameters.get("source_path") not in {None, source_path}:
+            if not isinstance(parameters, dict):
+                parameters = {}
+            if parameters.get("source_path") not in {None, source_path}:
                 continue
             candidate = checkpoint.get("proxy_video")
             if not isinstance(candidate, str) or not candidate:
                 continue
             path = Path(candidate).expanduser()
-            if path.is_file() and path.stat().st_size > 0:
-                return path.resolve()
+            if not path.is_file() or path.stat().st_size <= 0:
+                continue
+            try:
+                start_ms = int(parameters.get("analysis_start_ms") or 0)
+                end_ms = int(parameters.get("analysis_end_ms") or video.get("duration_ms") or 0)
+            except (TypeError, ValueError):
+                continue
+            if end_ms > start_ms:
+                return path.resolve(), start_ms, end_ms
         return None
 
     @staticmethod
@@ -1002,9 +1014,15 @@ class EngineService:
         temporary_path = output_path.with_name(
             f".{output_path.stem}.{os.getpid()}.tmp{output_path.suffix}"
         )
+        # 分析留下的代理文件小很多，覆盖到的时间点优先用它取帧（16GB 原片每张约 47 秒）；
+        # 代理保持原片宽高比，帧率只有 3–5 帧，预览帧最多偏差一个采样间隔。
+        frame_input, frame_time_ms = source, time_ms
+        proxy = self._latest_proxy_video(store, video["id"])
+        if proxy is not None and proxy[1] <= time_ms < proxy[2] - 1000:
+            frame_input, frame_time_ms = proxy[0], time_ms - proxy[1]
         command = [
             resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
-            "-ss", f"{time_ms / 1000:.3f}", "-i", str(source),
+            "-ss", f"{frame_time_ms / 1000:.3f}", "-i", str(frame_input),
             "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3", str(temporary_path),
         ]
         try:

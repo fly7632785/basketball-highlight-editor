@@ -1426,6 +1426,92 @@ def test_extract_preview_generates_frame_and_reuses_cached_frame(tmp_path: Path,
     assert cached == result
 
 
+def _preview_commands(monkeypatch):
+    commands = []
+    real_run = subprocess.run
+
+    def spy(command, *args, **kwargs):
+        commands.append(command)
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr("basketball_engine.service.subprocess.run", spy)
+    return commands
+
+
+def _project_with_proxy(tmp_path: Path, start_ms: int, end_ms: int):
+    source = tmp_path / "source.mp4"
+    proxy = tmp_path / "proxy.mp4"
+    for path, size, rate in ((source, "320x240", 10), (proxy, "160x120", 3)):
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", f"testsrc=size={size}:rate={rate}",
+                "-t", "8", "-pix_fmt", "yuv420p", str(path),
+            ],
+            check=True,
+        )
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "测试项目", "root_path": str(project_root)})
+    video = service.handle(
+        "link_video", {"project_root": str(project_root), "video_path": str(source)}
+    )["video"]
+    store = ProjectStore(project_root)
+    job = store.create_job(store.project()["id"], video["id"], "analysis")
+    store.update_job(job["id"], state="running", stage="refine")
+    store.update_job(
+        job["id"],
+        state="completed",
+        stage="done",
+        checkpoint={
+            "proxy_video": str(proxy),
+            "analysis_parameters": {
+                "source_path": str(source.resolve()),
+                "analysis_start_ms": start_ms,
+                "analysis_end_ms": end_ms,
+            },
+        },
+    )
+    return service, project_root, video, source, proxy
+
+
+def test_extract_preview_uses_proxy_inside_analysis_window(tmp_path: Path, monkeypatch):
+    service, project_root, video, source, proxy = _project_with_proxy(tmp_path, 1000, 7000)
+    commands = _preview_commands(monkeypatch)
+
+    result = service.handle(
+        "extract_preview",
+        {"project_root": str(project_root), "video_id": video["id"], "time_ms": 3000},
+    )
+
+    frame = Path(result["path"])
+    assert frame.is_file()
+    command = commands[-1]
+    assert str(proxy.resolve()) in command and str(source) not in command
+    assert command[command.index("-ss") + 1] == "2.000"  # 3000ms - 起点 1000ms
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=width,height",
+         "-of", "csv=p=0", str(frame)],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert probe == "640,480"  # 与原片 4:3 宽高比一致
+
+
+def test_extract_preview_falls_back_to_source_outside_proxy_window(
+    tmp_path: Path, monkeypatch
+):
+    service, project_root, video, source, proxy = _project_with_proxy(tmp_path, 1000, 7000)
+    commands = _preview_commands(monkeypatch)
+
+    for time_ms, expected in ((500, source), (6500, source)):
+        service.handle(
+            "extract_preview",
+            {"project_root": str(project_root), "video_id": video["id"], "time_ms": time_ms},
+        )
+        command = commands[-1]
+        assert str(expected) in command and str(proxy.resolve()) not in command
+
+
 def test_persist_candidates_creates_pending_reviews(tmp_path: Path):
     project_root = tmp_path / "project"
     service = EngineService()
