@@ -161,14 +161,17 @@ Future<void> disposeLoggedPlayer(Player player, String where) async {
 /// 打开后 [timeout] 内还没拿到可播放时长就记一行 warn（默认 10 秒）。
 /// 返回的 [Timer] 由调用方在 ready 后取消，测试里也可以手动触发。
 Timer watchPlayerReadyTimeout(
-  Player player,
   String where, {
   Duration timeout = const Duration(seconds: 10),
 }) {
   return Timer(timeout, () {
-    appLog('warn', 'player', '$where 打开后 ${timeout.inSeconds} 秒仍未就绪');
+    appLog('warn', 'player', playerReadyTimeoutLine(where, timeout));
   });
 }
+
+/// 就绪超时那行日志的文案（单独抽出来便于测试）。
+String playerReadyTimeoutLine(String where, Duration timeout) =>
+    '$where 打开后 ${timeout.inSeconds} 秒仍未就绪';
 
 /// 带耗时地记录打开视频：播放器 open 慢或失败时，日志里能看出是哪个文件类型、卡了多久。
 Future<void> openLoggedMedia(Player player, String where, String path) async {

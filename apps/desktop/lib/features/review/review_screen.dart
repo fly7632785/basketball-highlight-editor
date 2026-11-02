@@ -1899,7 +1899,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
       await matchPlayerToSourceRotation(player, rotation: widget.rotation);
       await openLoggedMedia(player, '审核页', path);
       if (!_isCurrent(generation)) return;
-      final readyWatch = watchPlayerReadyTimeout(player, '审核页');
+      final readyWatch = watchPlayerReadyTimeout('审核页');
       try {
         await waitForPlayableDuration(
           current: player.state.duration,

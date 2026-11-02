@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:desktop/core/app_log.dart';
 import 'package:desktop/core/engine_session.dart';
 import 'package:desktop/core/project_session.dart';
 import 'package:desktop/core/video_segments.dart';
@@ -45,6 +46,35 @@ void main() {
     }
     expect(done(), isTrue);
   }
+
+  String readLog() {
+    final file = appLogFileOverride!;
+    return file.existsSync() ? file.readAsStringSync() : '';
+  }
+
+  void clearLog() {
+    final file = appLogFileOverride!;
+    if (file.existsSync()) file.deleteSync();
+  }
+
+  test('队列暂停、继续、移除各记一行', () async {
+    engine.addVideo('v1', roi: true);
+    engine.addVideo('v2', roi: true);
+    expect(await notifier().openProject(directory.path), isTrue);
+    await notifier().startAnalysisQueue(beforeSeconds: 5, afterSeconds: 2);
+    await settle(() => state().analysisQueue.isEmpty && !state().busy);
+
+    clearLog();
+    await notifier().pauseAnalysisQueue();
+    await notifier().resumeAnalysisQueue();
+    await notifier().removeFromAnalysisQueue('v2');
+    final log = readLog();
+    expect(log, contains('[info] [analysis] 队列 暂停'));
+    expect(log, contains('[info] [analysis] 队列 继续'));
+    expect(log, contains('[info] [analysis] 队列 移除 id=v2'));
+    // 反向断言：不出现完整路径。
+    expect(log, isNot(contains(directory.path)));
+  });
 
   test('analyses every segment with a hoop in order and skips the rest', () async {
     engine.addVideo('v1', roi: true);

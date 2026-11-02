@@ -436,8 +436,13 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     setState(() => _applying = true);
     try {
       if (!await _importSelectedRoster()) return;
-      appLog('info', 'import', '分析全部 待分析段='
-          '${ref.read(projectProvider).analysisQueue.length}');
+      final queueState = ref.read(projectProvider);
+      appLog(
+        'info',
+        'import',
+        '分析全部 段数=${queueState.videos.length} 待分析='
+            '${queueState.videos.where((video) => !needsHoopConfirmation(video) && (video['analysis_job'] as Map?)?['state'] != 'completed').length}',
+      );
       await ref.read(projectProvider.notifier).startAnalysisQueue(
             beforeSeconds: _beforeSeconds.toDouble(),
             afterSeconds: _afterSeconds.toDouble(),
@@ -2118,7 +2123,7 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
       });
       await matchPlayerToSourceRotation(_player!, rotation: widget.rotation);
       await openLoggedMedia(_player!, '导入页', path);
-      final readyWatch = watchPlayerReadyTimeout(_player!, '导入页');
+      final readyWatch = watchPlayerReadyTimeout('导入页');
       try {
         await waitForPlayableDuration(
           current: _player!.state.duration,
