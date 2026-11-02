@@ -751,9 +751,10 @@ def export_goal_clips(
                 else available_output_path(output_dir / "highlights.mp4")
             )
             merged_existed = merged_path.exists()
-            concat_file = output_dir / "concat.txt"
-            if not concat_file.exists():
-                created_files.append(concat_file)
+            # 拼接清单用唯一的隐藏名：输出目录可能是用户自己选的文件夹，
+            # 里面若有同名 concat.txt 会被覆盖，用完还要能安全删掉。
+            concat_file = output_dir / f".bhe-concat-{uuid4().hex}.txt"
+            created_files.append(concat_file)
             concat_file.write_text(
                 "".join(concat_manifest_entry(path) for path in files),
                 encoding="utf-8",
@@ -854,6 +855,7 @@ def export_goal_clips(
                     if not merged_existed:
                         merged_path.unlink(missing_ok=True)
                     raise OSError("合并成品流或时长校验失败")
+            concat_file.unlink(missing_ok=True)
             if not merged_existed:
                 created_files.append(merged_path)
             if progress_callback:

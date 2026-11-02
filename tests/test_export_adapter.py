@@ -593,6 +593,39 @@ def test_merge_of_same_frame_rate_keeps_the_stream_copy_fast_path(tmp_path: Path
     assert all("-r" not in command for command in commands)
 
 
+def test_merge_never_touches_a_concat_txt_from_the_user(tmp_path: Path, monkeypatch):
+    # 输出目录是用户自己选的文件夹，「每个标签各合成一个」和「合并成一个」都往这里写；
+    # 里面原有的 concat.txt 是用户的文件，不能被覆盖，也不能留在导出目录里。
+    candidates = _mixed_rate_candidates(tmp_path, True)[:2]
+    out = tmp_path / "out"
+    out.mkdir()
+    user_manifest = out / "concat.txt"
+    user_manifest.write_text("file 'mine.mp4'\n", encoding="utf-8")
+    commands = []
+    real_run = export.run_atomic_ffmpeg
+
+    def spy(command, output_path, **kwargs):
+        commands.append(list(command))
+        return real_run(command, output_path, **kwargs)
+
+    monkeypatch.setattr(export, "run_atomic_ffmpeg", spy)
+    final = out / "final.mp4"
+    export.export_goal_clips(candidates, out, "merge", output_path=final)
+
+    assert user_manifest.read_text(encoding="utf-8") == "file 'mine.mp4'\n"
+    assert list(out.glob(".bhe-concat-*")) == []
+    merge_command = next(command for command in commands if "concat" in command)
+    manifest_index = merge_command.index("-i") + 1
+    manifest = Path(merge_command[manifest_index])
+    assert manifest.parent == out
+    assert manifest.name.startswith(".bhe-concat-") and manifest.suffix == ".txt"
+    # 除清单路径外，快路径参数与修复前一致。
+    assert [part for index, part in enumerate(merge_command) if index != manifest_index] == [
+        merge_command[0], "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "concat", "-safe", "0", "-i", "-c", "copy", str(final),
+    ]
+
+
 def test_frame_rate_is_unified_only_when_clips_differ():
     clip = {"fps": 59.94006}
     assert export._merge_frame_rate([{"fps": 60.0}, clip], {"fps": 60.0}) is None
