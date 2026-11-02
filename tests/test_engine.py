@@ -1446,7 +1446,7 @@ def _project_with_proxy(tmp_path: Path, start_ms: int, end_ms: int):
             [
                 "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                 "-f", "lavfi", "-i", f"testsrc=size={size}:rate={rate}",
-                "-t", "8", "-pix_fmt", "yuv420p", str(path),
+                "-t", "8" if path == source else str((end_ms - start_ms) / 1000), "-pix_fmt", "yuv420p", str(path),
             ],
             check=True,
         )
@@ -2837,3 +2837,30 @@ def test_proxy_rejected_after_relink_same_path_and_legacy_metadata(tmp_path):
     job = store.create_job(store.project()['id'], video['id'], 'analysis')
     store.update_job(job['id'], state='completed', checkpoint={'proxy_video': str(proxy), 'analysis_parameters': {'analysis_start_ms': 1000, 'analysis_end_ms': 7000}})
     assert service._latest_proxy_video(store, video['id']) is None
+
+
+@pytest.mark.parametrize('damage', ['garbage', 'wrong_size', 'wrong_duration'])
+def test_invalid_proxy_falls_back_to_original(tmp_path, monkeypatch, damage):
+    service, root, video, source, proxy = _project_with_proxy(tmp_path, 1000, 7000)
+    if damage == 'garbage':
+        proxy.write_bytes(b'nonempty garbage')
+    else:
+        size, duration = ('160x160', '6') if damage == 'wrong_size' else ('160x120', '2')
+        subprocess.run(['ffmpeg','-y','-v','error','-f','lavfi','-i',f'testsrc=size={size}:rate=3',
+                        '-t',duration,'-pix_fmt','yuv420p',str(proxy)],check=True)
+    commands = _preview_commands(monkeypatch)
+    result = service.extract_preview({'project_root':str(root), 'video_id':video['id'], 'time_ms':3000})
+    assert Path(result['path']).stat().st_size > 0
+    assert str(source) in commands[-1]
+
+
+def test_proxy_extract_without_frame_retries_source(tmp_path, monkeypatch):
+    service, root, video, source, proxy = _project_with_proxy(tmp_path, 1000, 7000)
+    real_run = subprocess.run
+    def run(command, *args, **kwargs):
+        if str(proxy.resolve()) in command and '-frames:v' in command:
+            return subprocess.CompletedProcess(command, 0)
+        return real_run(command, *args, **kwargs)
+    monkeypatch.setattr('basketball_engine.service.subprocess.run', run)
+    result = service.extract_preview({'project_root':str(root), 'video_id':video['id'], 'time_ms':3000})
+    assert Path(result['path']).stat().st_size > 0

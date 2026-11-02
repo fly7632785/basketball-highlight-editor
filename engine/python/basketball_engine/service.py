@@ -1025,23 +1025,38 @@ class EngineService:
         frame_input, frame_time_ms = source, time_ms
         proxy = self._latest_proxy_video(store, video["id"])
         if proxy is not None and proxy[1] <= time_ms < proxy[2] - 1000:
-            frame_input, frame_time_ms = proxy[0], time_ms - proxy[1]
-        command = [
-            resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
-            "-ss", f"{frame_time_ms / 1000:.3f}", "-i", str(frame_input),
-            "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3", str(temporary_path),
-        ]
+            try:
+                info = self.inspect_video({"video_path": str(proxy[0])})
+                pw, ph = int(info.get("width") or 0), int(info.get("height") or 0)
+                vw, vh = int(video.get("width") or 0), int(video.get("height") or 0)
+                duration = int(info.get("duration_ms") or 0)
+                if (pw <= 0 or ph <= 0 or vw <= 0 or vh <= 0
+                    or abs(pw / ph - vw / vh) > 0.02
+                    or abs(duration - (proxy[2] - proxy[1])) > 600
+                    or int(info.get("rotation") or 0) != 0):
+                    raise ValueError("proxy geometry or duration invalid")
+                frame_input, frame_time_ms = proxy[0], time_ms - proxy[1]
+            except (ProtocolError, OSError, ValueError, TypeError):
+                check_cancelled()
+        def extract(frame: Path, offset: int) -> None:
+            command = [
+                resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", f"{offset / 1000:.3f}", "-i", str(frame),
+                "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3", str(temporary_path),
+            ]
+            subprocess.run(command, check=True, capture_output=True, stdin=subprocess.DEVNULL,
+                           text=True, encoding="utf-8", errors="replace", timeout=20)
+            if not temporary_path.is_file() or temporary_path.stat().st_size == 0:
+                raise OSError("预览帧未生成")
         try:
-            subprocess.run(
-                command,
-                check=True,
-                capture_output=True,
-                stdin=subprocess.DEVNULL,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=20,
-            )
+            try:
+                extract(frame_input, frame_time_ms)
+            except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                temporary_path.unlink(missing_ok=True)
+                if frame_input == source:
+                    raise
+                self._check_project_identity(store, identity)
+                extract(source, time_ms)
             self._check_project_identity(store, identity)
             begin_commit()
             temporary_path.replace(output_path)
