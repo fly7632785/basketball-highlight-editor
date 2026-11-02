@@ -15,8 +15,15 @@ import 'cs_button.dart';
 /// 引导的一步：高亮 [target] 所在区域并显示一句话；[target] 为空时气泡居中。
 /// 文案是中文原文，显示时经 `bheText` 翻译。
 class OnboardingStep {
-  const OnboardingStep({required this.title, required this.body, this.target});
+  const OnboardingStep({
+    required this.id,
+    required this.title,
+    required this.body,
+    this.target,
+  });
 
+  /// 登记在 `onboardingStepIds` 里的步骤 id，“看过”按它记。
+  final String id;
   final String title;
   final String body;
   final GlobalKey? target;
@@ -97,14 +104,17 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
     final onboarding = ref.read(onboardingProvider);
     final replay = onboarding.replay[widget.page] ?? 0;
     final replayRequested = replay != _lastReplay;
+    // 首次（或升级后出现新步骤）只弹没看过的；点“?”重看则从头走全部。
+    final unseen = [
+      for (final step in widget.steps)
+        if (!onboarding.seen.contains(step.id)) step,
+    ];
     final firstTime =
-        onboarding.loaded &&
-        !onboarding.seen.contains(widget.page) &&
-        !_dismissedThisSession;
+        onboarding.loaded && unseen.isNotEmpty && !_dismissedThisSession;
     if (!force && !replayRequested && !firstTime) return;
     _lastReplay = replay;
     final steps = [
-      for (final step in widget.steps)
+      for (final step in replayRequested ? widget.steps : unseen)
         if (step.target == null || step.target!.currentContext != null) step,
     ];
     if (steps.isEmpty) return;
@@ -134,9 +144,10 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
 
   void _finish() {
     _dismissedThisSession = true;
+    final shown = [for (final step in _active) step.id];
     setState(() => _active = const []);
     _setVideoHidden(false);
-    unawaited(ref.read(onboardingProvider.notifier).markSeen(widget.page));
+    unawaited(ref.read(onboardingProvider.notifier).markSeen(shown));
     widget.onFinished?.call();
   }
 
@@ -199,8 +210,9 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
         if (mounted && _showing) setState(() {});
       });
     }
-    const bubbleWidth = 340.0;
-    const bubbleHeight = 190.0;
+    final bodyLines = '\n'.allMatches(step.body).length + 1;
+    final bubbleWidth = bodyLines > 1 ? 440.0 : 340.0;
+    final bubbleHeight = 170.0 + (bodyLines - 1) * 24;
     double left;
     double top;
     if (rect == null) {

@@ -26,6 +26,7 @@ import '../../theme/tokens.dart';
 import 'clip_range_timeline.dart';
 import 'media_readiness.dart';
 import 'player_group_editor.dart';
+import 'review_shortcuts.dart';
 import 'review_video_viewport.dart';
 import '../../core/app_log.dart';
 
@@ -43,6 +44,10 @@ class ReviewScreen extends ConsumerStatefulWidget {
   @override
   ConsumerState<ReviewScreen> createState() => _ReviewScreenState();
 }
+
+final _reviewGuideTagKey = GlobalKey(debugLabel: 'review-guide-tag');
+final _reviewGuideRangeKey = GlobalKey(debugLabel: 'review-guide-range');
+final _reviewGuideSourceKey = GlobalKey(debugLabel: 'review-guide-source');
 
 class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   String? _selectedCandidateId;
@@ -396,34 +401,35 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         !(commandPressed && key == LogicalKeyboardKey.keyZ)) {
       return KeyEventResult.ignored;
     }
-    if (key == LogicalKeyboardKey.arrowUp) {
-      _moveCandidate(candidates, -1);
-    } else if (key == LogicalKeyboardKey.arrowDown) {
-      _moveCandidate(candidates, 1);
-    } else if (key == LogicalKeyboardKey.arrowLeft) {
-      _seekBySeconds(keyboard.isShiftPressed ? -0.1 : -2);
-    } else if (key == LogicalKeyboardKey.arrowRight) {
-      _seekBySeconds(keyboard.isShiftPressed ? 0.1 : 2);
-    } else if (key == LogicalKeyboardKey.space) {
-      _togglePlayback();
-    } else if (key == LogicalKeyboardKey.keyA) {
-      _videoController.toggleAnnotations();
-    } else if (key == LogicalKeyboardKey.keyL) {
-      _toggleCandidateLoop();
-    } else if (key == LogicalKeyboardKey.keyZ && commandPressed) {
-      if (!reviewLocked) unawaited(notifier.undoReview());
-    } else if (key == LogicalKeyboardKey.keyX ||
-        key == LogicalKeyboardKey.backquote ||
-        key == LogicalKeyboardKey.backspace) {
-      final id = selected?['id']?.toString();
-      if (!reviewLocked && id != null) {
-        unawaited(_setCandidateStatus(id, 'excluded'));
-      }
-    } else if (key == LogicalKeyboardKey.keyC ||
-        key == LogicalKeyboardKey.enter) {
-      final id = selected?['id']?.toString();
-      if (!reviewLocked && id != null) {
-        unawaited(_setCandidateStatus(id, 'included'));
+    final action = reviewShortcutActionFor(key, commandPressed: commandPressed);
+    if (action != null) {
+      switch (action) {
+        case ReviewShortcutAction.previousCandidate:
+          _moveCandidate(candidates, -1);
+        case ReviewShortcutAction.nextCandidate:
+          _moveCandidate(candidates, 1);
+        case ReviewShortcutAction.seekBack:
+          _seekBySeconds(keyboard.isShiftPressed ? -0.1 : -2);
+        case ReviewShortcutAction.seekForward:
+          _seekBySeconds(keyboard.isShiftPressed ? 0.1 : 2);
+        case ReviewShortcutAction.playPause:
+          _togglePlayback();
+        case ReviewShortcutAction.annotations:
+          _videoController.toggleAnnotations();
+        case ReviewShortcutAction.loop:
+          _toggleCandidateLoop();
+        case ReviewShortcutAction.undo:
+          if (!reviewLocked) unawaited(notifier.undoReview());
+        case ReviewShortcutAction.exclude:
+          final id = selected?['id']?.toString();
+          if (!reviewLocked && id != null) {
+            unawaited(_setCandidateStatus(id, 'excluded'));
+          }
+        case ReviewShortcutAction.include:
+          final id = selected?['id']?.toString();
+          if (!reviewLocked && id != null) {
+            unawaited(_setCandidateStatus(id, 'included'));
+          }
       }
     } else if (_playerShortcutIndex(key) case final int index) {
       // 0 clears the tag; the other keys follow the player order shown in the tag menu.
@@ -441,32 +447,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     return KeyEventResult.handled;
   }
 
-  static const List<(LogicalKeyboardKey, LogicalKeyboardKey)> _playerKeys = [
-    (LogicalKeyboardKey.digit0, LogicalKeyboardKey.numpad0),
-    (LogicalKeyboardKey.digit1, LogicalKeyboardKey.numpad1),
-    (LogicalKeyboardKey.digit2, LogicalKeyboardKey.numpad2),
-    (LogicalKeyboardKey.digit3, LogicalKeyboardKey.numpad3),
-    (LogicalKeyboardKey.digit4, LogicalKeyboardKey.numpad4),
-    (LogicalKeyboardKey.digit5, LogicalKeyboardKey.numpad5),
-    (LogicalKeyboardKey.digit6, LogicalKeyboardKey.numpad6),
-    (LogicalKeyboardKey.digit7, LogicalKeyboardKey.numpad7),
-    (LogicalKeyboardKey.digit8, LogicalKeyboardKey.numpad8),
-    (LogicalKeyboardKey.digit9, LogicalKeyboardKey.numpad9),
-    // 第 10 个以后用 Q 到 P 这一排字母。
-    (LogicalKeyboardKey.keyQ, LogicalKeyboardKey.keyQ),
-    (LogicalKeyboardKey.keyW, LogicalKeyboardKey.keyW),
-    (LogicalKeyboardKey.keyE, LogicalKeyboardKey.keyE),
-    (LogicalKeyboardKey.keyR, LogicalKeyboardKey.keyR),
-    (LogicalKeyboardKey.keyT, LogicalKeyboardKey.keyT),
-    (LogicalKeyboardKey.keyY, LogicalKeyboardKey.keyY),
-    (LogicalKeyboardKey.keyU, LogicalKeyboardKey.keyU),
-    (LogicalKeyboardKey.keyI, LogicalKeyboardKey.keyI),
-    (LogicalKeyboardKey.keyO, LogicalKeyboardKey.keyO),
-    (LogicalKeyboardKey.keyP, LogicalKeyboardKey.keyP),
-  ];
-
   int? _playerShortcutIndex(LogicalKeyboardKey key) {
-    final index = _playerKeys.indexWhere(
+    final index = reviewPlayerKeys.indexWhere(
       (pair) => pair.$1 == key || pair.$2 == key,
     );
     return index < 0 ? null : index;
@@ -990,20 +972,40 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       onFinished: _focusReviewShortcuts,
       steps: [
         OnboardingStep(
+          id: 'review.video',
           title: '这里看视频',
-          body: '选中一个候选就会播放对应的片段。空格播放/暂停，← → 快进快退。',
+          body: '选中一个候选就会播放对应的片段，每个候选前后会多留一点画面。',
           target: _guideVideoKey,
         ),
         OnboardingStep(
+          id: 'review.queue',
           title: '这里是找到的候选',
-          body: '每一行是系统认为可能进球的一段。上下键切换，逐个看一遍。',
+          body: '每一行是系统认为可能进球的一段。逐个看一遍，是进球就保留，不是就排除。',
           target: _guideQueueKey,
         ),
         OnboardingStep(
-          title: '保留还是排除',
-          body: Platform.isMacOS
-              ? '是进球：按 C 或回车保留；不是：按 X 排除。点错了按 ⌘+Z 撤销。全部看完后点「导出 N 个片段」。'
-              : '是进球：按 C 或回车保留；不是：按 X 排除。点错了按 Ctrl+Z 撤销。全部看完后点「导出 N 个片段」。',
+          id: 'review.shortcuts',
+          title: '常用快捷键',
+          body:
+              '${reviewShortcutGuideText(context)}\n${context.bheText('完整列表：右上角「更多」→「快捷键一览」')}',
+        ),
+        OnboardingStep(
+          id: 'review.tag',
+          title: '给片段打球员标签',
+          body: '点这里选球员；还没有球员就新建，也可以从「球员分组」一键导入。打过标签，导出时可以每个球员各出一个视频。',
+          target: _reviewGuideTagKey,
+        ),
+        OnboardingStep(
+          id: 'review.range',
+          title: '片段前后不对？调范围',
+          body: '点这里打开范围编辑：拖动两端、拖到边缘继续延长，或播放到合适位置按 I 设为开始、O 设为结束。原视频不会被修改。',
+          target: _reviewGuideRangeKey,
+        ),
+        OnboardingStep(
+          id: 'review.source',
+          title: '候选预览 / 原视频',
+          body: '切到「原视频」可以看整段录像、补上系统没找到的进球。',
+          target: _reviewGuideSourceKey,
         ),
       ],
       child: content,
@@ -2446,7 +2448,9 @@ class _VideoSourceToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return Tooltip(
+    return KeyedSubtree(
+      key: _reviewGuideSourceKey,
+      child: Tooltip(
       message: context.bheText('切换视频来源'),
       child: Material(
         color: c.background.withValues(alpha: 0.88),
@@ -2471,6 +2475,7 @@ class _VideoSourceToggle extends StatelessWidget {
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -3326,21 +3331,27 @@ class _CandidateInspector extends StatelessWidget {
           runSpacing: 6,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            _PlayerChip(
-              key: const ValueKey('inspector-player-chip'),
-              name: candidate['player_name']?.toString(),
-              color: playerColor,
-              players: players,
-              onSelected: onSetPlayer,
-              onCreate: onCreatePlayer,
-              onDelete: onDeletePlayer,
+            KeyedSubtree(
+              key: _reviewGuideTagKey,
+              child: _PlayerChip(
+                key: const ValueKey('inspector-player-chip'),
+                name: candidate['player_name']?.toString(),
+                color: playerColor,
+                players: players,
+                onSelected: onSetPlayer,
+                onCreate: onCreatePlayer,
+                onDelete: onDeletePlayer,
+              ),
             ),
-            Tooltip(
-              message: context.bheText('调整片段范围'),
-              child: _InspectorAction(
-                icon: Icons.tune_rounded,
-                label: l10n?.reviewAdjustRange ?? '调整范围',
-                onPressed: onEditRange,
+            KeyedSubtree(
+              key: _reviewGuideRangeKey,
+              child: Tooltip(
+                message: context.bheText('调整片段范围'),
+                child: _InspectorAction(
+                  icon: Icons.tune_rounded,
+                  label: l10n?.reviewAdjustRange ?? '调整范围',
+                  onPressed: onEditRange,
+                ),
               ),
             ),
             Tooltip(
@@ -4159,9 +4170,9 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.space) {
       unawaited(_togglePlayback());
-    } else if (key == LogicalKeyboardKey.keyI) {
+    } else if (key == rangeSetStartKey) {
       _setHandleAtPosition(ClipRangeHandle.start);
-    } else if (key == LogicalKeyboardKey.keyO) {
+    } else if (key == rangeSetEndKey) {
       _setHandleAtPosition(ClipRangeHandle.end);
     } else if (key == LogicalKeyboardKey.arrowLeft) {
       _finishScrub(_positionMs - 1000);

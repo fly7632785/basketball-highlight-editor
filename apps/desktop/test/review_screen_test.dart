@@ -18,7 +18,7 @@ void main() {
   // 默认当作已看过引导，免得遮罩挡住别的用例；引导本身在 onboarding_test 里测。
   setUp(
     () => SharedPreferences.setMockInitialValues({
-      onboardingSeenPrefsKey: onboardingPages,
+      onboardingStepsPrefsKey: allOnboardingStepIds,
     }),
   );
   for (final language in ['zh', 'en']) {

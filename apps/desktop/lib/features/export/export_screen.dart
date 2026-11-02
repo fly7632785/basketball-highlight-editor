@@ -41,6 +41,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
   bool _showFastRisk = true;
   bool _choosingOutput = false;
   final _guideModeKey = GlobalKey();
+  final _guideTagModeKey = GlobalKey();
   final _guideStartKey = GlobalKey();
   String _mode = 'merge';
   String _effect = 'none';
@@ -231,7 +232,9 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
             if (state.players.isNotEmpty) ...[
               const SizedBox(width: Spacing.sm),
               Expanded(
-                child: _ModeCard(
+                child: KeyedSubtree(
+                  key: _guideTagModeKey,
+                  child: _ModeCard(
                   key: const Key('export-mode-by-player'),
                   title: context.bheText('每个标签各合成一个视频'),
                   description: context.bheText(
@@ -239,6 +242,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                   ),
                   selected: mode == 'merge_by_player',
                   onTap: () => setState(() => _mode = 'merge_by_player'),
+                ),
                 ),
               ),
             ],
@@ -451,11 +455,19 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
       ready: includedCount > 0 && !state.hydrating,
       steps: [
         OnboardingStep(
+          id: 'export.mode',
           title: '先选输出方式',
           body: '合并成一个视频，或每个片段单独导出；有球员标签时还能按标签各出一个。',
           target: _guideModeKey,
         ),
         OnboardingStep(
+          id: 'export.tag',
+          title: '按球员标签各出一个视频',
+          body: '给候选打过球员标签后，这里会多出「每个标签各合成一个视频」：每个标签一个 MP4，文件名就是标签名。',
+          target: _guideTagModeKey,
+        ),
+        OnboardingStep(
+          id: 'export.start',
           title: '点这里导出',
           body: '接着选保存位置，已排除的片段不会进入输出。导出在后台进行，期间可以回审核继续看；原视频不会被修改。',
           target: _guideStartKey,

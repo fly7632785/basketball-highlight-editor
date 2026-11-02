@@ -60,7 +60,7 @@ void main() {
   // 默认当作已看过引导，免得遮罩挡住别的用例；引导本身在专门的用例里测。
   setUp(
     () => SharedPreferences.setMockInitialValues({
-      onboardingSeenPrefsKey: onboardingPages,
+      onboardingStepsPrefsKey: allOnboardingStepIds,
     }),
   );
 

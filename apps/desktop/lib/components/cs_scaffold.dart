@@ -1,4 +1,5 @@
 // lib/components/cs_scaffold.dart
+import '../features/review/review_shortcuts.dart';
 import '../providers/onboarding_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -168,6 +169,10 @@ class CsTopBar extends ConsumerWidget {
                 child: Text(l10n?.feedback ?? '反馈'),
               ),
               PopupMenuItem(
+                value: 'shortcuts',
+                child: Text(context.bheText('快捷键一览')),
+              ),
+              PopupMenuItem(
                 value: 'reset-onboarding',
                 child: Text(context.bheText('重置新手引导')),
               ),
@@ -240,6 +245,10 @@ class CsTopBar extends ConsumerWidget {
           ),
         );
       }
+      return;
+    }
+    if (value == 'shortcuts') {
+      await showReviewShortcutsDialog(context);
       return;
     }
     if (value == 'about') {
