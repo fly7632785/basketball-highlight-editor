@@ -767,8 +767,23 @@ def export_goal_clips(
                 not c.get("tonemap") for c in candidates
             )
             normalize_color = mixed_color and not _compatible_color_streams(files)
-            audio_layouts = _audio_layouts(files)
-            normalize_audio = any(layout is not None for layout in audio_layouts) and len(set(audio_layouts)) > 1
+            try:
+                audio_layouts = _audio_layouts(files)
+            except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError, TypeError) as exc:
+                # 探测不出各片段的音轨布局时不能按 copy 快路径直出，改走重编码归一化。
+                log_diagnostic(f"audio layout probe failed, normalizing: {exc}")
+                audio_layouts = None
+            # 无音轨的片段按导出时的 has_audio 标记补静音；探测到确实没有音轨也补。
+            silent_inputs = [not candidate.get("has_audio", True) for candidate in candidates]
+            if audio_layouts is not None:
+                silent_inputs = [
+                    silent or layout is None
+                    for silent, layout in zip(silent_inputs, audio_layouts)
+                ]
+            expect_audio = any(not silent for silent in silent_inputs)
+            normalize_audio = audio_layouts is None or (
+                expect_audio and len(set(audio_layouts)) > 1
+            )
             try:
                 if normalize_audio:
                     raise OSError("audio layouts require normalization")
@@ -780,7 +795,7 @@ def export_goal_clips(
                     cancel_check=cancel_check,
                     process_callback=process_callback,
                 )
-                if not _merged_duration_ok(merged_path, total_ms, require_audio=any(layout is not None for layout in audio_layouts)):
+                if not _merged_duration_ok(merged_path, total_ms, require_audio=expect_audio):
                     raise OSError("merged duration does not match the clips")
             except (OSError, subprocess.CalledProcessError) as exc:
                 log_diagnostic(f"merge copy failed, re-encoding: {exc}")
@@ -806,9 +821,9 @@ def export_goal_clips(
                                 lambda codec: [
                                     resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
                                     "-i", str(path),
-                                    *(["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"] if normalize_audio and audio_layouts[index] is None else []),
-                                    *(["-map", "0:v:0", "-map", "1:a:0", "-shortest"] if normalize_audio and audio_layouts[index] is None else []),
-                                    *(["-map", "0:v:0", "-map", "0:a:0"] if normalize_audio and audio_layouts[index] is not None else []),
+                                    *(["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"] if normalize_audio and silent_inputs[index] else []),
+                                    *(["-map", "0:v:0", "-map", "1:a:0", "-shortest"] if normalize_audio and silent_inputs[index] else []),
+                                    *(["-map", "0:v:0", "-map", "0:a:0"] if normalize_audio and not silent_inputs[index] else []),
                                     *(["-vf", "scale=in_range=auto:out_range=tv,format=yuv420p"] if normalize_color else []),
                                     *(["-r", rate_target] if rate_target else []),
                                     *video_codec_options(codec), *(SDR_TAGS if normalize_color else []),
@@ -835,7 +850,7 @@ def export_goal_clips(
                         merged_path, codecs, cancel_check=cancel_check,
                         process_callback=process_callback,
                     )
-                if not _merged_duration_ok(merged_path, total_ms, require_audio=any(layout is not None for layout in audio_layouts)):
+                if not _merged_duration_ok(merged_path, total_ms, require_audio=expect_audio):
                     if not merged_existed:
                         merged_path.unlink(missing_ok=True)
                     raise OSError("合并成品流或时长校验失败")

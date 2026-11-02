@@ -95,3 +95,24 @@ def test_variable_frame_rate_requires_normalization(tmp_path):
                     '-vf',"select='not(mod(n,3))+not(mod(n,7))'",'-fps_mode','vfr',
                     '-c:v','mpeg4',str(path)],check=True,capture_output=True)
     assert export._uniform_frame_rate([path]) is not None
+
+
+def test_audio_layout_probe_failure_normalizes_instead_of_aborting(tmp_path, monkeypatch):
+    """任一片段探测不出音轨布局时不能直接用 copy 直出，也不能抛原始 ffprobe 错误。"""
+    monkeypatch.setattr(export, 'video_codecs', lambda: ['mpeg4'])
+    def failed(paths):
+        raise subprocess.CalledProcessError(1, ['ffprobe'])
+    monkeypatch.setattr(export, '_audio_layouts', failed)
+    candidates=[]
+    for i, rate in enumerate((48000, 44100)):
+        path=tmp_path/f'source{i}.mp4'
+        _make(path, rate, 2)
+        candidates.append({'source_path':str(path),'event_time_ms':500,'review_start_ms':0,
+                           'review_end_ms':1000,'width':64,'height':64,'fps':25,'has_audio':True})
+    result=export.export_goal_clips(candidates,tmp_path/'out','merge')
+    data=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_entries',
+         'stream=codec_type,duration,sample_rate,channels','-of','json',result['files'][0]]))
+    streams={s['codec_type']:s for s in data['streams']}
+    assert streams['audio']['sample_rate']=='48000' and streams['audio']['channels']==2
+    assert float(streams['audio']['duration']) == pytest.approx(2, abs=.1)
+    assert float(streams['video']['duration']) == pytest.approx(2, abs=.1)
