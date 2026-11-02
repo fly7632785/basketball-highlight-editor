@@ -202,3 +202,57 @@ def test_rotation_is_reported_counterclockwise_whichever_field_holds_it(tmp_path
     tag = _inspect_fake(tmp_path, monkeypatch, [{**portrait, "tags": {"rotate": "90"}}])
 
     assert matrix["rotation"] == tag["rotation"] == -90
+
+
+def test_open_project_leaves_a_square_video_alone(tmp_path: Path):
+    """1:1 视频互换宽高后不变，不能算方向错，否则会重跑 relink 并清掉标注。"""
+    ffmpeg = _ffmpeg_or_skip()
+    source = tmp_path / "square.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-v", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc=size=1080x1080:rate=30",
+            "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(source),
+        ],
+        check=True,
+    )
+    project_root = tmp_path / "project"
+    service = EngineService()
+    service.handle("create_project", {"name": "方形测试", "root_path": str(project_root)})
+    store = ProjectStore(project_root)
+    video = store.link_video({
+        "source_path": str(source),
+        "source_size_bytes": source.stat().st_size,
+        "source_mtime_ns": source.stat().st_mtime_ns,
+        "duration_ms": 2000,
+        "width": 1080,
+        "height": 1080,
+        "fps": 30.0,
+        "video_codec": "h264",
+        "audio_codec": None,
+    })
+    # 加 rotation 列之前写入的老库没有指纹；这种记录被误判方向错时标注会被整段清掉。
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE videos SET source_fingerprint = NULL WHERE id = ?", (video["id"],)
+        )
+    store.save_roi(video["id"], {"x1": 100, "y1": 200, "x2": 400, "y2": 500})
+    store.replace_candidates(video["id"], [{
+        "id": "candidate-1",
+        "video_id": video["id"],
+        "event_time_ms": 1000,
+        "default_start_ms": 0,
+        "default_end_ms": 1500,
+        "review_start_ms": 0,
+        "review_end_ms": 1500,
+        "detector_version": "test",
+        "score": 0.8,
+        "confidence": "review",
+        "evidence_json": "{}",
+    }])
+
+    context = service.handle("open_project", {"project_root": str(project_root)})
+
+    assert "orientation_corrected" not in context
+    assert context["videos"][0]["roi"] is not None
+    assert context["videos"][0]["candidate_count"] == 1

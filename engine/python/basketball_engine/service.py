@@ -244,9 +244,14 @@ class EngineService:
             except (ProtocolError, OSError):
                 continue
             # 只修正横竖互换的记录（旧版本存的是编码尺寸），其它差异不动。
-            orientation_wrong = (video.get("width"), video.get("height")) == (
-                probed["height"],
-                probed["width"],
+            # 宽高相等的视频（1:1）互换后还是一样，不能算方向错，否则每次打开项目
+            # 都会重跑 relink，指纹为空的老库还会被清掉篮筐和候选。
+            orientation_wrong = (
+                video.get("width") != video.get("height")
+                and (video.get("width"), video.get("height")) == (
+                    probed["height"],
+                    probed["width"],
+                )
             )
             # 尺寸已经对、只是没存过旋转角（加 rotation 列之前写入的项目）：
             # 只补字段，不动 ROI 和候选，否则用户已有的标注会被清掉。

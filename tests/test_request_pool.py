@@ -47,7 +47,7 @@ def running(monkeypatch, tmp_path):
         path = Path(payload['video_path']).resolve()
         stat = path.stat()
         return {'source_path': str(path), 'source_size_bytes': stat.st_size,
-                'source_mtime_ns': stat.st_mtime_ns, 'width': 64, 'height': 64,
+                'source_mtime_ns': stat.st_mtime_ns, 'width': 64, 'height': 48,
                 'duration_ms': 1000}
     monkeypatch.setattr(service, 'inspect_video', inspect)
     entered, release = threading.Event(), threading.Event()
@@ -223,8 +223,12 @@ def test_open_legacy_orientation_fingerprint_runs_off_main_loop(running, tmp_pat
     root = tmp_path/'a'
     store = service._require_store({'project_root': str(root)})
     video = store.link_video(service.inspect_video({'video_path': str(source)}))
+    # 老库存的是编码尺寸（横竖互换）且没有指纹，打开项目时要走 relink 补指纹那条路。
     with store.connect() as connection:
-        connection.execute('UPDATE videos SET source_fingerprint = NULL WHERE id = ?', (video['id'],))
+        connection.execute(
+            'UPDATE videos SET source_fingerprint = NULL, width = 48, height = 64 WHERE id = ?',
+            (video['id'],),
+        )
     input_.send('open', 'open_project', project_root=str(root))
     assert entered.wait(3)
     input_.send('hello', 'hello')
