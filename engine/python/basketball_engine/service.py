@@ -1946,10 +1946,15 @@ class EngineService:
                 (time.perf_counter() - preview_started) * 1000
             )
             preview_counts["deferred"] = len(rows) - len(eager_preview_rows)
-            if cancel_event and cancel_event.is_set():
-                raise PipelineCancelled("JOB_CANCELLED")
+            def abort_if_cancelled() -> None:
+                if cancel_event and cancel_event.is_set():
+                    raise PipelineCancelled("JOB_CANCELLED")
+
+            abort_if_cancelled()
             persist_started = time.perf_counter()
-            store.replace_candidates(video_id, rows)
+            # 取消检查放进写库事务、提交之前：要么候选和审核继承一起生效，要么整个回滚，
+            # 不会留下「新候选已写入却报已取消」的半截状态。
+            store.replace_candidates(video_id, rows, before_commit=abort_if_cancelled)
             stage_timings_ms["persist_candidates"] = round(
                 (time.perf_counter() - persist_started) * 1000
             )
@@ -1966,8 +1971,6 @@ class EngineService:
                     (time.perf_counter() - analysis_started) * 1000
                 ),
             }
-            if cancel_event and cancel_event.is_set():
-                raise PipelineCancelled("JOB_CANCELLED")
             store.update_job(job_id, state="completed", stage="persist_candidates", progress=1.0, checkpoint=checkpoint)
             proxy_info: Dict[str, Any] = {}
             try:

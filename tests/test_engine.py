@@ -2891,10 +2891,10 @@ def test_cancel_during_persist_is_honoured_instead_of_completing(tmp_path: Path,
     entered, release = threading.Event(), threading.Event()
     original = ProjectStore.replace_candidates
 
-    def slow_replace(self, video_id, rows):
+    def slow_replace(self, video_id, rows, **kwargs):
         entered.set()
         assert release.wait(5)
-        return original(self, video_id, rows)
+        return original(self, video_id, rows, **kwargs)
 
     monkeypatch.setattr(ProjectStore, "replace_candidates", slow_replace)
     payload = {
@@ -2903,6 +2903,7 @@ def test_cancel_during_persist_is_honoured_instead_of_completing(tmp_path: Path,
         "model_path": str(model),
         "mode": "fast",
     }
+    ids_before = [row["id"] for row in store.list_candidates(video["id"])]
     job = service.handle("start_analysis", payload)["job"]
     worker = service._job_threads[job["id"]]
     try:
@@ -2918,6 +2919,8 @@ def test_cancel_during_persist_is_honoured_instead_of_completing(tmp_path: Path,
     finished = store.get_job(job["id"])
     assert finished["state"] == "cancelled"
     assert finished["error_code"] == "JOB_CANCELLED"
+    # 候选写入与取消决定同一个提交点：取消了就整个回滚，不留新候选、也不替换掉旧审核记录。
+    assert [row["id"] for row in store.list_candidates(video["id"])] == ids_before
 
 
 def test_progress_write_keeps_the_cancelling_stage(tmp_path: Path):

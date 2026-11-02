@@ -700,7 +700,13 @@ class ProjectStore:
         )
         return candidate
 
-    def replace_candidates(self, video_id: str, rows: list[Dict[str, Any]]) -> None:
+    def replace_candidates(
+        self,
+        video_id: str,
+        rows: list[Dict[str, Any]],
+        before_commit=None,
+    ) -> None:
+        """替换候选。`before_commit` 在同一个事务里、提交之前调用：它抛异常整个替换回滚。"""
         timestamp = now_iso()
         with self.connect() as connection:
             video_row = connection.execute(
@@ -849,6 +855,8 @@ class ProjectStore:
                         timestamp,
                     ),
                 )
+            if before_commit is not None:
+                before_commit()
 
     def list_players(self) -> list[Dict[str, Any]]:
         project = self.project()
