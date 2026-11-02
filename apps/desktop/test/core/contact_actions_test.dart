@@ -18,4 +18,28 @@ void main() {
     expect(uri, contains('Description%3A'));
     expect(uri, isNot(contains('%E9%97%AE%E9%A2%98%E6%8F%8F%E8%BF%B0')));
   });
+
+  test('Windows opens links without cmd so the & in mailto is not a command separator', () {
+    final mailto = feedbackMailto(appVersion: '1.0.0');
+    expect(mailto, contains('&body='));
+
+    final windows = externalOpenCommand(mailto, platform: 'windows');
+    expect(windows.executable, 'rundll32');
+    expect(windows.arguments, ['url.dll,FileProtocolHandler', mailto]);
+
+    final https = externalOpenCommand(githubIssueUrl, platform: 'windows');
+    expect(https.executable, 'rundll32');
+    expect(https.arguments.last, githubIssueUrl);
+  });
+
+  test('macOS and Linux keep their own openers', () {
+    expect(
+      externalOpenCommand('https://x.example', platform: 'macos').executable,
+      'open',
+    );
+    expect(
+      externalOpenCommand('https://x.example', platform: 'linux').executable,
+      'xdg-open',
+    );
+  });
 }
