@@ -20,6 +20,8 @@ class OnboardingStep {
     required this.title,
     required this.body,
     this.target,
+    this.extra,
+    this.extraHeight = 0,
   });
 
   /// 登记在 `onboardingStepIds` 里的步骤 id，“看过”按它记。
@@ -27,6 +29,10 @@ class OnboardingStep {
   final String title;
   final String body;
   final GlobalKey? target;
+
+  /// 正文下面附带的内容（例如示例图），[extraHeight] 用来给气泡留出位置。
+  final WidgetBuilder? extra;
+  final double extraHeight;
 }
 
 /// 包住一个页面：首次进入（或点“?”）时在页面上盖一层遮罩 + 气泡，逐步介绍。
@@ -211,8 +217,12 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
       });
     }
     final bodyLines = '\n'.allMatches(step.body).length + 1;
-    final bubbleWidth = bodyLines > 1 ? 440.0 : 340.0;
-    final bubbleHeight = 170.0 + (bodyLines - 1) * 24;
+    final bubbleWidth = step.extra != null
+        ? 560.0
+        : bodyLines > 1
+        ? 440.0
+        : 340.0;
+    final bubbleHeight = 170.0 + (bodyLines - 1) * 24 + step.extraHeight;
     double left;
     double top;
     if (rect == null) {
@@ -280,6 +290,10 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
                           color: c.textSecondary,
                         ),
                       ),
+                      if (step.extra != null) ...[
+                        const SizedBox(height: Spacing.sm),
+                        step.extra!(context),
+                      ],
                       const SizedBox(height: Spacing.md),
                       Row(
                         children: [

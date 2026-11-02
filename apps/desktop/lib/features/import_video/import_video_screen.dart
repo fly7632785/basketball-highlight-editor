@@ -14,6 +14,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../components/cs_button.dart';
 import '../../components/onboarding_guide.dart';
+import 'hoop_example.dart';
 import '../../providers/onboarding_provider.dart';
 import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
@@ -1089,12 +1090,19 @@ KeyedSubtree(
         title: '框出篮筐',
         body: '系统会先自动识别篮筐。不准的话在画面上拖动、缩放；篮筐被挡住时，先换一个画面时间再框。',
         target: _importGuideRoiKey,
+        extra: (_) => const HoopExampleGallery(maxPanelWidth: 170),
+        extraHeight: 150,
       ),
       OnboardingStep(
         id: 'calibrate.regions',
         title: '橙色和白色两个区域',
         body: '橙色区域覆盖来球轨迹、篮圈和落球范围，用来跟踪球；白色区域只盖篮网摆动范围。点这两个按钮切换要编辑的区域，改动自动保存。',
         target: _importGuideRegionKey,
+        extra: (_) => const HoopExampleGallery(
+          examples: [HoopExample.good],
+          maxPanelWidth: 260,
+        ),
+        extraHeight: 210,
       ),
     ],
     _ => [
@@ -2196,6 +2204,12 @@ KeyedSubtree(
                     : null,
               ),
               const Spacer(),
+              TextButton.icon(
+                key: const Key('hoop-example-open'),
+                onPressed: () => showHoopExampleDialog(context),
+                icon: const Icon(Icons.image_outlined, size: 16),
+                label: Text(context.bheText('看示例')),
+              ),
               TextButton.icon(
                 onPressed: widget.enabled ? widget.onResetCurrent : null,
                 icon: const Icon(Icons.restart_alt_rounded, size: 16),
