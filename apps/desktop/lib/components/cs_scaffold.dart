@@ -1,4 +1,5 @@
 // lib/components/cs_scaffold.dart
+import '../providers/onboarding_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -139,6 +140,19 @@ class CsTopBar extends ConsumerWidget {
             ),
             const SizedBox(width: Spacing.md),
           ],
+          if (shell.currentIndex == 2 || shell.currentIndex == 3)
+            IconButton(
+              key: const Key('onboarding-help'),
+              tooltip: context.bheText('本页新手引导'),
+              icon: Icon(LucideIcons.helpCircle, size: 18, color: c.textSecondary),
+              onPressed: () => ref
+                  .read(onboardingProvider.notifier)
+                  .replay(
+                    shell.currentIndex == 2
+                        ? onboardingReviewPage
+                        : onboardingExportPage,
+                  ),
+            ),
           PopupMenuButton<String>(
             key: feedbackMenuKey,
             tooltip: l10n?.more ?? '更多',
@@ -147,11 +161,15 @@ class CsTopBar extends ConsumerWidget {
               size: 18,
               color: c.textSecondary,
             ),
-            onSelected: (value) => _handleUtilityAction(context, value),
+            onSelected: (value) => _handleUtilityAction(context, ref, value),
             itemBuilder: (context) => [
               PopupMenuItem(
                 value: 'feedback',
                 child: Text(l10n?.feedback ?? '反馈'),
+              ),
+              PopupMenuItem(
+                value: 'reset-onboarding',
+                child: Text(context.bheText('重置新手引导')),
               ),
               PopupMenuItem(
                 value: 'about',
@@ -208,7 +226,22 @@ class CsTopBar extends ConsumerWidget {
     }
   }
 
-  Future<void> _handleUtilityAction(BuildContext context, String value) async {
+  Future<void> _handleUtilityAction(
+    BuildContext context,
+    WidgetRef ref,
+    String value,
+  ) async {
+    if (value == 'reset-onboarding') {
+      await ref.read(onboardingProvider.notifier).reset();
+      if (context.mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(
+            content: Text(context.bheText('已重置，下次进入审核页和导出页会再次显示新手引导')),
+          ),
+        );
+      }
+      return;
+    }
     if (value == 'about') {
       await showCourtsideAboutDialog(context);
       return;

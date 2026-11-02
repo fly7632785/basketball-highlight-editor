@@ -19,7 +19,7 @@ import 'session_provider.dart';
 import 'sidebar_provider.dart';
 import '../core/app_log.dart';
 
-const _recentProjectRootsKey = 'basketball_recent_project_roots';
+const recentProjectRootsPrefsKey = 'basketball_recent_project_roots';
 
 /// 项目显示名的长度上限。只约束数据库里的 name，不影响磁盘目录名。
 const projectNameMaxLength = 60;
@@ -2990,7 +2990,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
       final preferences = await SharedPreferences.getInstance().timeout(
         const Duration(milliseconds: 250),
       );
-      return preferences.getStringList(_recentProjectRootsKey) ??
+      return preferences.getStringList(recentProjectRootsPrefsKey) ??
           const <String>[];
     } catch (error) {
       appLog('warn', 'project_state', '_recentProjectRoots 忽略了错误: $error');
@@ -3006,10 +3006,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
       );
       final roots = <String>{
         canonical,
-        ...preferences.getStringList(_recentProjectRootsKey) ??
+        ...preferences.getStringList(recentProjectRootsPrefsKey) ??
             const <String>[],
       }.take(12).toList();
-      return await preferences.setStringList(_recentProjectRootsKey, roots);
+      return await preferences.setStringList(recentProjectRootsPrefsKey, roots);
     } catch (error) {
       appLog('warn', 'project_state', '_rememberProjectsRoot 忽略了错误: $error');
       return false;

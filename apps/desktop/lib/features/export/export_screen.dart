@@ -12,6 +12,8 @@ import '../../components/cs_button.dart';
 import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../components/cs_progress_track.dart';
+import '../../components/onboarding_guide.dart';
+import '../../providers/onboarding_provider.dart';
 import '../../core/app_log.dart';
 import '../../providers/project_state.dart';
 import '../../providers/playback_coordinator.dart';
@@ -38,6 +40,8 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
   (String?, String?)? _playerFilterScope;
   bool _showFastRisk = true;
   bool _choosingOutput = false;
+  final _guideModeKey = GlobalKey();
+  final _guideStartKey = GlobalKey();
   String _mode = 'merge';
   String _effect = 'none';
 
@@ -198,7 +202,9 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
           style: theme.textTheme.titleSmall,
         ),
         const SizedBox(height: Spacing.sm),
-        Row(
+        KeyedSubtree(
+          key: _guideModeKey,
+          child: Row(
           children: [
             Expanded(
               child: _ModeCard(
@@ -237,6 +243,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               ),
             ],
           ],
+        ),
         ),
         const SizedBox(height: Spacing.md),
         _ExportSection(
@@ -349,7 +356,9 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
           runSpacing: Spacing.sm,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            CsButton(
+            KeyedSubtree(
+              key: _guideStartKey,
+              child: CsButton(
               key: const Key('export-start'),
               label: Text(
                 l10n?.exportStartButton(includedCount) ??
@@ -361,6 +370,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               onPressed: includedCount > 0 && !busy && !state.exportStartUnconfirmed
                   ? () => _chooseOutput(notifier, mode: mode)
                   : null,
+            ),
             ),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 300),
@@ -436,7 +446,22 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
       ],
     );
 
-    return LayoutBuilder(
+    return OnboardingGuide(
+      page: onboardingExportPage,
+      ready: includedCount > 0 && !state.hydrating,
+      steps: [
+        OnboardingStep(
+          title: '先选输出方式',
+          body: '合并成一个视频，或每个片段单独导出；有球员标签时还能按标签各出一个。',
+          target: _guideModeKey,
+        ),
+        OnboardingStep(
+          title: '点这里导出',
+          body: '接着选保存位置，已排除的片段不会进入输出。导出在后台进行，期间可以回审核继续看；原视频不会被修改。',
+          target: _guideStartKey,
+        ),
+      ],
+      child: LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 1000;
         return SingleChildScrollView(
@@ -465,6 +490,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
           ),
         );
       },
+    ),
     );
   }
 

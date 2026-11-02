@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:desktop/components/cs_button.dart';
 import 'package:desktop/core/video_orientation.dart';
 import 'package:desktop/features/export/export_screen.dart';
+import 'package:desktop/providers/onboarding_provider.dart';
 import 'package:desktop/providers/project_state.dart';
 import 'package:desktop/providers/playback_coordinator.dart';
 import 'package:desktop/providers/export_output_picker.dart';
@@ -56,7 +57,12 @@ void main() {
     }
   }
 
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  // 默认当作已看过引导，免得遮罩挡住别的用例；引导本身在专门的用例里测。
+  setUp(
+    () => SharedPreferences.setMockInitialValues({
+      onboardingSeenPrefsKey: onboardingPages,
+    }),
+  );
 
   for (final locale in ['zh', 'en']) {
     testWidgets('legacy source warning appears $locale', (tester) async {
@@ -431,6 +437,33 @@ void main() {
       expect(notifier.exports, ['merge:/tmp/highlights.mp4']);
     },
   );
+
+  testWidgets('export page shows the onboarding guide once on first visit', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final picker = _TestOutputPicker();
+    final notifier = _TrackingExportNotifier();
+    await _pumpExport(tester, PlaybackCoordinator(), picker, notifier);
+    await tester.pump();
+    expect(find.byKey(const Key('onboarding-overlay')), findsOneWidget);
+    expect(find.text('先选输出方式'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('onboarding-next')));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('点这里导出'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('onboarding-next')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('onboarding-overlay')), findsNothing);
+    expect(picker.calls, 0);
+    // 看过之后，导出按钮可以正常点。
+    final merge = find.byKey(const Key('export-start'));
+    await tester.ensureVisible(merge);
+    await tester.tap(merge);
+    await tester.pump();
+    await tester.pump();
+    expect(picker.calls, 1);
+  });
 
   testWidgets('stuck frame still opens the picker and says so', (tester) async {
     final stuck = Completer<void>();

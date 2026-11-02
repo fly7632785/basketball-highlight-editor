@@ -10,10 +10,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:desktop/features/review/review_screen.dart';
 import 'package:desktop/components/cs_progress_track.dart';
 import 'package:desktop/features/review/media_readiness.dart';
+import 'package:desktop/providers/onboarding_provider.dart';
 import 'package:desktop/providers/project_state.dart';
 import 'package:desktop/theme/tokens.dart';
 
 void main() {
+  // 默认当作已看过引导，免得遮罩挡住别的用例；引导本身在 onboarding_test 里测。
+  setUp(
+    () => SharedPreferences.setMockInitialValues({
+      onboardingSeenPrefsKey: onboardingPages,
+    }),
+  );
   for (final language in ['zh', 'en']) {
     testWidgets('preflight stage and percentages stay consistent $language', (
       tester,
@@ -1278,6 +1285,36 @@ void main() {
     expect(find.text('候选预览'), findsOneWidget);
     expect(find.text('原视频'), findsOneWidget);
     expect(find.byTooltip('切换视频来源'), findsOneWidget);
+  });
+
+  testWidgets('review page shows the onboarding guide on first visit only', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        video: {'id': 'v1', 'source_path': '/v/a.mp4', 'duration_ms': 300000},
+        videoPath: '/v/a.mp4',
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'video_id': 'v1',
+            'event_time_ms': 12000,
+            'default_start_ms': 9000,
+            'default_end_ms': 13000,
+          },
+        ],
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const Key('onboarding-overlay')), findsOneWidget);
+    expect(find.text('这里看视频'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('onboarding-skip')));
+    await tester.pump();
+    expect(find.byKey(const Key('onboarding-overlay')), findsNothing);
   });
 
   testWidgets('multi-part review can switch to the original video after import', (

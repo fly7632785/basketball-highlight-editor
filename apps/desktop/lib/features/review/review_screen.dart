@@ -17,6 +17,8 @@ import '../../components/cs_progress_track.dart';
 import 'candidate_status_labels.dart';
 import '../../core/video_orientation.dart';
 import '../../providers/player_groups_provider.dart';
+import '../../components/onboarding_guide.dart';
+import '../../providers/onboarding_provider.dart';
 import '../../providers/project_state.dart';
 import '../../providers/playback_coordinator.dart';
 import '../../theme/app_colors.dart';
@@ -45,6 +47,8 @@ class ReviewScreen extends ConsumerStatefulWidget {
 class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   String? _selectedCandidateId;
   bool _showOriginalVideo = false;
+  final _guideVideoKey = GlobalKey();
+  final _guideQueueKey = GlobalKey();
   final Set<String> _reviewStartedCandidateIds = <String>{};
   String _candidateFilter = 'all';
   String _playerFilter = 'all';
@@ -723,7 +727,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         ? () => _confirmReanalyzeWithMode(forceStandard: true)
         : _confirmReanalyze;
 
-    return Focus(
+    final content = Focus(
       key: const Key('review-shortcut-focus'),
       focusNode: _shortcutFocusNode,
       autofocus: true,
@@ -776,7 +780,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final video = _VideoPane(
+                  final videoPane = _VideoPane(
                     controller: _videoController,
                     videoPath: playbackPath,
                     candidate: selected,
@@ -841,10 +845,14 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     },
                     onDeletePlayer: _deletePlayer,
                   );
+                  final video = KeyedSubtree(
+                    key: _guideVideoKey,
+                    child: videoPane,
+                  );
                   final queueWidth = (constraints.maxWidth * 0.30)
                       .clamp(360.0, 460.0)
                       .toDouble();
-                  final queue = _CandidatePanel(
+                  final queuePanel = _CandidatePanel(
                     candidates: candidates,
                     overlappingIds: _overlappingCandidateIds(allCandidates),
                     selectedId: selected?['id']?.toString(),
@@ -923,6 +931,10 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                         ? null
                         : () => context.go('/export'),
                   );
+                  final queue = KeyedSubtree(
+                    key: _guideQueueKey,
+                    child: queuePanel,
+                  );
                   if (constraints.maxWidth >= Breakpoints.md) {
                     return Container(
                       color: AppColors.of(context).surface,
@@ -970,6 +982,31 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
           ],
         ),
       ),
+    );
+    return OnboardingGuide(
+      page: onboardingReviewPage,
+      ready: allCandidates.isNotEmpty && !state.hydrating,
+      hideVideo: true,
+      onFinished: _focusReviewShortcuts,
+      steps: [
+        OnboardingStep(
+          title: '这里看视频',
+          body: '选中一个候选就会播放对应的片段。空格播放/暂停，← → 快进快退。',
+          target: _guideVideoKey,
+        ),
+        OnboardingStep(
+          title: '这里是找到的候选',
+          body: '每一行是系统认为可能进球的一段。上下键切换，逐个看一遍。',
+          target: _guideQueueKey,
+        ),
+        OnboardingStep(
+          title: '保留还是排除',
+          body: Platform.isMacOS
+              ? '是进球：按 C 或回车保留；不是：按 X 排除。点错了按 ⌘+Z 撤销。全部看完后点「导出 N 个片段」。'
+              : '是进球：按 C 或回车保留；不是：按 X 排除。点错了按 Ctrl+Z 撤销。全部看完后点「导出 N 个片段」。',
+        ),
+      ],
+      child: content,
     );
   }
 
