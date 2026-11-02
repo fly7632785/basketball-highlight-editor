@@ -65,11 +65,11 @@ void main() {
 
     test('每个页面的步骤都登记过，且 id 不重复', () {
       expect(allOnboardingStepIds.toSet().length, allOnboardingStepIds.length);
-      for (final entry in onboardingStepIds.entries) {
-        for (final id in entry.value) {
-          expect(id.startsWith('${entry.key}.'), isTrue, reason: id);
-        }
-      }
+      expect(onboardingStepIds.keys, [
+        onboardingImportPage,
+        onboardingReviewPage,
+        onboardingExportPage,
+      ]);
     });
 
     test('重置有效：清空记录，重启后也不会被当成升级用户', () async {

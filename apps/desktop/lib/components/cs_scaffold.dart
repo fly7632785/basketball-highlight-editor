@@ -141,7 +141,7 @@ class CsTopBar extends ConsumerWidget {
             ),
             const SizedBox(width: Spacing.md),
           ],
-          if (shell.currentIndex == 2 || shell.currentIndex == 3)
+          if (shell.currentIndex >= 1 && shell.currentIndex <= 3)
             IconButton(
               key: const Key('onboarding-help'),
               tooltip: context.bheText('本页新手引导'),
@@ -149,9 +149,11 @@ class CsTopBar extends ConsumerWidget {
               onPressed: () => ref
                   .read(onboardingProvider.notifier)
                   .replay(
-                    shell.currentIndex == 2
-                        ? onboardingReviewPage
-                        : onboardingExportPage,
+                    switch (shell.currentIndex) {
+                      1 => onboardingImportPage,
+                      2 => onboardingReviewPage,
+                      _ => onboardingExportPage,
+                    },
                   ),
             ),
           PopupMenuButton<String>(

@@ -13,6 +13,8 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../components/cs_button.dart';
+import '../../components/onboarding_guide.dart';
+import '../../providers/onboarding_provider.dart';
 import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../core/engine_session.dart';
@@ -36,6 +38,14 @@ const _afterSecondOptions = <int>[1, 2, 3, 4, 5, 6, 8, 10, 12, 15];
 /// 全页面配置向导：视频 → 分析范围 → 检测区域 → 确认并开始分析。
 ///
 /// 所有编辑先写入 workflowDraft，只有最后一步才写入项目生效配置并启动分析。
+final _importGuideStepperKey = GlobalKey(debugLabel: 'import-guide-stepper');
+final _importGuideBodyKey = GlobalKey(debugLabel: 'import-guide-body');
+final _importGuideFooterKey = GlobalKey(debugLabel: 'import-guide-footer');
+final _importGuideRoiKey = GlobalKey(debugLabel: 'import-guide-roi');
+final _importGuideRegionKey = GlobalKey(debugLabel: 'import-guide-region');
+final _importGuideModeKey = GlobalKey(debugLabel: 'import-guide-mode');
+final _importGuideClipKey = GlobalKey(debugLabel: 'import-guide-clip');
+
 class ImportVideoScreen extends ConsumerStatefulWidget {
   const ImportVideoScreen({super.key});
 
@@ -771,7 +781,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
         )
         .length;
 
-    return Column(
+    final content = Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(
@@ -838,12 +848,15 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
                     ],
                   ),
                   const SizedBox(height: Spacing.md),
-                  _ImportStepper(
+KeyedSubtree(
+            key: _importGuideStepperKey,
+            child:                   _ImportStepper(
                     steps: steps,
                     summaries: stepSummaries,
                     current: _step,
                     onStepTap: busy ? null : _goToEarlierStep,
                   ),
+          ),
                   if (_showExistingDraft) ...[
                     const SizedBox(height: Spacing.sm),
                     _DraftBanner(
@@ -876,15 +889,20 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 1240),
-                child: AnimatedSwitcher(
+                child: KeyedSubtree(
+                  key: _importGuideBodyKey,
+                  child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 180),
                   child: _buildStep(context, state, busy),
+                ),
                 ),
               ),
             ),
           ),
         ),
-        Container(
+        KeyedSubtree(
+          key: _importGuideFooterKey,
+          child: Container(
           key: const Key('import-footer'),
           decoration: BoxDecoration(
             color: c.surface,
@@ -1028,9 +1046,78 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
             ),
           ),
         ),
+        ),
       ],
     );
+    return OnboardingGuide(
+      key: ValueKey('import-guide-$_step'),
+      page: onboardingImportPage,
+      ready: _step == 0 || hasVideo,
+      hideVideo: _step == 1 || _step == 2,
+      steps: _guideSteps(_step),
+      child: content,
+    );
   }
+
+  /// 导入页每个阶段的引导；目标控件当前不存在的步骤（例如没有快速分析选项）会被跳过。
+  List<OnboardingStep> _guideSteps(int stage) => switch (stage) {
+    0 => [
+      OnboardingStep(
+        id: 'import.steps',
+        title: '导入分四步',
+        body: '选视频 → 定分析范围 → 框出篮筐 → 开始分析。上面的步骤条可以点回已经完成的步骤，设置会自动保存为草稿。',
+        target: _importGuideStepperKey,
+      ),
+      OnboardingStep(
+        id: 'import.pick',
+        title: '先选原始视频',
+        body: '支持 MP4、MOV、M4V、AVI、MKV。同一场的多段视频可以一起选，会建成一个项目。原视频不会被修改或上传。',
+        target: _importGuideBodyKey,
+      ),
+    ],
+    1 => [
+      OnboardingStep(
+        id: 'range.window',
+        title: '只分析需要的一段',
+        body: '拖动时间轴两端，选出要分析的范围，比如跳过赛前热身；不确定就保持整段。范围越短，分析越快。',
+        target: _importGuideBodyKey,
+      ),
+    ],
+    2 => [
+      OnboardingStep(
+        id: 'calibrate.hoop',
+        title: '框出篮筐',
+        body: '系统会先自动识别篮筐。不准的话在画面上拖动、缩放；篮筐被挡住时，先换一个画面时间再框。',
+        target: _importGuideRoiKey,
+      ),
+      OnboardingStep(
+        id: 'calibrate.regions',
+        title: '橙色和白色两个区域',
+        body: '橙色区域覆盖来球轨迹、篮圈和落球范围，用来跟踪球；白色区域只盖篮网摆动范围。点这两个按钮切换要编辑的区域，改动自动保存。',
+        target: _importGuideRegionKey,
+      ),
+    ],
+    _ => [
+      OnboardingStep(
+        id: 'analysis.clip',
+        title: '每个进球留多长',
+        body: '设置进球前、后各保留几秒。后面审核时，每个片段还能单独调整。',
+        target: _importGuideClipKey,
+      ),
+      OnboardingStep(
+        id: 'analysis.mode',
+        title: '标准还是快速',
+        body: '标准分析更完整、漏检少，推荐；快速分析更快，但可能漏掉少量片段。',
+        target: _importGuideModeKey,
+      ),
+      OnboardingStep(
+        id: 'analysis.start',
+        title: '开始分析',
+        body: '点右下角的按钮开始（多段视频先保存这一段的设置，再在列表里「分析全部」）。分析在后台进行，结束后到「审核」页逐个确认候选。',
+        target: _importGuideFooterKey,
+      ),
+    ],
+  };
 
   String? _nextStepLabel(BheLocalizations? l10n) => switch (_step) {
     0 => l10n?.importNextTo(l10n.analysisRange),
@@ -2025,7 +2112,9 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
             ),
             const SizedBox(height: Spacing.sm),
           ],
-          _RoiCanvas(
+KeyedSubtree(
+            key: _importGuideRoiKey,
+            child:           _RoiCanvas(
             enabled: widget.enabled && !state.previewRefreshing,
             videoController: _playerReady ? _controller : null,
             previewPath: state.previewPath,
@@ -2042,6 +2131,7 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
             onRefreshPreview: widget.onRefreshPreview,
             onChanged: widget.onChanged,
             onEditComplete: () {},
+          ),
           ),
           const SizedBox(height: Spacing.sm),
           _PreviewTimeControls(
@@ -2082,7 +2172,9 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
             ),
           ],
           const SizedBox(height: Spacing.sm),
-          Row(
+          KeyedSubtree(
+            key: _importGuideRegionKey,
+            child: Row(
             children: [
               _CalibrationTargetButton(
                 index: '1',
@@ -2112,6 +2204,7 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
                 ),
               ),
             ],
+          ),
           ),
           const SizedBox(height: Spacing.xs),
           Text(
@@ -2526,7 +2619,9 @@ class _SummaryStep extends StatelessWidget {
             style: theme.textTheme.titleSmall,
           ),
           const SizedBox(height: Spacing.sm),
-          Row(
+          KeyedSubtree(
+            key: _importGuideModeKey,
+            child: Row(
             children: [
               Expanded(
                 child: _AnalysisModeOption(
@@ -2553,14 +2648,18 @@ class _SummaryStep extends StatelessWidget {
               ),
             ],
           ),
+          ),
           const SizedBox(height: Spacing.md),
         ],
-        _ClipWindowSelector(
+KeyedSubtree(
+            key: _importGuideClipKey,
+            child:         _ClipWindowSelector(
           beforeSeconds: beforeSeconds,
           afterSeconds: afterSeconds,
           onBeforeChanged: onBeforeSecondsChanged,
           onAfterChanged: onAfterSecondsChanged,
         ),
+          ),
         const SizedBox(height: Spacing.md),
         Container(
           padding: const EdgeInsets.symmetric(

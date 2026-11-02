@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:bhe_l10n/bhe_l10n.dart';
 import 'package:desktop/features/import_video/import_video_screen.dart';
 import 'package:desktop/features/import_video/player_roster_picker.dart';
+import 'package:desktop/providers/onboarding_provider.dart';
 import 'package:desktop/providers/player_groups_provider.dart';
 import 'package:desktop/providers/project_state.dart';
 import 'package:flutter/material.dart';
@@ -122,6 +123,7 @@ Future<ProviderContainer> _pump(
   bool english = false,
 }) async {
   SharedPreferences.setMockInitialValues({
+    onboardingStepsPrefsKey: allOnboardingStepIds,
     if (withGroups) playerGroupsPrefsKey: _savedGroups,
     if (withDefault) defaultPlayerGroupPrefsKey: 'Saturday',
   });

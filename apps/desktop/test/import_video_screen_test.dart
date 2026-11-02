@@ -6,11 +6,19 @@ import 'package:file_selector_platform_interface/file_selector_platform_interfac
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:desktop/providers/pending_import_provider.dart';
 import 'package:desktop/components/cs_button.dart';
+import 'package:desktop/providers/onboarding_provider.dart';
 import 'package:desktop/providers/project_state.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:desktop/features/import_video/import_video_screen.dart';
 
 void main() {
+  // 默认当作已看过引导，免得遮罩挡住别的用例；引导本身在专门的用例里测。
+  setUp(
+    () => SharedPreferences.setMockInitialValues({
+      onboardingStepsPrefsKey: allOnboardingStepIds,
+    }),
+  );
   for (final frame in [
     const Size(1440, 1080),
     const Size(1920, 1080),
@@ -46,6 +54,59 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('import stage 0 guides the first visit and remembers each step', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final container = ProviderContainer(
+      overrides: [projectProvider.overrideWith(() => _DropNotifier())],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(home: Scaffold(body: ImportVideoScreen())),
+    ));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('导入分四步'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('onboarding-next')));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('先选原始视频'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('onboarding-next')));
+    await tester.pump();
+    expect(find.byKey(const Key('onboarding-overlay')), findsNothing);
+    expect(
+      container.read(onboardingProvider).seen,
+      {'import.steps', 'import.pick'},
+    );
+  });
+
+  testWidgets('range stage shows only its own guide step', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(1100, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          projectProvider.overrideWith(() => _RangeNotifier(const Size(1920, 1080))),
+        ],
+        child: const MaterialApp(home: Scaffold(body: ImportVideoScreen())),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+    expect(find.text('只分析需要的一段'), findsOneWidget);
+    expect(find.text('导入分四步'), findsNothing);
+    expect(find.text('1/1'), findsOneWidget);
+  });
 
   testWidgets('cancelling the file picker does not create a project', (tester) async {
     final previous = FileSelectorPlatform.instance;

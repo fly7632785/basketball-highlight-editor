@@ -54,6 +54,9 @@ void main() {
       'Could not choose an output location: test',
     );
     expect(english.text('跳过'), 'Skip');
+    expect(english.text('导入分四步'), 'Import in four steps');
+    expect(english.text('常用快捷键'), 'Common shortcuts');
+    expect(english.text('框出篮筐'), 'Mark the hoop');
     expect(english.text('先选输出方式'), 'Choose how to export');
     expect(english.text('保留 380 / 389'), 'Included 380 / 389');
     expect(english.text('正在保存球员标签…'), 'Saving player tags…');

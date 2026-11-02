@@ -11,17 +11,23 @@ const String onboardingLegacySeenPrefsKey = 'bhe.onboarding.seen';
 const String onboardingStepsPrefsKey = 'bhe.onboarding.steps_seen';
 
 const String onboardingImportPage = 'import';
-const String onboardingCalibratePage = 'calibrate';
-const String onboardingAnalysisPage = 'analysis';
 const String onboardingReviewPage = 'review';
 const String onboardingExportPage = 'export';
 
 /// 每页有哪些步骤（按出现顺序）。“看过”按步骤记：升级后新增的步骤只弹新的，
 /// 已经看过的不重复。新增步骤时在这里登记，并在对应页面写文案。
+/// 导入页分四个阶段（选视频、分析范围、检测区域、确认并分析），步骤 id 以阶段名开头。
 const Map<String, List<String>> onboardingStepIds = {
-  onboardingImportPage: ['import.pick', 'import.multi'],
-  onboardingCalibratePage: ['calibrate.hoop', 'calibrate.example'],
-  onboardingAnalysisPage: ['analysis.range', 'analysis.mode', 'analysis.start'],
+  onboardingImportPage: [
+    'import.steps',
+    'import.pick',
+    'range.window',
+    'calibrate.hoop',
+    'calibrate.regions',
+    'analysis.clip',
+    'analysis.mode',
+    'analysis.start',
+  ],
   onboardingReviewPage: [
     'review.video',
     'review.queue',
