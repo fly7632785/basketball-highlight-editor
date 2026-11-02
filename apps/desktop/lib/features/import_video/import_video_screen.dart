@@ -150,6 +150,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
         (draftVideoId == null ||
             draftVideoId == currentState.video?['id']?.toString())) {
       _applyDraftLocally(draft);
+      appLog('info', 'import', '草稿 恢复 step=${draft['step'] ?? 0}');
       setState(() => _showExistingDraft = true);
       return;
     }
@@ -260,6 +261,14 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       ...?_rectMap('auto_hoop_bbox', _autoHoopBbox),
     };
   }
+
+  /// 区域只记画布比例（两位小数），不记画面内容。
+  static String _rectLog(Rect rect) =>
+      'x=${(rect.left * 100).toStringAsFixed(1)}% y=${(rect.top * 100).toStringAsFixed(1)}% '
+      'w=${(rect.width * 100).toStringAsFixed(1)}% h=${(rect.height * 100).toStringAsFixed(1)}%';
+
+  String _roiLogSummary() =>
+      '篮筐=${_roi == null ? '(未设置)' : _rectLog(_roi!)} 篮网=${_netRoi == null ? '(未设置)' : _rectLog(_netRoi!)}';
 
   Future<void> _persistDraft({int? step}) async {
     if (ref.read(projectProvider).video == null) return;
@@ -398,6 +407,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     ids
       ..removeAt(index)
       ..insert(target, videoId);
+    appLog('info', 'import', '多段 调整顺序 id=$videoId $index→$target 共=${ids.length}');
     unawaited(ref.read(projectProvider.notifier).reorderVideos(ids));
   }
 
@@ -412,6 +422,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       );
       if (!mounted || !applied) return;
       final videoId = ref.read(projectProvider).video?['id']?.toString();
+      appLog('info', 'import', '保存这一段设置 id=$videoId '
+          '范围=$_analysisStartMs-$_analysisEndMs ms ${_roiLogSummary()}');
       if (videoId != null) await notifier.propagateHoopToFollowingParts(videoId);
       if (mounted) setState(() => _step = 0);
     } finally {
@@ -424,6 +436,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     setState(() => _applying = true);
     try {
       if (!await _importSelectedRoster()) return;
+      appLog('info', 'import', '分析全部 待分析段='
+          '${ref.read(projectProvider).analysisQueue.length}');
       await ref.read(projectProvider.notifier).startAnalysisQueue(
             beforeSeconds: _beforeSeconds.toDouble(),
             afterSeconds: _afterSeconds.toDouble(),
@@ -619,11 +633,19 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     });
   }
 
+  /// 导入页阶段（0 视频 / 1 分析范围 / 2 检测区域 / 3 确认）切换只在一个地方记。
+  void _logStep(int from, String trigger) {
+    if (from == _step) return;
+    appLog('info', 'import', '导入 阶段 $from→$_step ($trigger)');
+  }
+
   Future<void> _next() async {
     if (!_canLeaveStep(_step)) return;
     final next = math.min(_step + 1, _stepCount - 1);
     if (_step == 2 && next != 2) _stopPreviewPlayback();
+    final from = _step;
     setState(() => _step = next);
+    _logStep(from, '下一步');
     await _persistDraft(step: next);
     // 进入检测区域步骤时,标记画面落在分析范围内,而不是停在片头或范围之外。
     if (next == 2) {
@@ -640,7 +662,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     if (_step == 0) return;
     final next = _step - 1;
     if (_step == 2 && next != 2) _stopPreviewPlayback();
+    final from = _step;
     setState(() => _step = next);
+    _logStep(from, '上一步');
     await _persistDraft(step: next);
   }
 
@@ -678,6 +702,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       );
       if (confirmed != true || !mounted) return;
     }
+    appLog('info', 'import', '确认并开始分析 mode=$_analysisMode '
+        '范围=$_analysisStartMs-$_analysisEndMs ms before=$_beforeSeconds s '
+        'after=${_afterSeconds}s 已有候选=${state.candidates.length} $_roiLogSummary()');
     setState(() => _applying = true);
     try {
       final applied = await ref
@@ -897,9 +924,12 @@ KeyedSubtree(
                   if (_showExistingDraft) ...[
                     const SizedBox(height: Spacing.sm),
                     _DraftBanner(
-                      onContinue: () =>
-                          setState(() => _showExistingDraft = false),
+                      onContinue: () {
+                        appLog('info', 'import', '草稿 继续编辑');
+                        setState(() => _showExistingDraft = false);
+                      },
                       onDiscard: () async {
+                        appLog('info', 'import', '草稿 丢弃');
                         await ref
                             .read(projectProvider.notifier)
                             .clearWorkflowDraft();
@@ -1173,7 +1203,9 @@ KeyedSubtree(
   void _goToEarlierStep(int index) {
     if (index >= _step) return;
     if (_step == 2 && index != 2) _stopPreviewPlayback();
+    final from = _step;
     setState(() => _step = index);
+    _logStep(from, '点步骤条');
     unawaited(_persistDraft(step: index));
   }
 
@@ -1229,6 +1261,12 @@ KeyedSubtree(
               _analysisEndMs = end;
               _rangeTouched = true;
             });
+            appLogThrottled(
+              'import-range',
+              'info',
+              'import',
+              '调整分析范围 $start-$end ms',
+            );
             unawaited(_persistDraft());
           },
         );
@@ -1267,6 +1305,13 @@ KeyedSubtree(
                 }
               }
             });
+            // 拖动中每帧都会回调，这里按 1 秒节流，只记区域大小比例，不记画面。
+            appLogThrottled(
+              'import-roi-${_editingNet ? 'net' : 'hoop'}',
+              'info',
+              'import',
+              '修改${_editingNet ? '篮网' : '篮筐'}区域 ${_rectLog(value)} 已经用户编辑=${_editingNet || _netUserEdited}',
+            );
             unawaited(_persistDraft());
           },
           onResetCurrent: () {
@@ -1313,6 +1358,7 @@ KeyedSubtree(
           ),
           onAnalysisModeChanged: (mode) {
             setState(() => _analysisMode = mode);
+            appLog('info', 'import', '选择分析模式 $mode');
             unawaited(_persistDraft());
           },
           onBeforeSecondsChanged: (seconds) {
@@ -2014,7 +2060,7 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
         await player.stop();
       } catch (error) { appLog('warn', 'import_video_screen', 'dispose 忽略了错误: $error'); }
       try {
-        await player.dispose();
+        await disposeLoggedPlayer(player, '导入页');
       } catch (error) { appLog('warn', 'import_video_screen', 'dispose 忽略了错误: $error'); }
     }());
     super.dispose();
@@ -3245,7 +3291,7 @@ class _AnalysisRangeEditorState extends ConsumerState<_AnalysisRangeEditor> {
         await player.stop();
       } catch (error) { appLog('warn', 'import_video_screen', 'dispose 忽略了错误: $error'); }
       try {
-        await player.dispose();
+        await disposeLoggedPlayer(player, '导入页');
       } catch (error) { appLog('warn', 'import_video_screen', 'dispose 忽略了错误: $error'); }
     }());
     super.dispose();
