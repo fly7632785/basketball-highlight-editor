@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:desktop/features/review/review_screen.dart';
 import 'package:desktop/components/cs_progress_track.dart';
 import 'package:desktop/features/review/media_readiness.dart';
+import 'package:desktop/features/review/review_shortcuts.dart';
 import 'package:desktop/providers/onboarding_provider.dart';
 import 'package:desktop/providers/project_state.dart';
 import 'package:desktop/theme/tokens.dart';
@@ -1656,12 +1657,15 @@ void main() {
       ),
     );
 
-    expect(
-      find.byTooltip(
-        '快捷键\nSpace  播放/暂停\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒 · 加 Shift 每次 0.1 秒\nC / Enter  保留\nX / ` / Backspace  排除\n1–9、Q–P  设置球员标签 · 0  清除\nCmd/Ctrl+Z  撤销',
-      ),
-      findsOneWidget,
-    );
+    // 提示文字来自快捷键表，不是手写的；这里核对它列全了表里的每个动作。
+    final tooltip = tester
+        .widgetList<Tooltip>(find.byType(Tooltip))
+        .firstWhere((tip) => (tip.message ?? '').startsWith('快捷键\n'));
+    final message = tooltip.message!;
+    for (final shortcut in reviewShortcuts) {
+      expect(message, contains(shortcut.label), reason: shortcut.label);
+    }
+    expect(message, contains('1–9、Q–P'));
   });
 
   testWidgets('routes review shortcuts through the workspace focus node', (

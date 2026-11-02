@@ -62,6 +62,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   );
 
   int _step = 0;
+  bool _jumpToReviewWhenQueueDone = false;
   bool _draftLoaded = false;
   bool _applying = false;
   bool _showExistingDraft = false;
@@ -420,6 +421,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
             beforeSeconds: _beforeSeconds.toDouble(),
             afterSeconds: _afterSeconds.toDouble(),
           );
+      // 队列真的排上了，全部分析完要自动去审核页（单段分析启动后就直接去了）。
+      _jumpToReviewWhenQueueDone =
+          ref.read(projectProvider).analysisQueue.isNotEmpty;
     } finally {
       if (mounted) setState(() => _applying = false);
     }
@@ -685,6 +689,21 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(projectProvider);
+    ref.listen<ProjectState>(projectProvider, (previous, next) {
+      if (!_jumpToReviewWhenQueueDone ||
+          previous == null ||
+          next.queueFinishedCount <= previous.queueFinishedCount) {
+        return;
+      }
+      _jumpToReviewWhenQueueDone = false;
+      final anyCompleted = next.videos.any(
+        (video) => (video['analysis_job'] as Map?)?['state'] == 'completed',
+      );
+      // 只在用户还停在导入页时跳；已经去别处看了就不打断。
+      if (anyCompleted && mounted && TickerMode.valuesOf(context).enabled) {
+        context.go('/review');
+      }
+    });
     ref.listen<List<String>?>(pendingImportProvider, (_, next) {
       if (next == null) return;
       // Let the project-change handling below settle before importing.

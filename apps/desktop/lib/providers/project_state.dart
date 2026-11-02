@@ -106,6 +106,7 @@ class ProjectState {
     this.queueBeforeSeconds = 3,
     this.queueAfterSeconds = 1,
     this.queuePaused = false,
+    this.queueFinishedCount = 0,
     this.exportQueued = false,
     this.exportStartUnconfirmed = false,
   });
@@ -148,6 +149,9 @@ class ProjectState {
   final double queueBeforeSeconds;
   final double queueAfterSeconds;
   final bool queuePaused;
+
+  /// 多段分析队列整体跑完的次数（只增不减），界面据此在分析全部结束后跳到审核页。
+  final int queueFinishedCount;
 
   /// 队列分析时点了导出：等当前这段分析完先导出，再继续排队。
   final bool exportQueued;
@@ -204,6 +208,7 @@ class ProjectState {
     double? queueBeforeSeconds,
     double? queueAfterSeconds,
     bool? queuePaused,
+    int? queueFinishedCount,
     bool? exportQueued,
     bool? exportStartUnconfirmed,
     List<JsonMap>? candidates,
@@ -281,6 +286,7 @@ class ProjectState {
       queueBeforeSeconds: queueBeforeSeconds ?? this.queueBeforeSeconds,
       queueAfterSeconds: queueAfterSeconds ?? this.queueAfterSeconds,
       queuePaused: queuePaused ?? this.queuePaused,
+      queueFinishedCount: queueFinishedCount ?? this.queueFinishedCount,
       exportQueued: exportQueued ?? this.exportQueued,
       exportStartUnconfirmed: exportStartUnconfirmed ?? this.exportStartUnconfirmed,
     );
@@ -1624,6 +1630,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     }
     if (state.analysisQueue.isEmpty) {
       _pushNotice('全部视频段分析完成', NoticeSeverity.success);
+      state = state.copyWith(queueFinishedCount: state.queueFinishedCount + 1);
     }
     await _startNextQueued();
   }

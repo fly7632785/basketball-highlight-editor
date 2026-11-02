@@ -48,6 +48,9 @@ class ReviewScreen extends ConsumerStatefulWidget {
 final _reviewGuideTagKey = GlobalKey(debugLabel: 'review-guide-tag');
 final _reviewGuideRangeKey = GlobalKey(debugLabel: 'review-guide-range');
 final _reviewGuideSourceKey = GlobalKey(debugLabel: 'review-guide-source');
+final _reviewGuideFilterKey = GlobalKey(debugLabel: 'review-guide-filter');
+final _reviewGuideBatchKey = GlobalKey(debugLabel: 'review-guide-batch');
+final _reviewGuideMissedKey = GlobalKey(debugLabel: 'review-guide-missed');
 
 class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   String? _selectedCandidateId;
@@ -984,6 +987,19 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
           target: _guideQueueKey,
         ),
         OnboardingStep(
+          id: 'review.filter',
+          title: '全部 / 保留 / 排除',
+          body:
+              '「全部」是系统找到的所有候选；「保留」是你确认要导出的；「排除」是你打了叉的。\n推荐：看完一遍后点「保留」再过一遍，这里的就是最终会导出的；还可以在「保留」里接着按球员标签、篮筐检测结果筛选，挑出要重点检查的。',
+          target: _reviewGuideFilterKey,
+        ),
+        OnboardingStep(
+          id: 'review.batch',
+          title: '批量设置片段时长',
+          body: '想把所有片段统一加长或缩短，点这个按钮，设置每个进球「前」「后」各留几秒。只作用于当前列表里的候选（会随上面的筛选变化），默认不覆盖你手动调整过的片段。',
+          target: _reviewGuideBatchKey,
+        ),
+        OnboardingStep(
           id: 'review.shortcuts',
           title: '常用快捷键',
           body:
@@ -1006,6 +1022,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
           title: '候选预览 / 原视频',
           body: '切到「原视频」可以看整段录像、补上系统没找到的进球。',
           target: _reviewGuideSourceKey,
+        ),
+        OnboardingStep(
+          id: 'review.missed',
+          title: '补漏：系统漏掉的进球',
+          body: '先切到「原视频」，播放到漏掉的进球附近，再点「补漏片段」：会以当前位置作为进球时刻新建一个候选，在弹出的窗口里用 I / O 或拖动定好开始和结束，点「加入候选」即可。',
+          target: _reviewGuideMissedKey,
         ),
       ],
       child: content,
@@ -4885,16 +4907,18 @@ class _CandidatePanel extends StatelessWidget {
                     ),
                   ),
                 const Spacer(),
-                IconButton(
-                  tooltip: context.bheText('批量设置片段时长'),
-                  onPressed: busy ? null : onBatchRange,
-                  icon: const Icon(Icons.schedule_outlined, size: 18),
-                  visualDensity: VisualDensity.compact,
+                KeyedSubtree(
+                  key: _reviewGuideBatchKey,
+                  child: IconButton(
+                    tooltip: context.bheText('批量设置片段时长'),
+                    onPressed: busy ? null : onBatchRange,
+                    icon: const Icon(Icons.schedule_outlined, size: 18),
+                    visualDensity: VisualDensity.compact,
+                  ),
                 ),
                 Tooltip(
-                  message: context.bheText(
-                    '快捷键\nSpace  播放/暂停\nL  循环当前\nA  显示/关闭标注\n↑ / ↓  切换候选\n← / →  快退/快进 2 秒 · 加 Shift 每次 0.1 秒\nC / Enter  保留\nX / ` / Backspace  排除\n1–9、Q–P  设置球员标签 · 0  清除\nCmd/Ctrl+Z  撤销',
-                  ),
+                  message:
+                      '${context.bheText('快捷键')}\n${reviewShortcutGuideText(context)}',
                   child: Padding(
                     padding: const EdgeInsets.all(8),
                     child: Icon(
@@ -4962,11 +4986,14 @@ class _CandidatePanel extends StatelessWidget {
             ),
           ],
           const SizedBox(height: Spacing.sm),
-          _StatusSegments(
-            value: filter,
-            total: totalCount,
-            included: includedCount,
-            onChanged: onFilterChanged,
+          KeyedSubtree(
+            key: _reviewGuideFilterKey,
+            child: _StatusSegments(
+              value: filter,
+              total: totalCount,
+              included: includedCount,
+              onChanged: onFilterChanged,
+            ),
           ),
           const SizedBox(height: Spacing.sm),
           _PlayerTagChips(
@@ -5128,6 +5155,8 @@ class _CandidatePanel extends StatelessWidget {
                   const SizedBox(width: Spacing.sm),
                   Flexible(
                     flex: 2,
+                    child: KeyedSubtree(
+                    key: _reviewGuideMissedKey,
                     child: Tooltip(
                     message: context.bheText('从原视频当前时间补漏候选'),
                     child: OutlinedButton.icon(
@@ -5144,6 +5173,7 @@ class _CandidatePanel extends StatelessWidget {
                         side: BorderSide(color: c.borderStrong),
                         minimumSize: const Size(0, 40),
                       ),
+                    ),
                     ),
                     ),
                   ),

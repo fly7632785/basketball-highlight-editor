@@ -60,6 +60,9 @@ void main() {
       expect(seen.contains('review.shortcuts'), isFalse);
       expect(seen.contains('review.tag'), isFalse);
       expect(seen.contains('review.range'), isFalse);
+      expect(seen.contains('review.filter'), isFalse);
+      expect(seen.contains('review.batch'), isFalse);
+      expect(seen.contains('review.missed'), isFalse);
       expect(seen.contains('export.tag'), isFalse);
     });
 

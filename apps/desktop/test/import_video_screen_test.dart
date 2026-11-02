@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:desktop/providers/pending_import_provider.dart';
 import 'package:desktop/components/cs_button.dart';
 import 'package:desktop/providers/onboarding_provider.dart';
@@ -189,6 +190,57 @@ void main() {
     expect(notifier.edited, ['v3']);
   });
 
+  Future<_QueueNotifier> pumpQueueApp(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final notifier = _QueueNotifier();
+    final router = GoRouter(
+      initialLocation: '/import',
+      routes: [
+        GoRoute(
+          path: '/import',
+          builder: (_, _) => const Scaffold(body: ImportVideoScreen()),
+        ),
+        GoRoute(path: '/review', builder: (_, _) => const Text('review page')),
+      ],
+    );
+    addTearDown(router.dispose);
+    final container = ProviderContainer(
+      overrides: [projectProvider.overrideWith(() => notifier)],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('import-analyze-all')));
+    await tester.pumpAndSettle();
+    return notifier;
+  }
+
+  testWidgets('multi-video analysis goes to the review page when all parts finish', (
+    tester,
+  ) async {
+    final notifier = await pumpQueueApp(tester);
+    expect(find.text('review page'), findsNothing);
+    notifier.finishQueue();
+    await tester.pumpAndSettle();
+    expect(find.text('review page'), findsOneWidget);
+  });
+
+  testWidgets('multi-video analysis stays on import when every part failed', (
+    tester,
+  ) async {
+    final notifier = await pumpQueueApp(tester);
+    notifier.finishQueue(completed: false);
+    await tester.pumpAndSettle();
+    expect(find.text('review page'), findsNothing);
+  });
+
   testWidgets('several dropped videos become one project', (tester) async {
     final notifier = _SegmentsNotifier();
     final container = ProviderContainer(
@@ -328,6 +380,28 @@ class _SegmentsNotifier extends ProjectNotifier {
 
   @override
   void activateVideo(String videoId) => edited.add(videoId);
+}
+
+class _QueueNotifier extends _SegmentsNotifier {
+  @override
+  Future<void> startAnalysisQueue({
+    required double beforeSeconds,
+    required double afterSeconds,
+  }) async {
+    state = state.copyWith(analysisQueue: ['v2', 'v3']);
+  }
+
+  /// 模拟整条队列跑完：队列清空、各段已完成、完成计数加一。
+  void finishQueue({bool completed = true}) {
+    state = state.copyWith(
+      analysisQueue: const [],
+      videos: [
+        for (final video in state.videos)
+          {...video, 'analysis_job': {'state': completed ? 'completed' : 'failed'}},
+      ],
+      queueFinishedCount: state.queueFinishedCount + 1,
+    );
+  }
 }
 
 class _DropNotifier extends ProjectNotifier {

@@ -31,10 +31,13 @@ const Map<String, List<String>> onboardingStepIds = {
   onboardingReviewPage: [
     'review.video',
     'review.queue',
+    'review.filter',
+    'review.batch',
     'review.shortcuts',
     'review.tag',
     'review.range',
     'review.source',
+    'review.missed',
   ],
   onboardingExportPage: ['export.mode', 'export.tag', 'export.start'],
 };
