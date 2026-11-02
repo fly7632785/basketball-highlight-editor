@@ -650,7 +650,10 @@ class EngineService:
             parameters = checkpoint.get("analysis_parameters")
             if not isinstance(parameters, dict):
                 parameters = {}
-            if parameters.get("source_path") not in {None, source_path}:
+            if (not video.get("source_fingerprint")
+                or parameters.get("source_path") != source_path
+                or parameters.get("source_fingerprint") != video.get("source_fingerprint")
+                or parameters.get("source_rotation") != int(video.get("rotation") or 0)):
                 continue
             candidate = checkpoint.get("proxy_video")
             if not isinstance(candidate, str) or not candidate:
@@ -659,9 +662,12 @@ class EngineService:
             if not path.is_file() or path.stat().st_size <= 0:
                 continue
             try:
-                start_ms = int(parameters.get("analysis_start_ms") or 0)
-                end_ms = int(parameters.get("analysis_end_ms") or video.get("duration_ms") or 0)
-            except (TypeError, ValueError):
+                start_ms = int(parameters["analysis_start_ms"])
+                end_ms = int(parameters["analysis_end_ms"])
+                if (start_ms != int(video.get("analysis_start_ms") or 0)
+                    or end_ms != int(video.get("analysis_end_ms") or video.get("duration_ms") or 0)):
+                    continue
+            except (KeyError, TypeError, ValueError):
                 continue
             if end_ms > start_ms:
                 return path.resolve(), start_ms, end_ms
@@ -1058,7 +1064,8 @@ class EngineService:
         fingerprint = hashlib.sha256(
             (
                 f"{video.get('source_size_bytes')}:{video.get('source_mtime_ns')}:"
-                f"{video.get('source_path')}"
+                f"{video.get('source_path')}:{video.get('source_fingerprint')}:"
+                f"{video.get('rotation')}:{video.get('analysis_start_ms')}:{video.get('analysis_end_ms')}"
             ).encode("utf-8")
         ).hexdigest()[:12]
         return (
@@ -1618,6 +1625,8 @@ class EngineService:
                 "source_path": str(source_video),
                 "source_size_bytes": video.get("source_size_bytes"),
                 "source_mtime_ns": video.get("source_mtime_ns"),
+                "source_fingerprint": video.get("source_fingerprint"),
+                "source_rotation": int(video.get("rotation") or 0),
                 "model_path": str(model_path),
                 "model_mtime_ns": model_path.stat().st_mtime_ns,
                 "roi": source_roi,

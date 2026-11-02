@@ -1457,6 +1457,8 @@ def _project_with_proxy(tmp_path: Path, start_ms: int, end_ms: int):
         "link_video", {"project_root": str(project_root), "video_path": str(source)}
     )["video"]
     store = ProjectStore(project_root)
+    store.set_analysis_range(video["id"], start_ms, end_ms)
+    video = store.video(video["id"])
     job = store.create_job(store.project()["id"], video["id"], "analysis")
     store.update_job(job["id"], state="running", stage="refine")
     store.update_job(
@@ -1467,6 +1469,8 @@ def _project_with_proxy(tmp_path: Path, start_ms: int, end_ms: int):
             "proxy_video": str(proxy),
             "analysis_parameters": {
                 "source_path": str(source.resolve()),
+                "source_fingerprint": video["source_fingerprint"],
+                "source_rotation": int(video.get("rotation") or 0),
                 "analysis_start_ms": start_ms,
                 "analysis_end_ms": end_ms,
             },
@@ -2818,3 +2822,18 @@ def test_the_crop_scale_compat_switch_gets_its_own_analysis_stages(tmp_path: Pat
     assert stage_dir() == normal
     monkeypatch.setenv("BHE_CROP_SCALE_COMPAT", "1")
     assert stage_dir() != normal
+
+
+def test_proxy_rejected_after_relink_same_path_and_legacy_metadata(tmp_path):
+    service, root, video, source, proxy = _project_with_proxy(tmp_path, 1000, 7000)
+    store = ProjectStore(root)
+    assert service._latest_proxy_video(store, video['id']) is not None
+    before = service._preview_path(store, video, 3000)
+    source.write_bytes(source.read_bytes() + b'changed')
+    service.relink_video({'project_root': str(root), 'video_id': video['id'], 'video_path': str(source)})
+    updated = store.video(video['id'])
+    assert service._latest_proxy_video(store, video['id']) is None
+    assert service._preview_path(store, updated, 3000) != before
+    job = store.create_job(store.project()['id'], video['id'], 'analysis')
+    store.update_job(job['id'], state='completed', checkpoint={'proxy_video': str(proxy), 'analysis_parameters': {'analysis_start_ms': 1000, 'analysis_end_ms': 7000}})
+    assert service._latest_proxy_video(store, video['id']) is None
