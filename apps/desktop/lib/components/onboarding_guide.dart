@@ -202,7 +202,17 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
     final box = targetContext.findRenderObject();
     if (box is! RenderBox || !box.hasSize || !box.attached) return null;
     final topLeft = box.localToGlobal(Offset.zero, ancestor: overlay);
-    return topLeft & box.size;
+    var rect = topLeft & box.size;
+    // 目标比可见的滚动区域还高（或还宽）时，只高亮看得见的那一部分，
+    // 不然高亮框会伸到滚动区域外面的步骤条、底部按钮上。
+    final scrollable = Scrollable.maybeOf(targetContext);
+    final viewport = scrollable?.context.findRenderObject();
+    if (viewport is RenderBox && viewport.hasSize && viewport.attached) {
+      final visible =
+          viewport.localToGlobal(Offset.zero, ancestor: overlay) & viewport.size;
+      rect = rect.intersect(visible);
+    }
+    return rect.isEmpty ? null : rect;
   }
 
   Widget _buildOverlay(BuildContext context, Size size) {

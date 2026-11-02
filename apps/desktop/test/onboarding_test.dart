@@ -203,6 +203,56 @@ void main() {
       expect(find.text('1/1'), findsOneWidget);
     });
 
+    testWidgets('目标比滚动区域高时，高亮框只圈住看得见的部分', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final tall = GlobalKey();
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            home: Scaffold(
+              body: OnboardingGuide(
+                page: onboardingImportPage,
+                steps: [
+                  OnboardingStep(id: 't.tall', title: '高', body: '说明', target: tall),
+                ],
+                child: Column(
+                  children: [
+                    const SizedBox(height: 100, width: double.infinity),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: SizedBox(key: tall, height: 2000, width: 700),
+                      ),
+                    ),
+                    const SizedBox(height: 80, width: double.infinity),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+      }
+      final overlay = find.byKey(const Key('onboarding-overlay'));
+      expect(overlay, findsOneWidget);
+      final painter = tester
+          .widget<CustomPaint>(
+            find.descendant(of: overlay, matching: find.byType(CustomPaint)).first,
+          )
+          .painter;
+      final rect = (painter as dynamic).rect as Rect;
+      // 滚动区域在 y=100 到 y=520 之间；框（含 6 的外扩）不能伸出去太多。
+      expect(rect.top, greaterThanOrEqualTo(100 - 6 - 0.5));
+      expect(rect.bottom, lessThanOrEqualTo(520 + 6 + 0.5));
+    });
+
     testWidgets('内容没就绪时不弹', (tester) async {
       await pump(tester, prefs: {}, ready: false);
       expect(find.byKey(const Key('onboarding-overlay')), findsNothing);
