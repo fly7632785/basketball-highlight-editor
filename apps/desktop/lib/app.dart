@@ -126,6 +126,7 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
       final router = ref.read(appRouterProvider);
       final dialogContext = router.routerDelegate.navigatorKey.currentContext;
       if (dialogContext == null || !dialogContext.mounted) {
+        appLog('info', 'app', '关闭保护 无界面可确认，直接准备退出');
         final ready = await ref
             .read(projectProvider.notifier)
             .prepareForShutdown();
@@ -168,6 +169,11 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
             ),
           ],
         ),
+      );
+      appLog(
+        'info',
+        'app',
+        '关闭保护 用户选择=${action == 'exit' ? '退出' : '返回'} 分析中=$analyzing 导出中=$exporting 忙=$busy',
       );
       if (action != 'exit') return;
       final ready = await ref

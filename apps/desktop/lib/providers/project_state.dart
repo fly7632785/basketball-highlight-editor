@@ -834,6 +834,18 @@ class ProjectNotifier extends Notifier<ProjectState> {
     final session = ref.read(projectSessionProvider);
     final normalizedRoot = canonicalProjectPath(root);
     final wasCurrentProject = session.projectRoot == normalizedRoot;
+    final deletedId = state.recentProjects
+        .map((project) => project['project_root']?.toString() ?? '')
+        .where((path) => canonicalProjectPath(path) == normalizedRoot)
+        .map((path) => state.recentProjects
+            .firstWhere(
+              (project) =>
+                  canonicalProjectPath(project['project_root']?.toString() ?? '') ==
+                  normalizedRoot,
+            )['id']
+            ?.toString())
+        .firstOrNull;
+    appLog('info', 'project', '删除项目 id=${deletedId ?? '(未知)'} 当前项目=$wasCurrentProject');
     if (wasCurrentProject) await flushReviewQueue();
     await _runBusy(() async {
       await session.deleteProject(root);
@@ -2223,7 +2235,12 @@ class ProjectNotifier extends Notifier<ProjectState> {
                 item,
           ],
         );
-        appLog('info', 'home', '重命名项目结束 ok=true 范围=其他项目');
+        appLog(
+          'info',
+          'home',
+          '重命名项目结束 ok=true 范围=其他项目 '
+              'id=${ref.read(projectSessionProvider).projectId ?? '(未知)'}',
+        );
         return true;
       }
       final statistics = state.statistics;
@@ -2240,7 +2257,12 @@ class ProjectNotifier extends Notifier<ProjectState> {
         );
       }
       unawaited(refreshStatistics());
-      appLog('info', 'home', '重命名项目结束 ok=true 范围=当前项目');
+      appLog(
+        'info',
+        'home',
+        '重命名项目结束 ok=true 范围=当前项目 '
+            'id=${ref.read(projectSessionProvider).projectId ?? '(未知)'}',
+      );
       return true;
     } catch (error) {
       appLog('warn', 'home', '重命名项目失败: $error');

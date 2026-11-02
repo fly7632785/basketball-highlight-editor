@@ -311,6 +311,11 @@ Future<void> _confirmCloseProject(
       ],
     ),
   );
+  appLog(
+    'info',
+    'project',
+    '关闭项目 用户选择=${confirmed == true ? '关闭' : '返回'} 分析中=$analyzing 导出中=$exporting 忙=$busy',
+  );
   if (confirmed != true || !context.mounted) return;
   final closed = busy
       ? await ref.read(projectProvider.notifier).cancelTasksAndCloseProject()

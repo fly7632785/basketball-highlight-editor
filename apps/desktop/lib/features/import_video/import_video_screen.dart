@@ -2117,13 +2117,25 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
         setState(() => _playing = playing);
       });
       await matchPlayerToSourceRotation(_player!, rotation: widget.rotation);
-      await _player!.open(Media(Uri.file(path).toString()), play: false);
-      await waitForPlayableDuration(
-        current: _player!.state.duration,
-        updates: _player!.stream.duration,
-      );
+      await openLoggedMedia(_player!, '导入页', path);
+      final readyWatch = watchPlayerReadyTimeout(_player!, '导入页');
+      try {
+        await waitForPlayableDuration(
+          current: _player!.state.duration,
+          updates: _player!.stream.duration,
+        );
+      } finally {
+        readyWatch.cancel();
+      }
       final target = widget.state.previewTimeMs;
-      if (target > 0) await _player!.seek(Duration(milliseconds: target));
+      if (target > 0) {
+        try {
+          await _player!.seek(Duration(milliseconds: target));
+        } catch (error) {
+          appLog('error', 'player', '导入页 seek 失败 target=${target}ms: $error');
+          rethrow;
+        }
+      }
       _lastSyncedMs = target;
       if (mounted) setState(() => _playerReady = true);
     } catch (error) {

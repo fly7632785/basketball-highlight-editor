@@ -63,8 +63,14 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
   }
 
   void _setEffect(String value) {
+    appLog('info', 'export', '选择效果 $value');
     setState(() => _effect = value);
     SharedPreferences.getInstance().then((prefs) => prefs.setString(_effectKey, value));
+  }
+
+  void _selectMode(String mode) {
+    if (_mode != mode) appLog('info', 'export', '选择输出方式 $mode');
+    setState(() => _mode = mode);
   }
 
   Future<void> _confirmUncertainExport(ProjectNotifier notifier) async {
@@ -172,29 +178,47 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                     selected: _selectedPlayerIds.contains(
                       state.players[index]['id']?.toString(),
                     ),
-                    onSelected: (value) => setState(() {
+                    onSelected: (value) {
                       final id = state.players[index]['id']?.toString();
-                      if (id == null) return;
-                      if (!_playerFilterActive) {
-                        _includeUnassigned = false;
-                      }
-                      _playerFilterActive = true;
-                      if (value) {
-                        _selectedPlayerIds.add(id);
-                      } else {
-                        _selectedPlayerIds.remove(id);
-                      }
-                    }),
+                      setState(() {
+                        if (id == null) return;
+                        if (!_playerFilterActive) {
+                          _includeUnassigned = false;
+                        }
+                        _playerFilterActive = true;
+                        if (value) {
+                          _selectedPlayerIds.add(id);
+                        } else {
+                          _selectedPlayerIds.remove(id);
+                        }
+                      });
+                      appLogThrottled(
+                        'export-player-filter',
+                        'info',
+                        'export',
+                        '球员过滤变化 选中=${_selectedPlayerIds.length} '
+                            '含未标记=$_includeUnassigned',
+                      );
+                    },
                   ),
                 _ScopeChip(
                   label: l10n?.unassigned ?? '未标记',
                   count: _playerCount(state, null),
                   dashed: true,
                   selected: _playerFilterActive && _includeUnassigned,
-                  onSelected: (value) => setState(() {
-                    _playerFilterActive = true;
-                    _includeUnassigned = value;
-                  }),
+                  onSelected: (value) {
+                    setState(() {
+                      _playerFilterActive = true;
+                      _includeUnassigned = value;
+                    });
+                    appLogThrottled(
+                      'export-player-filter',
+                      'info',
+                      'export',
+                      '球员过滤变化 选中=${_selectedPlayerIds.length} '
+                          '含未标记=$_includeUnassigned',
+                    );
+                  },
                 ),
               ],
             ),
@@ -217,7 +241,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                 description:
                     l10n?.exportMergeDescription ?? '按时间顺序拼接为一个 MP4，适合直接分享。',
                 selected: mode == 'merge',
-                onTap: () => setState(() => _mode = 'merge'),
+                onTap: () => _selectMode('merge'),
               ),
             ),
             const SizedBox(width: Spacing.sm),
@@ -229,7 +253,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                     l10n?.exportSeparateDescription ??
                     '每段一个文件，放进同一个文件夹，适合二次剪辑。',
                 selected: mode == 'separate',
-                onTap: () => setState(() => _mode = 'separate'),
+                onTap: () => _selectMode('separate'),
               ),
             ),
             if (state.players.isNotEmpty) ...[
@@ -244,7 +268,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                     '只导出选中的标签，每个标签一个 MP4，文件名就是标签名，放进同一个文件夹。',
                   ),
                   selected: mode == 'merge_by_player',
-                  onTap: () => setState(() => _mode = 'merge_by_player'),
+                  onTap: () => _selectMode('merge_by_player'),
                 ),
                 ),
               ),
@@ -335,7 +359,12 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               label: Text(l10n?.text('重试导出') ?? '重试导出'),
               icon: LucideIcons.refreshCw,
               size: CsButtonSize.sm,
-              onPressed: busy ? null : () => notifier.retryExport(),
+              onPressed: busy
+                  ? null
+                  : () {
+                      appLog('info', 'export', '导出历史 重新导出');
+                      notifier.retryExport();
+                    },
             ),
           ),
         ],
@@ -1353,6 +1382,8 @@ Future<void> _openDirectory(
   String? targetPath,
 }) async {
   final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+  // 导出历史里点「打开目录」：只记目录是否存在的结论，不记完整路径。
+  appLog('info', 'export', '导出历史 打开目录 目标存在=${targetPath != null && File(targetPath).existsSync()}');
   try {
     final String? target = targetPath == null || !File(targetPath).existsSync()
         ? null
