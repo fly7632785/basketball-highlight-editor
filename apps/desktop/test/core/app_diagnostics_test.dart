@@ -154,6 +154,15 @@ void main() {
       expect(text, contains('已截断'));
     });
 
+    test('超长文本先截断再过正则，耗时有上界且凭据照样被遮', () {
+      final watch = Stopwatch()..start();
+      final text = sanitizeLogText('password=SECRET1 ${'password ' * 200000}');
+      watch.stop();
+      expect(watch.elapsedMilliseconds, lessThan(200));
+      expect(text, isNot(contains('SECRET1')));
+      expect(text, contains('已截断'));
+    });
+
     test('appLog 写进文件的内容也经过兜底', () {
       appLog('error', 'player', '打开失败 https://h/v.mp4?token=SECRETVALUE');
       expect(log(), isNot(contains('SECRETVALUE')));

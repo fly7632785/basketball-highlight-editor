@@ -54,6 +54,7 @@ void appLog(String level, String module, String message) {
 }
 
 const _maxLogMessageLength = 800;
+const _maxScanLength = 4000;
 
 final _secretPatterns = <(RegExp, String)>[
   // URL 查询参数里常见的凭据
@@ -67,7 +68,9 @@ final _secretPatterns = <(RegExp, String)>[
 /// 写日志前对文本限长并遮掉常见的凭据样式（URL 查询参数、Bearer、token=…）。
 /// 只是兜底，不能当作脱敏保证；日志里本来就不应该放密钥。
 String sanitizeLogText(String text) {
-  var result = text;
+  // 先按上限截断再跑正则：超长异常文本不会让界面线程在正则上花时间；
+  // 最终只保留前 800 个字符，所以 4000 之后的内容本来就不会写出。
+  var result = text.length > _maxScanLength ? text.substring(0, _maxScanLength) : text;
   for (final (pattern, replacement) in _secretPatterns) {
     result = result.replaceAllMapped(pattern, (match) {
       var out = replacement;
