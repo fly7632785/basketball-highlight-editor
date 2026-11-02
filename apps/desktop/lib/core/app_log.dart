@@ -88,3 +88,21 @@ String sanitizeLogText(String text) {
 
 /// 界面层最近写的一行，卡顿监控报警时用它说明「卡在哪一步之后」。
 String lastAppLogLine = '';
+
+final _lastThrottledLog = <String, DateTime>{};
+
+/// 同类高频事件（拖动、连续切页等）用 [key] 节流：同一 key 至少间隔 [interval] 才写一行。
+/// 只影响日志，不影响业务；写失败同样不抛。
+void appLogThrottled(
+  String key,
+  String level,
+  String module,
+  String message, {
+  Duration interval = const Duration(seconds: 1),
+}) {
+  final now = DateTime.now();
+  final previous = _lastThrottledLog[key];
+  if (previous != null && now.difference(previous) < interval) return;
+  _lastThrottledLog[key] = now;
+  appLog(level, module, message);
+}

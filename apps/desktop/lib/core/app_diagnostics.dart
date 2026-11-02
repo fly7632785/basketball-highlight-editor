@@ -140,6 +140,7 @@ String describeVideoForLog(Map<String, dynamic>? video) {
 /// 播放器出错、mpv 报错都写进日志；[where] 说明是哪个页面的播放器。
 Player createLoggedPlayer(String where) {
   final player = Player();
+  appLog('info', 'player', '$where 创建播放器');
   player.stream.error.listen((error) {
     appLog('error', 'player', '$where 播放器报错: $error');
   });
@@ -149,6 +150,24 @@ Player createLoggedPlayer(String where) {
     }
   });
   return player;
+}
+
+/// 销毁播放器并记一行；[where] 说明是哪个页面。
+Future<void> disposeLoggedPlayer(Player player, String where) async {
+  appLog('info', 'player', '$where 销毁播放器');
+  await player.dispose();
+}
+
+/// 打开后 [timeout] 内还没拿到可播放时长就记一行 warn（默认 10 秒）。
+/// 返回的 [Timer] 由调用方在 ready 后取消，测试里也可以手动触发。
+Timer watchPlayerReadyTimeout(
+  Player player,
+  String where, {
+  Duration timeout = const Duration(seconds: 10),
+}) {
+  return Timer(timeout, () {
+    appLog('warn', 'player', '$where 打开后 ${timeout.inSeconds} 秒仍未就绪');
+  });
 }
 
 /// 带耗时地记录打开视频：播放器 open 慢或失败时，日志里能看出是哪个文件类型、卡了多久。
