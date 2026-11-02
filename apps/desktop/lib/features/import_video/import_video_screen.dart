@@ -703,11 +703,13 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
         return;
       }
       _jumpToReviewWhenQueueDone = false;
-      final anyCompleted = next.videos.any(
-        (video) => (video['analysis_job'] as Map?)?['state'] == 'completed',
-      );
-      // 只在用户还停在导入页时跳；已经去别处看了就不打断。
-      if (anyCompleted && mounted && TickerMode.valuesOf(context).enabled) {
+      // 本次排队的每一段都成功才自动去审核；有失败就留在这里让用户看错误。
+      // 只在用户还停在导入页、且没有弹窗挡着时跳，已经去别处看了或在操作弹窗就不打断。
+      final canJump =
+          mounted &&
+          TickerMode.valuesOf(context).enabled &&
+          !Navigator.of(context, rootNavigator: true).canPop();
+      if (next.lastQueueAllCompleted && canJump) {
         context.go('/review');
       }
     });

@@ -68,6 +68,7 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
   int _index = 0;
   bool _dismissedThisSession = false;
   int _lastReplay = 0;
+  int _lastResets = 0;
   Rect? _lastRect;
 
   bool get _showing => _active.isNotEmpty;
@@ -76,12 +77,18 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
   void initState() {
     super.initState();
     _lastReplay = ref.read(onboardingProvider).replay[widget.page] ?? 0;
+    _lastResets = ref.read(onboardingProvider).resets;
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeStart());
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // 页面被切走（保活在后台）时收起引导并交还视频画面，不记为看过，回来再弹。
+    if (_showing && !TickerMode.valuesOf(context).enabled) {
+      _active = const [];
+      _setVideoHidden(false);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeStart());
   }
 
@@ -97,9 +104,15 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
     super.dispose();
   }
 
+  VoidCallback? _releaseVideo;
+
   void _setVideoHidden(bool hidden) {
-    if (widget.hideVideo && videoSurfaceHidden.value != hidden) {
-      videoSurfaceHidden.value = hidden;
+    if (!widget.hideVideo) return;
+    if (hidden) {
+      _releaseVideo ??= holdVideoSurfaceHidden();
+    } else {
+      _releaseVideo?.call();
+      _releaseVideo = null;
     }
   }
 
@@ -108,6 +121,11 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
     if (!mounted || _showing) return;
     if (!widget.ready || !TickerMode.valuesOf(context).enabled) return;
     final onboarding = ref.read(onboardingProvider);
+    if (onboarding.resets != _lastResets) {
+      // 点过「重置新手引导」：这个页面（可能一直保活在后台）也要能再弹。
+      _lastResets = onboarding.resets;
+      _dismissedThisSession = false;
+    }
     final replay = onboarding.replay[widget.page] ?? 0;
     final replayRequested = replay != _lastReplay;
     // 首次（或升级后出现新步骤）只弹没看过的；点“?”重看则从头走全部。
@@ -268,14 +286,18 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
               ),
             ),
             Positioned(
-              left: left,
-              top: top,
-              width: bubbleWidth,
-              child: Material(
+              left: left.clamp(0.0, math.max(0.0, size.width - math.min(bubbleWidth, size.width - 24))),
+              top: top.clamp(12.0, math.max(12.0, size.height - 24 - 60)),
+              width: math.min(bubbleWidth, size.width - 24),
+              // 窗口小或文字多时气泡不超出屏幕，内容在气泡里滚动。
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: math.max(120.0, size.height - 24)),
+                child: Material(
                 color: c.surface,
                 elevation: 8,
                 borderRadius: BorderRadius.circular(CsRadius.md),
-                child: Container(
+                child: SingleChildScrollView(
+                  child: Container(
                   padding: const EdgeInsets.all(Spacing.md),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(CsRadius.md),
@@ -344,7 +366,9 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
                     ],
                   ),
                 ),
+                ),
               ),
+                ),
             ),
           ],
         ),

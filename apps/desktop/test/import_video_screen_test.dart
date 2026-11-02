@@ -1,3 +1,4 @@
+import 'dart:async';
 // ignore_for_file: depend_on_referenced_packages
 
 import 'package:flutter_test/flutter_test.dart';
@@ -232,6 +233,24 @@ void main() {
     expect(find.text('review page'), findsOneWidget);
   });
 
+  testWidgets('multi-video analysis does not jump while a dialog is open', (
+    tester,
+  ) async {
+    final notifier = await pumpQueueApp(tester);
+    final context = tester.element(find.byType(ImportVideoScreen));
+    unawaited(
+      showDialog<void>(
+        context: context,
+        builder: (_) => const AlertDialog(title: Text('正在操作的弹窗')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    notifier.finishQueue();
+    await tester.pumpAndSettle();
+    expect(find.text('review page'), findsNothing);
+    expect(find.text('正在操作的弹窗'), findsOneWidget);
+  });
+
   testWidgets('multi-video analysis stays on import when every part failed', (
     tester,
   ) async {
@@ -400,6 +419,7 @@ class _QueueNotifier extends _SegmentsNotifier {
           {...video, 'analysis_job': {'state': completed ? 'completed' : 'failed'}},
       ],
       queueFinishedCount: state.queueFinishedCount + 1,
+      lastQueueAllCompleted: completed,
     );
   }
 }

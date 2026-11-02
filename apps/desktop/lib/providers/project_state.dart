@@ -108,6 +108,7 @@ class ProjectState {
     this.queueAfterSeconds = 1,
     this.queuePaused = false,
     this.queueFinishedCount = 0,
+    this.lastQueueAllCompleted = false,
     this.exportQueued = false,
     this.exportStartUnconfirmed = false,
   });
@@ -153,6 +154,9 @@ class ProjectState {
 
   /// 多段分析队列整体跑完的次数（只增不减），界面据此在分析全部结束后跳到审核页。
   final int queueFinishedCount;
+
+  /// 最近一次队列跑完时，本次排队的每一段是否都分析成功（有失败/取消则为 false）。
+  final bool lastQueueAllCompleted;
 
   /// 队列分析时点了导出：等当前这段分析完先导出，再继续排队。
   final bool exportQueued;
@@ -210,6 +214,7 @@ class ProjectState {
     double? queueAfterSeconds,
     bool? queuePaused,
     int? queueFinishedCount,
+    bool? lastQueueAllCompleted,
     bool? exportQueued,
     bool? exportStartUnconfirmed,
     List<JsonMap>? candidates,
@@ -288,6 +293,7 @@ class ProjectState {
       queueAfterSeconds: queueAfterSeconds ?? this.queueAfterSeconds,
       queuePaused: queuePaused ?? this.queuePaused,
       queueFinishedCount: queueFinishedCount ?? this.queueFinishedCount,
+      lastQueueAllCompleted: lastQueueAllCompleted ?? this.lastQueueAllCompleted,
       exportQueued: exportQueued ?? this.exportQueued,
       exportStartUnconfirmed: exportStartUnconfirmed ?? this.exportStartUnconfirmed,
     );
@@ -327,6 +333,9 @@ class _ReviewBaseline {
 /// - `_section = AppSection.x` 不迁移(由 router 负责)
 /// - `_error = ...` 不迁移(由 notice 替代)
 class ProjectNotifier extends Notifier<ProjectState> {
+  /// 本次排队里各视频段的分析结果（视频段 id → completed/failed/cancelled）。
+  final Map<String, String> _queueOutcomes = <String, String>{};
+
   @override
   bool updateShouldNotify(ProjectState previous, ProjectState next) {
     // 换了当前视频就记一行它的规格，反馈时能看出是什么样的视频（分辨率、帧率、编码、时长）。
@@ -1521,6 +1530,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     required double afterSeconds,
   }) async {
     appLog('info', 'analysis', '开始排队分析多段视频 before=${beforeSeconds}s after=${afterSeconds}s');
+    _queueOutcomes.clear();
     final videoIds = [
       for (final video in state.videos)
         if (!needsHoopConfirmation(video) &&
@@ -1627,6 +1637,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
   Future<void> _advanceAnalysisQueue(JsonMap? job) async {
     final videoId = job?['video_id']?.toString();
     if (videoId == null || state.analysisQueue.firstOrNull != videoId) return;
+    _queueOutcomes[videoId] = job?['state']?.toString() ?? '';
     if (job?['state'] == 'cancelled') {
       state = state.copyWith(queuePaused: true);
     } else {
@@ -1641,8 +1652,19 @@ class ProjectNotifier extends Notifier<ProjectState> {
       return;
     }
     if (state.analysisQueue.isEmpty) {
-      _pushNotice('全部视频段分析完成', NoticeSeverity.success);
-      state = state.copyWith(queueFinishedCount: state.queueFinishedCount + 1);
+      final allCompleted =
+          _queueOutcomes.isNotEmpty &&
+          _queueOutcomes.values.every((outcome) => outcome == 'completed');
+      _queueOutcomes.clear();
+      if (allCompleted) {
+        _pushNotice('全部视频段分析完成', NoticeSeverity.success);
+      } else {
+        _pushNotice('分析队列已结束，有视频段没有分析成功，请在列表里查看', NoticeSeverity.warning);
+      }
+      state = state.copyWith(
+        queueFinishedCount: state.queueFinishedCount + 1,
+        lastQueueAllCompleted: allCompleted,
+      );
     }
     await _startNextQueued();
   }

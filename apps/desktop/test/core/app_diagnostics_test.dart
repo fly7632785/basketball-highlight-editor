@@ -130,4 +130,42 @@ void main() {
     );
     expect(report, contains('屏幕: '));
   });
+
+  group('日志文本兜底', () {
+    test('遮掉 URL 查询参数和 Bearer 里的凭据', () {
+      final text = sanitizeLogText(
+        'GET https://x.example/a?token=abc123&name=ok&api_key=zzz Authorization: Bearer eyJhbGciOi.payload.sig',
+      );
+      expect(text, isNot(contains('abc123')));
+      expect(text, isNot(contains('zzz')));
+      expect(text, isNot(contains('eyJhbGciOi')));
+      expect(text, contains('name=ok'));
+    });
+
+    test('遮掉 password=… 这类键值', () {
+      final text = sanitizeLogText('login failed password=hunter2 user=bob');
+      expect(text, isNot(contains('hunter2')));
+      expect(text, contains('user=bob'));
+    });
+
+    test('过长的文本被截断并注明原长', () {
+      final text = sanitizeLogText('x' * 5000);
+      expect(text.length, lessThan(900));
+      expect(text, contains('已截断'));
+    });
+
+    test('appLog 写进文件的内容也经过兜底', () {
+      appLog('error', 'player', '打开失败 https://h/v.mp4?token=SECRETVALUE');
+      expect(log(), isNot(contains('SECRETVALUE')));
+    });
+
+    test('卡顿报警不会成为「最后一步」，不会层层嵌套', () {
+      appLog('info', 'export', '开始导出');
+      appLog('warn', 'ui', '界面线程卡顿约 3000 ms；卡顿前最后记录的一步：$lastAppLogLine');
+      appLog('warn', 'ui', '界面线程卡顿约 3000 ms；卡顿前最后记录的一步：$lastAppLogLine');
+      expect(lastAppLogLine, '[info] [export] 开始导出');
+      expect('卡顿前最后记录的一步'.allMatches(log()).length, 2);
+      expect(log(), isNot(contains('卡顿前最后记录的一步：[warn]')));
+    });
+  });
 }

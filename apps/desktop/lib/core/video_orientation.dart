@@ -19,6 +19,22 @@ import 'package:media_kit_video/media_kit_video.dart';
 /// 弹原生对话框期间为 true：所有 [OrientedVideo] 换成占位，不再显示视频纹理。
 final ValueNotifier<bool> videoSurfaceHidden = ValueNotifier<bool>(false);
 
+int _videoSurfaceHolds = 0;
+
+/// 把视频画面换成占位。引导遮罩、保存窗口等各自占一份，互不覆盖；
+/// 返回的函数只能用一次，用来归还自己那一份，全部归还后画面才恢复。
+VoidCallback holdVideoSurfaceHidden() {
+  _videoSurfaceHolds++;
+  videoSurfaceHidden.value = true;
+  var released = false;
+  return () {
+    if (released) return;
+    released = true;
+    _videoSurfaceHolds--;
+    videoSurfaceHidden.value = _videoSurfaceHolds > 0;
+  };
+}
+
 class OrientedVideo extends StatelessWidget {
   const OrientedVideo({
     super.key,

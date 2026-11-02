@@ -67,6 +67,47 @@ void main() {
     );
   });
 
+  test('a fully successful queue marks the whole queue as completed', () async {
+    engine.addVideo('v1', roi: true);
+    engine.addVideo('v2', roi: true);
+    await notifier().openProject(directory.path);
+
+    await notifier().startAnalysisQueue(beforeSeconds: 5, afterSeconds: 2);
+    await settle(() => state().queueFinishedCount == 1 && !state().busy);
+
+    expect(state().lastQueueAllCompleted, isTrue);
+  });
+
+  test('a failed segment ends the queue but is not reported as all completed', () async {
+    engine.addVideo('v1', roi: true);
+    engine.addVideo('v2', roi: true);
+    engine.failing.add('v2');
+    await notifier().openProject(directory.path);
+
+    await notifier().startAnalysisQueue(beforeSeconds: 5, afterSeconds: 2);
+    await settle(() => state().queueFinishedCount == 1 && !state().busy);
+
+    expect(state().lastQueueAllCompleted, isFalse);
+    final titles = container.read(noticeProvider).map((item) => item.title);
+    expect(titles, isNot(contains('全部视频段分析完成')));
+    expect(titles, contains('分析队列已结束，有视频段没有分析成功，请在列表里查看'));
+  });
+
+  test('this queue failing is not rescued by an earlier successful segment', () async {
+    engine.addVideo('v1', roi: true);
+    engine.addVideo('v2', roi: true);
+    // v1 在之前已经分析成功；这次排队只有 v2，而且失败了。
+    engine.videos.first['analysis_job'] = {'id': 'job-earlier', 'state': 'completed'};
+    engine.failing.add('v2');
+    await notifier().openProject(directory.path);
+
+    await notifier().startAnalysisQueue(beforeSeconds: 5, afterSeconds: 2);
+    await settle(() => state().queueFinishedCount == 1 && !state().busy);
+
+    expect(engine.started, ['v2']);
+    expect(state().lastQueueAllCompleted, isFalse);
+  });
+
   test('pausing lets the running segment finish without starting the next', () async {
     engine.addVideo('v1', roi: true);
     engine.addVideo('v2', roi: true);
@@ -243,6 +284,7 @@ class _GameEngine implements EngineTransport {
   final List<String> suggested = [];
   JsonMap queue = {'video_ids': <String>[], 'before_seconds': 6, 'after_seconds': 3};
   Completer<void>? hold;
+  final failing = <String>{};
 
   String _path(String name) => '${directory.path}/$name';
 
@@ -345,10 +387,11 @@ class _GameEngine implements EngineTransport {
       case 'get_job':
         final job = jobs[payload['job_id']]!;
         if (job['type'] == 'export' || hold == null || hold!.isCompleted) {
-          job['state'] = 'completed';
+          final outcome = failing.contains(job['video_id']) ? 'failed' : 'completed';
+          job['state'] = outcome;
           final video = videos.where((item) => item['id'] == job['video_id']);
           for (final item in video) {
-            item['analysis_job'] = {'id': job['id'], 'state': 'completed'};
+            item['analysis_job'] = {'id': job['id'], 'state': outcome};
           }
         }
         return {'job': Map<String, dynamic>.from(job)};

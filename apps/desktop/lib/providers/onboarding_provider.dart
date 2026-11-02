@@ -57,6 +57,7 @@ class OnboardingState {
     this.loaded = false,
     this.seen = const <String>{},
     this.replay = const <String, int>{},
+    this.resets = 0,
   });
 
   final bool loaded;
@@ -66,6 +67,9 @@ class OnboardingState {
 
   /// 每个页面的“重看”计数，变化即表示要从第一步重新开始。
   final Map<String, int> replay;
+
+  /// 「重置新手引导」的次数；页面据此清掉本次会话里的“已关闭”标志，重置后能再弹。
+  final int resets;
 }
 
 /// 新手引导的“看过”状态，按页面记录，存在本地偏好里。
@@ -88,6 +92,7 @@ class OnboardingNotifier extends Notifier<OnboardingState> {
           loaded: true,
           seen: {...saved, ...state.seen},
           replay: state.replay,
+          resets: state.resets,
         );
         return;
       }
@@ -102,6 +107,7 @@ class OnboardingNotifier extends Notifier<OnboardingState> {
         loaded: true,
         seen: {...migrated, ...state.seen},
         replay: state.replay,
+        resets: state.resets,
       );
       if (migrated.isNotEmpty) await _persist();
     } catch (error) {
@@ -110,6 +116,7 @@ class OnboardingNotifier extends Notifier<OnboardingState> {
         loaded: true,
         seen: allOnboardingStepIds.toSet(),
         replay: state.replay,
+        resets: state.resets,
       );
     }
   }
@@ -122,13 +129,18 @@ class OnboardingNotifier extends Notifier<OnboardingState> {
       loaded: state.loaded,
       seen: {...state.seen, ...added},
       replay: state.replay,
+      resets: state.resets,
     );
     await _persist();
   }
 
   /// 设置里的“重置新手引导”：清空看过记录，下次进入各页面会再弹。
   Future<void> reset() async {
-    state = OnboardingState(loaded: true, replay: state.replay);
+    state = OnboardingState(
+      loaded: true,
+      replay: state.replay,
+      resets: state.resets + 1,
+    );
     await _persist();
   }
 
@@ -138,6 +150,7 @@ class OnboardingNotifier extends Notifier<OnboardingState> {
       loaded: state.loaded,
       seen: state.seen,
       replay: {...state.replay, page: (state.replay[page] ?? 0) + 1},
+      resets: state.resets,
     );
   }
 

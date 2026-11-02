@@ -28,7 +28,7 @@ class PlaybackCoordinator {
   }) async {
     if (_dialogActive) throw StateError('An output dialog is already open');
     _dialogActive = true;
-    videoSurfaceHidden.value = true;
+    final releaseVideo = holdVideoSurfaceHidden();
     try {
       try {
         await _nextFrame().timeout(prepareTimeout);
@@ -38,7 +38,7 @@ class PlaybackCoordinator {
       return await showDialog();
     } finally {
       // Do not automatically resume hidden players when a modal closes.
-      videoSurfaceHidden.value = false;
+      releaseVideo();
       _dialogActive = false;
     }
   }

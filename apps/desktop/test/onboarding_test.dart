@@ -24,6 +24,18 @@ Future<List<String>?> _saved() async =>
     );
 
 void main() {
+  test('视频画面占位按持有者计数，互不覆盖', () {
+    final first = holdVideoSurfaceHidden();
+    final second = holdVideoSurfaceHidden();
+    expect(videoSurfaceHidden.value, isTrue);
+    first();
+    expect(videoSurfaceHidden.value, isTrue);
+    first(); // 重复归还无效
+    expect(videoSurfaceHidden.value, isTrue);
+    second();
+    expect(videoSurfaceHidden.value, isFalse);
+  });
+
   group('看过状态', () {
     test('新用户：什么都没看过，按步骤分别记录', () async {
       final container = await _container({});
@@ -254,6 +266,68 @@ void main() {
       // 滚动区域在 y=100 到 y=520 之间；框（含 6 的外扩）不能伸出去太多。
       expect(rect.top, greaterThanOrEqualTo(100 - 6 - 0.5));
       expect(rect.bottom, lessThanOrEqualTo(520 + 6 + 0.5));
+    });
+
+    testWidgets('页面被切到后台时引导收起并交还视频画面，回来再弹', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final active = ValueNotifier(true);
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            home: Scaffold(
+              body: ValueListenableBuilder<bool>(
+                valueListenable: active,
+                builder: (_, enabled, _) => TickerMode(
+                  enabled: enabled,
+                  child: OnboardingGuide(
+                    page: onboardingReviewPage,
+                    hideVideo: true,
+                    steps: const [
+                      OnboardingStep(id: 't.one', title: '第一步', body: '说明一'),
+                    ],
+                    child: const SizedBox(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+      }
+      expect(find.byKey(const Key('onboarding-overlay')), findsOneWidget);
+      expect(videoSurfaceHidden.value, isTrue);
+
+      active.value = false;
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const Key('onboarding-overlay')), findsNothing);
+      expect(videoSurfaceHidden.value, isFalse);
+      expect(container.read(onboardingProvider).seen, isEmpty);
+
+      active.value = true;
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+      }
+      expect(find.byKey(const Key('onboarding-overlay')), findsOneWidget);
+    });
+
+    testWidgets('点「重置新手引导」后，已经看完的页面也能再弹', (tester) async {
+      final container = await pump(tester, prefs: {});
+      await tester.tap(find.byKey(const Key('onboarding-skip')));
+      await tester.pump();
+      expect(find.byKey(const Key('onboarding-overlay')), findsNothing);
+
+      await container.read(onboardingProvider.notifier).reset();
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+      }
+      expect(find.byKey(const Key('onboarding-overlay')), findsOneWidget);
+      expect(find.text('第一步'), findsOneWidget);
     });
 
     testWidgets('内容没就绪时不弹', (tester) async {
