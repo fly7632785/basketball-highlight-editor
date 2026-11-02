@@ -121,13 +121,19 @@ void main() {
       expect(log, isNot(contains('新名字')), reason: '不记项目名');
     });
 
-    test('重命名其他项目写出范围日志（id 为当前会话项目）', () async {
+    test('重命名其他项目写出范围日志，id 是被改的那个项目', () async {
       final session = _LogSession(
         transport: _UpdateSettingsTransport(),
-      )
-        ..fakeProjectId = 'proj-current'
-        ..updateProjectSettingsProjectId = 'proj-other';
-      final container = _boot(session);
+      )..fakeProjectId = 'proj-current';
+      final container = _boot(
+        session,
+        recentProjects: [
+          {
+            'project_root': '/tmp/other',
+            'project': {'id': 'proj-other', 'name': '旧名字'},
+          },
+        ],
+      );
       _clearLog();
 
       final renamed = await container
@@ -138,10 +144,11 @@ void main() {
       final log = _readLog();
       expect(
         log,
-        contains('[info] [home] 重命名项目结束 ok=true 范围=其他项目 id=proj-current'),
-        reason:
-            '现状：改其他项目时 id 记的是当前会话项目，不是被改的那个（已向组长报告）',
+        contains('[info] [home] 重命名项目结束 ok=true 范围=其他项目 id=proj-other'),
       );
+      expect(log, isNot(contains('proj-current')), reason: '不能记成当前会话项目的 id');
+      expect(log, isNot(contains('新名字')));
+      expect(log, isNot(contains('旧名字')));
     });
   });
 }

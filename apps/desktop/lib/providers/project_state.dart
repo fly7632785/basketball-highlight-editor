@@ -2220,6 +2220,12 @@ class ProjectNotifier extends Notifier<ProjectState> {
       if (_disposed) return false;
       if (!isCurrent) {
         // 改的不是当前项目：同步最近项目列表里的名字，不必重开项目。
+        String? renamedId;
+        for (final item in state.recentProjects) {
+          if (item['project_root']?.toString() == target) {
+            renamedId = (item['project'] as Map?)?['id']?.toString();
+          }
+        }
         state = state.copyWith(
           recentProjects: [
             for (final item in state.recentProjects)
@@ -2238,8 +2244,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         appLog(
           'info',
           'home',
-          '重命名项目结束 ok=true 范围=其他项目 '
-              'id=${ref.read(projectSessionProvider).projectId ?? '(未知)'}',
+          '重命名项目结束 ok=true 范围=其他项目 id=${renamedId ?? '(未知)'}',
         );
         return true;
       }
