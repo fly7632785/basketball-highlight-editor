@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
 
+import '../core/app_log.dart';
 import '../providers/session_provider.dart';
 import '../providers/project_state.dart';
 import '../providers/locale_provider.dart';
@@ -196,16 +197,15 @@ class CsTopBar extends ConsumerWidget {
               color: c.textSecondary,
             ),
             onPressed: () {
-              ref
-                  .read(themeModeProvider.notifier)
-                  .set(_nextThemeMode(themeMode));
+              ref.read(themeModeProvider.notifier).set(_nextThemeMode(themeMode));
             },
           ),
           PopupMenuButton<Locale>(
             tooltip: l10n?.switchLanguage ?? '切换语言',
             icon: Icon(LucideIcons.languages, size: 18, color: c.textSecondary),
-            onSelected: (locale) =>
-                ref.read(appLocaleProvider.notifier).set(locale),
+            onSelected: (locale) {
+              ref.read(appLocaleProvider.notifier).set(locale);
+            },
             itemBuilder: (context) => [
               PopupMenuItem(
                 value: BheLocale.zh,
@@ -239,6 +239,7 @@ class CsTopBar extends ConsumerWidget {
     String value,
   ) async {
     if (value == 'reset-onboarding') {
+      appLog('info', 'settings', '重置新手引导');
       await ref.read(onboardingProvider.notifier).reset();
       if (context.mounted) {
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(
@@ -250,13 +251,16 @@ class CsTopBar extends ConsumerWidget {
       return;
     }
     if (value == 'shortcuts') {
+      appLog('info', 'settings', '打开快捷键一览');
       await showReviewShortcutsDialog(context);
       return;
     }
     if (value == 'about') {
+      appLog('info', 'settings', '打开关于');
       await showCourtsideAboutDialog(context);
       return;
     }
+    appLog('info', 'feedback', '打开反馈');
     await showFeedbackDialog(context);
   }
 }

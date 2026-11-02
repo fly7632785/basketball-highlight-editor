@@ -28,6 +28,9 @@ class LocaleNotifier extends Notifier<Locale> {
 
   Future<void> set(Locale locale) async {
     final normalized = BheLocale.fromName(locale.toLanguageTag());
+    if (normalized != state) {
+      appLog('info', 'settings', '切换语言 ${normalized.toLanguageTag()}');
+    }
     state = normalized;
     try {
       final prefs = await SharedPreferences.getInstance();

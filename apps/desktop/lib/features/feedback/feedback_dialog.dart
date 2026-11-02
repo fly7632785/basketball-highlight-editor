@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../core/app_log.dart';
 import '../../core/contact_actions.dart';
 import '../../core/diagnostics.dart';
 import '../../theme/app_colors.dart';
@@ -36,6 +37,7 @@ class _FeedbackDialogState extends State<FeedbackDialog> {
   Future<void> _copy() async {
     final report = await buildDiagnosticReport(error: widget.error);
     await Clipboard.setData(ClipboardData(text: report));
+    appLog('info', 'feedback', '复制诊断信息 ${report.length} 字符');
     if (mounted) setState(() => _copied = true);
   }
 
@@ -127,19 +129,28 @@ class _FeedbackDialogState extends State<FeedbackDialog> {
                 runSpacing: Spacing.xs,
                 children: [
                   TextButton.icon(
-                    onPressed: () => openExternalUri(communityUrl),
+                    onPressed: () {
+                      appLog('info', 'feedback', '打开链接 交流群');
+                      openExternalUri(communityUrl);
+                    },
                     icon: const Icon(LucideIcons.users, size: 16),
                     label: Text(context.bheText('进交流群（官网扫码）')),
                   ),
                   TextButton.icon(
-                    onPressed: () => openExternalUri(
-                      feedbackMailto(appVersion: appVersion, english: english),
-                    ),
+                    onPressed: () {
+                      appLog('info', 'feedback', '打开链接 邮件');
+                      openExternalUri(
+                        feedbackMailto(appVersion: appVersion, english: english),
+                      );
+                    },
                     icon: const Icon(LucideIcons.mail, size: 16),
                     label: Text(context.bheText('发邮件')),
                   ),
                   TextButton.icon(
-                    onPressed: () => openExternalUri(githubIssueUrl),
+                    onPressed: () {
+                      appLog('info', 'feedback', '打开链接 GitHub');
+                      openExternalUri(githubIssueUrl);
+                    },
                     icon: const Icon(LucideIcons.bug, size: 16),
                     label: Text(context.bheText('GitHub 提交')),
                   ),

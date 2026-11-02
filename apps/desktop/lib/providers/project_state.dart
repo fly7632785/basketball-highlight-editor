@@ -1275,8 +1275,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
       state = state.copyWith(
         recentProjects: projectsByPath.values.take(20).toList(),
       );
+      appLog('info', 'home', '最近项目加载结束 共=${state.recentProjects.length}');
     } catch (error) {
       state = state.copyWith(recentError: error.toString());
+      appLog('warn', 'home', '最近项目加载失败: $error');
     } finally {
       state = state.copyWith(recentLoading: false);
     }
@@ -2127,7 +2129,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
   Future<bool> renameProject(String name, {String? projectRoot}) async {
     if (_disposed) return false;
     final trimmed = name.trim();
-    if (trimmed.isEmpty || trimmed.length > projectNameMaxLength) return false;
+    if (trimmed.isEmpty || trimmed.length > projectNameMaxLength) {
+      appLog('warn', 'home', '重命名项目被拒 名字为空或超长');
+      return false;
+    }
     final target = projectRoot?.trim() ?? '';
     final isCurrent =
         target.isEmpty ||
@@ -2163,6 +2168,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
                 item,
           ],
         );
+        appLog('info', 'home', '重命名项目结束 ok=true 范围=其他项目');
         return true;
       }
       final statistics = state.statistics;
@@ -2179,8 +2185,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
         );
       }
       unawaited(refreshStatistics());
+      appLog('info', 'home', '重命名项目结束 ok=true 范围=当前项目');
       return true;
     } catch (error) {
+      appLog('warn', 'home', '重命名项目失败: $error');
       if (!_disposed) _pushNotice('项目名称保存失败：$error', NoticeSeverity.error);
       return false;
     }

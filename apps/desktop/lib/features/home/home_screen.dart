@@ -12,6 +12,7 @@ import '../../components/cs_button.dart';
 import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../components/cs_skeleton.dart';
+import '../../core/app_log.dart';
 import '../../providers/pending_import_provider.dart';
 import '../../providers/project_state.dart';
 import '../../theme/app_colors.dart';
@@ -89,11 +90,14 @@ class HomeScreen extends ConsumerWidget {
     }
 
     Future<void> openRecentProject(String root) async {
-      if (await notifier.openProject(
+      appLog('info', 'home', '打开最近项目');
+      final opened = await notifier.openProject(
         root,
         relinkVideoButtonLabel: l10n?.relinkVideo,
         videoTypeLabel: context.bheText('视频'),
-      )) {
+      );
+      appLog(opened ? 'info' : 'warn', 'home', '打开最近项目结束 ok=$opened');
+      if (opened) {
         onProjectOpened?.call();
       }
     }
@@ -124,8 +128,14 @@ class HomeScreen extends ConsumerWidget {
         ),
       );
       if (confirmed == true) {
+        appLog('info', 'home', '删除项目 已确认');
         await notifier.deleteProject(root);
         await notifier.loadRecentProjects();
+        appLog(
+          'info',
+          'home',
+          '删除项目结束 剩余=${ref.read(projectProvider).recentProjects.length}',
+        );
       }
     }
 

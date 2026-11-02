@@ -53,6 +53,7 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
   }
 
   Future<void> set(ThemeMode mode) async {
+    if (mode != state) appLog('info', 'settings', '切换主题 ${mode.name}');
     state = mode;
     try {
       final prefs = await SharedPreferences.getInstance();

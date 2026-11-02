@@ -154,6 +154,7 @@ class UpdateNotifier extends Notifier<UpdateState> {
       return;
     }
     state = const UpdateState(status: UpdateStatus.checking);
+    appLog('info', 'update', '检查更新开始 manual=$manual');
     try {
       final manifest = await ref.read(updateServiceProvider).fetch();
       final prefs = await SharedPreferences.getInstance();
@@ -176,8 +177,14 @@ class UpdateNotifier extends Notifier<UpdateState> {
         status: available ? UpdateStatus.available : UpdateStatus.upToDate,
         manifest: manifest,
       );
+      appLog(
+        'info',
+        'update',
+        '检查更新结束 ${available ? '发现新版本 v${state.targetVersion}' : '已是最新'}',
+      );
     } catch (error) {
       state = UpdateState(status: UpdateStatus.failed, error: error.toString());
+      appLog('warn', 'update', '检查更新失败: $error');
     }
   }
 
@@ -217,6 +224,7 @@ class UpdateNotifier extends Notifier<UpdateState> {
     _downloadClient = client;
     _cancelled = false;
     state = UpdateState(status: UpdateStatus.downloading, manifest: manifest);
+    appLog('info', 'update', '开始下载更新 v${manifest.versionFor(currentUpdatePlatform())} size=${package.size}');
     var reported = 0;
     try {
       final file = await ref.read(updateServiceProvider).download(
@@ -238,6 +246,7 @@ class UpdateNotifier extends Notifier<UpdateState> {
         received: package.size,
         file: file,
       );
+      appLog('info', 'update', '下载更新完成');
     } catch (error) {
       state = _cancelled
           ? UpdateState(status: UpdateStatus.available, manifest: manifest)
@@ -246,6 +255,11 @@ class UpdateNotifier extends Notifier<UpdateState> {
               manifest: manifest,
               error: error.toString(),
             );
+      appLog(
+        _cancelled ? 'info' : 'warn',
+        'update',
+        _cancelled ? '下载更新已取消' : '下载更新失败: $error',
+      );
     } finally {
       _downloadClient = null;
     }
@@ -258,7 +272,10 @@ class UpdateNotifier extends Notifier<UpdateState> {
 
   Future<void> openPackage() async {
     final file = state.file;
-    if (file != null) await ref.read(updateServiceProvider).open(file);
+    if (file != null) {
+      appLog('info', 'update', '打开更新包所在位置');
+      await ref.read(updateServiceProvider).open(file);
+    }
   }
 
   Future<void> install() async {
@@ -272,6 +289,7 @@ class UpdateNotifier extends Notifier<UpdateState> {
     }
     final lifecycle = ref.read(updateLifecycleProvider);
     if (lifecycle.isBusy()) return;
+    appLog('info', 'update', '开始安装更新 v${ready.targetVersion}');
     state = UpdateState(
       status: UpdateStatus.installing,
       manifest: ready.manifest,
@@ -311,6 +329,7 @@ class UpdateNotifier extends Notifier<UpdateState> {
         received: ready.received,
         error: error.toString(),
       );
+      appLog('warn', 'update', '安装更新失败: $error');
     }
   }
 }
