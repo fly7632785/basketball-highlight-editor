@@ -1343,6 +1343,7 @@ const _englishText = <String, String>{
   '球员已删除': 'Player deleted',
   '选择输出位置失败：': 'Could not choose an output location: ',
   '正在准备输出位置…': 'Preparing output location…',
+  '视频画面准备较慢，已直接打开选择窗口': 'The video view was slow to get ready; opening the picker now',
   '导出任务未返回 id': 'The export task did not return an id',
   '检查视频输入': 'Check video input',
   '生成预览视频': 'Generate preview video',

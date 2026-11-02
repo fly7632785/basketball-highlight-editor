@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:desktop/components/cs_button.dart';
+import 'package:desktop/core/video_orientation.dart';
 import 'package:desktop/features/export/export_screen.dart';
 import 'package:desktop/providers/project_state.dart';
 import 'package:desktop/providers/playback_coordinator.dart';
@@ -400,11 +401,9 @@ void main() {
   });
 
   testWidgets(
-    'export waits for paused previews and prevents duplicate native dialogs',
+    'export hides video, opens the picker and prevents duplicate dialogs',
     (tester) async {
       final coordinator = PlaybackCoordinator();
-      final paused = Completer<void>();
-      coordinator.register(Object(), () => paused.future);
       final picker = _TestOutputPicker();
       final notifier = _TrackingExportNotifier();
       await _pumpExport(tester, coordinator, picker, notifier);
@@ -412,15 +411,14 @@ void main() {
       await tester.ensureVisible(merge);
       await tester.tap(merge);
       await tester.pump();
-      expect(picker.calls, 0);
       expect(tester.widget<CsButton>(merge).onPressed, isNull);
       expect(find.text('正在准备输出位置…'), findsOneWidget);
-      paused.complete();
-      await tester.pump();
       await tester.pump();
       expect(picker.calls, 1);
+      expect(videoSurfaceHidden.value, isTrue);
       picker.result.complete(null);
       await tester.pumpAndSettle();
+      expect(videoSurfaceHidden.value, isFalse);
       expect(notifier.exports, isEmpty);
       expect(tester.widget<CsButton>(merge).onPressed, isNotNull);
       picker.result = Completer<String?>();
@@ -434,27 +432,42 @@ void main() {
     },
   );
 
-  testWidgets(
-    'failed pause never opens native dialog and leaves export retryable',
-    (tester) async {
-      final coordinator = PlaybackCoordinator();
-      coordinator.register(Object(), () async {
-        throw StateError('pause failed');
-      });
-      final picker = _TestOutputPicker();
-      final notifier = _TrackingExportNotifier();
-      await _pumpExport(tester, coordinator, picker, notifier);
-      final merge = find.byKey(const Key('export-start'));
-      await tester.ensureVisible(merge);
-      await tester.tap(merge);
-      await tester.pump();
-      await tester.pump();
-      expect(picker.calls, 0);
-      expect(notifier.exports, isEmpty);
-      expect(find.textContaining('选择输出位置失败'), findsOneWidget);
-      expect(tester.widget<CsButton>(merge).onPressed, isNotNull);
-    },
-  );
+  testWidgets('stuck frame still opens the picker and says so', (tester) async {
+    final stuck = Completer<void>();
+    final coordinator = PlaybackCoordinator(
+      prepareTimeout: const Duration(seconds: 10),
+      nextFrame: () => stuck.future,
+    );
+    final picker = _TestOutputPicker();
+    final notifier = _TrackingExportNotifier();
+    await _pumpExport(tester, coordinator, picker, notifier);
+    final merge = find.byKey(const Key('export-start'));
+    await tester.ensureVisible(merge);
+    await tester.tap(merge);
+    await tester.pump();
+    expect(picker.calls, 0);
+    await tester.pump(const Duration(seconds: 11));
+    expect(picker.calls, 1);
+    expect(find.text('视频画面准备较慢，已直接打开选择窗口'), findsOneWidget);
+    picker.result.complete(null);
+    await tester.pumpAndSettle();
+    expect(tester.widget<CsButton>(merge).onPressed, isNotNull);
+  });
+
+  testWidgets('picker failure leaves export retryable', (tester) async {
+    final picker = _TestOutputPicker()..failure = StateError('picker failed');
+    final notifier = _TrackingExportNotifier();
+    await _pumpExport(tester, PlaybackCoordinator(), picker, notifier);
+    final merge = find.byKey(const Key('export-start'));
+    await tester.ensureVisible(merge);
+    await tester.tap(merge);
+    await tester.pump();
+    await tester.pump();
+    expect(notifier.exports, isEmpty);
+    expect(find.textContaining('选择输出位置失败'), findsOneWidget);
+    expect(tester.widget<CsButton>(merge).onPressed, isNotNull);
+    expect(videoSurfaceHidden.value, isFalse);
+  });
 
   testWidgets('separate export uses the same paused native-dialog path', (
     tester,
@@ -703,15 +716,18 @@ Future<void> _pumpExport(
 class _TestOutputPicker extends ExportOutputPicker {
   var result = Completer<String?>();
   var calls = 0;
+  Object? failure;
   @override
   Future<String?> mergedPath({required String typeLabel}) {
     calls++;
+    if (failure != null) throw failure!;
     return result.future;
   }
 
   @override
   Future<String?> directory({required String confirmLabel}) {
     calls++;
+    if (failure != null) throw failure!;
     return result.future;
   }
 }

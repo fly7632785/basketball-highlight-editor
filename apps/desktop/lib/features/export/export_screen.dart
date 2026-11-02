@@ -512,21 +512,23 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     final merge = mode == 'merge';
     if (_choosingOutput) return;
     setState(() => _choosingOutput = true);
-    final videoId = ref.read(projectProvider).video?['id'];
-    final playerIds = _playerFilterActive ? _selectedPlayerIds.toList() : null;
-    final includeUnassigned = _playerFilterActive ? _includeUnassigned : null;
     try {
+      final videoId = ref.read(projectProvider).video?['id'];
+      final playerIds = _playerFilterActive ? _selectedPlayerIds.toList() : null;
+      final includeUnassigned = _playerFilterActive ? _includeUnassigned : null;
       final picker = ref.read(exportOutputPickerProvider);
       final path = await ref
           .read(playbackCoordinatorProvider)
-          .withPausedPlayback(() async {
-            // Let the paused, offstage previews finish their last Flutter frame
-            // before Windows enters the native modal message loop.
-            await WidgetsBinding.instance.endOfFrame;
+          .withNativeDialog(() async {
             if (!mounted || !TickerMode.valuesOf(context).enabled) return null;
             return merge
                 ? picker.mergedPath(typeLabel: context.bheText('视频'))
                 : picker.directory(confirmLabel: context.bheText('选择输出目录'));
+          }, onPrepareTimeout: () {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(context.bheText('视频画面准备较慢，已直接打开选择窗口'))),
+            );
           });
       if (!mounted ||
           path == null ||

@@ -467,34 +467,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     return index < 0 ? null : index;
   }
 
-  Future<({int startMs, int endMs})?> _showRangeDialog(
-    WidgetBuilder builder,
-  ) async {
-    try {
-      return await ref.read(playbackCoordinatorProvider).withPausedPlayback(() {
-        if (!mounted) return Future<({int startMs, int endMs})?>.value();
-        return showDialog<({int startMs, int endMs})>(
-          context: context,
-          builder: builder,
-        );
-      });
-    } catch (error) {
-      if (mounted) {
-        final l10n = Localizations.of<BheLocalizations>(
-          context,
-          BheLocalizations,
-        );
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              l10n?.reviewRangeOpenFailed(error.toString()) ??
-                  '无法暂停预览并打开范围编辑：$error',
-            ),
-          ),
-        );
-      }
-      return null;
-    }
+  Future<({int startMs, int endMs})?> _showRangeDialog(WidgetBuilder builder) {
+    if (!mounted) return Future<({int startMs, int endMs})?>.value();
+    return showDialog<({int startMs, int endMs})>(
+      context: context,
+      builder: builder,
+    );
   }
 
   Future<void> _editClipRange(Map<String, dynamic> candidate) async {
@@ -1564,7 +1542,6 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
   void initState() {
     super.initState();
     widget.controller._attach(this);
-    _playback.register(this, _pauseForDialog);
     _clipEndMs = reviewTimelineBounds(
       isOriginalVideo: widget.isOriginalVideo,
       candidate: widget.candidate,
@@ -1692,7 +1669,6 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
   @override
   void dispose() {
     widget.controller._detach(this);
-    _playback.unregister(this);
     _disposed = true;
     _mediaGeneration++;
     _playbackToken++;

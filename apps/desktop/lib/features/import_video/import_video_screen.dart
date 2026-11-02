@@ -1863,13 +1863,11 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
   @override
   void initState() {
     super.initState();
-    _playback.register(this, _pauseForDialog);
     unawaited(_openVideo());
   }
 
   @override
   void dispose() {
-    _playback.unregister(this);
     // 组件卸载后纹理不再渲染,此时销毁是安全的(见 review 页同类处理)。
     unawaited(_positionSubscription?.cancel());
     unawaited(_playingSubscription?.cancel());
@@ -2997,7 +2995,6 @@ class _AnalysisRangeEditorState extends ConsumerState<_AnalysisRangeEditor> {
   @override
   void initState() {
     super.initState();
-    _playback.register(this, _pauseForDialog);
     _openVideo();
   }
 
@@ -3083,7 +3080,6 @@ class _AnalysisRangeEditorState extends ConsumerState<_AnalysisRangeEditor> {
 
   @override
   void dispose() {
-    _playback.unregister(this);
     _mediaGeneration++;
     unawaited(_positionSubscription?.cancel());
     unawaited(_playingSubscription?.cancel());

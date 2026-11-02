@@ -1,4 +1,3 @@
-import 'dart:async';
 
 import 'package:bhe_l10n/bhe_l10n.dart';
 import 'package:desktop/features/review/clip_range_timeline.dart';
@@ -284,59 +283,15 @@ void main() {
     expect(notifier.reviews, ['excluded']);
   });
 
-  testWidgets(
-    'range modal waits for background pause and releases guard on cancel',
-    (tester) async {
-      final coordinator = PlaybackCoordinator();
-      final paused = Completer<void>();
-      var calls = 0;
-      coordinator.register(Object(), () {
-        calls++;
-        return paused.future;
-      });
-      await _pump(tester, _RangeNotifier(), coordinator: coordinator);
-      await tester.tap(find.byTooltip('调整片段范围'));
-      await tester.pump();
-      expect(calls, 1);
-      expect(coordinator.dialogActive, isTrue);
-      expect(find.byType(Dialog), findsNothing);
-      paused.complete();
-      await tester.pumpAndSettle();
-      expect(find.byType(Dialog), findsOneWidget);
-      expect(coordinator.dialogActive, isTrue);
-      await tester.ensureVisible(find.text('取消'));
-      await tester.tap(find.text('取消'));
-      await tester.pumpAndSettle();
-      expect(coordinator.dialogActive, isFalse);
-    },
-  );
-
-  testWidgets('pause failure leaves range editor retryable and localized', (
-    tester,
-  ) async {
-    final coordinator = PlaybackCoordinator();
-    final owner = Object();
-    coordinator.register(owner, () async {
-      throw StateError('pause failed');
-    });
-    await _pump(
-      tester,
-      _RangeNotifier(),
-      coordinator: coordinator,
-      locale: const Locale('en'),
-    );
-    await tester.tap(find.byTooltip('Adjust clip range'));
-    await tester.pumpAndSettle();
-    expect(find.byType(Dialog), findsNothing);
-    expect(coordinator.dialogActive, isFalse);
-    expect(find.textContaining('Could not pause the preview'), findsOneWidget);
-    coordinator.unregister(owner);
-    // Let the error snackbar leave the bottom toolbar before retrying its button.
-    await tester.pump(const Duration(seconds: 5));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Adjust clip range'));
+  testWidgets('range modal opens directly and closes on cancel', (tester) async {
+    await _pump(tester, _RangeNotifier());
+    await tester.tap(find.byTooltip('调整片段范围'));
     await tester.pumpAndSettle();
     expect(find.byType(Dialog), findsOneWidget);
+    await tester.ensureVisible(find.text('取消'));
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
