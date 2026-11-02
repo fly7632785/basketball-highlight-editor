@@ -269,6 +269,25 @@ Future<File> downloadUpdate(
   void Function(int received, int total)? onProgress,
   HttpClient? client,
 }) async {
+  try {
+    return await _downloadUpdate(
+      package,
+      directory,
+      onProgress: onProgress,
+      client: client,
+    );
+  } on FileSystemException {
+    // 磁盘满、缓存目录没权限、安装包被占用：不要把 Dart 异常原文抛给用户。
+    throw const UpdateException('磁盘空间不足或无法写入更新缓存，请清理空间后重试');
+  }
+}
+
+Future<File> _downloadUpdate(
+  UpdatePackage package,
+  Directory directory, {
+  void Function(int received, int total)? onProgress,
+  HttpClient? client,
+}) async {
   await directory.create(recursive: true);
   final target = File(
     '${directory.path}${Platform.pathSeparator}${package.fileName}',
@@ -326,7 +345,33 @@ Future<File> downloadUpdate(
     throw const UpdateException('安装包校验失败，请重新下载');
   }
   if (await target.exists()) await target.delete();
-  return partial.rename(target.path);
+  final downloaded = await partial.rename(target.path);
+  await _pruneStaleDownloads(directory, keep: downloaded);
+  return downloaded;
+}
+
+/// 清掉缓存目录里其它版本的安装包和下载残片，只认本应用发版时的命名规则。
+///
+/// 不打补丁的旧版本会一直堆在 `~/Library/Caches/BHE/updates` 这类目录里，
+/// 这里是唯一自然的清理时机：新包已经校验通过，旧包不再有用。
+Future<void> _pruneStaleDownloads(Directory directory, {required File keep}) async {
+  final keepName = keep.uri.pathSegments.last;
+  try {
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity is! File) continue;
+      final name = entity.uri.pathSegments.last;
+      if (name == keepName) continue;
+      // 发版脚本产出的包都以 BHE- 开头；残片是 <包名>.part。
+      if (!name.startsWith('BHE-') && !name.endsWith('.part')) continue;
+      try {
+        await entity.delete();
+      } on FileSystemException {
+        // 旧包删不掉不影响这次更新。
+      }
+    }
+  } on FileSystemException {
+    // 目录读不了就跳过清理，更新本身已经成功。
+  }
 }
 
 Future<String> _sha256(File file) async =>
