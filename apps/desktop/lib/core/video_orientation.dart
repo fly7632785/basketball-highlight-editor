@@ -21,6 +21,13 @@ final ValueNotifier<bool> videoSurfaceHidden = ValueNotifier<bool>(false);
 
 int _videoSurfaceHolds = 0;
 
+/// 测试用：清掉没归还的占位计数，免得上一个用例漏还影响下一个。
+@visibleForTesting
+void resetVideoSurfaceHoldsForTest() {
+  _videoSurfaceHolds = 0;
+  videoSurfaceHidden.value = false;
+}
+
 /// 把视频画面换成占位。引导遮罩、保存窗口等各自占一份，互不覆盖；
 /// 返回的函数只能用一次，用来归还自己那一份，全部归还后画面才恢复。
 VoidCallback holdVideoSurfaceHidden() {

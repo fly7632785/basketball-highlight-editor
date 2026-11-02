@@ -58,11 +58,12 @@ void main() {
   }
 
   // 默认当作已看过引导，免得遮罩挡住别的用例；引导本身在专门的用例里测。
-  setUp(
-    () => SharedPreferences.setMockInitialValues({
+  setUp(() {
+    resetVideoSurfaceHoldsForTest();
+    SharedPreferences.setMockInitialValues({
       onboardingStepsPrefsKey: allOnboardingStepIds,
-    }),
-  );
+    });
+  });
 
   for (final locale in ['zh', 'en']) {
     testWidgets('legacy source warning appears $locale', (tester) async {
