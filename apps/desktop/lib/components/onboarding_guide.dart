@@ -287,7 +287,7 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
             ),
             Positioned(
               left: left.clamp(0.0, math.max(0.0, size.width - math.min(bubbleWidth, size.width - 24))),
-              top: top.clamp(12.0, math.max(12.0, size.height - 24 - 60)),
+              top: top.clamp(12.0, math.max(12.0, size.height - 12 - math.min(bubbleHeight, size.height - 24))),
               width: math.min(bubbleWidth, size.width - 24),
               // 窗口小或文字多时气泡不超出屏幕，内容在气泡里滚动。
               child: ConstrainedBox(
@@ -296,8 +296,7 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
                 color: c.surface,
                 elevation: 8,
                 borderRadius: BorderRadius.circular(CsRadius.md),
-                child: SingleChildScrollView(
-                  child: Container(
+                child: Container(
                   padding: const EdgeInsets.all(Spacing.md),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(CsRadius.md),
@@ -307,25 +306,35 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        context.bheText(step.title),
-                        key: const Key('onboarding-title'),
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: c.textPrimary,
-                          fontWeight: FontWeight.w700,
+                      // 文字和示例图放在可滚动区里，「跳过 / 上一步 / 下一步」始终固定在底部。
+                      Flexible(
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                context.bheText(step.title),
+                                key: const Key('onboarding-title'),
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  color: c.textPrimary,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: Spacing.xs),
+                              Text(
+                                context.bheText(step.body),
+                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: c.textSecondary,
+                                ),
+                              ),
+                              if (step.extra != null) ...[
+                                const SizedBox(height: Spacing.sm),
+                                step.extra!(context),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
-                      const SizedBox(height: Spacing.xs),
-                      Text(
-                        context.bheText(step.body),
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: c.textSecondary,
-                        ),
-                      ),
-                      if (step.extra != null) ...[
-                        const SizedBox(height: Spacing.sm),
-                        step.extra!(context),
-                      ],
                       const SizedBox(height: Spacing.md),
                       Row(
                         children: [
@@ -368,7 +377,6 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
                 ),
                 ),
               ),
-                ),
             ),
           ],
         ),

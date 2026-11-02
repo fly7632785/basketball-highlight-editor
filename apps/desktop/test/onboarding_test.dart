@@ -330,6 +330,38 @@ void main() {
       expect(find.text('第一步'), findsOneWidget);
     });
 
+    testWidgets('窗口很小、文字很多时气泡不超出屏幕，内容可滚动', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      tester.view.physicalSize = const Size(380, 420);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final longBody = List.generate(14, (i) => '第 $i 行很长很长的说明文字用来撑高气泡').join('\n');
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            home: Scaffold(
+              body: OnboardingGuide(
+                page: onboardingReviewPage,
+                steps: [OnboardingStep(id: 't.long', title: '很长', body: longBody)],
+                child: const SizedBox(),
+              ),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+      }
+      expect(find.byKey(const Key('onboarding-overlay')), findsOneWidget);
+      final bubble = tester.getRect(find.byKey(const Key('onboarding-next')));
+      expect(bubble.bottom, lessThanOrEqualTo(420));
+      expect(bubble.right, lessThanOrEqualTo(380));
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('内容没就绪时不弹', (tester) async {
       await pump(tester, prefs: {}, ready: false);
       expect(find.byKey(const Key('onboarding-overlay')), findsNothing);
