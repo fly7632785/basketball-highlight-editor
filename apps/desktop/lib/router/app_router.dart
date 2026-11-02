@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../components/cs_scaffold.dart';
+import '../core/app_log.dart';
 import '../features/export/export_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/import_video/import_video_screen.dart';
@@ -16,8 +17,35 @@ import '../providers/project_state.dart';
 /// `context.go('/review')` 等触发。
 ///
 /// 四个 branch 均绑定真实 screen，页面数据统一来自 projectProvider。
-final Provider<GoRouter> appRouterProvider = Provider<GoRouter>(
-  (ref) => GoRouter(
+final Provider<GoRouter> appRouterProvider = Provider<GoRouter>((ref) {
+  final router = _buildRouter();
+  _logNavigation(ref, router);
+  ref.onDispose(router.dispose);
+  return router;
+});
+
+/// 切页面时写一行：去了哪、当时项目里有几个视频/候选、分析和导出状态。
+/// 排查「点了没反应/跳错页」时先看这条线。
+void _logNavigation(Ref ref, GoRouter router) {
+  String? last;
+  router.routerDelegate.addListener(() {
+    final path = router.routerDelegate.currentConfiguration.uri.path;
+    if (path == last) return;
+    final from = last;
+    last = path;
+    final state = ref.read(projectProvider);
+    appLog(
+      'info',
+      'nav',
+      '${from ?? '(启动)'} → $path videos=${state.videos.length} '
+          'candidates=${state.candidates.length} job=${state.job?['state']} '
+          'export=${state.exportJob?['state']} busy=${state.busy}',
+    );
+  });
+}
+
+GoRouter _buildRouter() =>
+  GoRouter(
     initialLocation: '/home',
     routes: <RouteBase>[
       StatefulShellRoute.indexedStack(
@@ -49,8 +77,7 @@ final Provider<GoRouter> appRouterProvider = Provider<GoRouter>(
         ],
       ),
     ],
-  ),
-);
+  );
 
 /// Home 路由壳:首次进入自动加载最近项目,随后渲染 HomeScreen。
 class _HomeRoute extends ConsumerStatefulWidget {

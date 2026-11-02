@@ -1,3 +1,4 @@
+import '../../core/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -321,8 +322,11 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
         'com.apple.quicktime-movie',
       ],
     );
+    final pickWatch = Stopwatch()..start();
+    appLog('info', 'import', '打开选择视频对话框');
     if (existingVideo == null) {
       final files = await openFiles(acceptedTypeGroups: [group]);
+      appLog('info', 'import', '选择视频对话框结束 选了 ${files.length} 个 用时 ${pickWatch.elapsedMilliseconds}ms');
       if (files.isEmpty || !mounted) return;
       if (files.length > 1) {
         await _importVideoPaths([for (final file in files) file.path]);
@@ -332,6 +336,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       return;
     }
     final file = await openFile(acceptedTypeGroups: [group]);
+    appLog('info', 'import', '选择视频对话框结束 选了 ${file == null ? 0 : 1} 个 用时 ${pickWatch.elapsedMilliseconds}ms');
     if (file == null || !mounted) return;
     await _importVideoPath(file.path);
   }
@@ -350,6 +355,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   }
 
   Future<void> _addVideos() async {
+    appLog('info', 'import', '打开添加视频对话框');
     final files = await openFiles(
       acceptedTypeGroups: [
         XTypeGroup(
@@ -360,6 +366,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
         ),
       ],
     );
+    appLog('info', 'import', '添加视频对话框结束 选了 ${files.length} 个');
     if (files.isEmpty || !mounted) return;
     await ref
         .read(projectProvider.notifier)
@@ -2029,7 +2036,7 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
     if (path == null || path.isEmpty || !File(path).existsSync()) return;
     try {
       if (_player == null) {
-        _player = Player();
+        _player = createLoggedPlayer('导入页');
         _controller = VideoController(
           _player!,
           configuration: VideoControllerConfiguration(
@@ -3153,7 +3160,7 @@ class _AnalysisRangeEditorState extends ConsumerState<_AnalysisRangeEditor> {
     // player.dispose() 会触发原生 ~VideoOutput 析构,在 Windows 上与
     // 光栅线程死锁导致整个应用无响应。仅组件卸载时才销毁。
     if (_player == null && path != null && path.isNotEmpty) {
-      _player = Player();
+      _player = createLoggedPlayer('导入页');
       _controller = VideoController(
         _player!,
         configuration: VideoControllerConfiguration(
@@ -3189,7 +3196,7 @@ class _AnalysisRangeEditorState extends ConsumerState<_AnalysisRangeEditor> {
     });
     try {
       await matchPlayerToSourceRotation(player, rotation: widget.rotation);
-      await player.open(Media(Uri.file(path).toString()), play: false);
+      await openLoggedMedia(player, '导入页', path);
       _playbackRequested = false;
       await player.pause();
       if (mounted &&

@@ -1,4 +1,5 @@
 // lib/providers/project_state.dart
+import '../core/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -326,6 +327,16 @@ class _ReviewBaseline {
 /// - `_section = AppSection.x` 不迁移(由 router 负责)
 /// - `_error = ...` 不迁移(由 notice 替代)
 class ProjectNotifier extends Notifier<ProjectState> {
+  @override
+  bool updateShouldNotify(ProjectState previous, ProjectState next) {
+    // 换了当前视频就记一行它的规格，反馈时能看出是什么样的视频（分辨率、帧率、编码、时长）。
+    final id = next.video?['id'];
+    if (id != null && id != previous.video?['id']) {
+      appLog('info', 'video', '当前视频 ${describeVideoForLog(next.video)}');
+    }
+    return super.updateShouldNotify(previous, next);
+  }
+
   final List<_ReviewSnapshot> _reviewHistory = <_ReviewSnapshot>[];
   final Set<String> _pollingJobIds = <String>{};
   final Set<String> _pollingExportJobIds = <String>{};
@@ -1509,6 +1520,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     required double beforeSeconds,
     required double afterSeconds,
   }) async {
+    appLog('info', 'analysis', '开始排队分析多段视频 before=${beforeSeconds}s after=${afterSeconds}s');
     final videoIds = [
       for (final video in state.videos)
         if (!needsHoopConfirmation(video) &&
@@ -1717,6 +1729,13 @@ class ProjectNotifier extends Notifier<ProjectState> {
     final requestedMode = mode == 'fast' || mode == 'standard'
         ? mode
         : state.analysisMode;
+    appLog(
+      'info',
+      'analysis',
+      '开始分析 mode=$requestedMode before=${beforeSeconds}s after=${afterSeconds}s '
+          'video=${state.video?['width']}x${state.video?['height']} '
+          'fps=${state.video?['fps']} duration_ms=${state.video?['duration_ms']}',
+    );
     await _runBusy(() async {
       await flushReviewQueue();
       await ref.read(engineBootstrapProvider.notifier).ensure();
@@ -1830,6 +1849,13 @@ class ProjectNotifier extends Notifier<ProjectState> {
           unawaited(_advanceAnalysisQueue(nextJob));
         }
         if (nextState != previousState) {
+          appLog(
+            nextState == 'failed' ? 'error' : 'info',
+            'analysis',
+            '分析任务状态 $previousState → $nextState job=$jobId '
+                'stage=${nextJob?['stage']} code=${nextJob?['error_code']} '
+                'msg=${nextJob?['error_message']}',
+          );
           final segment = state.segmentOf(nextJob?['video_id']?.toString());
           if (nextState == 'completed' && segment != null) {
             _pushNotice('第 $segment 段分析完成', NoticeSeverity.success);
@@ -1910,6 +1936,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   /// 等价 app.dart:_retryAnalysis(521)。
   Future<void> retryAnalysis({String? mode}) async {
+    appLog('info', 'analysis', '重试分析 mode=$mode');
     final jobId = state.job?['id'];
     if (jobId is! String) return;
     final requestedMode = mode == 'fast' || mode == 'standard'
@@ -1962,6 +1989,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   /// 等价 app.dart:_cancelAnalysis(538)。
   Future<void> cancelAnalysis() async {
+    appLog('info', 'analysis', '请求取消分析 job=${state.job?['id']}');
     final jobId = state.job?['id'];
     if (jobId is! String) return;
     final generation = _projectLoadGeneration;
@@ -2153,6 +2181,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     bool showNotice = true,
   }) {
     if (_disposed) return Future<bool>.value(false);
+    appLog('info', 'review', '标记候选 id=$id → $status${reason == null ? '' : ' reason=$reason'}');
     final generation = _projectLoadGeneration;
     final engineStatus = status == 'included' ? 'goal' : status;
     final pending = _pendingReviews[id];
@@ -2331,6 +2360,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   /// 等价 app.dart:_undoReview(599)。
   Future<void> undoReview() {
+    appLog('info', 'review', '撤销上一步审核');
     final pending = _undoOperation;
     if (pending != null) return pending;
     final generation = _projectLoadGeneration;
@@ -2367,6 +2397,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   /// 等价 app.dart:_updateClipRange(612)。
   Future<void> updateClipRange(String id, int startMs, int endMs) async {
+    appLog('info', 'review', '调整范围 id=$id start=${startMs}ms end=${endMs}ms');
     await _runBusy(() async {
       await ref
           .read(projectSessionProvider)
@@ -2407,6 +2438,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     int? eventTimeMs,
   }) async {
     JsonMap? created;
+    appLog('info', 'review', '补漏候选 start=${startMs}ms end=${endMs}ms event=${eventTimeMs}ms');
     await _runBusy(() async {
       final payload = await ref
           .read(projectSessionProvider)
@@ -2498,6 +2530,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   Future<void> setCandidatePlayer(String candidateId, String? playerId) async {
+    appLog('info', 'review', '设置球员标签 id=$candidateId player=${playerId ?? '(清除)'}');
     await _runPlayerChange((generation) async {
       await ref
           .read(projectSessionProvider)
@@ -2950,6 +2983,16 @@ class ProjectNotifier extends Notifier<ProjectState> {
   void _pushNotice(Object error, NoticeSeverity severity) {
     final content = userFacingNotice(error);
     if (_disposed || content.title.trim().isEmpty) return;
+    // 用户看到的每条提示都留一行：反馈时对照日志就知道他当时看到了什么。
+    appLog(
+      switch (severity) {
+        NoticeSeverity.error => 'error',
+        NoticeSeverity.warning => 'warn',
+        _ => 'info',
+      },
+      'notice',
+      '${content.title}${content.description == null ? '' : ' | ${content.description}'}',
+    );
     ref
         .read(noticeProvider.notifier)
         .push(

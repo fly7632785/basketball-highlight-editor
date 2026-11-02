@@ -137,7 +137,10 @@ print(json.dumps({"request_id": request["request_id"], "ok": False,
     final log = logFile.readAsStringSync();
     expect(log, contains('start python='));
     expect(log, contains('stderr: ffmpeg not found'));
-    expect(log, contains('inspect_video failed: {"code":"MEDIA_TOOL_MISSING"'));
+    expect(
+      log,
+      contains(RegExp(r'inspect_video failed after \d+ms: \{"code":"MEDIA_TOOL_MISSING"')),
+    );
     expect(log, contains('exit code=0'));
   });
 

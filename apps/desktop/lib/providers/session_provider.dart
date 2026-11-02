@@ -186,6 +186,7 @@ class EngineBootstrapNotifier extends Notifier<AsyncValue<bool>> {
         extraPath: runtimeBin,
       );
       await EngineSession(client).hello();
+      appLog('info', 'engine', 'Engine 就绪 python=$pythonPath');
       _restartAttempts = 0;
       return true;
     });
@@ -208,6 +209,12 @@ class EngineBootstrapNotifier extends Notifier<AsyncValue<bool>> {
     }
     _lastEngineExitAt = now;
     _restartAttempts++;
+    appLog(
+      _restartAttempts > 5 ? 'error' : 'warn',
+      'engine',
+      'Engine 意外退出 exitCode=$exitCode 第 $_restartAttempts 次'
+          '${_restartAttempts > 5 ? '，不再自动重启' : '，1 秒后重启'}；stderr 尾部: $stderrTail',
+    );
     if (_restartAttempts > 5) return;
     Future<void>.delayed(const Duration(seconds: 1), ensure);
   }

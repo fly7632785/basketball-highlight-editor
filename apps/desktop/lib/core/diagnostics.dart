@@ -5,6 +5,9 @@ import 'package:bhe_core/bhe_core.dart' show redactUserPaths;
 
 export 'package:bhe_core/bhe_core.dart' show redactUserPaths;
 
+import 'package:flutter/widgets.dart' show WidgetsBinding;
+
+import 'app_diagnostics.dart' show describeViews;
 import 'app_log.dart';
 
 /// 打包时由 `--dart-define=BHE_VERSION=<版本>` 注入，本地开发显示 dev。
@@ -15,7 +18,7 @@ const appVersion = String.fromEnvironment('BHE_VERSION', defaultValue: 'dev');
 Future<String> buildDiagnosticReport({
   String? error,
   Map<String, String>? environment,
-  int logLines = 300,
+  int logLines = 600,
 }) async {
   final env = environment ?? Platform.environment;
   final buffer = StringBuffer()
@@ -26,7 +29,8 @@ Future<String> buildDiagnosticReport({
     )
     ..writeln('架构: ${Abi.current()}')
     ..writeln('CPU 核数: ${Platform.numberOfProcessors}')
-    ..writeln('语言: ${Platform.localeName}');
+    ..writeln('语言: ${Platform.localeName}')
+    ..writeln('屏幕: ${_displayInfo()}');
   if (error != null && error.trim().isNotEmpty) {
     buffer
       ..writeln()
@@ -81,5 +85,13 @@ Future<String> readUpdateLogTail(String directory) async {
     );
   } on Object {
     return '';
+  }
+}
+
+String _displayInfo() {
+  try {
+    return describeViews(WidgetsBinding.instance.platformDispatcher.views);
+  } on Object {
+    return '(未知)';
   }
 }

@@ -1,3 +1,4 @@
+import '../../core/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -1619,7 +1620,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
     if (_player == null || _controller == null) {
       try {
         MediaKit.ensureInitialized();
-        _player ??= Player();
+        _player ??= createLoggedPlayer('审核页');
         _controller = VideoController(
           _player!,
           configuration: VideoControllerConfiguration(
@@ -1877,7 +1878,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
         return;
       }
       await matchPlayerToSourceRotation(player, rotation: widget.rotation);
-      await player.open(Media(Uri.file(path).toString()), play: false);
+      await openLoggedMedia(player, '审核页', path);
       if (!_isCurrent(generation)) return;
       await waitForPlayableDuration(
         current: player.state.duration,
@@ -3942,7 +3943,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
     }
     try {
       MediaKit.ensureInitialized();
-      final player = Player();
+      final player = createLoggedPlayer('范围编辑');
       _player = player;
       _controller = VideoController(
         player,
@@ -3974,7 +3975,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
         }
       });
       await matchPlayerToSourceRotation(player, rotation: widget.rotation);
-      await player.open(Media(Uri.file(path).toString()), play: false);
+      await openLoggedMedia(player, '审核页', path);
       // 等媒体元数据就绪后再 seek:open 后立即 seek 在加载较慢时
       // (Windows 软件解码)会被丢弃,导致播放从 0 开始而非片段起点。
       await waitForPlayableDuration(

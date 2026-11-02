@@ -46,5 +46,11 @@ void appendEngineLog(String message, {File? file}) {
 
 /// 界面层日志：写进同一个 engine.log（诊断复制已带它的尾部），一行一条，
 /// 格式 `[级别] [模块] 内容`。写失败不抛。
-void appLog(String level, String module, String message) =>
-    appendEngineLog('[$level] [$module] $message');
+void appLog(String level, String module, String message) {
+  final line = '[$level] [$module] $message';
+  lastAppLogLine = line;
+  appendEngineLog(line);
+}
+
+/// 界面层最近写的一行，卡顿监控报警时用它说明「卡在哪一步之后」。
+String lastAppLogLine = '';

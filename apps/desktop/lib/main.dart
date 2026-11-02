@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
+import 'core/app_diagnostics.dart';
 import 'core/app_errors.dart';
 import 'providers/session_provider.dart';
 import 'providers/theme_provider.dart';
@@ -15,6 +16,7 @@ void main() => runWithAppErrorLogging(_startApp);
 
 Future<void> _startApp() async {
   WidgetsFlutterBinding.ensureInitialized();
+  AppDiagnostics.start();
   MediaKit.ensureInitialized();
   final themeMode = await loadSavedThemeMode();
   ThemeModeNotifier.startupMode = themeMode;
