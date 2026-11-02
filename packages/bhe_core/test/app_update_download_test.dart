@@ -42,6 +42,8 @@ void main() {
     )..writeAsBytesSync(utf8.encode('half'));
     final userFile = File('${cache.path}${Platform.pathSeparator}notes.txt')
       ..writeAsStringSync('用户自己的文件');
+    final userPart = File('${cache.path}${Platform.pathSeparator}notes.part')
+      ..writeAsStringSync('不是更新残片的 .part 文件');
 
     final file = await downloadUpdate(
       UpdatePackage(
@@ -58,6 +60,7 @@ void main() {
     expect(stalePart.existsSync(), isFalse);
     expect(userFile.existsSync(), isTrue);
     expect(userFile.readAsStringSync(), '用户自己的文件');
+    expect(userPart.existsSync(), isTrue, reason: '只清 BHE- 开头的更新文件，不删别的 .part');
   });
 
   test('reports an unwritable cache instead of the raw dart exception', () async {

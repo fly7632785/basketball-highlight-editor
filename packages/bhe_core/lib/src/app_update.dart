@@ -361,8 +361,8 @@ Future<void> _pruneStaleDownloads(Directory directory, {required File keep}) asy
       if (entity is! File) continue;
       final name = entity.uri.pathSegments.last;
       if (name == keepName) continue;
-      // 发版脚本产出的包都以 BHE- 开头；残片是 <包名>.part。
-      if (!name.startsWith('BHE-') && !name.endsWith('.part')) continue;
+      // 发版脚本产出的包都以 BHE- 开头；残片是 BHE-<包名>.part（同样以 BHE- 开头）。
+      if (!name.startsWith('BHE-')) continue;
       try {
         await entity.delete();
       } on FileSystemException {
