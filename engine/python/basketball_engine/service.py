@@ -1947,6 +1947,8 @@ class EngineService:
                     (time.perf_counter() - analysis_started) * 1000
                 ),
             }
+            if cancel_event and cancel_event.is_set():
+                raise PipelineCancelled("JOB_CANCELLED")
             store.update_job(job_id, state="completed", stage="persist_candidates", progress=1.0, checkpoint=checkpoint)
             proxy_info: Dict[str, Any] = {}
             try:

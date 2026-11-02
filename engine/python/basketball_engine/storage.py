@@ -1263,7 +1263,13 @@ class ProjectStore:
                 fields.append("finished_at = COALESCE(finished_at, ?)")
                 values.append(now_iso())
         if stage is not None:
-            fields.append("stage = ?")
+            # 已进入取消收尾的任务保留 cancelling 显示，不被后续进度写入盖回普通阶段。
+            if state is None or state == "running":
+                fields.append(
+                    "stage = CASE WHEN stage = 'cancelling' THEN stage ELSE ? END"
+                )
+            else:
+                fields.append("stage = ?")
             values.append(stage)
         if progress is not None:
             fields.append("progress = ?")

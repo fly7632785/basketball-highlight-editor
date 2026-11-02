@@ -2864,3 +2864,69 @@ def test_proxy_extract_without_frame_retries_source(tmp_path, monkeypatch):
     monkeypatch.setattr('basketball_engine.service.subprocess.run', run)
     result = service.extract_preview({'project_root':str(root), 'video_id':video['id'], 'time_ms':3000})
     assert Path(result['path']).stat().st_size > 0
+
+
+def _stub_analysis_pipeline(monkeypatch, service):
+    refined = {"candidates": [{"time": 1.5, "score": 0.8}]}
+
+    def fake_build(**_kwargs):
+        return [["fake", "proxy"], ["fake", "scan"], ["fake", "candidates"]]
+
+    def fake_run(_commands, refined_output, *_args, **_kwargs):
+        Path(refined_output).parent.mkdir(parents=True, exist_ok=True)
+        Path(refined_output).write_text(json.dumps(refined), encoding="utf-8")
+        return {"refined": refined, "logs": [], "cache_hits": 0, "stage_timings_ms": {}}
+
+    monkeypatch.setattr("engine.python.basketball_engine.service.build_pipeline_commands", fake_build)
+    monkeypatch.setattr("engine.python.basketball_engine.service.run_pipeline", fake_run)
+    monkeypatch.setattr(
+        service, "_prepare_candidate_previews", lambda **_: {"generated": 1, "reused": 0, "failed": 0}
+    )
+
+
+def test_cancel_during_persist_is_honoured_instead_of_completing(tmp_path: Path, monkeypatch):
+    """收尾写库那一下点取消：不能再落成 completed，否则界面说「分析完成」并接着跑下一段。"""
+    service, store, video, model = _analysis_fixture(tmp_path)
+    _stub_analysis_pipeline(monkeypatch, service)
+    entered, release = threading.Event(), threading.Event()
+    original = ProjectStore.replace_candidates
+
+    def slow_replace(self, video_id, rows):
+        entered.set()
+        assert release.wait(5)
+        return original(self, video_id, rows)
+
+    monkeypatch.setattr(ProjectStore, "replace_candidates", slow_replace)
+    payload = {
+        "project_root": str(store.root),
+        "video_id": video["id"],
+        "model_path": str(model),
+        "mode": "fast",
+    }
+    job = service.handle("start_analysis", payload)["job"]
+    worker = service._job_threads[job["id"]]
+    try:
+        assert entered.wait(5)
+        cancelled = service.handle(
+            "cancel_job", {"project_root": str(store.root), "job_id": job["id"]}
+        )["job"]
+        assert cancelled["stage"] == "cancelling"
+    finally:
+        release.set()
+        worker.join(10)
+    assert not worker.is_alive()
+    finished = store.get_job(job["id"])
+    assert finished["state"] == "cancelled"
+    assert finished["error_code"] == "JOB_CANCELLED"
+
+
+def test_progress_write_keeps_the_cancelling_stage(tmp_path: Path):
+    """取消后还在跑的进度写入不能把 cancelling 盖回普通阶段。"""
+    _service, store, video, _model = _analysis_fixture(tmp_path)
+    job = store.create_job(store.project()["id"], video["id"], "analysis")
+    store.update_job(job["id"], state="running", stage="cancelling")
+    updated = store.update_job(
+        job["id"], state="running", stage="prepare_review_previews", progress=0.9
+    )
+    assert updated["stage"] == "cancelling"
+    assert updated["progress"] == pytest.approx(0.9)
