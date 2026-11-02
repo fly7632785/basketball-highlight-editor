@@ -93,6 +93,7 @@ def test_capability_check_cached_and_missing_filter_is_safe(monkeypatch):
 
 
 def test_mixed_incompatible_streams_force_reencode_without_second_tonemap(monkeypatch,tmp_path):
+    monkeypatch.setattr(export, '_audio_layouts', lambda paths: [None] * len(paths))
     calls=[]
     monkeypatch.setattr(export, '_compatible_color_streams', lambda paths: False)
     monkeypatch.setattr(export, 'video_codecs', lambda: ['mpeg4'])

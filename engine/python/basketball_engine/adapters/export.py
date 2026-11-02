@@ -483,6 +483,26 @@ def _uniform_frame_rate(paths: list[Path]) -> str | None:
     return seen[0][0]
 
 
+def _audio_layouts(paths: list[Path]) -> list[tuple[str, int] | None]:
+    """Read actual encoded stream layouts before deciding whether concat is safe."""
+    layouts = []
+    for path in paths:
+        result = subprocess.run(
+            [resolve_media_tool("ffprobe"), "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=sample_rate,channels", "-of", "json", str(path)],
+            check=True, capture_output=True, text=True, timeout=15,
+        )
+        streams = json.loads(result.stdout)["streams"]
+        if not streams:
+            layouts.append(None)
+        else:
+            rate, channels = str(streams[0]["sample_rate"]), int(streams[0]["channels"])
+            if int(rate) <= 0 or channels <= 0:
+                raise ValueError("invalid audio format")
+            layouts.append((rate, channels))
+    return layouts
+
+
 def _merged_duration_ok(path: Path, expected_ms: int) -> bool:
     """拼接成品里每条流的时长都要和各片段之和对得上；探测失败时不拦截。"""
     try:
@@ -735,7 +755,11 @@ def export_goal_clips(
                 not c.get("tonemap") for c in candidates
             )
             normalize_color = mixed_color and not _compatible_color_streams(files)
+            audio_layouts = _audio_layouts(files)
+            normalize_audio = any(layout is not None for layout in audio_layouts) and len(set(audio_layouts)) > 1
             try:
+                if normalize_audio:
+                    raise OSError("audio layouts require normalization")
                 if normalize_color:
                     raise OSError("incompatible color streams require re-encoding")
                 run_atomic_ffmpeg(
@@ -757,7 +781,7 @@ def export_goal_clips(
                 # as-is either: the demuxer rescales timestamps and the result runs
                 # long. Bring them to the first clip's rate first.
                 rate_target = _uniform_frame_rate(files)
-                needs_normalize = normalize_color or rate_target is not None
+                needs_normalize = normalize_color or normalize_audio or rate_target is not None
                 with (tempfile.TemporaryDirectory(prefix="bhe-color-", dir=output_dir)
                       if needs_normalize else nullcontext(None)) as temp:
                     normalized_manifest = concat_file
@@ -770,10 +794,13 @@ def export_goal_clips(
                                 lambda codec: [
                                     resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
                                     "-i", str(path),
+                                    *(["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"] if normalize_audio and audio_layouts[index] is None else []),
+                                    *(["-map", "0:v:0", "-map", "1:a:0", "-shortest"] if normalize_audio and audio_layouts[index] is None else []),
+                                    *(["-map", "0:v:0", "-map", "0:a:0"] if normalize_audio and audio_layouts[index] is not None else []),
                                     *(["-vf", "scale=in_range=auto:out_range=tv,format=yuv420p"] if normalize_color else []),
                                     *(["-r", rate_target] if rate_target else []),
                                     *video_codec_options(codec), *(SDR_TAGS if normalize_color else []),
-                                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+                                    "-c:a", "aac", "-b:a", "128k", *(["-ar", "48000", "-ac", "2"] if normalize_audio else []), "-movflags", "+faststart",
                                     str(normalized_path),
                                 ],
                                 normalized_path, codecs, cancel_check=cancel_check,
