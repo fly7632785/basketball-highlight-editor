@@ -503,6 +503,83 @@ void main() {
     expect(videoSurfaceHidden.value, isFalse);
   });
 
+  testWidgets('picker opens while an unrelated pause remains stuck and restores the surface', (tester) async {
+    final player = _HungPausePlayer();
+    unawaited(player.pause());
+    final picker = _TestOutputPicker();
+    final notifier = _TrackingExportNotifier();
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        projectProvider.overrideWith(() => notifier),
+        playbackCoordinatorProvider.overrideWithValue(PlaybackCoordinator()),
+        exportOutputPickerProvider.overrideWithValue(picker),
+      ],
+      child: MaterialApp(home: Scaffold(body: Stack(children: [
+        const ExportScreen(),
+        IgnorePointer(child: ValueListenableBuilder<bool>(
+          valueListenable: videoSurfaceHidden,
+          builder: (_, hidden, _) => Text(hidden ? 'video placeholder' : 'video surface'),
+        )),
+      ]))),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('video surface'), findsOneWidget);
+    final start = find.byKey(const Key('export-start'));
+    await tester.ensureVisible(start);
+    await tester.tap(start);
+    await tester.pump();
+    await tester.pump();
+    expect(picker.calls, 1);
+    expect(player.pauseCalls, 1);
+    expect(player.pauseFinished, isFalse);
+    expect(find.text('video placeholder'), findsOneWidget);
+    picker.result.complete(null);
+    await tester.pumpAndSettle();
+    expect(find.text('video surface'), findsOneWidget);
+    expect(tester.widget<CsButton>(start).onPressed, isNotNull);
+  });
+
+  testWidgets('diagnostic failures cannot block or strand picker', (tester) async {
+    final picker = _TestOutputPicker();
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        projectProvider.overrideWith(_TrackingExportNotifier.new),
+        exportOutputPickerProvider.overrideWithValue(picker),
+        exportDialogLogProvider.overrideWithValue((_, _, _) => throw StateError('log failed')),
+      ],
+      child: const MaterialApp(home: Scaffold(body: ExportScreen())),
+    ));
+    await tester.pumpAndSettle();
+    final start = find.byKey(const Key('export-start'));
+    await tester.ensureVisible(start);
+    await tester.tap(start);
+    await tester.pump();
+    await tester.pump();
+    expect(picker.calls, 1);
+    picker.result.complete(null);
+    await tester.pumpAndSettle();
+    expect(tester.widget<CsButton>(start).onPressed, isNotNull);
+    expect(videoSurfaceHidden.value, isFalse);
+  });
+
+  testWidgets('provider failure resets the export button', (tester) async {
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        projectProvider.overrideWith(_TrackingExportNotifier.new),
+        playbackCoordinatorProvider.overrideWith((ref) => throw StateError('provider failed')),
+      ],
+      child: const MaterialApp(home: Scaffold(body: ExportScreen())),
+    ));
+    await tester.pumpAndSettle();
+    final start = find.byKey(const Key('export-start'));
+    await tester.ensureVisible(start);
+    await tester.tap(start);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('选择输出位置失败'), findsOneWidget);
+    expect(tester.widget<CsButton>(start).onPressed, isNotNull);
+    expect(videoSurfaceHidden.value, isFalse);
+  });
+
   testWidgets('separate export uses the same paused native-dialog path', (
     tester,
   ) async {
@@ -763,6 +840,17 @@ class _TestOutputPicker extends ExportOutputPicker {
     calls++;
     if (failure != null) throw failure!;
     return result.future;
+  }
+}
+
+class _HungPausePlayer {
+  final _pending = Completer<void>();
+  int pauseCalls = 0;
+  bool pauseFinished = false;
+  Future<void> pause() async {
+    pauseCalls++;
+    await _pending.future;
+    pauseFinished = true;
   }
 }
 

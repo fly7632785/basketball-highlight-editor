@@ -22,6 +22,9 @@ import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
 import 'game_stats.dart';
 
+@visibleForTesting
+final exportDialogLogProvider = Provider<void Function(String, String, String)>((ref) => appLog);
+
 /// Export 屏:汇总当前保留片段 + 合并/分别导出 CTA + 历史。
 ///
 /// 数据来自 [projectProvider];导出走 `ProjectNotifier.export(mode:)`,
@@ -552,8 +555,15 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     if (_choosingOutput) return;
     setState(() => _choosingOutput = true);
     final chooseWatch = Stopwatch()..start();
-    appLog('info', 'export', '选择输出位置开始 mode=$mode');
     try {
+      void log(String level, String message) {
+        try {
+          ref.read(exportDialogLogProvider)(level, 'export', message);
+        } catch (_) {
+          // Diagnostics are best effort and must not block the picker.
+        }
+      }
+      log('info', '选择输出位置开始 mode=$mode');
       final videoId = ref.read(projectProvider).video?['id'];
       final playerIds = _playerFilterActive ? _selectedPlayerIds.toList() : null;
       final includeUnassigned = _playerFilterActive ? _includeUnassigned : null;
@@ -566,7 +576,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                 ? picker.mergedPath(typeLabel: context.bheText('视频'))
                 : picker.directory(confirmLabel: context.bheText('选择输出目录'));
           }, onPrepareTimeout: () {
-            appLog('warn', 'export', '准备阶段超过时限，直接弹出选择框');
+            log('warn', '准备阶段超过时限，直接弹出选择框');
             if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text(context.bheText('视频画面准备较慢，已直接打开选择窗口'))),
@@ -586,15 +596,19 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
         includeUnassigned: includeUnassigned,
       );
     } catch (error) {
-      appLog('error', 'export', '选择输出位置失败: $error');
+      try {
+        ref.read(exportDialogLogProvider)('error', 'export', '选择输出位置失败: $error');
+      } catch (_) {}
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(context.bheText('选择输出位置失败：$error'))),
         );
       }
     } finally {
-      appLog('info', 'export', '选择输出位置结束 耗时${chooseWatch.elapsedMilliseconds}ms');
       if (mounted) setState(() => _choosingOutput = false);
+      try {
+        ref.read(exportDialogLogProvider)('info', 'export', '选择输出位置结束 耗时${chooseWatch.elapsedMilliseconds}ms');
+      } catch (_) {}
     }
   }
 }
