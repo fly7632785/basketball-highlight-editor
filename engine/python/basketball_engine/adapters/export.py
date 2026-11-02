@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import platform
 import re
@@ -471,16 +472,21 @@ def _uniform_frame_rate(paths: list[Path]) -> str | None:
         for path in paths:
             result = subprocess.run(
                 [resolve_media_tool("ffprobe"), "-v", "error", "-select_streams", "v:0",
-                 "-show_entries", "stream=r_frame_rate,time_base", "-of", "json", str(path)],
+                 "-show_entries", "stream=r_frame_rate,avg_frame_rate,time_base", "-of", "json", str(path)],
                 check=True, capture_output=True, text=True, timeout=15,
             )
             stream = json.loads(result.stdout)["streams"][0]
-            seen.append((stream["r_frame_rate"], stream["time_base"]))
-    except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError, TypeError):
+            rate, avg, base = stream["r_frame_rate"], stream["avg_frame_rate"], stream["time_base"]
+            if Fraction(rate) <= 0 or Fraction(avg) <= 0 or Fraction(base) <= 0:
+                raise ValueError("invalid frame rate")
+            seen.append((rate, avg, base))
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError, TypeError, ZeroDivisionError) as exc:
+        raise OSError("无法探测片段帧率") from exc
+    if not seen:
+        raise OSError("缺少视频流")
+    if all(item == seen[0] and item[0] == item[1] for item in seen):
         return None
-    if not seen or all(item == seen[0] for item in seen):
-        return None
-    return seen[0][0]
+    return seen[0][1]
 
 
 def _audio_layouts(paths: list[Path]) -> list[tuple[str, int] | None]:
@@ -503,20 +509,26 @@ def _audio_layouts(paths: list[Path]) -> list[tuple[str, int] | None]:
     return layouts
 
 
-def _merged_duration_ok(path: Path, expected_ms: int) -> bool:
-    """拼接成品里每条流的时长都要和各片段之和对得上；探测失败时不拦截。"""
+def _merged_duration_ok(path: Path, expected_ms: int, *, require_audio: bool = False) -> bool:
+    """Require the expected streams and check their durations; unknown is failure."""
     try:
         result = subprocess.run(
-            [resolve_media_tool("ffprobe"), "-v", "error", "-show_entries", "stream=duration",
+            [resolve_media_tool("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type,duration",
              "-of", "json", str(path)],
             check=True, capture_output=True, text=True, timeout=15,
         )
-        durations = [float(stream["duration"]) for stream in json.loads(result.stdout)["streams"] if "duration" in stream]
+        streams = json.loads(result.stdout)["streams"]
+        durations = {stream["codec_type"]: float(stream["duration"]) for stream in streams
+                     if stream.get("codec_type") in {"video", "audio"}}
+        required = {"video", "audio"} if require_audio else {"video"}
+        if not required.issubset(durations):
+            return False
+        expected = expected_ms / 1000
+        tolerance = max(0.5, expected * 0.02)
+        return all(math.isfinite(duration) and duration > 0 and abs(duration - expected) <= tolerance
+                   for duration in durations.values())
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
-        return True
-    expected = expected_ms / 1000
-    tolerance = max(0.5, expected * 0.02)
-    return all(abs(duration - expected) <= tolerance for duration in durations)
+        return False
 
 
 def validate_media_file(path: Path) -> None:
@@ -768,7 +780,7 @@ def export_goal_clips(
                     cancel_check=cancel_check,
                     process_callback=process_callback,
                 )
-                if not _merged_duration_ok(merged_path, total_ms):
+                if not _merged_duration_ok(merged_path, total_ms, require_audio=any(layout is not None for layout in audio_layouts)):
                     raise OSError("merged duration does not match the clips")
             except (OSError, subprocess.CalledProcessError) as exc:
                 log_diagnostic(f"merge copy failed, re-encoding: {exc}")
@@ -823,6 +835,10 @@ def export_goal_clips(
                         merged_path, codecs, cancel_check=cancel_check,
                         process_callback=process_callback,
                     )
+                if not _merged_duration_ok(merged_path, total_ms, require_audio=any(layout is not None for layout in audio_layouts)):
+                    if not merged_existed:
+                        merged_path.unlink(missing_ok=True)
+                    raise OSError("合并成品流或时长校验失败")
             if not merged_existed:
                 created_files.append(merged_path)
             if progress_callback:
