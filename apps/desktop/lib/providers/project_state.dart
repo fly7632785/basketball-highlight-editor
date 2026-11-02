@@ -1053,6 +1053,20 @@ class ProjectNotifier extends Notifier<ProjectState> {
           : _normalizeRoi(storedNetRoi.cast<String, dynamic>(), video);
       final restoredRoiSource = calibration?['source']?.toString() ?? 'manual';
       _applyVideoContext(payload);
+      final openedVideos = ((payload['videos'] as List?) ?? const <dynamic>[])
+          .whereType<Map>()
+          .toList();
+      final missingSegments = <int>[
+        for (final (index, item) in openedVideos.indexed)
+          if (_segmentSourceMissing(item)) index + 1,
+      ];
+      // 单段项目缺源视频已有专门的重新定位流程，这里只管多段项目的各段。
+      if (openedVideos.length > 1 && missingSegments.isNotEmpty) {
+        _pushNotice(
+          '第 ${missingSegments.join('、')} 段的原视频找不到，请在导入页重新定位',
+          NoticeSeverity.warning,
+        );
+      }
       if (((payload['orientation_corrected'] as List?) ?? const []).isNotEmpty) {
         ref
             .read(noticeProvider.notifier)
@@ -1284,7 +1298,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
     }
   }
 
-  /// 等价 app.dart:_saveRoi(404)。
+  static bool _segmentSourceMissing(Map item) {
+    return item['source_exists'] == false;
+  }
+
   void _applyVideoContext(JsonMap payload) {
     final queue = (payload['analysis_queue'] as Map?)?.cast<String, dynamic>();
     state = state.copyWith(
@@ -1533,14 +1550,29 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }) async {
     appLog('info', 'analysis', '开始排队分析多段视频 before=${beforeSeconds}s after=${afterSeconds}s');
     _queueOutcomes.clear();
-    final videoIds = [
-      for (final video in state.videos)
-        if (!needsHoopConfirmation(video) &&
-            (video['analysis_job'] as Map?)?['state'] != 'completed')
-          video['id'].toString(),
-    ];
+    final missingSegments = <int>[];
+    final videoIds = <String>[];
+    for (final (index, video) in state.videos.indexed) {
+      if (needsHoopConfirmation(video) ||
+          (video['analysis_job'] as Map?)?['state'] == 'completed') {
+        continue;
+      }
+      if (_segmentSourceMissing(video)) {
+        missingSegments.add(index + 1);
+        continue;
+      }
+      videoIds.add(video['id'].toString());
+    }
+    if (missingSegments.isNotEmpty) {
+      _pushNotice(
+        '第 ${missingSegments.join('、')} 段的原视频找不到，已跳过；请在导入页重新定位后再分析',
+        NoticeSeverity.warning,
+      );
+    }
     if (videoIds.isEmpty) {
-      _pushNotice('没有需要分析的视频段', NoticeSeverity.info);
+      if (missingSegments.isEmpty) {
+        _pushNotice('没有需要分析的视频段', NoticeSeverity.info);
+      }
       return;
     }
     await _saveAnalysisQueue(

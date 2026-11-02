@@ -155,6 +155,37 @@ void main() {
     expect(container.read(pendingImportProvider), isNull);
   });
 
+  testWidgets('缺失段显示重新定位按钮，点击后激活该段再走重新定位', (tester) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final notifier = _MissingSourceNotifier();
+    final container = ProviderContainer(
+      overrides: [projectProvider.overrideWith(() => notifier)],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: Scaffold(body: ImportVideoScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('原视频已移动'), findsOneWidget);
+    final relink = find.byKey(const ValueKey('video-segment-relink-v2'));
+    expect(relink, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('video-segment-relink-v1')),
+      findsNothing,
+      reason: '源视频正常的段不应有重新定位按钮',
+    );
+
+    await tester.tap(relink);
+    await tester.pump();
+    expect(notifier.activated, ['v2']);
+  });
+
   testWidgets('lists every segment of a multi-video project and queues them', (
     tester,
   ) async {
@@ -349,6 +380,51 @@ class _RangeNotifier extends ProjectNotifier {
     },
     workflowDraft: const {'step': 1},
   );
+}
+
+class _MissingSourceNotifier extends ProjectNotifier {
+  final activated = <String>[];
+
+  @override
+  ProjectState build() => ProjectState(
+    video: _missingSegment('v1', true),
+    videoPath: '/v/v1.mp4',
+    videos: [
+      ..._missingSegmentWithRoi('v1'),
+      ..._missingSegmentWithRoi('v2', exists: false),
+    ],
+  );
+
+  static Map<String, dynamic> _missingSegment(String id, bool exists) => {
+    'id': id,
+    'source_path': '/v/$id.mp4',
+    'source_exists': exists,
+    'duration_ms': 300000,
+    'width': 1920,
+    'height': 1440,
+  };
+
+  static List<Map<String, dynamic>> _missingSegmentWithRoi(
+    String id, {
+    bool exists = true,
+  }) => [
+    {
+      ..._missingSegment(id, exists),
+      'roi': {
+        'x1': 700,
+        'y1': 300,
+        'x2': 1260,
+        'y2': 1000,
+        'calibration': {'source': 'manual'},
+      },
+    },
+  ];
+
+  @override
+  Future<Map<String, dynamic>?> loadWorkflowDraft() async => null;
+
+  @override
+  void activateVideo(String videoId) => activated.add(videoId);
 }
 
 class _SegmentsNotifier extends ProjectNotifier {

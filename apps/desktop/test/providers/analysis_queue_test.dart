@@ -67,6 +67,50 @@ void main() {
     );
   });
 
+  test('opening a multi-video project names every segment whose source is missing', () async {
+    engine.addVideo('v1', roi: true);
+    engine.addVideo('v2', roi: true);
+    engine.addVideo('v3', roi: true);
+    engine.videos[1]['source_exists'] = false;
+    engine.videos[2]['source_exists'] = false;
+
+    await notifier().openProject(directory.path);
+
+    expect(
+      container.read(noticeProvider).map((item) => item.title),
+      contains('第 2、3 段的原视频找不到，请在导入页重新定位'),
+    );
+  });
+
+  test('a single-video project does not get the per-segment missing notice', () async {
+    engine.addVideo('v1', roi: true);
+    engine.videos[0]['source_exists'] = false;
+
+    await notifier().openProject(directory.path);
+
+    expect(
+      container.read(noticeProvider).map((item) => item.title),
+      isNot(contains('第 1 段的原视频找不到，请在导入页重新定位')),
+    );
+  });
+
+  test('the queue skips segments whose source is missing and says so', () async {
+    engine.addVideo('v1', roi: true);
+    engine.addVideo('v2', roi: true);
+    engine.addVideo('v3', roi: true);
+    engine.videos[1]['source_exists'] = false;
+    await notifier().openProject(directory.path);
+
+    await notifier().startAnalysisQueue(beforeSeconds: 5, afterSeconds: 2);
+    await settle(() => state().analysisQueue.isEmpty && !state().busy);
+
+    expect(engine.started, ['v1', 'v3']);
+    expect(
+      container.read(noticeProvider).map((item) => item.title),
+      contains('第 2 段的原视频找不到，已跳过；请在导入页重新定位后再分析'),
+    );
+  });
+
   test('a fully successful queue marks the whole queue as completed', () async {
     engine.addVideo('v1', roi: true);
     engine.addVideo('v2', roi: true);

@@ -79,6 +79,14 @@ extension BheBuildContextText on BuildContext {
 }
 
 String? _translateDynamic(String source) {
+  final missingOpened = RegExp(r'^第 ([\d、]+) 段的原视频找不到，请在导入页重新定位$').firstMatch(source);
+  if (missingOpened != null) {
+    return 'The original video for part ${missingOpened.group(1)!.replaceAll('、', ', ')} is missing - relink it on the Import page';
+  }
+  final missingSkipped = RegExp(r'^第 ([\d、]+) 段的原视频找不到，已跳过；请在导入页重新定位后再分析$').firstMatch(source);
+  if (missingSkipped != null) {
+    return 'The original video for part ${missingSkipped.group(1)!.replaceAll('、', ', ')} is missing, so it was skipped - relink it on the Import page, then analyse';
+  }
   final exportElapsed = RegExp(r'^已用 (\d+:\d+(?::\d+)?)$').firstMatch(source);
   if (exportElapsed != null) return 'Elapsed ${exportElapsed.group(1)}';
   final savedPath = RegExp(r'^项目(可能)?保存在：([\s\S]+)，可在首页「打开项目」选择该文件夹。$').firstMatch(source);
@@ -1403,6 +1411,7 @@ const _englishText = <String, String>{
   '先切到「原视频」，播放到漏掉的进球附近，再点「补漏片段」：会以当前位置作为进球时刻新建一个候选，在弹出的窗口里用 I / O 或拖动定好开始和结束，点「加入候选」即可。': "Switch to \"Original\", play to near the missed goal, then click \"Add missed clip\": a new candidate is created with the current position as the goal moment. In the window, set start and end with I / O or by dragging, then click \"Add to candidates\".",
   '快捷键': "Shortcuts",
   '分析队列已结束，有视频段没有分析成功，请在列表里查看': 'The analysis queue has finished, but some parts did not succeed - check the list',
+  '重新定位': 'Relink',
   '本页新手引导': 'Guide for this page',
   '重置新手引导': 'Reset onboarding guide',
   '已重置，下次进入审核页和导出页会再次显示新手引导': 'Reset. The guide will show again next time you open Review and Export',

@@ -542,6 +542,14 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     await _persistDraft(step: 1);
   }
 
+  Future<void> _relinkSegment(String videoId) async {
+    final notifier = ref.read(projectProvider.notifier);
+    if (ref.read(projectProvider).video?['id']?.toString() != videoId) {
+      notifier.activateVideo(videoId);
+    }
+    await _relinkMissingVideo();
+  }
+
   Future<void> _relinkMissingVideo() async {
     final group = XTypeGroup(
       label: context.bheText('视频'),
@@ -1182,6 +1190,7 @@ KeyedSubtree(
             onAfterChanged: (seconds) => setState(() => _afterSeconds = seconds),
             onAddVideos: state.busy ? null : _addVideos,
             onEdit: _editSegment,
+            onRelink: _relinkSegment,
             onMove: _moveSegment,
             onRemoveFromQueue: (videoId) => unawaited(
               ref.read(projectProvider.notifier).removeFromAnalysisQueue(videoId),
@@ -4523,6 +4532,7 @@ class _VideoSegmentList extends StatelessWidget {
     required this.onAfterChanged,
     required this.onAddVideos,
     required this.onEdit,
+    required this.onRelink,
     required this.onMove,
     required this.onRemoveFromQueue,
     required this.onPauseQueue,
@@ -4537,6 +4547,7 @@ class _VideoSegmentList extends StatelessWidget {
   final ValueChanged<int> onAfterChanged;
   final VoidCallback? onAddVideos;
   final ValueChanged<String> onEdit;
+  final ValueChanged<String>? onRelink;
   final void Function(String videoId, int offset) onMove;
   final ValueChanged<String> onRemoveFromQueue;
   final VoidCallback onPauseQueue;
@@ -4575,6 +4586,9 @@ class _VideoSegmentList extends StatelessWidget {
                   state: state,
                   active: video['id'] == state.video?['id'],
                   onEdit: busy ? null : () => onEdit(video['id'].toString()),
+                  onRelink: (video['source_exists'] == false) && !busy
+                      ? onRelink
+                      : null,
                   onMoveUp: reorderLocked || index == 0
                       ? null
                       : () => onMove(video['id'].toString(), -1),
@@ -4685,6 +4699,7 @@ class _VideoSegmentRow extends StatelessWidget {
     required this.state,
     required this.active,
     required this.onEdit,
+    required this.onRelink,
     required this.onMoveUp,
     required this.onMoveDown,
     required this.onRemoveFromQueue,
@@ -4696,6 +4711,7 @@ class _VideoSegmentRow extends StatelessWidget {
   final ProjectState state;
   final bool active;
   final VoidCallback? onEdit;
+  final ValueChanged<String>? onRelink;
   final VoidCallback? onMoveUp;
   final VoidCallback? onMoveDown;
   final VoidCallback onRemoveFromQueue;
@@ -4806,6 +4822,19 @@ class _VideoSegmentRow extends StatelessWidget {
                         context.bheText('原视频已移动'),
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: c.error,
+                        ),
+                      ),
+                    if (onRelink != null)
+                      TextButton.icon(
+                        key: ValueKey('video-segment-relink-$id'),
+                        onPressed: () => onRelink!(video['id'].toString()),
+                        icon: const Icon(Icons.link_rounded, size: 14),
+                        label: Text(context.bheText('重新定位')),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: const Size(0, 28),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         ),
                       ),
                     Text(
