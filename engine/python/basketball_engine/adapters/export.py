@@ -502,21 +502,22 @@ def _merged_duration_ok(path: Path, expected_ms: int) -> bool:
 def validate_media_file(path: Path) -> None:
     if not path.is_file() or path.stat().st_size <= 0:
         raise OSError(f"导出文件为空: {path}")
-    result = subprocess.run(
-        [
-            resolve_media_tool("ffprobe"), "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ],
-        check=True,
-        capture_output=True,
-        stdin=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=15,
-    )
+    command = [
+        resolve_media_tool("ffprobe"), "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", str(path),
+    ]
+    for attempt, timeout in enumerate((15, 60)):
+        try:
+            result = subprocess.run(
+                command, check=True, capture_output=True, stdin=subprocess.DEVNULL,
+                text=True, encoding="utf-8", errors="replace", timeout=timeout,
+            )
+            break
+        except subprocess.TimeoutExpired:
+            if attempt:
+                raise
+            log_diagnostic("export validation ffprobe timed out after 15s; retrying once (60s)")
     try:
         duration = float(result.stdout.strip())
     except ValueError as exc:

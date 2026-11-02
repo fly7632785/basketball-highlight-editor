@@ -593,3 +593,101 @@ def test_frame_rate_is_unified_only_when_clips_differ():
     command = build_clip_command(Path("s.mp4"), 0, 1000, Path("o.mp4"), "libx264", frame_rate="60/1")
     assert command[-3:] == ["-r", "60/1", "o.mp4"]
     assert "-r" not in build_clip_command(Path("s.mp4"), 0, 1000, Path("o.mp4"), "libx264")
+
+
+def test_validate_media_file_retries_only_timeout(tmp_path, monkeypatch):
+    import subprocess
+    from engine.python.basketball_engine.adapters import export
+
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(b"video")
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(kwargs["timeout"])
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0, stdout="2.5\n")
+
+    monkeypatch.setattr(export.subprocess, "run", run)
+    export.validate_media_file(path)
+    assert calls == [15, 60]
+
+
+def test_validate_media_file_does_not_accept_repeated_timeout_or_invalid_result(tmp_path, monkeypatch):
+    import subprocess
+    from engine.python.basketball_engine.adapters import export
+
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(b"video")
+    calls = []
+
+    def timeout(command, **kwargs):
+        calls.append(kwargs["timeout"])
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(export.subprocess, "run", timeout)
+    with pytest.raises(subprocess.TimeoutExpired):
+        export.validate_media_file(path)
+    assert calls == [15, 60]
+    monkeypatch.setattr(export.subprocess, "run", lambda command, **kw: subprocess.CompletedProcess(command, 0, stdout="0\n"))
+    with pytest.raises(OSError):
+        export.validate_media_file(path)
+
+
+def test_probe_retry_succeeds_before_atomic_publish(tmp_path, monkeypatch):
+    import subprocess
+    from engine.python.basketball_engine.adapters import export
+
+    output = tmp_path / "clip.mp4"
+    output.write_bytes(b"existing")
+    calls = []
+
+    class Process:
+        returncode = 0
+
+        def __init__(self, command, **_kwargs):
+            Path(command[-1]).write_bytes(b"new video")
+
+        def poll(self):
+            return 0
+
+    def probe(command, **kwargs):
+        calls.append(kwargs["timeout"])
+        assert output.read_bytes() == b"existing"
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0, stdout="5\n")
+
+    monkeypatch.setattr(export.subprocess, "Popen", Process)
+    monkeypatch.setattr(export.subprocess, "run", probe)
+    export.run_atomic_ffmpeg(["ffmpeg", str(output)], output)
+    assert calls == [15, 60]
+    assert output.read_bytes() == b"new video"
+
+
+def test_probe_timeout_never_replaces_existing_output(tmp_path, monkeypatch):
+    import subprocess
+    from engine.python.basketball_engine.adapters import export
+
+    output = tmp_path / "clip.mp4"
+    output.write_bytes(b"existing")
+
+    class Process:
+        returncode = 0
+
+        def __init__(self, command, **_kwargs):
+            Path(command[-1]).write_bytes(b"new video")
+
+        def poll(self):
+            return 0
+
+    def timeout(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(export.subprocess, "Popen", Process)
+    monkeypatch.setattr(export.subprocess, "run", timeout)
+    with pytest.raises(subprocess.TimeoutExpired):
+        export.run_atomic_ffmpeg(["ffmpeg", str(output)], output)
+    assert output.read_bytes() == b"existing"
+    assert not list(tmp_path.glob("*.part*"))
