@@ -29,6 +29,11 @@ void main() {
     expect(of(LogicalKeyboardKey.backspace), ReviewShortcutAction.exclude);
     expect(of(LogicalKeyboardKey.keyL), ReviewShortcutAction.loop);
     expect(of(LogicalKeyboardKey.keyA), ReviewShortcutAction.annotations);
+    // 音量：M 静音，- / =（含数字键盘 +/-）调音量；方向键仍归候选翻页。
+    expect(of(LogicalKeyboardKey.keyM), ReviewShortcutAction.toggleMute);
+    expect(of(LogicalKeyboardKey.minus), ReviewShortcutAction.volumeDown);
+    expect(of(LogicalKeyboardKey.equal), ReviewShortcutAction.volumeUp);
+    expect(of(LogicalKeyboardKey.add), ReviewShortcutAction.volumeUp);
     // 撤销必须带 Cmd/Ctrl；单按 Z 什么都不做。
     expect(of(LogicalKeyboardKey.keyZ, command: true), ReviewShortcutAction.undo);
     expect(of(LogicalKeyboardKey.keyZ), isNull);
@@ -47,6 +52,17 @@ void main() {
       (item) => item.action == ReviewShortcutAction.include,
     );
     expect(shortcutKeysText(include, isMac: true), 'C / Enter');
+    // 新增的音量键在 Mac / Windows 上显示一致（没有修饰键）。
+    final volumeUp = reviewShortcuts.firstWhere(
+      (item) => item.action == ReviewShortcutAction.volumeUp,
+    );
+    expect(shortcutKeysText(volumeUp, isMac: true), '= / +');
+    expect(shortcutKeysText(volumeUp, isMac: false), '= / +');
+    final mute = reviewShortcuts.firstWhere(
+      (item) => item.action == ReviewShortcutAction.toggleMute,
+    );
+    expect(shortcutKeysText(mute, isMac: true), 'M');
+    expect(shortcutKeysText(mute, isMac: false), 'M');
   });
 
   test('球员标签键位说明来自键位表', () {

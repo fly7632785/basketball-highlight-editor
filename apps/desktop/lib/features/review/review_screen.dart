@@ -2936,6 +2936,14 @@ class _VideoControlsState extends State<_VideoControls> {
                   enabled: widget.annotationsEnabled,
                   onChanged: widget.onToggleAnnotations!,
                 ),
+              // 还没有播放器时也保留音量控制，控制条布局不会跳。
+              ReviewVolumeControls(
+                enabled: widget.enabled,
+                colors: c,
+                labelStyle: theme.textTheme.labelSmall?.copyWith(
+                  color: c.textSecondary,
+                ),
+              ),
             ],
           ),
         ),

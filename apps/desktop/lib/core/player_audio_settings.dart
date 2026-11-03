@@ -31,6 +31,16 @@ class PlayerAudioSettings extends ChangeNotifier {
 
   final Set<Player> _players = {};
 
+  /// 额外的音量出口：测试里注入假的「设置音量」回调，避免起真 mpv。
+  final Set<void Function(int volume)> _sinks = {};
+
+  void addVolumeSink(void Function(int volume) sink) {
+    _sinks.add(sink);
+    sink(effectiveVolume);
+  }
+
+  void removeVolumeSink(void Function(int volume) sink) => _sinks.remove(sink);
+
   Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -88,6 +98,7 @@ class PlayerAudioSettings extends ChangeNotifier {
 
   Future<void> reset() async {
     _players.clear();
+    _sinks.clear();
     _volume = defaultVolume;
     _muted = false;
   }
@@ -95,6 +106,9 @@ class PlayerAudioSettings extends ChangeNotifier {
   void _applyToPlayers() {
     for (final player in _players.toList()) {
       _setPlayerVolume(player);
+    }
+    for (final sink in _sinks.toList()) {
+      sink(effectiveVolume);
     }
   }
 

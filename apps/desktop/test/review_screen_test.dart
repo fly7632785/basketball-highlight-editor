@@ -9,10 +9,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:desktop/features/review/review_screen.dart';
 import 'package:desktop/components/cs_progress_track.dart';
+import 'package:desktop/core/player_audio_settings.dart';
 import 'package:desktop/features/review/media_readiness.dart';
 import 'package:desktop/features/review/review_shortcuts.dart';
 import 'package:desktop/providers/onboarding_provider.dart';
 import 'package:desktop/providers/project_state.dart';
+import 'package:desktop/theme/app_colors.dart';
 import 'package:desktop/theme/tokens.dart';
 
 void main() {
@@ -825,6 +827,59 @@ void main() {
 
     expect(find.text('快速分析未找到候选 · 可能漏检'), findsOneWidget);
     expect(find.text('用标准模式重新分析', skipOffstage: false), findsOneWidget);
+  });
+
+  testWidgets('审核页控制条里有静音按钮与音量滑块', (tester) async {
+    await playerAudioSettings.load();
+    await playerAudioSettings.reset();
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+          },
+        ],
+      ),
+    );
+
+    expect(find.byKey(const Key('review-volume-mute')), findsOneWidget);
+    expect(find.byKey(const Key('review-volume-slider')), findsOneWidget);
+  });
+
+  testWidgets('音量控制：点静音变划线喇叭、再点恢复，记住的音量不变', (
+    tester,
+  ) async {
+    await playerAudioSettings.load();
+    await playerAudioSettings.reset();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: ReviewVolumeControls(
+              enabled: true,
+              colors: darkAppColors,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byIcon(Icons.volume_up), findsOneWidget);
+    await tester.tap(find.byKey(const Key('review-volume-mute')));
+    await tester.pump();
+    expect(find.byIcon(Icons.volume_off), findsOneWidget);
+    expect(playerAudioSettings.muted, isTrue);
+    expect(playerAudioSettings.volume, 100, reason: '静音不改记住的音量');
+
+    await tester.tap(find.byKey(const Key('review-volume-mute')));
+    await tester.pump();
+    expect(find.byIcon(Icons.volume_up), findsOneWidget);
+    expect(playerAudioSettings.muted, isFalse);
   });
 
   testWidgets('keeps review status and action areas inset from the edges', (
