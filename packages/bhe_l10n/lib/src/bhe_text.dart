@@ -87,6 +87,8 @@ String? _translateDynamic(String source) {
   if (missingSkipped != null) {
     return 'The original video for part ${missingSkipped.group(1)!.replaceAll('、', ', ')} is missing, so it was skipped - relink it on the Import page, then analyse';
   }
+  final volumePercent = RegExp(r'^音量 (\d+)%$').firstMatch(source);
+  if (volumePercent != null) return 'Volume ${volumePercent.group(1)}%';
   final exportElapsed = RegExp(r'^已用 (\d+:\d+(?::\d+)?)$').firstMatch(source);
   if (exportElapsed != null) return 'Elapsed ${exportElapsed.group(1)}';
   final savedPath = RegExp(r'^项目(可能)?保存在：([\s\S]+)，可在首页「打开项目」选择该文件夹。$').firstMatch(source);
@@ -877,6 +879,7 @@ const _englishText = <String, String>{
   '退出横屏审核': 'Exit landscape review',
   '播放速度': 'Playback speed',
   '静音': 'Mute',
+  '静音 / 取消静音': 'Mute / unmute',
   '取消静音': 'Unmute',
   '音量 -10%': 'Volume -10%',
   '音量 +10%': 'Volume +10%',

@@ -71,7 +71,6 @@ class PlayerAudioSettings extends ChangeNotifier {
     _muted = false;
     _applyToPlayers();
     unawaited(_persist());
-    appLog('info', 'player', '音量设为 $_volume%');
     notifyListeners();
   }
 

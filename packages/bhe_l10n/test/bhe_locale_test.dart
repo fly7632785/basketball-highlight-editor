@@ -4,6 +4,46 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
 
 void main() {
+  testWidgets('translates volume and mute copy', (tester) async {
+    late BheLocalizations english;
+    late BheLocalizations chinese;
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: BheLocalizations.localizationsDelegates,
+        supportedLocales: BheLocalizations.supportedLocales,
+        locale: BheLocale.en,
+        home: Builder(
+          builder: (context) {
+            english = BheLocalizations.of(context);
+            return const SizedBox.shrink();
+          },
+        ),
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: BheLocalizations.localizationsDelegates,
+        supportedLocales: BheLocalizations.supportedLocales,
+        locale: BheLocale.zh,
+        home: Builder(
+          builder: (context) {
+            chinese = BheLocalizations.of(context);
+            return const SizedBox.shrink();
+          },
+        ),
+      ),
+    );
+
+    expect(english.text('静音'), 'Mute');
+    expect(english.text('取消静音'), 'Unmute');
+    expect(english.text('静音 / 取消静音'), 'Mute / unmute');
+    expect(english.text('音量 60%'), 'Volume 60%');
+    expect(english.text('音量 -10%'), 'Volume -10%');
+    expect(english.text('音量 +10%'), 'Volume +10%');
+    // 中文原样返回（中文表就是原文，不做替换）。
+    expect(chinese.text('音量 60%'), '音量 60%');
+  });
+
   test('maps system locales to supported app locales', () {
     expect(BheLocale.fromSystem(const Locale('zh', 'TW')), BheLocale.zh);
     expect(BheLocale.fromSystem(const Locale('en', 'GB')), BheLocale.en);

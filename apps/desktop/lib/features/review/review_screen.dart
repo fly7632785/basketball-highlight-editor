@@ -391,10 +391,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   }
 
   /// 方向键给候选翻页了，音量用 - / =（以及数字键盘 +/-）按 10 步进。
+  ///
+  /// 静音中按这两个键：按记住的音量加减，并自动取消静音（不会从 0 开始）。
   void _nudgeVolume(int delta) {
     final settings = playerAudioSettings;
-    final base = settings.muted ? 0 : settings.volume;
-    settings.setVolume(base + delta);
+    settings.setVolume(settings.volume + delta);
+    appLog('info', 'player', '音量 ${settings.volume}%');
   }
 
   KeyEventResult _handleShortcut(
