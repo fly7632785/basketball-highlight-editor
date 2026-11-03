@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:bhe_core/bhe_core.dart';
@@ -8,7 +9,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class TestFilePicker extends FilePicker {
+  /// 可以同时挂多个「待完成的窗口」：先挂的先被调用（FIFO）。
+  final waits = <Completer<FilePickerResult?>>[];
   Future<FilePickerResult?> Function()? pick;
+  var calls = 0;
   @override
   Future<FilePickerResult?> pickFiles({
     String? dialogTitle,
@@ -23,7 +27,11 @@ class TestFilePicker extends FilePicker {
     bool withReadStream = false,
     bool lockParentWindow = false,
     bool readSequential = false,
-  }) async => pick?.call();
+  }) async {
+    calls++;
+    if (waits.isNotEmpty) return waits.removeAt(0).future;
+    return pick?.call();
+  }
 }
 
 class MobileVideoFixture {
@@ -40,6 +48,7 @@ class MobileVideoFixture {
     Duration exportDrainTimeout = const Duration(seconds: 30),
     Duration analysisStartupTimeout = const Duration(seconds: 60),
     Duration analysisCancelTimeout = const Duration(seconds: 6),
+    Duration pickerRetryDelay = const Duration(milliseconds: 1500),
   }) async {
     root = await Directory.systemTemp.createTemp('bhe_state_');
     SharedPreferences.setMockInitialValues({});
@@ -50,6 +59,11 @@ class MobileVideoFixture {
         );
     FilePicker.platform = picker;
     state = MobileAppState(
+      // 走注入的文件选择器（picker 本身就是 file_picker 的替身）。
+      filePicker: ({
+        required FileType type,
+        List<String>? allowedExtensions,
+      }) => picker.pickFiles(type: type, allowedExtensions: allowedExtensions),
       analysisEngine: engine ?? const MobileAnalysisEngineUnavailable(),
       exportEngine: exportEngine,
       exportCancelTimeout: exportCancelTimeout,
@@ -57,6 +71,7 @@ class MobileVideoFixture {
       videoProbe: probe ?? inspect,
       analysisStartupTimeout: analysisStartupTimeout,
       analysisCancelTimeout: analysisCancelTimeout,
+      pickerRetryDelay: pickerRetryDelay,
     );
     await state.ready;
   }

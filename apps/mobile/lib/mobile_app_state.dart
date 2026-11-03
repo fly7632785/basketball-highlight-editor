@@ -1486,7 +1486,15 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       return;
     }
     _invalidateVideoPreparation();
-    final picked = await _pickVideo();
+    final ({String path, String name})? picked;
+    try {
+      picked = await _pickVideo();
+    } on Object catch (error, stack) {
+      // 选择窗口本身失败（如系统报 already_active）：提示用户，不当成功处理。
+      recordDiagnosticFailure(error, stack, operation: 'video.pick');
+      notifyListeners();
+      return;
+    }
     if (picked == null ||
         !_isProjectIntent(intent) ||
         project.id != id ||

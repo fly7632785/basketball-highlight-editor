@@ -119,7 +119,7 @@ void main() {
     });
   }
   test(
-    'two overlapping imports honor the newer picker even if the older fails',
+    'two imports in a row honor the newer picker even if the older fails',
     () async {
       final f = MobileVideoFixture();
       await f.init();
@@ -131,6 +131,7 @@ void main() {
             f.project('missing', id: 'C').copyWith(clearVideo: true),
           ),
         );
+        // 选择窗口互斥：占用中再点会被忽略，所以两次导入必须一次接一次。
         final entered = Completer<void>(),
             result = Completer<FilePickerResult?>();
         f.picker.pick = () {
@@ -139,15 +140,17 @@ void main() {
         };
         final old = f.state.importProject();
         await entered.future;
-        f.choose(incoming);
-        await f.state.importProject();
-        expect(f.state.project.id, 'C');
+        expect(f.state.pickerBusy, isTrue);
         result.completeError(
           PlatformException(code: 'obsolete_picker_failure'),
         );
         await old;
+        expect(f.state.pickerBusy, isFalse);
+
+        f.choose(incoming);
+        await f.state.importProject();
         expect(f.state.project.id, 'C');
-        expect(f.state.diagnosticError, isNull);
+        expect(f.state.pickerBusy, isFalse);
       } finally {
         await f.close();
       }

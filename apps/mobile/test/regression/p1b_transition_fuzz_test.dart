@@ -211,7 +211,7 @@ Future<void> main() async {
   });
 
   test(
-    'minimal old import must not commit while newer import picker is pending',
+    'minimal old import must not commit over a newer import',
     () async {
       final f = MobileVideoFixture();
       await f.init();
@@ -231,35 +231,34 @@ Future<void> main() async {
             f.project(source.path, id: 'C').copyWith(clearVideo: true),
           ),
         );
+        // 选择窗口互斥：旧窗口必须结束后新窗口才会打开。
         final firstEntered = Completer<void>(),
-            first = Completer<FilePickerResult?>(),
-            secondEntered = Completer<void>(),
-            second = Completer<FilePickerResult?>();
+            first = Completer<FilePickerResult?>();
         f.picker.pick = () {
           firstEntered.complete();
           return first.future;
         };
         final old = f.state.importProject();
         await firstEntered.future;
+        expect(f.state.pickerBusy, isTrue);
+        first.complete(choice(incoming));
+        await old;
+        await f.state.pendingProjectWrites;
+        expect(f.state.pickerBusy, isFalse);
+
+        final secondEntered = Completer<void>(),
+            second = Completer<FilePickerResult?>();
         f.picker.pick = () {
           secondEntered.complete();
           return second.future;
         };
         final latest = f.state.importProject();
         await secondEntered.future;
-        final expected = state(f), before = await tree(f.data);
-        first.complete(choice(incoming));
-        await old;
-        await f.state.pendingProjectWrites;
-        final staleState = state(f) != expected,
-            staleDisk = jsonEncode(await tree(f.data)) != jsonEncode(before);
         second.complete(choice(laterFile));
         await latest;
         await f.state.pendingProjectWrites;
-        check(
-          !staleState && !staleDisk,
-          'obsolete import committed while later picker pending: state=$staleState files/index=$staleDisk',
-        );
+        check(f.state.project.id == 'C', 'newer import did not win');
+        check(!f.state.pickerBusy, 'picker stayed busy after newer import');
       } finally {
         await f.close();
       }
@@ -428,6 +427,24 @@ Future<void> main() async {
           final beforeB = await File(
             '${f.data.path}/projects/B.json',
           ).readAsBytes();
+          // 选择窗口互斥：占用中再点导入会被忽略，所以两者重叠时先把旧窗口放行。
+          var oldReleased = false;
+          if (later == 'import' && older != 'open') {
+            oldReleased = true;
+            if (oldOutcome == 'success') {
+              oldPicker!.complete(choice(older == 'import' ? oldFile : source));
+            }
+            if (oldOutcome == 'cancel') oldPicker!.complete(null);
+            if (oldOutcome == 'failure') {
+              oldPicker!.completeError(
+                PlatformException(code: 'old_picker_failure'),
+              );
+            }
+            await oldObserved.timeout(const Duration(seconds: 10));
+            await f.state.pendingProjectWrites;
+          }
+          // 新动作开始前的项目 id：失败/取消的新导入不该改变它。
+          final lateStartId = f.state.project.id;
           Future<void> latest = switch (later) {
             'new' => f.state.createNewProject(),
             'open' => f.state.openProject(older == 'open' ? 'A' : 'B'),
@@ -442,7 +459,7 @@ Future<void> main() async {
           String? expectedState;
           Map<String, String>? expectedTree;
           String? earlyError;
-          if (earlyOld) {
+          if (earlyOld && !oldReleased) {
             final beforeState = state(f), beforeTree = await tree(f.data);
             final errorCountBefore = backend.messages
                 .where((m) => m.startsWith('app error:'))
@@ -525,7 +542,7 @@ Future<void> main() async {
             }
             if (later == 'import' && lateOutcome != 'success') {
               check(
-                f.state.project.id == 'A',
+                f.state.project.id == lateStartId,
                 'cancelled/failed newer import changed project',
               );
             }
@@ -563,7 +580,7 @@ Future<void> main() async {
             expectedState = state(f);
             expectedTree = await tree(f.data);
             noTemporary(expectedTree);
-            if (!earlyOld) {
+            if (!earlyOld && !oldReleased) {
               final errorCountBefore = backend.messages
                   .where((m) => m.startsWith('app error:'))
                   .length;
