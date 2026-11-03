@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'app_log.dart';
+import 'player_audio_settings.dart';
 import 'diagnostics.dart' show appVersion;
 
 /// 界面线程卡顿的判定：监控定时器本该每 [interval] 触发一次，实际间隔超出
@@ -141,6 +142,8 @@ String describeVideoForLog(Map<String, dynamic>? video) {
 Player createLoggedPlayer(String where) {
   final player = Player();
   appLog('info', 'player', '$where 创建播放器');
+  // 新建的播放器立刻套用记住的音量/静音设置，之后设置变化也会同步回来。
+  playerAudioSettings.registerPlayer(player);
   player.stream.error.listen((error) {
     appLog('error', 'player', '$where 播放器报错: $error');
   });
@@ -155,6 +158,7 @@ Player createLoggedPlayer(String where) {
 /// 销毁播放器并记一行；[where] 说明是哪个页面。
 Future<void> disposeLoggedPlayer(Player player, String where) async {
   appLog('info', 'player', '$where 销毁播放器');
+  playerAudioSettings.unregisterPlayer(player);
   await player.dispose();
 }
 

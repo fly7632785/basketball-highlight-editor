@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'core/app_diagnostics.dart';
+import 'core/player_audio_settings.dart';
 import 'core/app_errors.dart';
 import 'providers/session_provider.dart';
 import 'providers/theme_provider.dart';
@@ -18,6 +19,8 @@ Future<void> _startApp() async {
   WidgetsFlutterBinding.ensureInitialized();
   AppDiagnostics.start();
   MediaKit.ensureInitialized();
+  // 音量/静音设置在界面出现前读好，播放器创建时就能套用。
+  await playerAudioSettings.load();
   final themeMode = await loadSavedThemeMode();
   ThemeModeNotifier.startupMode = themeMode;
   final brightness = switch (themeMode) {

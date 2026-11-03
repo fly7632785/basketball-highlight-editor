@@ -17,6 +17,9 @@ enum ReviewShortcutAction {
   undo,
   loop,
   annotations,
+  toggleMute,
+  volumeDown,
+  volumeUp,
 }
 
 class ReviewShortcut {
@@ -74,6 +77,17 @@ const List<ReviewShortcut> reviewShortcuts = [
   ]),
   ReviewShortcut(ReviewShortcutAction.annotations, '显示 / 隐藏识别标注', [
     LogicalKeyboardKey.keyA,
+  ]),
+  ReviewShortcut(ReviewShortcutAction.toggleMute, '静音 / 取消静音', [
+    LogicalKeyboardKey.keyM,
+  ]),
+  ReviewShortcut(ReviewShortcutAction.volumeDown, '音量 -10%', [
+    LogicalKeyboardKey.minus,
+  ]),
+  ReviewShortcut(ReviewShortcutAction.volumeUp, '音量 +10%', [
+    // 主键盘的 = （Shift 就是 +）和数字键盘的 + 都能用。
+    LogicalKeyboardKey.equal,
+    LogicalKeyboardKey.add,
   ]),
 ];
 

@@ -1,4 +1,3 @@
-import '../../core/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -10,6 +9,8 @@ import 'package:go_router/go_router.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
+import '../../core/app_diagnostics.dart';
+import '../../core/player_audio_settings.dart';
 
 import '../feedback/feedback_dialog.dart';
 import '../../components/cs_button.dart';
@@ -389,6 +390,13 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     );
   }
 
+  /// 方向键给候选翻页了，音量用 - / =（以及数字键盘 +/-）按 10 步进。
+  void _nudgeVolume(int delta) {
+    final settings = playerAudioSettings;
+    final base = settings.muted ? 0 : settings.volume;
+    settings.setVolume(base + delta);
+  }
+
   KeyEventResult _handleShortcut(
     KeyEvent event, {
     required List<Map<String, dynamic>> candidates,
@@ -434,6 +442,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
           if (!reviewLocked && id != null) {
             unawaited(_setCandidateStatus(id, 'included'));
           }
+        case ReviewShortcutAction.toggleMute:
+          playerAudioSettings.toggleMute();
+        case ReviewShortcutAction.volumeDown:
+          _nudgeVolume(-10);
+        case ReviewShortcutAction.volumeUp:
+          _nudgeVolume(10);
       }
     } else if (_playerShortcutIndex(key) case final int index) {
       // 0 clears the tag; the other keys follow the player order shown in the tag menu.
@@ -3121,6 +3135,11 @@ class _VideoControlsState extends State<_VideoControls> {
                 onChanged: widget.onToggleAnnotations!,
               ),
             ],
+            ReviewVolumeControls(
+              enabled: widget.enabled,
+              colors: c,
+              labelStyle: labelStyle,
+            ),
             StreamBuilder<double>(
               stream: player.stream.rate,
               initialData: player.state.rate,
@@ -7355,4 +7374,93 @@ String _formatEstimatedRemaining(String? startedAt, double progress) {
   final remainingMs = (elapsed.inMilliseconds * (1 - progress) / progress)
       .round();
   return _formatDuration(Duration(milliseconds: remainingMs));
+}
+
+/// 播放控制条里的音量控制：静音按钮（喇叭/划线喇叭）+ 紧凑音量滑块。
+///
+/// 拖动中实时生效，只在松手时记一条日志，避免刷屏。
+class ReviewVolumeControls extends StatelessWidget {
+  const ReviewVolumeControls({
+    super.key,
+    required this.enabled,
+    required this.colors,
+    this.labelStyle,
+  });
+
+  final bool enabled;
+  final AppColors colors;
+  final TextStyle? labelStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: playerAudioSettings,
+      builder: (context, _) {
+        final settings = playerAudioSettings;
+        final muted = settings.muted;
+        final volume = settings.volume;
+        final percent = muted ? 0 : volume;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              key: const Key('review-volume-mute'),
+              tooltip: context.bheText(muted ? '取消静音' : '静音'),
+              onPressed: enabled ? settings.toggleMute : null,
+              iconSize: 18,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              icon: Icon(
+                muted ? Icons.volume_off : Icons.volume_up,
+                color: enabled ? colors.textSecondary : colors.textTertiary,
+              ),
+            ),
+            SizedBox(
+              width: 84,
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 2,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 5,
+                  ),
+                  overlayShape: const RoundSliderOverlayShape(
+                    overlayRadius: 10,
+                  ),
+                ),
+                child: Slider(
+                  key: const Key('review-volume-slider'),
+                  value: percent.toDouble(),
+                  max: 100,
+                  divisions: 20,
+                  activeColor: colors.orange,
+                  inactiveColor: colors.border,
+                  label: context.bheText('音量 $percent%'),
+                  onChanged: enabled
+                      ? (value) => settings.setVolume(value.round())
+                      : null,
+                  onChangeEnd: enabled
+                      ? (value) => appLog(
+                          'info',
+                          'player',
+                          '音量拖动结束 ${value.round()}%',
+                        )
+                      : null,
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 34,
+              child: Text(
+                '$percent%',
+                style: labelStyle?.copyWith(
+                  color: enabled ? colors.textSecondary : colors.textTertiary,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
