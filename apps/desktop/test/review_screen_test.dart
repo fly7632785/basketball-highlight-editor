@@ -882,6 +882,38 @@ void main() {
     expect(playerAudioSettings.muted, isFalse);
   });
 
+  testWidgets('静音中按 = 从记住的音量加 10 并自动取消静音', (tester) async {
+    await playerAudioSettings.load();
+    await playerAudioSettings.reset();
+    playerAudioSettings.setVolume(60);
+    playerAudioSettings.setMuted(true);
+    expect(playerAudioSettings.effectiveVolume, 0);
+
+    await _pumpReview(
+      tester,
+      const ProjectState(
+        job: {'state': 'completed'},
+        candidates: [
+          {
+            'id': 'candidate-1',
+            'event_time_ms': 12000,
+            'default_start_ms': 6000,
+            'default_end_ms': 15000,
+          },
+        ],
+      ),
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+    await tester.pump();
+    expect(playerAudioSettings.muted, isFalse);
+    expect(playerAudioSettings.volume, 70, reason: '从 60 加 10，不是从 0');
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.minus);
+    await tester.pump();
+    expect(playerAudioSettings.volume, 60);
+  });
+
   testWidgets('keeps review status and action areas inset from the edges', (
     tester,
   ) async {

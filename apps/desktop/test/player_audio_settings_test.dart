@@ -69,17 +69,39 @@ void main() {
     expect(applied, [100, 25, 0]);
   });
 
-  test('日志只记最终值：静音开关各一条，音量一条', () async {
+  test('setVolume 不写日志（滑块拖动不会刷屏）', () async {
     final file = await _tempLog();
     appLogFileOverride = file;
     final settings = PlayerAudioSettings();
     await settings.load();
-    settings.setVolume(50);
+    // 模拟拖一次滑块：每个刻度都会调 setVolume。
+    for (var value = 100; value >= 0; value -= 5) {
+      settings.setVolume(value);
+    }
+    await Future<void>.delayed(Duration.zero);
+    final lines = file.existsSync() ? await file.readAsLines() : <String>[];
+    expect(
+      lines.where((line) => line.contains('音量')).toList(),
+      isEmpty,
+      reason: '拖动过程中不该有音量日志',
+    );
+
+    // 只有显式记最终值的那一次才有一条。
+    appLog('info', 'player', '音量拖动结束 0%');
+    await Future<void>.delayed(Duration.zero);
+    final after = await file.readAsLines();
+    expect(after.where((line) => line.contains('音量拖动结束 0%')).length, 1);
+  });
+
+  test('日志只记最终值：静音开关各一条', () async {
+    final file = await _tempLog();
+    appLogFileOverride = file;
+    final settings = PlayerAudioSettings();
+    await settings.load();
     settings.setMuted(true);
     settings.setMuted(false);
     await Future<void>.delayed(Duration.zero);
     final lines = await file.readAsLines();
-    expect(lines.where((line) => line.contains('音量设为 50%')).length, 1);
     expect(lines.where((line) => line.contains('已静音')).length, 1);
     expect(lines.where((line) => line.contains('取消静音')).length, 1);
   });
