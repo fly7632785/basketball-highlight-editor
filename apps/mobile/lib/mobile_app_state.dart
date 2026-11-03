@@ -8,6 +8,7 @@ import 'package:bhe_core/bhe_core.dart';
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'package:share_plus/share_plus.dart';
@@ -49,14 +50,79 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     this.exportDrainTimeout = const Duration(seconds: 30),
     this.analysisStartupTimeout = const Duration(seconds: 60),
     this.analysisCancelTimeout = const Duration(seconds: 6),
+    this.pickerRetryDelay = const Duration(milliseconds: 1500),
+    MobileFilePicker? filePicker,
   }) : analysisEngine = analysisEngine ?? NativeAnalysisEngine(),
        exportEngine = exportEngine ?? NativeMediaExportEngine(),
+       _filePicker = filePicker ?? _systemFilePicker,
        _providedVideoStore = videoSourceStore {
     ready = Future.wait([loadSavedProject(), _loadPlayerGroups()]).then((_) {});
   }
 
   late final Future<void> ready;
   final VideoSourceStore? _providedVideoStore;
+  final MobileFilePicker _filePicker;
+
+  /// 已经拿到 already_active 后要等多久再试一次（测试里调小）。
+  final Duration pickerRetryDelay;
+
+  /// 系统选文件窗口的「占用中」标记：占用中再点入口直接忽略，按钮置灰。
+  bool get pickerBusy => _pickerBusy;
+  bool _pickerBusy = false;
+
+  /// 统一包住两处 pickFiles：互斥、错误提示、already_active 重试都在这里。
+  Future<FilePickerResult?> _pickFiles({
+    required FileType type,
+    required String kind,
+    List<String>? allowedExtensions,
+  }) async {
+    if (_pickerBusy) return null;
+    _pickerBusy = true;
+    notifyListeners();
+    try {
+      try {
+        MobileDiagnostics.instance.event('picker.open.$kind');
+        final result = await _filePicker(
+          type: type,
+          allowedExtensions: allowedExtensions,
+        );
+        MobileDiagnostics.instance.event(
+          result == null ? 'picker.cancelled.$kind' : 'picker.result.$kind',
+        );
+        return result;
+      } on PlatformException catch (error) {
+        MobileDiagnostics.instance.event(
+          'picker.error.$kind',
+          count: 1,
+        );
+        if (!_isPickerAlreadyActive(error)) rethrow;
+        // 小米等系统在上一轮选择还没真正结束时仍报 already_active：
+        // 延迟后重试一次；还失败就把原始错误交给上层给用户人话提示。
+        await Future<void>.delayed(pickerRetryDelay);
+        MobileDiagnostics.instance.event('picker.retry.$kind', count: 2);
+        final retried = await _filePicker(
+          type: type,
+          allowedExtensions: allowedExtensions,
+        );
+        MobileDiagnostics.instance.event(
+          retried == null
+              ? 'picker.cancelled.$kind.attempt2'
+              : 'picker.result.$kind.attempt2',
+        );
+        return retried;
+      }
+    } finally {
+      _pickerBusy = false;
+      notifyListeners();
+    }
+  }
+
+  /// 只认 file_picker 的 already_active（部分机型把它塞进 message）。
+  static bool _isPickerAlreadyActive(PlatformException error) {
+    final code = error.code.toLowerCase();
+    return code == 'already_active' ||
+        error.message?.toLowerCase().contains('already active') == true;
+  }
   final Future<VideoInfo> Function(File)? videoProbe;
   final Duration exportCancelTimeout;
   final Duration exportDrainTimeout;
@@ -1431,7 +1497,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   }
 
   Future<({String path, String name})?> _pickVideo() async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.video);
+    final result = await _pickFiles(type: FileType.video, kind: 'video');
     final file = result?.files.single;
     final path = file?.path;
     if (path == null) return null;
@@ -1635,8 +1701,9 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     final intent = _newProjectIntent();
     final id = project.id, session = _projectSession;
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await _pickFiles(
         type: FileType.custom,
+        kind: 'project',
         allowedExtensions: ['bhe', 'json'],
       );
       final path = result?.files.single.path;
@@ -3180,3 +3247,18 @@ String _readProjectFromArchive(List<int> bytes) {
   if (project == null) throw const FormatException('项目包缺少 project.json');
   return utf8.decode(project.readBytes() ?? const <int>[]);
 }
+
+/// 可注入的系统文件选择器：默认是 file_picker 的真实实现，测试里换成假实现。
+typedef MobileFilePicker =
+    Future<FilePickerResult?> Function({
+      required FileType type,
+      List<String>? allowedExtensions,
+    });
+
+Future<FilePickerResult?> _systemFilePicker({
+  required FileType type,
+  List<String>? allowedExtensions,
+}) => FilePicker.platform.pickFiles(
+  type: type,
+  allowedExtensions: allowedExtensions,
+);

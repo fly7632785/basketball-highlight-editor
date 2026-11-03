@@ -528,7 +528,7 @@ class _TopBar extends StatelessWidget {
               icon: const Icon(LucideIcons.download, size: 19),
             ),
           IconButton(
-            onPressed: onCreateProject,
+            onPressed: state.pickerBusy ? null : onCreateProject,
             tooltip: l10n?.newProject ?? '新建项目',
             icon: const Icon(LucideIcons.plus, size: 20),
           ),
@@ -604,10 +604,12 @@ class _TopBar extends StatelessWidget {
               ),
               PopupMenuItem(
                 value: 'new',
+                enabled: !state.pickerBusy,
                 child: Text(l10n?.newProject ?? '新建项目'),
               ),
               PopupMenuItem(
                 value: 'import',
+                enabled: !state.pickerBusy,
                 child: Text(l10n?.openPackage ?? '打开项目包'),
               ),
               PopupMenuItem(
@@ -685,6 +687,7 @@ class _ProjectView extends StatelessWidget {
               _VideoPreparationCard(message: state.preparingVideoMessage, onCancel: state.cancelVideoPreparation)
             else if (state.project.video == null)
               _EmptyProject(
+                enabled: !state.pickerBusy,
                 onPick: () { unawaited(_createManagedProject(context, state)); },
               )
             else
@@ -747,8 +750,9 @@ class _PageIntro extends StatelessWidget {
 }
 
 class _EmptyProject extends StatelessWidget {
-  const _EmptyProject({required this.onPick});
+  const _EmptyProject({required this.onPick, this.enabled = true});
   final VoidCallback onPick;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
@@ -776,7 +780,7 @@ class _EmptyProject extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             FilledButton.icon(
-              onPressed: onPick,
+              onPressed: enabled ? onPick : null,
               icon: const Icon(LucideIcons.upload, size: 18),
               label: Text(l10n?.selectVideo ?? '选择视频'),
             ),

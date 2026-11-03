@@ -35,6 +35,11 @@ FriendlyMobileError friendlyMobileError(
       raw.contains('分析已取消')) {
     return const FriendlyMobileError(null, cancelled: true);
   }
+  if (code == 'ALREADY_ACTIVE' || raw.contains('already_active')) {
+    return const FriendlyMobileError(
+      '系统文件选择窗口还在占用，请稍等几秒再试；如果一直这样，请完全退出 App 后重新打开。',
+    );
+  }
   if (raw.contains('上一次导出尚未结束')) {
     return const FriendlyMobileError('上一次导出尚未结束，请稍后重试。');
   }
