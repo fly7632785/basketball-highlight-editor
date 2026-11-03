@@ -4066,7 +4066,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
         await player.stop();
       } catch (error) { appLog('warn', 'review_screen', 'dispose 忽略了错误: $error'); }
       try {
-        await player.dispose();
+        await disposeLoggedPlayer(player, '范围编辑');
       } catch (error) { appLog('warn', 'review_screen', 'dispose 忽略了错误: $error'); }
     }());
     _startController.dispose();
