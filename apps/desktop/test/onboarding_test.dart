@@ -80,6 +80,10 @@ void main() {
 
     test('每个页面的步骤都登记过，且 id 不重复', () {
       expect(allOnboardingStepIds.toSet().length, allOnboardingStepIds.length);
+      expect(allOnboardingStepIds.length, 20);
+      expect(onboardingStepIds[onboardingImportPage], containsAll(['calibrate.shootzone', 'calibrate.netzone']));
+      expect(allOnboardingStepIds, isNot(contains('calibrate.hoop')));
+      expect(allOnboardingStepIds, isNot(contains('calibrate.regions')));
       expect(onboardingStepIds.keys, [
         onboardingImportPage,
         onboardingReviewPage,

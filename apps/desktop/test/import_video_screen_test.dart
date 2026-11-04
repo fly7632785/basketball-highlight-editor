@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:bhe_l10n/bhe_l10n.dart';
+import 'package:desktop/features/import_video/hoop_example.dart';
 // ignore_for_file: depend_on_referenced_packages
 
 import 'package:flutter_test/flutter_test.dart';
@@ -109,6 +111,54 @@ void main() {
     expect(find.text('导入分四步'), findsNothing);
     expect(find.text('1/1'), findsOneWidget);
   });
+
+  for (final language in ['zh', 'en']) {
+    testWidgets('detection area guide has two localized illustrated steps: $language', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      tester.view.physicalSize = Size(language == 'en' ? 1440 : 1200, language == 'en' ? 900 : 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(ProviderScope(
+        overrides: [projectProvider.overrideWith(() => _RoiGuideNotifier())],
+        child: MaterialApp(
+          locale: Locale(language),
+          localizationsDelegates: BheLocalizations.localizationsDelegates,
+          supportedLocales: BheLocalizations.supportedLocales,
+          home: const Scaffold(body: ImportVideoScreen()),
+        ),
+      ));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+      expect(find.text(language == 'zh' ? '先框投篮分析区（橙色）' : 'First: shot analysis area (orange)'), findsOneWidget);
+      expect(find.text('框出篮筐'), findsNothing);
+      expect(find.textContaining(language == 'zh' ? '橙色框覆盖球靠近篮圈上方' : 'The orange box covers the entire ball path'), findsOneWidget);
+      await tester.runAsync(() async {
+        final context = tester.element(find.byType(HoopExampleGallery));
+        for (final example in HoopExample.values) {
+          await precacheImage(AssetImage(example.asset), context);
+        }
+      });
+      await tester.pump();
+      for (final example in shotExamples) {
+        expect(find.byKey(ValueKey('hoop-example-${example.name}')), findsOneWidget);
+        expect(tester.getSize(find.byKey(ValueKey('hoop-example-${example.name}'))).width, greaterThanOrEqualTo(220));
+      }
+      await tester.tap(find.byKey(const Key('onboarding-next')));
+      await tester.pump();
+      expect(find.text(language == 'zh' ? '再框篮网检测区（白色）' : 'Next: net detection area (white)'), findsOneWidget);
+      expect(find.textContaining(language == 'zh' ? '点下面的「篮网检测区」按钮' : 'Click the Net detection area button'), findsOneWidget);
+      for (final example in netExamples) {
+        expect(find.byKey(ValueKey('hoop-example-${example.name}')), findsOneWidget);
+      }
+      if (language == 'en') {
+        final overlay = find.byKey(const Key('onboarding-overlay'));
+        final texts = tester.widgetList<Text>(find.descendant(of: overlay, matching: find.byType(Text)));
+        expect(texts.where((text) => RegExp(r'[\u4e00-\u9fff]').hasMatch(text.data ?? '')), isEmpty);
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('cancelling the file picker does not create a project', (tester) async {
     final previous = FileSelectorPlatform.instance;
@@ -364,6 +414,14 @@ void main() {
 
     expect(estimate.label, '约 1 分钟');
   });
+}
+
+class _RoiGuideNotifier extends ProjectNotifier {
+  @override
+  ProjectState build() => ProjectState(
+    video: {'id': 'v1', 'duration_ms': 60000, 'width': 1920, 'height': 1080},
+    workflowDraft: const {'step': 2},
+  );
 }
 
 class _RangeNotifier extends ProjectNotifier {

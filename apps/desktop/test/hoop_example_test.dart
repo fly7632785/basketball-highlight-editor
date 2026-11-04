@@ -24,7 +24,7 @@ void main() {
       }
     });
     await tester.pump();
-    for (final example in HoopExample.values) {
+    for (final example in shotExamples) {
       expect(find.byKey(ValueKey('hoop-example-${example.name}')), findsOneWidget);
       expect(find.text(example.caption), findsOneWidget);
     }
@@ -51,6 +51,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('hoop-example-dialog')), findsOneWidget);
     expect(find.text('框选示例'), findsOneWidget);
+    for (final example in HoopExample.values) {
+      expect(find.byKey(ValueKey('hoop-example-${example.name}')), findsOneWidget);
+    }
     await tester.tap(find.text('关闭'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('hoop-example-dialog')), findsNothing);

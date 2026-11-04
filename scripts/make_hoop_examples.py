@@ -96,6 +96,10 @@ def main() -> None:
     render("too_big", [((40, 24, 440, 290), ORANGE, False)], False, figure=True)
     # 太小：只框住篮圈，球一靠近或落下就出框
     render("too_small", [((210, 106, 270, 134), ORANGE, False)], False)
+    # 白色检测区只框篮网；错误示例分别包括篮板地面及只有网口。
+    render("net_good", [((206, 122, 274, 190), WHITE, True)], True)
+    render("net_too_big", [((40, 24, 440, 290), WHITE, True)], False, figure=True)
+    render("net_too_small", [((210, 120, 270, 132), WHITE, True)], False)
 
 
 if __name__ == "__main__":

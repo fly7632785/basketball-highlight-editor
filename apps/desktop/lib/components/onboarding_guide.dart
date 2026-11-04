@@ -22,6 +22,8 @@ class OnboardingStep {
     this.target,
     this.extra,
     this.extraHeight = 0,
+    this.width,
+    this.reserveBottom = 0,
   });
 
   /// 登记在 `onboardingStepIds` 里的步骤 id，“看过”按它记。
@@ -33,6 +35,8 @@ class OnboardingStep {
   /// 正文下面附带的内容（例如示例图），[extraHeight] 用来给气泡留出位置。
   final WidgetBuilder? extra;
   final double extraHeight;
+  final double? width;
+  final double reserveBottom;
 }
 
 /// 包住一个页面：首次进入（或点“?”）时在页面上盖一层遮罩 + 气泡，逐步介绍。
@@ -199,7 +203,14 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
     return Stack(
       fit: StackFit.passthrough,
       children: [
-        widget.child,
+        Padding(
+          padding: EdgeInsets.only(
+            bottom: _showing
+                ? math.min(_active[_index].reserveBottom, math.max(0, MediaQuery.sizeOf(context).height - 400))
+                : 0,
+          ),
+          child: widget.child,
+        ),
         if (_showing)
           Positioned.fill(
             child: LayoutBuilder(
@@ -245,11 +256,11 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
       });
     }
     final bodyLines = '\n'.allMatches(step.body).length + 1;
-    final bubbleWidth = step.extra != null
+    final bubbleWidth = step.width ?? (step.extra != null
         ? 560.0
         : bodyLines > 1
         ? 440.0
-        : 340.0;
+        : 340.0);
     final bubbleHeight = 170.0 + (bodyLines - 1) * 24 + step.extraHeight;
     double left;
     double top;

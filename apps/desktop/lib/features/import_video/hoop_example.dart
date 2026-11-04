@@ -5,11 +5,14 @@ import '../../components/cs_button.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/tokens.dart';
 
-/// 框选篮筐的示意图（本地绘制，脚本见 scripts/make_hoop_examples.py）。
+/// 检测区域的示意图（本地绘制，脚本见 scripts/make_hoop_examples.py）。
 enum HoopExample {
   good('assets/hoop_example/good.png', '正确：橙色框盖住来球轨迹、篮圈和网下落球范围，白色虚线框只盖篮网'),
   tooBig('assets/hoop_example/too_big.png', '太大：别把整块篮板、球员和地面框进去'),
-  tooSmall('assets/hoop_example/too_small.png', '太小：只框篮圈，球一靠近或落下就出框');
+  tooSmall('assets/hoop_example/too_small.png', '太小：只框篮圈，球一靠近或落下就出框'),
+  netGood('assets/hoop_example/net_good.png', '正确：白色框只覆盖篮网摆动范围'),
+  netTooBig('assets/hoop_example/net_too_big.png', '太大：别把篮板、球员或地面框进去'),
+  netTooSmall('assets/hoop_example/net_too_small.png', '太小：只框网口，漏掉网底的摆动');
 
   const HoopExample(this.asset, this.caption);
 
@@ -19,10 +22,21 @@ enum HoopExample {
   final String caption;
 }
 
+const shotExamples = [
+  HoopExample.good,
+  HoopExample.tooBig,
+  HoopExample.tooSmall,
+];
+const netExamples = [
+  HoopExample.netGood,
+  HoopExample.netTooBig,
+  HoopExample.netTooSmall,
+];
+
 class HoopExampleGallery extends StatelessWidget {
   const HoopExampleGallery({
     super.key,
-    this.examples = HoopExample.values,
+    this.examples = shotExamples,
     this.maxPanelWidth = 220,
   });
 
@@ -55,9 +69,9 @@ class HoopExampleGallery extends StatelessWidget {
                   const SizedBox(height: Spacing.xs),
                   Text(
                     context.bheText(example.caption),
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: c.textSecondary,
-                    ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
                   ),
                 ],
               ),
@@ -82,7 +96,16 @@ Future<void> showHoopExampleDialog(BuildContext context) {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Text(context.bheText('投篮分析区（橙色）')),
+              const SizedBox(height: Spacing.sm),
               const HoopExampleGallery(maxPanelWidth: 230),
+              const SizedBox(height: Spacing.md),
+              Text(context.bheText('篮网检测区（白色）')),
+              const SizedBox(height: Spacing.sm),
+              const HoopExampleGallery(
+                examples: netExamples,
+                maxPanelWidth: 230,
+              ),
               const SizedBox(height: Spacing.md),
               Text(
                 context.bheText(

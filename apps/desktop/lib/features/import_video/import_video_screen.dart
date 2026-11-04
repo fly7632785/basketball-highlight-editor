@@ -1137,7 +1137,7 @@ KeyedSubtree(
       OnboardingStep(
         id: 'import.steps',
         title: '导入分四步',
-        body: '选视频 → 定分析范围 → 框出篮筐 → 开始分析。上面的步骤条可以点回已经完成的步骤，设置会自动保存为草稿。',
+        body: '选视频 → 定分析范围 → 设检测区域 → 开始分析。上面的步骤条可以点回已经完成的步骤，设置会自动保存为草稿。',
         target: _importGuideStepperKey,
       ),
       OnboardingStep(
@@ -1157,23 +1157,25 @@ KeyedSubtree(
     ],
     2 => [
       OnboardingStep(
-        id: 'calibrate.hoop',
-        title: '框出篮筐',
-        body: '系统会先自动识别篮筐。不准的话在画面上拖动、缩放；篮筐被挡住时，先换一个画面时间再框。',
+        id: 'calibrate.shootzone',
+        title: '先框投篮分析区（橙色）',
+        body:
+            '橙色框覆盖球靠近篮圈上方、穿过篮圈到落出网下的整段路线；不要只框篮圈，也别框进整块篮板、球员或地面。系统会先自动识别，不准就在画面上拖动或缩放；篮筐被挡住时先换一个画面时间。',
         target: _importGuideRoiKey,
-        extra: (_) => const HoopExampleGallery(maxPanelWidth: 170),
-        extraHeight: 150,
+        extra: (_) => const HoopExampleGallery(),
+        width: 720,
+        reserveBottom: 500,
+        extraHeight: 330,
       ),
       OnboardingStep(
-        id: 'calibrate.regions',
-        title: '橙色和白色两个区域',
-        body: '橙色区域覆盖来球轨迹、篮圈和落球范围，用来跟踪球；白色区域只盖篮网摆动范围。点这两个按钮切换要编辑的区域，改动自动保存。',
+        id: 'calibrate.netzone',
+        title: '再框篮网检测区（白色）',
+        body:
+            '点下面的「篮网检测区」按钮切换白色框，只覆盖篮圈下沿到网底的篮网摆动范围，用来判断球有没有穿网。别框进篮板、球员或地面；改动自动保存。',
         target: _importGuideRegionKey,
-        extra: (_) => const HoopExampleGallery(
-          examples: [HoopExample.good],
-          maxPanelWidth: 260,
-        ),
-        extraHeight: 210,
+        extra: (_) => const HoopExampleGallery(examples: netExamples),
+        width: 720,
+        extraHeight: 330,
       ),
     ],
     _ => [
