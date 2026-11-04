@@ -24,6 +24,7 @@ class OnboardingStep {
     this.extraHeight = 0,
     this.width,
     this.reserveBottom = 0,
+    this.sidePanel = false,
   });
 
   /// 登记在 `onboardingStepIds` 里的步骤 id，“看过”按它记。
@@ -37,6 +38,7 @@ class OnboardingStep {
   final double extraHeight;
   final double? width;
   final double reserveBottom;
+  final bool sidePanel;
 }
 
 /// 包住一个页面：首次进入（或点“?”）时在页面上盖一层遮罩 + 气泡，逐步介绍。
@@ -162,7 +164,7 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
       if (targetContext != null && targetContext.mounted) {
         Scrollable.ensureVisible(
           targetContext,
-          alignment: 0.3,
+          alignment: _active[_index].sidePanel ? 1.0 : 0.3,
           duration: Duration.zero,
         );
       }
@@ -209,7 +211,9 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
                 ? math.min(_active[_index].reserveBottom, math.max(0, MediaQuery.sizeOf(context).height - 400))
                 : 0,
           ),
-          child: widget.child,
+          child: _showing && _active[_index].sidePanel
+              ? Transform.scale(scale: 0.62, alignment: Alignment.topLeft, child: widget.child)
+              : widget.child,
         ),
         if (_showing)
           Positioned.fill(
@@ -230,15 +234,17 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
     if (targetContext == null || overlay is! RenderBox) return null;
     final box = targetContext.findRenderObject();
     if (box is! RenderBox || !box.hasSize || !box.attached) return null;
-    final topLeft = box.localToGlobal(Offset.zero, ancestor: overlay);
-    var rect = topLeft & box.size;
+    var rect = MatrixUtils.transformRect(
+      box.getTransformTo(overlay), Offset.zero & box.size,
+    );
     // 目标比可见的滚动区域还高（或还宽）时，只高亮看得见的那一部分，
     // 不然高亮框会伸到滚动区域外面的步骤条、底部按钮上。
     final scrollable = Scrollable.maybeOf(targetContext);
     final viewport = scrollable?.context.findRenderObject();
     if (viewport is RenderBox && viewport.hasSize && viewport.attached) {
-      final visible =
-          viewport.localToGlobal(Offset.zero, ancestor: overlay) & viewport.size;
+      final visible = MatrixUtils.transformRect(
+        viewport.getTransformTo(overlay), Offset.zero & viewport.size,
+      );
       rect = rect.intersect(visible);
     }
     return rect.isEmpty ? null : rect;
@@ -264,7 +270,10 @@ class _OnboardingGuideState extends ConsumerState<OnboardingGuide> {
     final bubbleHeight = 170.0 + (bodyLines - 1) * 24 + step.extraHeight;
     double left;
     double top;
-    if (rect == null) {
+    if (step.sidePanel) {
+      left = size.width - bubbleWidth - 12;
+      top = 12;
+    } else if (rect == null) {
       left = (size.width - bubbleWidth) / 2;
       top = (size.height - bubbleHeight) / 2;
     } else {

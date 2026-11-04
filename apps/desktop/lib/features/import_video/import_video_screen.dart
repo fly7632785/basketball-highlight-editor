@@ -1160,12 +1160,17 @@ KeyedSubtree(
         id: 'calibrate.shootzone',
         title: '先框投篮分析区（橙色）',
         body:
-            '橙色框覆盖球靠近篮圈上方、穿过篮圈到落出网下的整段路线；不要只框篮圈，也别框进整块篮板、球员或地面。系统会先自动识别，不准就在画面上拖动或缩放；篮筐被挡住时先换一个画面时间。',
+            '橙色框覆盖球靠近篮圈上方、穿过篮圈到落出网下的整段路线。区域要明显大于篮圈，宽约占画面的四分之一以上，太小系统会提示；别框进整块篮板、球员或地面。系统会先自动识别，不准就拖动或缩放；篮筐被挡住先换画面时间。',
         target: _importGuideRoiKey,
-        extra: (_) => const HoopExampleGallery(),
-        width: 720,
-        reserveBottom: 500,
-        extraHeight: 330,
+        extra: (context) => TextButton.icon(
+          key: const Key('onboarding-examples'),
+          onPressed: () => showHoopExampleDialog(context),
+          icon: const Icon(Icons.image_outlined),
+          label: Text(context.bheText('看示例')),
+        ),
+        width: 360,
+        sidePanel: true,
+        extraHeight: 100,
       ),
       OnboardingStep(
         id: 'calibrate.netzone',
@@ -1173,9 +1178,15 @@ KeyedSubtree(
         body:
             '点下面的「篮网检测区」按钮切换白色框，只覆盖篮圈下沿到网底的篮网摆动范围，用来判断球有没有穿网。别框进篮板、球员或地面；改动自动保存。',
         target: _importGuideRegionKey,
-        extra: (_) => const HoopExampleGallery(examples: netExamples),
-        width: 720,
-        extraHeight: 330,
+        extra: (context) => TextButton.icon(
+          key: const Key('onboarding-examples'),
+          onPressed: () => showHoopExampleDialog(context),
+          icon: const Icon(Icons.image_outlined),
+          label: Text(context.bheText('看示例')),
+        ),
+        width: 360,
+        sidePanel: true,
+        extraHeight: 100,
       ),
     ],
     _ => [
@@ -2227,7 +2238,12 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
           ],
 KeyedSubtree(
             key: _importGuideRoiKey,
-            child:           _RoiCanvas(
+            child: ValueListenableBuilder<bool>(
+              valueListenable: videoSurfaceHidden,
+              builder: (context, hidden, _) => Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: hidden ? 600 : double.infinity),
+                  child: _RoiCanvas(
             enabled: widget.enabled && !state.previewRefreshing,
             videoController: _playerReady ? _controller : null,
             previewPath: state.previewPath,
@@ -2244,7 +2260,10 @@ KeyedSubtree(
             onRefreshPreview: widget.onRefreshPreview,
             onChanged: widget.onChanged,
             onEditComplete: () {},
-          ),
+                  ),
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: Spacing.sm),
           _PreviewTimeControls(
@@ -4229,7 +4248,8 @@ class _RoiCanvasState extends State<_RoiCanvas> {
                               : null,
                           child: Stack(
                             children: [
-                              if (widget.videoController != null)
+                              if (widget.videoController != null &&
+                                  !(videoSurfaceHidden.value && widget.previewPath != null && File(widget.previewPath!).existsSync()))
                                 Positioned.fill(
                                   // 框已是视频比例。Windows 软件渲染的纹理比例
                                   // 可能不对、里面带黑边,cover 正好把黑边裁掉,

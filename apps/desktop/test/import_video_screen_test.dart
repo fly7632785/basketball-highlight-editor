@@ -132,25 +132,29 @@ void main() {
       await tester.pump();
       expect(find.text(language == 'zh' ? '先框投篮分析区（橙色）' : 'First: shot analysis area (orange)'), findsOneWidget);
       expect(find.text('框出篮筐'), findsNothing);
-      expect(find.textContaining(language == 'zh' ? '橙色框覆盖球靠近篮圈上方' : 'The orange box covers the entire ball path'), findsOneWidget);
-      await tester.runAsync(() async {
-        final context = tester.element(find.byType(HoopExampleGallery));
-        for (final example in HoopExample.values) {
-          await precacheImage(AssetImage(example.asset), context);
-        }
-      });
-      await tester.pump();
-      for (final example in shotExamples) {
+      final canvas = find.byWidgetPredicate((widget) =>
+          widget.key is GlobalKey && widget.key.toString().contains('import-guide-roi'));
+      expect(tester.getRect(find.byKey(const Key('onboarding-title'))).left,
+          greaterThan(tester.getRect(canvas).right));
+      expect(find.textContaining(language == 'zh' ? '橙色框覆盖球靠近篮圈上方' : 'The orange box covers the ball path'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('onboarding-examples')));
+      await tester.pumpAndSettle();
+      for (final example in HoopExample.values) {
         expect(find.byKey(ValueKey('hoop-example-${example.name}')), findsOneWidget);
-        expect(tester.getSize(find.byKey(ValueKey('hoop-example-${example.name}'))).width, greaterThanOrEqualTo(220));
       }
+      await tester.tap(find.text(language == 'zh' ? '关闭' : 'Close'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('onboarding-next')));
       await tester.pump();
       expect(find.text(language == 'zh' ? '再框篮网检测区（白色）' : 'Next: net detection area (white)'), findsOneWidget);
       expect(find.textContaining(language == 'zh' ? '点下面的「篮网检测区」按钮' : 'Click the Net detection area button'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('onboarding-examples')));
+      await tester.pumpAndSettle();
       for (final example in netExamples) {
         expect(find.byKey(ValueKey('hoop-example-${example.name}')), findsOneWidget);
       }
+      await tester.tap(find.text(language == 'zh' ? '关闭' : 'Close'));
+      await tester.pumpAndSettle();
       if (language == 'en') {
         final overlay = find.byKey(const Key('onboarding-overlay'));
         final texts = tester.widgetList<Text>(find.descendant(of: overlay, matching: find.byType(Text)));

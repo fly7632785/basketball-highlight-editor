@@ -15,7 +15,11 @@ GREEN = (46, 160, 90)
 RED = (214, 69, 65)
 
 # 篮筐位置（480x320 坐标系）
-RIM_CX, RIM_Y, RIM_W = 240, 118, 56
+RIM_CX, RIM_Y, RIM_W = 240, 132, 14
+SHOT_GOOD = (168, 50, 312, 226)
+SHOT_BIG = (40, 24, 440, 290)
+SHOT_SMALL = (225, 124, 255, 158)
+NET_GOOD = (230, 134, 250, 158)
 
 
 def s(v):
@@ -27,24 +31,20 @@ def scene(d: ImageDraw.ImageDraw, figure: bool) -> None:
     # 墙面与地板
     d.rectangle([0, s(250), s(W), s(H)], fill=(150, 104, 62))
     d.line([0, s(250), s(W), s(250)], fill=(110, 76, 44), width=s(2))
-    # 篮板
-    d.rectangle([s(RIM_CX - 78), s(40), s(RIM_CX + 78), s(RIM_Y + 8)], fill=(226, 230, 236), outline=(160, 168, 180), width=s(2))
-    d.rectangle([s(RIM_CX - 26), s(78), s(RIM_CX + 26), s(RIM_Y + 4)], outline=(220, 70, 60), width=s(3))
-    # 篮网（梯形 + 网格线）
+    # 缩小篮筐与篮板，模拟固定机位的画面比例。
+    d.rectangle([s(150), s(96), s(330), s(134)], fill=(226, 230, 236), outline=(160, 168, 180), width=s(2))
+    d.rectangle([s(229), s(113), s(251), s(133)], outline=(220, 70, 60), width=s(1))
     top_l, top_r = RIM_CX - RIM_W / 2, RIM_CX + RIM_W / 2
-    bot_l, bot_r, bot_y = RIM_CX - 18, RIM_CX + 18, RIM_Y + 62
-    d.polygon([(s(top_l), s(RIM_Y)), (s(top_r), s(RIM_Y)), (s(bot_r), s(bot_y)), (s(bot_l), s(bot_y))], outline=(235, 238, 242), width=s(2))
-    for i in range(1, 6):
-        t = i / 6
+    bot_l, bot_r, bot_y = RIM_CX - 5, RIM_CX + 5, RIM_Y + 20
+    d.polygon([(s(top_l), s(RIM_Y)), (s(top_r), s(RIM_Y)), (s(bot_r), s(bot_y)), (s(bot_l), s(bot_y))], outline=(235, 238, 242), width=s(1))
+    for i in range(1, 4):
+        t = i / 4
         d.line([s(top_l + (top_r - top_l) * t), s(RIM_Y), s(bot_l + (bot_r - bot_l) * t), s(bot_y)], fill=(235, 238, 242), width=s(1))
     for j in range(1, 4):
-        y = RIM_Y + 62 * j / 4
-        k = j / 4
-        d.line([s(top_l + (bot_l - top_l) * k), s(y), s(top_r + (bot_r - top_r) * k), s(y)], fill=(235, 238, 242), width=s(1))
-    # 篮圈
-    d.ellipse([s(top_l - 2), s(RIM_Y - 6), s(top_r + 2), s(RIM_Y + 8)], outline=(235, 110, 20), width=s(4))
-    # 球
-    d.ellipse([s(RIM_CX - 13), s(RIM_Y - 52), s(RIM_CX + 13), s(RIM_Y - 26)], fill=(228, 120, 40), outline=(120, 56, 16), width=s(2))
+        t = j / 4
+        d.line([s(top_l + (bot_l - top_l) * t), s(RIM_Y + 20 * t), s(top_r + (bot_r - top_r) * t), s(RIM_Y + 20 * t)], fill=(235, 238, 242), width=s(1))
+    d.ellipse([s(top_l - 1), s(RIM_Y - 2), s(top_r + 1), s(RIM_Y + 3)], outline=(235, 110, 20), width=s(2))
+    d.ellipse([s(235), s(91), s(245), s(101)], fill=(228, 120, 40), outline=(120, 56, 16), width=s(1))
     if figure:
         # 球员剪影：说明框太大会把人也框进去
         d.ellipse([s(96), s(156), s(116), s(176)], fill=(200, 208, 220))
@@ -90,16 +90,23 @@ def render(name: str, boxes, ok: bool, figure: bool = False) -> None:
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    # 正确：橙色框盖住来球轨迹、篮圈和网下落球范围；白色框只盖篮网
-    render("good", [((190, 62, 290, 206), ORANGE, False), ((206, 112, 274, 194), WHITE, True)], True)
-    # 太大：把整块篮板、球员和地面都框进去
-    render("too_big", [((40, 24, 440, 290), ORANGE, False)], False, figure=True)
-    # 太小：只框住篮圈，球一靠近或落下就出框
-    render("too_small", [((210, 106, 270, 134), ORANGE, False)], False)
-    # 白色检测区只框篮网；错误示例分别包括篮板地面及只有网口。
-    render("net_good", [((206, 122, 274, 190), WHITE, True)], True)
-    render("net_too_big", [((40, 24, 440, 290), WHITE, True)], False, figure=True)
-    render("net_too_small", [((210, 120, 270, 132), WHITE, True)], False)
+    def width(rect): return rect[2] - rect[0]
+    def height(rect): return rect[3] - rect[1]
+    assert 0.25 <= width(SHOT_GOOD) / W <= 0.35
+    assert 0.45 <= height(SHOT_GOOD) / H <= 0.60
+    assert 8 <= width(SHOT_GOOD) / RIM_W <= 15
+    assert 1.5 <= width(SHOT_SMALL) / RIM_W <= 3
+    assert width(SHOT_SMALL) < W * 0.08 and height(SHOT_SMALL) < H * 0.12
+    assert width(SHOT_BIG) > W * 0.5
+    assert SHOT_GOOD[0] < NET_GOOD[0] < NET_GOOD[2] < SHOT_GOOD[2]
+    assert SHOT_GOOD[1] < NET_GOOD[1] < NET_GOOD[3] < SHOT_GOOD[3]
+    render("good", [(SHOT_GOOD, ORANGE, False), (NET_GOOD, WHITE, True)], True)
+    render("too_big", [(SHOT_BIG, ORANGE, False)], False, figure=True)
+    render("too_small", [(SHOT_SMALL, ORANGE, False)], False)
+    render("net_good", [(NET_GOOD, WHITE, True)], True)
+    render("net_too_big", [(SHOT_BIG, WHITE, True)], False, figure=True)
+    render("net_too_small", [((230, 133, 250, 138), WHITE, True)], False)
+
 
 
 if __name__ == "__main__":

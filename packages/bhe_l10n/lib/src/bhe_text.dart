@@ -1411,8 +1411,8 @@ const _englishText = <String, String>{
   '框选示例': "Detection area examples",
   "先框投篮分析区（橙色）": "First: shot analysis area (orange)",
   "再框篮网检测区（白色）": "Next: net detection area (white)",
-  "橙色框覆盖球靠近篮圈上方、穿过篮圈到落出网下的整段路线；不要只框篮圈，也别框进整块篮板、球员或地面。系统会先自动识别，不准就在画面上拖动或缩放；篮筐被挡住时先换一个画面时间。":
-      "The orange box covers the entire ball path from above the rim, through it and below the net. Do not frame only the rim or include the whole backboard, players or floor. The app detects it first; drag or resize if needed. If the hoop is blocked, pick another frame.",
+  "橙色框覆盖球靠近篮圈上方、穿过篮圈到落出网下的整段路线。区域要明显大于篮圈，宽约占画面的四分之一以上，太小系统会提示；别框进整块篮板、球员或地面。系统会先自动识别，不准就拖动或缩放；篮筐被挡住先换画面时间。":
+      "The orange box covers the ball path from above the rim, through it and below the net. Make it much larger than the rim, at least about one quarter of the frame width; the app warns if it is too small. Exclude the whole backboard, players and floor. The app detects it first; drag or resize if needed. If the hoop is blocked, pick another frame.",
   "点下面的「篮网检测区」按钮切换白色框，只覆盖篮圈下沿到网底的篮网摆动范围，用来判断球有没有穿网。别框进篮板、球员或地面；改动自动保存。":
       "Click the Net detection area button below to select the white box. Cover only the net swing from the bottom of the rim to the bottom of the net to detect whether the ball went through. Exclude the backboard, players and floor. Changes save automatically.",
   "正确：白色框只覆盖篮网摆动范围": "Right: the white box covers only the net swing",
