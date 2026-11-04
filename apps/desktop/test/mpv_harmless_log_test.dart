@@ -1,4 +1,4 @@
-// D-L057：mpv 的「property not found _setProperty(osc, 1)」是已知无害提示，
+// D-L057：mpv 对没注册过的 OSC 属性报的这条提示是已知无害的，
 // 要记成 debug 而不是 error（它此前还误导了「界面卡顿最后一步」）。
 import 'package:desktop/core/app_diagnostics.dart';
 import 'package:desktop/core/app_log.dart';
@@ -17,6 +17,7 @@ void main() {
       reason: '同一行里带前后缀也认',
     );
     expect(isHarmlessMpvLog('property not found _setProperty(volume, 50)'), isFalse);
+    expect(isHarmlessMpvLog('property not found _setProperty(osc, 0)'), isTrue);
   });
 
   test('写进日志时是 debug 而不是 error', () async {

@@ -161,9 +161,8 @@ Player createLoggedPlayer(String where) {
   return player;
 }
 
-/// mpv 的已知无害提示（只认这两条原文，其它一律照常记 error）。
-bool isHarmlessMpvLog(String text) =>
-    text.contains('property not found _setProperty(osc, 1)');
+/// mpv 的已知无害提示：只认 OSC 这一条，其它一律照常记 error。
+bool isHarmlessMpvLog(String text) => text.contains('_setProperty(osc');
 
 /// 销毁播放器并记一行；[where] 说明是哪个页面。
 Future<void> disposeLoggedPlayer(Player player, String where) async {

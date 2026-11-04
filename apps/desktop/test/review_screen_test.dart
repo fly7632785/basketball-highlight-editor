@@ -2014,6 +2014,46 @@ void main() {
 
     expect(notifier.maxConcurrentPreviewLoads, lessThanOrEqualTo(2));
   });
+
+  // D-L057 a)：一进审核页到底会发多少个取封面请求、会不会重复发同一个。
+  testWidgets('首屏每个候选各发一次取封面，不重复发同一帧', (tester) async {
+    final notifier = _PreviewTrackingNotifier(
+      ProjectState(
+        video: const {'id': 'video-1'},
+        job: const {'state': 'completed'},
+        candidates: List.generate(
+          20,
+          (index) => {
+            'id': 'candidate-$index',
+            'event_time_ms': index * 3000,
+            'default_start_ms': index * 3000,
+            'default_end_ms': index * 3000 + 3000,
+          },
+        ),
+      ),
+    );
+    await _pumpReview(
+      tester,
+      notifier.initialState,
+      notifier: notifier,
+      size: const Size(1440, 900),
+    );
+    await tester.pump(const Duration(seconds: 1));
+
+    final requests = notifier.previewRequests;
+    expect(requests, isNotEmpty);
+    expect(
+      requests.length,
+      lessThan(20),
+      reason: '只有首屏可见的候选才会请求封面（不是全部 20 个）',
+    );
+    expect(
+      requests.toSet().length,
+      requests.length,
+      reason: '同一个候选同一时刻只发一次（_coverCache 去重）',
+    );
+    expect(notifier.sawDuplicateInFlight, isFalse);
+  });
 }
 
 Future<void> _pumpReview(
@@ -2202,14 +2242,21 @@ class _PreviewTrackingNotifier extends _ReviewNotifier {
 
   int activePreviewLoads = 0;
   int maxConcurrentPreviewLoads = 0;
+  final List<String> previewRequests = <String>[];
+  final Set<String> inFlightPreviewKeys = <String>{};
+  bool sawDuplicateInFlight = false;
 
   @override
   Future<String?> loadCandidatePreview(String candidateId, int timeMs) async {
+    previewRequests.add('$candidateId:$timeMs');
+    final key = '$candidateId:$timeMs';
+    if (!inFlightPreviewKeys.add(key)) sawDuplicateInFlight = true;
     activePreviewLoads++;
     if (activePreviewLoads > maxConcurrentPreviewLoads) {
       maxConcurrentPreviewLoads = activePreviewLoads;
     }
     await Future<void>.delayed(const Duration(milliseconds: 20));
+    inFlightPreviewKeys.remove(key);
     activePreviewLoads--;
     return null;
   }
