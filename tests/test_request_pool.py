@@ -126,8 +126,14 @@ def test_slow_validation_commands_do_not_block_other_requests(running, tmp_path,
     service, input_, output, entered, release, source = running
     store = service._require_store({'project_root': str(tmp_path/'a')})
     video = store.link_video(service.inspect_video({'video_path': str(source)}))
-    if command in {'suggest_roi', 'extract_preview'}:
+    if command == 'suggest_roi':
         monkeypatch.setattr(EngineService, '_source_fingerprint', staticmethod(service._source_fingerprint))
+    elif command == 'extract_preview':
+        def slow_proxy(*args):
+            entered.set()
+            assert release.wait(5)
+            return None
+        monkeypatch.setattr(service, '_latest_proxy_video', slow_proxy)
     input_.send('slow', command, project_root=str(tmp_path/'a'), video_id=video['id'], video_path=str(source), model_path=str(tmp_path/'missing.pt'))
     assert entered.wait(3)
     input_.send('hello', 'hello')

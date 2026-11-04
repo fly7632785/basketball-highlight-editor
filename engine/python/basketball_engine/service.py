@@ -702,7 +702,7 @@ class EngineService:
         return fingerprint(path)
 
     @classmethod
-    def _validated_original_source(cls, video: Dict[str, Any]) -> Path:
+    def _validated_original_source(cls, video: Dict[str, Any], verify_content: bool = True) -> Path:
         source = Path(video["source_path"])
         if not source.is_file():
             raise ProtocolError("VIDEO_NOT_FOUND", f"原始视频不存在: {source}")
@@ -719,7 +719,8 @@ class EngineService:
             )
         )
         content_changed = False
-        if isinstance(stored_fingerprint, str) and stored_fingerprint:
+        metadata_matches = stored_size is not None and stored_mtime is not None and not metadata_changed
+        if (verify_content or not metadata_matches) and isinstance(stored_fingerprint, str) and stored_fingerprint:
             try:
                 content_changed = stored_fingerprint != cls._source_fingerprint(source)
             except OSError:
@@ -1021,8 +1022,8 @@ class EngineService:
         video = store.video(video_id) if isinstance(video_id, str) else None
         if not video:
             raise ProtocolError("VIDEO_NOT_FOUND", "预览任务缺少有效视频")
-        # Calibration and review previews share the original source coordinate system.
-        source = self._validated_source(video)
+        # Preview can trust matching file metadata; analysis and export verify content.
+        source = self._validated_source(video, verify_content=False)
         try:
             duration_ms = video.get("duration_ms")
             duration_limit = int(duration_ms) if duration_ms is not None else 1000

@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import time
@@ -1424,6 +1425,61 @@ def test_extract_preview_generates_frame_and_reuses_cached_frame(tmp_path: Path,
         {"project_root": str(project_root), "video_id": video["id"], "time_ms": 200},
     )
     assert cached == result
+
+
+@pytest.mark.parametrize("change", ["none", "mtime", "size"])
+def test_preview_source_validation_uses_matching_metadata(tmp_path: Path, monkeypatch, change):
+    source = tmp_path / "source.mp4"
+    subprocess.run([
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+        "-i", "testsrc=size=320x240:rate=10", "-t", "1", "-pix_fmt", "yuv420p", str(source),
+    ], check=True)
+    root = tmp_path / "project"
+    service = EngineService()
+    service.create_project({"name": "预览", "root_path": str(root)})
+    video = service.link_video({"project_root": str(root), "video_path": str(source)})["video"]
+    if change == "mtime":
+        stat = source.stat()
+        os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+    elif change == "size":
+        with source.open("ab") as stream:
+            stream.write(b"changed")
+    calls = []
+    original = EngineService._source_fingerprint
+    def fingerprint_spy(path):
+        calls.append(path)
+        return original(path)
+    monkeypatch.setattr(EngineService, "_source_fingerprint", staticmethod(fingerprint_spy))
+    output = root / "cached.jpg"
+    output.write_bytes(b"cached")
+    payload = {"project_root": str(root), "video_id": video["id"], "output_path": str(output)}
+    if change in {"mtime", "size"}:
+        with pytest.raises(ProtocolError) as error:
+            service.extract_preview(payload)
+        assert error.value.code == "VIDEO_SOURCE_CHANGED"
+    else:
+        assert service.extract_preview(payload)["path"] == str(output)
+    assert len(calls) == (0 if change == "none" else 1)
+
+
+def test_export_still_checks_content_when_metadata_matches(tmp_path: Path):
+    source = tmp_path / "source.mp4"
+    subprocess.run([
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+        "-i", "testsrc=size=320x240:rate=10", "-t", "1", "-pix_fmt", "yuv420p", str(source),
+    ], check=True)
+    root = tmp_path / "project"
+    service = EngineService()
+    service.create_project({"name": "导出", "root_path": str(root)})
+    video = service.link_video({"project_root": str(root), "video_path": str(source)})["video"]
+    stat = source.stat()
+    content = bytearray(source.read_bytes())
+    content[-1] ^= 1
+    source.write_bytes(content)
+    os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    with pytest.raises(ProtocolError) as error:
+        service._export_videos(service._require_store({"project_root": str(root)}), [{"video_id": video["id"]}])
+    assert error.value.code == "VIDEO_SOURCE_CHANGED"
 
 
 def _preview_commands(monkeypatch):
