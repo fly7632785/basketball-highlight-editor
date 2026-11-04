@@ -648,6 +648,10 @@ class MainActivity : FlutterActivity() {
                 Log.w("BHE-Export", "skipping audio track ${track.index}: ${track.mime}", error)
                 AppDiagnostics.event("export.audio.skipped", mapOf("track" to track.index, "mime" to track.mime), error)
             },
+            onSkippedVideo = { track, mime ->
+                Log.w("BHE-Export", "skipping extra video track ${track.index}: $mime")
+                AppDiagnostics.event("export.video.skipped", mapOf("track" to track.index, "mime" to mime))
+            },
         )
 
     private fun applySourceOrientation(extractor: MediaExtractor, muxer: MediaMuxer) {
