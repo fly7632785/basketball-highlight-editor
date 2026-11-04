@@ -720,7 +720,8 @@ class MainActivity : FlutterActivity() {
                 val endUs = endMs.toLong() * 1000L
                 currentExtractor.seekTo(startMs.toLong() * 1000L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                 val clipStartUs = currentExtractor.sampleTime
-                if (clipStartUs < 0L) throw IllegalStateException("无法定位视频片段起点")
+                // -1 且没有样本才是「定位不到」；负的起始 PTS（手机录制常见）是合法时间戳。
+                MergeMediaFinalizer.requireLocation(clipStartUs, currentExtractor.sampleTrackIndex)
                 var buffer = ByteBuffer.allocate(16 * 1024 * 1024)
                 val info = android.media.MediaCodec.BufferInfo()
                 while (true) {
@@ -905,13 +906,14 @@ class MainActivity : FlutterActivity() {
                         val endUs = endMs * 1000L
                         extractor.seekTo(startMs * 1000L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                         val clipStartUs = extractor.sampleTime
-                        MergeMediaFinalizer.requireLocation(clipStartUs)
+                        MergeMediaFinalizer.requireLocation(clipStartUs, extractor.sampleTrackIndex)
                         val intervalStats = videoStats.startInterval(clipStartUs)
                         while (true) {
                             if (cancelled.get()) throw InterruptedException("合并导出已取消")
                             val sourceTrack = extractor.sampleTrackIndex
                             val sampleTime = extractor.sampleTime
-                            if (sourceTrack < 0 || sampleTime < 0L || sampleTime >= endUs) break
+                            // 只把「没有样本」(-1) 当结束；负 PTS 是合法值，继续按夹到片段起点写。
+                            if (sourceTrack < 0 || sampleTime == NO_SAMPLE_TIME || sampleTime >= endUs) break
                             val muxTrack = trackMap[sourceTrack]
                             if (muxTrack != null) {
                                 val sampleSizeBytes = extractor.sampleSize

@@ -12,11 +12,18 @@ internal data class MergeMediaFacts(
 
 internal class MergeRangeUnavailable(message: String) : IllegalStateException(message)
 
+/** MediaExtractor 在没有（或读不到）样本时给出的时间戳；负的 PTS 不是这个值。 */
+internal const val NO_SAMPLE_TIME = -1L
+
 /** Injectable media boundary: the caller owns resource cleanup if a step fails. */
 internal object MergeMediaFinalizer {
-    fun requireLocation(sampleTimeUs: Long) {
-        if (sampleTimeUs < 0) throw MergeRangeUnavailable("无法定位合并片段")
+    /** -1（SAMPLE_TIME_NONE）且没有可读样本才算定位失败；负的起始 PTS 是合法时间戳（手机录制常见）。 */
+    fun requireLocation(sampleTimeUs: Long, sampleTrackIndex: Int = 0) {
+        if (sampleTimeUs == NO_SAMPLE_TIME && sampleTrackIndex < 0) {
+            throw MergeRangeUnavailable("无法定位合并片段")
+        }
     }
+
 
     fun requireVideoSamples(count: Long) {
         if (count <= 0) throw MergeRangeUnavailable("合并片段没有可读取的视频样本")
