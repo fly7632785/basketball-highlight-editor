@@ -37,13 +37,13 @@ Use the suggested hoop area and adjust it when needed. Desktop export offers opt
 
 ## Download
 
-Current release: [v0.1.13](https://github.com/fly7632785/basketball-highlight-editor/releases/tag/v0.1.13). Downloads are also available from the [website](https://bhe.jafir.top/en/#download) and [GitHub Releases](https://github.com/fly7632785/basketball-highlight-editor/releases).
+Current release: [v0.1.14](https://github.com/fly7632785/basketball-highlight-editor/releases/tag/v0.1.14). Downloads are also available from the [website](https://bhe.jafir.top/en/#download) and [GitHub Releases](https://github.com/fly7632785/basketball-highlight-editor/releases).
 
-| System | v0.1.13 package | Notes |
+| System | v0.1.14 package | Notes |
 |---|---|---|
-| macOS | [Apple silicon](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-macos-arm64-v0.1.13-adhoc.dmg) · [Intel](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-macos-x86_64-v0.1.13-adhoc.dmg) | Intel Macs require macOS 13 or later. On first launch, right-click and select Open. |
-| Windows 10 / 11 | [x64 .zip](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-windows-x64-v0.1.13.zip) | Extract the archive; see [setup notes](docs/GETTING_STARTED.en.md). |
-| Android | [arm64-v8a .apk](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.13/BHE-android-arm64-v8a-v0.1.13-debug-signed.apk) | Sideloaded test package; allow installation from unknown sources. |
+| macOS | [Apple silicon](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.14/BHE-macos-arm64-v0.1.14-adhoc.dmg) · [Intel](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.14/BHE-macos-x86_64-v0.1.14-adhoc.dmg) | Intel Macs require macOS 13 or later. On first launch, right-click and select Open. |
+| Windows 10 / 11 | [x64 .zip](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.14/BHE-windows-x64-v0.1.14.zip) | Extract the archive; see [setup notes](docs/GETTING_STARTED.en.md). |
+| Android | [arm64-v8a .apk](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.14/BHE-android-arm64-v8a-v0.1.14-debug-signed.apk) | Sideloaded test package; allow installation from unknown sources. |
 
 On a Snapdragon 8 Elite Gen 5 phone, a 10-minute video took about 4.5 minutes to analyze; other devices differ. See the v0.1.9 notes below. iPhone can play, review and export, but cannot analyze yet.
 
@@ -86,6 +86,7 @@ See [CHANGELOG](CHANGELOG.md) for all changes. Windows one-click updates start w
 
 | Version | Date | Highlights |
 |---|---|---|
+| v0.1.14 | 2026-11-04 | Fixes the export screen freezing on Windows and makes mixed frame rate videos and Dolby Vision clips from phones merge cleanly; onboarding now has 20 steps, review gains a shortcut cheat sheet, and the detection-area guide splits into a shooting area (orange) and a net area (white) with example images; the desktop player has volume and mute (M to mute) and remembers the setting; opening a project no longer reports the project as busy; logs are more complete, Android adds an About page with the version, and the file picker asks you to retry when the system picker is still open |
 | v0.1.13 | 2026-10-28 | Android adds a project list (open, rename, delete, close a project), three output modes on the export page (including one merged video per tag), game stats, export history and a reminder about untagged clips before exporting, and moves undo into the menu; Android can select a player group and check who is playing before analysis, edit groups, undo up to 20 review actions, rename or delete player tags, and rename projects; adds feedback, diagnostics, task recovery guidance and clearer errors; analysis and export cannot run at the same time; merged exports combine overlapping clips and show the reduction in clip count, while separate exports now run one by one and may take longer; fixes export failures for some videos, video recovery, project package path safety and portrait export orientation, preserving existing reviews if source validation fails; desktop merged exports combine overlapping clips from the same video when no goal effect is selected, and review shows Edited and Overlap labels; Windows checks the analysis engine earlier; diagnostics are improved and future platform-specific patches are supported |
 | v0.1.12-windows.1 | 2026-10-26 | Windows hotfix: one-click update installation with rollback protection, requiring a first manual replacement; skip unrecognized audio tracks during export; includes editable player groups and roster selection when importing |
 | v0.1.12-macos.2 | 2026-10-26 | macOS export hotfix: skip unrecognized audio tracks to fix FFmpeg exit code 234; preserve normal audio in separate, merged and manual clip exports |
