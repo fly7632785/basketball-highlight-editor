@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import '../core/app_log.dart';
+import 'engine_client.dart' show EngineException;
 import 'engine_session.dart';
 
 String canonicalProjectPath(String path) {
@@ -58,10 +60,13 @@ class ProjectSessionScope {
   final String? videoId;
 
   Future<JsonMap> extractPreview({int timeMs = 1000}) {
-    return engine.extractPreview(
-      projectRoot: projectRoot,
-      videoId: _requireVideoId(),
-      timeMs: timeMs,
+    return retryWhileProjectBusy(
+      'extract_preview',
+      () => engine.extractPreview(
+        projectRoot: projectRoot,
+        videoId: _requireVideoId(),
+        timeMs: timeMs,
+      ),
     );
   }
 
@@ -184,6 +189,41 @@ class ProjectSessionScope {
       throw const SessionStateException('当前快照尚未关联视频');
     }
     return value;
+  }
+}
+
+/// 项目忙（`PROJECT_BUSY`）是临时状态：打开项目、生成预览代理的几秒里，
+/// 同一项目的读请求会被引擎直接拒掉。这里静默重试，避免用户一进审核页
+/// 就连续收到「视频预览加载失败」「开始记录审核耗时失败」两个错误通知。
+///
+/// 只用于读操作（取预览、开始记录审核耗时），不会重放会改数据的命令。
+const projectBusyRetryDelays = <Duration>[
+  Duration(milliseconds: 300),
+  Duration(milliseconds: 700),
+  Duration(milliseconds: 1500),
+  Duration(milliseconds: 3000),
+];
+
+Future<JsonMap> retryWhileProjectBusy(
+  String command,
+  Future<JsonMap> Function() request, {
+  List<Duration> delays = projectBusyRetryDelays,
+}) async {
+  for (var attempt = 0; ; attempt++) {
+    try {
+      final result = await request();
+      if (attempt > 0) {
+        appLog(
+          'info',
+          'project',
+          '$command 项目忙，第 ${attempt + 1} 次尝试成功',
+        );
+      }
+      return result;
+    } on EngineException catch (error) {
+      if (error.code != 'PROJECT_BUSY' || attempt >= delays.length) rethrow;
+      await Future<void>.delayed(delays[attempt]);
+    }
   }
 }
 
@@ -379,10 +419,13 @@ class ProjectSession {
   }
 
   Future<JsonMap> extractPreview({int timeMs = 1000, String? videoId}) {
-    return engine.extractPreview(
-      projectRoot: _requireProjectRoot(),
-      videoId: videoId ?? _requireVideoId(),
-      timeMs: timeMs,
+    return retryWhileProjectBusy(
+      'extract_preview',
+      () => engine.extractPreview(
+        projectRoot: _requireProjectRoot(),
+        videoId: videoId ?? _requireVideoId(),
+        timeMs: timeMs,
+      ),
     );
   }
 
@@ -615,10 +658,13 @@ class ProjectSession {
   }
 
   Future<JsonMap> startReview(String candidateId, {String? reviewStartedAt}) {
-    return engine.startReview(
-      projectRoot: _requireProjectRoot(),
-      candidateId: candidateId,
-      reviewStartedAt: reviewStartedAt,
+    return retryWhileProjectBusy(
+      'start_review',
+      () => engine.startReview(
+        projectRoot: _requireProjectRoot(),
+        candidateId: candidateId,
+        reviewStartedAt: reviewStartedAt,
+      ),
     );
   }
 
