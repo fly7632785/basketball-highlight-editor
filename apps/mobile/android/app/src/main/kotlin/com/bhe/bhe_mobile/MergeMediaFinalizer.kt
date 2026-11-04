@@ -24,6 +24,10 @@ internal object MergeMediaFinalizer {
         }
     }
 
+    /** 成品只能有 1 条视频轨：多轨时写入/回读的样本口径对不上，播放器也只会认其中一条。 */
+    fun requireSingleVideoTrack(videoTracks: Int) {
+        check(videoTracks <= 1) { "合并结果出现多条视频轨（$videoTracks）" }
+    }
 
     fun requireVideoSamples(count: Long) {
         if (count <= 0) throw MergeRangeUnavailable("合并片段没有可读取的视频样本")

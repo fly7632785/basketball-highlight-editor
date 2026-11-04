@@ -117,4 +117,12 @@ class MergeMediaFinalizerTest {
         MergeMediaFinalizer.requireLocation(-33_333L, 3)
     }
 
+    @Test fun extraVideoTrackInOutputIsReportedInsteadOfGuessed() {
+        MergeMediaFinalizer.requireSingleVideoTrack(1)
+        MergeMediaFinalizer.requireSingleVideoTrack(0)
+        val error = assertThrows(IllegalStateException::class.java) {
+            MergeMediaFinalizer.requireSingleVideoTrack(3)
+        }
+        assertTrue(error.message!!.contains("多条视频轨"))
+    }
 }

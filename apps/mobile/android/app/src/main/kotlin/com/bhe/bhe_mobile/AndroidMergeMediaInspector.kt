@@ -49,6 +49,8 @@ internal object AndroidMergeMediaInspector {
                     "合并结果视频轨无效"
                 }
                 tracks++
+                // 只写入 1 条视频轨，成品就不该出现第 2 条；多出来就明说，不去猜哪条该算。
+                MergeMediaFinalizer.requireSingleVideoTrack(tracks)
                 extractor.selectTrack(index)
                 try {
                     extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
