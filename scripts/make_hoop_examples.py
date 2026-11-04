@@ -19,7 +19,13 @@ RIM_CX, RIM_Y, RIM_W = 240, 132, 14
 SHOT_GOOD = (168, 50, 312, 226)
 SHOT_BIG = (40, 24, 440, 290)
 SHOT_SMALL = (225, 124, 255, 158)
-NET_GOOD = (230, 134, 250, 158)
+NET_GOOD = (231, 134, 250, 158)
+NET_TOO_SMALL = (232, 133, 248, 139)
+NET_TOO_BIG = (16, 16, 464, 304)
+# 篮网区示例的特写窗口（场景坐标）：篮圈+网占满画面，白框才看得清。
+NET_ZOOM = (206, 112, 288, 164)
+# 橙色「正确」图右下角的放大插图位置（画面坐标）。
+GOOD_INSET = (330, 206, 470, 300)
 
 
 def s(v):
@@ -77,12 +83,46 @@ def badge(d, ok: bool) -> None:
         d.line([s(cx - 9), s(cy + 9), s(cx + 9), s(cy - 9)], fill=WHITE, width=s(5))
 
 
-def render(name: str, boxes, ok: bool, figure: bool = False) -> None:
+def scene_image(figure: bool = False) -> Image.Image:
     img = Image.new("RGB", (s(W), s(H)))
+    scene(ImageDraw.Draw(img), figure)
+    return img
+
+
+def map_rect(rect, crop, dest):
+    zx = (dest[2] - dest[0]) / (crop[2] - crop[0])
+    zy = (dest[3] - dest[1]) / (crop[3] - crop[1])
+    return (
+        dest[0] + (rect[0] - crop[0]) * zx,
+        dest[1] + (rect[1] - crop[1]) * zy,
+        dest[0] + (rect[2] - crop[0]) * zx,
+        dest[1] + (rect[3] - crop[1]) * zy,
+    )
+
+
+def inset(img: Image.Image, crop, dest, boxes) -> None:
+    """在画面一角贴一张放大特写，框线按同一比例映射进去。"""
+    panel = scene_image(figure=True).crop([s(v) for v in crop]).resize(
+        (s(dest[2] - dest[0]), s(dest[3] - dest[1])), Image.LANCZOS
+    )
+    img.paste(panel, (s(dest[0]), s(dest[1])))
     d = ImageDraw.Draw(img)
-    scene(d, figure)
+    for rect, color, dash in boxes:
+        box(d, map_rect(rect, crop, dest), color, width=3, dash=dash)
+    d.rectangle([s(dest[0]), s(dest[1]), s(dest[2]), s(dest[3])], outline=(255, 255, 255), width=s(2))
+
+
+def render(name: str, boxes, ok: bool, figure: bool = False, crop=None, extra=None) -> None:
+    img = scene_image(figure)
+    if crop is not None:
+        # 整张图就是特写：篮圈占画面宽 15% 以上，白框才分得清。
+        img = img.crop([s(v) for v in crop]).resize((s(W), s(H)), Image.LANCZOS)
+        boxes = [(map_rect(rect, crop, (0, 0, W, H)), color, dash) for rect, color, dash in boxes]
+    d = ImageDraw.Draw(img)
     for rect, color, dash in boxes:
         box(d, rect, color, dash=dash)
+    if extra is not None:
+        extra(img)
     badge(d, ok)
     img = img.resize((W, H), Image.LANCZOS).quantize(colors=64, method=Image.Quantize.MEDIANCUT)
     img.save(OUT / f"{name}.png", optimize=True)
@@ -100,12 +140,33 @@ def main() -> None:
     assert width(SHOT_BIG) > W * 0.5
     assert SHOT_GOOD[0] < NET_GOOD[0] < NET_GOOD[2] < SHOT_GOOD[2]
     assert SHOT_GOOD[1] < NET_GOOD[1] < NET_GOOD[3] < SHOT_GOOD[3]
-    render("good", [(SHOT_GOOD, ORANGE, False), (NET_GOOD, WHITE, True)], True)
+    # 白框宽度（场景坐标）用于比例自检
+    def net_size(rect):
+        return rect[2] - rect[0], rect[3] - rect[1]
+
+    good_w, good_h = net_size(NET_GOOD)
+    small_w, small_h = net_size(NET_TOO_SMALL)
+    # 白框宽约等于 1.0~1.4 倍篮圈宽，高约 1.5~2.5 倍篮圈宽
+    assert 1.0 <= good_w / RIM_W <= 1.4
+    assert 1.5 * RIM_W <= good_h <= 2.5 * RIM_W
+    assert NET_GOOD[0] >= SHOT_GOOD[0] and NET_GOOD[2] <= SHOT_GOOD[2]
+    assert NET_GOOD[1] >= SHOT_GOOD[1] and NET_GOOD[3] <= SHOT_GOOD[3]
+    assert small_w < good_w and small_h < good_h * 0.5
+    assert NET_TOO_BIG[2] - NET_TOO_BIG[0] > W * 0.5 and NET_TOO_BIG[3] - NET_TOO_BIG[1] > H * 0.5
+    # 特写窗口里篮圈必须占画面宽 15% 以上，否则白框还是看不清
+    assert RIM_W / (NET_ZOOM[2] - NET_ZOOM[0]) >= 0.15
+
+    render(
+        "good",
+        [(SHOT_GOOD, ORANGE, False), (NET_GOOD, WHITE, True)],
+        True,
+        extra=lambda img: inset(img, NET_ZOOM, GOOD_INSET, [(NET_GOOD, WHITE, True)]),
+    )
     render("too_big", [(SHOT_BIG, ORANGE, False)], False, figure=True)
     render("too_small", [(SHOT_SMALL, ORANGE, False)], False)
-    render("net_good", [(NET_GOOD, WHITE, True)], True)
-    render("net_too_big", [(SHOT_BIG, WHITE, True)], False, figure=True)
-    render("net_too_small", [((230, 133, 250, 138), WHITE, True)], False)
+    render("net_good", [(NET_GOOD, WHITE, True)], True, crop=NET_ZOOM, extra=lambda img: inset(img, NET_ZOOM, (300, 12, 468, 104), [(NET_GOOD, WHITE, True)]))
+    render("net_too_big", [(NET_TOO_BIG, WHITE, True)], False, figure=True)
+    render("net_too_small", [(NET_TOO_SMALL, WHITE, True)], False, crop=NET_ZOOM, extra=lambda img: inset(img, NET_ZOOM, (300, 12, 468, 104), [(NET_TOO_SMALL, WHITE, True)]))
 
 
 
