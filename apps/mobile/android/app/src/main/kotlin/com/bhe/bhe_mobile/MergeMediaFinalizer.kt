@@ -1,11 +1,13 @@
 package com.bhe.bhe_mobile
 
+import com.bhe.bhe_mobile.diagnostics.AppDiagnostics
 import java.io.File
 
 internal data class MergeMediaFacts(
     val videoTracks: Int,
     val durationMs: Long,
     val readableVideoSamples: Long,
+    val tracks: List<MergeTrackFacts> = emptyList(),
 )
 
 internal class MergeRangeUnavailable(message: String) : IllegalStateException(message)
@@ -26,6 +28,7 @@ internal object MergeMediaFinalizer {
         stop: () -> Unit,
         release: () -> Unit,
         inspect: (File) -> MergeMediaFacts,
+        stats: MergeVideoStats = MergeVideoStats().apply { this.writtenVideoSamples = writtenVideoSamples },
     ) {
         try {
             stop()
@@ -42,7 +45,13 @@ internal object MergeMediaFinalizer {
         transaction.publish { file ->
             val facts = inspect(file)
             check(facts.videoTracks > 0 && facts.durationMs > 0) { "合并结果没有有效视频轨或时长" }
-            check(facts.readableVideoSamples == writtenVideoSamples) { "合并结果视频样本不完整" }
+            if (facts.readableVideoSamples != writtenVideoSamples) {
+                // 先把两边的数记进诊断，再照旧失败：这是区分「误报」和「真丢帧」的唯一证据。
+                MergeMismatchReport.events(stats, facts).forEach { (event, fields) ->
+                    AppDiagnostics.event(event, fields)
+                }
+                check(false) { "合并结果视频样本不完整" }
+            }
         }
     }
 }

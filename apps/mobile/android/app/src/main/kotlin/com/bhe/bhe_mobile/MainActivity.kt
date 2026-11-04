@@ -891,7 +891,7 @@ class MainActivity : FlutterActivity() {
                 var buffer = ByteBuffer.allocate(16 * 1024 * 1024)
                 val info = android.media.MediaCodec.BufferInfo()
                 var outputBaseUs = 0L
-                var writtenVideoSamples = 0L
+                val videoStats = MergeVideoStats()
                 for ((startMs, endMs) in clips) {
                     if (cancelled.get()) throw InterruptedException("合并导出已取消")
                     val extractor = MediaExtractor()
@@ -902,7 +902,7 @@ class MainActivity : FlutterActivity() {
                         extractor.seekTo(startMs * 1000L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                         val clipStartUs = extractor.sampleTime
                         MergeMediaFinalizer.requireLocation(clipStartUs)
-                        var intervalVideoSamples = 0L
+                        val intervalStats = videoStats.startInterval(clipStartUs)
                         while (true) {
                             if (cancelled.get()) throw InterruptedException("合并导出已取消")
                             val sourceTrack = extractor.sampleTrackIndex
@@ -923,13 +923,17 @@ class MainActivity : FlutterActivity() {
                                 info.flags = extractor.sampleFlags
                                 currentMuxer.writeSampleData(muxTrack, buffer, info)
                                 if (sourceTrack in videoTracks) {
-                                    intervalVideoSamples++
-                                    writtenVideoSamples++
+                                    intervalStats.record(
+                                        sourcePtsUs = sampleTime,
+                                        outputPtsUs = info.presentationTimeUs,
+                                        isSync = extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0,
+                                    )
                                 }
                             }
                             extractor.advance()
                         }
-                        MergeMediaFinalizer.requireVideoSamples(intervalVideoSamples)
+                        videoStats.finishInterval(intervalStats)
+                        MergeMediaFinalizer.requireVideoSamples(intervalStats.samples)
                         outputBaseUs += (endUs - clipStartUs).coerceAtLeast(1L)
                     } finally {
                         extractor.release()
@@ -937,10 +941,11 @@ class MainActivity : FlutterActivity() {
                 }
                 MergeMediaFinalizer.finish(
                     transaction = currentTransaction,
-                    writtenVideoSamples = writtenVideoSamples,
+                    writtenVideoSamples = videoStats.writtenVideoSamples,
                     stop = { currentMuxer.stop(); muxerStarted = false },
                     release = { currentMuxer.release(); muxer = null },
                     inspect = { file -> AndroidMergeMediaInspector.inspect(file, cancelled) },
+                    stats = videoStats,
                 )
                 AppDiagnostics.event("export.completed")
                 completion = { result.success(exportResult(outputPath, selection) + mapOf("mergedOverlapCount" to plan.mergedOverlapCount, "committed" to true)) }
