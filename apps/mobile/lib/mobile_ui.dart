@@ -587,6 +587,9 @@ class _TopBar extends StatelessWidget {
                     context, error: state.diagnosticError,
                   );
                   break;
+                case 'about':
+                  await _showAboutDialog(context, state);
+                  break;
               }
             },
             itemBuilder: (context) => [
@@ -637,6 +640,10 @@ class _TopBar extends StatelessWidget {
               PopupMenuItem(
                 value: 'update',
                 child: Text(context.bheText('检查更新')),
+              ),
+              PopupMenuItem(
+                value: 'about',
+                child: Text(context.bheText('关于')),
               ),
               PopupMenuItem(
                 value: 'diagnostics',
@@ -4766,6 +4773,55 @@ Future<void> _showRoiEditor(BuildContext context, MobileAppState state) async {
     ),
   );
   if (result != null) state.updateRois(hoop: result.hoop, net: result.net);
+}
+
+Future<void> _showAboutDialog(BuildContext context, MobileAppState state) async {
+  final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+  String? engineVersion;
+  try {
+    final snapshot = await MobileDiagnostics.instance.snapshot();
+    final value = snapshot.environment['native_package_version'];
+    if (value is String && value.isNotEmpty && value != 'unknown') {
+      engineVersion = value;
+    }
+  } catch (_) {}
+  if (!context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(dialogContext.bheText('关于')),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${dialogContext.bheText('版本')}：'
+            '${mobileAppVersion == 'dev' ? dialogContext.bheText('开发版') : mobileAppVersion}',
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${dialogContext.bheText('分析引擎版本')}：'
+            '${engineVersion ?? dialogContext.bheText('获取失败')}',
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: Text(l10n?.text('关闭') ?? '关闭'),
+        ),
+        TextButton(
+          onPressed: () {
+            Navigator.pop(dialogContext);
+            unawaited(
+              showMobileDiagnostics(context, error: state.diagnosticError),
+            );
+          },
+          child: Text(l10n?.text('现在反馈') ?? '现在反馈'),
+        ),
+      ],
+    ),
+  );
 }
 
 class _UpdateSheet extends StatelessWidget {
