@@ -1162,11 +1162,18 @@ KeyedSubtree(
         body:
             '橙色框覆盖球靠近篮圈上方、穿过篮圈到落出网下的整段路线。区域要明显大于篮圈，宽约占画面的四分之一以上，太小系统会提示；别框进整块篮板、球员或地面。系统会先自动识别，不准就拖动或缩放；篮筐被挡住先换画面时间。',
         target: _importGuideRoiKey,
-        extra: (context) => TextButton.icon(
-          key: const Key('onboarding-examples'),
-          onPressed: () => showHoopExampleDialog(context),
-          icon: const Icon(Icons.image_outlined),
-          label: Text(context.bheText('看示例')),
+        // 示例默认就显示在侧栏里，想放大再看仍可点「看示例」。
+        extra: (context) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const HoopExampleList(examples: shotExamples),
+            TextButton.icon(
+              key: const Key('onboarding-examples'),
+              onPressed: () => showHoopExampleDialog(context),
+              icon: const Icon(Icons.image_outlined),
+              label: Text(context.bheText('看示例')),
+            ),
+          ],
         ),
         width: 360,
         sidePanel: true,
@@ -1178,11 +1185,17 @@ KeyedSubtree(
         body:
             '点下面的「篮网检测区」按钮切换白色框，只覆盖篮圈下沿到网底的篮网摆动范围，用来判断球有没有穿网。别框进篮板、球员或地面；改动自动保存。',
         target: _importGuideRegionKey,
-        extra: (context) => TextButton.icon(
-          key: const Key('onboarding-examples'),
-          onPressed: () => showHoopExampleDialog(context),
-          icon: const Icon(Icons.image_outlined),
-          label: Text(context.bheText('看示例')),
+        extra: (context) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const HoopExampleList(examples: netExamples),
+            TextButton.icon(
+              key: const Key('onboarding-examples'),
+              onPressed: () => showHoopExampleDialog(context),
+              icon: const Icon(Icons.image_outlined),
+              label: Text(context.bheText('看示例')),
+            ),
+          ],
         ),
         width: 360,
         sidePanel: true,

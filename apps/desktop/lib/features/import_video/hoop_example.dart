@@ -33,6 +33,45 @@ const netExamples = [
   HoopExample.netTooSmall,
 ];
 
+/// 引导侧栏里的竖排示例：每张撑满侧栏宽度，图注在下方。
+class HoopExampleList extends StatelessWidget {
+  const HoopExampleList({super.key, required this.examples});
+
+  final List<HoopExample> examples;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final (index, example) in examples.indexed) ...[
+          if (index > 0) const SizedBox(height: Spacing.sm),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(CsRadius.sm),
+            child: AspectRatio(
+              aspectRatio: 3 / 2,
+              child: Image.asset(
+                example.asset,
+                key: ValueKey('hoop-example-${example.name}'),
+                fit: BoxFit.cover,
+                semanticLabel: context.bheText(example.caption),
+              ),
+            ),
+          ),
+          const SizedBox(height: Spacing.xs),
+          Text(
+            context.bheText(example.caption),
+            style: Theme.of(
+              context,
+            ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class HoopExampleGallery extends StatelessWidget {
   const HoopExampleGallery({
     super.key,
