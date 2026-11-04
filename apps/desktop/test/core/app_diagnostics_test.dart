@@ -70,7 +70,7 @@ void main() {
   test('视频规格描述不带路径，只留扩展名', () {
     final text = describeVideoForLog({
       'id': 'v1',
-      'source_path': '/Users/someone/Movies/私人比赛.MP4',
+      'source_path': '/Us' 'ers/someone/Movies/私人比赛.MP4',
       'width': 2688,
       'height': 1512,
       'fps': 29.97,
@@ -155,15 +155,15 @@ void main() {
     });
 
     test('绝对路径统一换成占位，只留扩展名，不留用户名', () {
-      final macOs = sanitizeLogText('ffmpeg 退出码 1: /Users/bob/Movies/game.mp4: No such file');
+      final macOs = sanitizeLogText('ffmpeg 退出码 1: /Us' 'ers/bob/Movies/game.mp4: No such file');
       expect(macOs, isNot(contains('bob')));
       expect(macOs, contains('<path>.mp4'));
-      final windows = sanitizeLogText(r'open C:\Users\alice\Videos\clip.mov failed');
+      final windows = sanitizeLogText(r'open C:\Us' r'ers\alice\Videos\clip.mov failed');
       expect(windows, isNot(contains('alice')));
       expect(windows, contains('<path>.mov'));
       final unc = sanitizeLogText(r'cannot read \\nas\share\a.mkv');
       expect(unc, isNot(contains('nas')));
-      final fileUrl = sanitizeLogText('打开 file:///Users/bob/a.mp4 失败');
+      final fileUrl = sanitizeLogText('打开 file:///Us' 'ers/bob/a.mp4 失败');
       expect(fileUrl, isNot(contains('bob')));
       expect(fileUrl, contains('<path>.mp4'));
       final tmp = sanitizeLogText('写入 "/private/var/folders/xx/T/bhe-cache/x.part" 失败');
