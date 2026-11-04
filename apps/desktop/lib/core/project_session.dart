@@ -52,7 +52,11 @@ class ProjectSessionScope {
     required this.projectRoot,
     this.projectId,
     this.videoId,
+    this.isCancelled,
   });
+
+  /// 会话已被替换/页面已销毁时返回 true，重试循环据此提前收手。
+  final bool Function()? isCancelled;
 
   final EngineSession engine;
   final String projectRoot;
@@ -67,6 +71,7 @@ class ProjectSessionScope {
         videoId: _requireVideoId(),
         timeMs: timeMs,
       ),
+      isCancelled: isCancelled,
     );
   }
 
@@ -202,29 +207,39 @@ const projectBusyRetryDelays = <Duration>[
   Duration(milliseconds: 700),
   Duration(milliseconds: 1500),
   Duration(milliseconds: 3000),
+  Duration(milliseconds: 4000),
+  Duration(milliseconds: 5500),
 ];
 
 Future<JsonMap> retryWhileProjectBusy(
   String command,
   Future<JsonMap> Function() request, {
   List<Duration> delays = projectBusyRetryDelays,
+  bool Function()? isCancelled,
 }) async {
   for (var attempt = 0; ; attempt++) {
     try {
       final result = await request();
       if (attempt > 0) {
-        appLog(
-          'info',
-          'project',
-          '$command 项目忙，第 ${attempt + 1} 次尝试成功',
-        );
+        appLog('info', 'project', '$command 项目忙，第 ${attempt + 1} 次尝试成功');
       }
       return result;
     } on EngineException catch (error) {
-      if (error.code != 'PROJECT_BUSY' || attempt >= delays.length) rethrow;
+      // 「项目正在导出」也复用 PROJECT_BUSY，但导出可能要几分钟，重试没有意义。
+      if (!_isRetryableBusy(error) || attempt >= delays.length) rethrow;
       await Future<void>.delayed(delays[attempt]);
+      if (isCancelled?.call() ?? false) {
+        appLog('info', 'project', '$command 项目忙，页面已失效，停止重试');
+        rethrow;
+      }
     }
   }
+}
+
+/// 只有「项目正在读取/请求排队」才值得重试；导出占用和引擎关闭都不重试。
+bool _isRetryableBusy(EngineException error) {
+  if (error.code != 'PROJECT_BUSY') return false;
+  return !error.message.contains('导出');
 }
 
 List<JsonMap> _mapList(Object? raw) {
@@ -419,13 +434,18 @@ class ProjectSession {
   }
 
   Future<JsonMap> extractPreview({int timeMs = 1000, String? videoId}) {
+    final root = _requireProjectRoot();
+    final targetVideoId = videoId ?? _requireVideoId();
+    final revision = _sessionRevision;
     return retryWhileProjectBusy(
       'extract_preview',
       () => engine.extractPreview(
-        projectRoot: _requireProjectRoot(),
-        videoId: videoId ?? _requireVideoId(),
+        projectRoot: root,
+        videoId: targetVideoId,
         timeMs: timeMs,
       ),
+      // 重试途中切了项目/换了视频就不要再重试旧项目。
+      isCancelled: () => _sessionRevision != revision,
     );
   }
 
@@ -658,13 +678,16 @@ class ProjectSession {
   }
 
   Future<JsonMap> startReview(String candidateId, {String? reviewStartedAt}) {
+    final root = _requireProjectRoot();
+    final revision = _sessionRevision;
     return retryWhileProjectBusy(
       'start_review',
       () => engine.startReview(
-        projectRoot: _requireProjectRoot(),
+        projectRoot: root,
         candidateId: candidateId,
         reviewStartedAt: reviewStartedAt,
       ),
+      isCancelled: () => _sessionRevision != revision,
     );
   }
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:desktop/core/engine_client.dart';
 import 'package:desktop/core/engine_session.dart';
 import 'package:desktop/core/project_session.dart';
@@ -59,6 +61,59 @@ void main() {
       ),
     );
     expect(calls, _fast.length + 1, reason: '首次 + 每个延迟各一次');
+  });
+
+  test('默认重试窗口约 15 秒，够覆盖大视频的代理生成', () {
+    final total = projectBusyRetryDelays.fold(
+      Duration.zero,
+      (sum, item) => sum + item,
+    );
+    expect(projectBusyRetryDelays.length, 6);
+    expect(total.inMilliseconds, greaterThanOrEqualTo(14000));
+    expect(total.inSeconds, lessThanOrEqualTo(16));
+  });
+
+  test('项目正在导出：不重试，立刻抛', () async {
+    var calls = 0;
+    await expectLater(
+      retryWhileProjectBusy('extract_preview', () async {
+        calls++;
+        throw const EngineException('PROJECT_BUSY', '项目正在导出，请等待完成或取消');
+      }, delays: _fast),
+      throwsA(
+        isA<EngineException>().having((e) => e.message, 'message', contains('导出')),
+      ),
+    );
+    expect(calls, 1, reason: '导出可能几分钟，重试没有意义');
+  });
+
+  test('会话已失效：第一轮失败后就停，只请求一次', () async {
+    var calls = 0;
+    await expectLater(
+      retryWhileProjectBusy('extract_preview', () async {
+        calls++;
+        throw _busyError();
+      }, delays: _fast, isCancelled: () => true),
+      throwsA(isA<EngineException>()),
+    );
+    expect(calls, 1);
+  });
+
+  test('取消发生在重试等待期间：等完就收手，不再发请求', () async {
+    var calls = 0;
+    final gate = Completer<void>();
+    final future = retryWhileProjectBusy(
+      'extract_preview',
+      () async {
+        calls++;
+        throw _busyError();
+      },
+      delays: const [Duration(milliseconds: 30), Duration(milliseconds: 30)],
+      isCancelled: () => gate.isCompleted,
+    );
+    gate.complete();
+    await expectLater(future, throwsA(isA<EngineException>()));
+    expect(calls, 1, reason: '第一轮失败后等完 30ms 发现已取消，不再请求');
   });
 
   test('其它错误不重试', () async {

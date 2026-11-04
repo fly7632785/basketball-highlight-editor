@@ -61,6 +61,44 @@ void main() {
     );
   });
 
+  group('ProjectNotifier.startReview', () {
+    ProviderContainer containerFor(_FakeProjectSession session) {
+      final container = ProviderContainer(
+        overrides: <Override>[
+          projectSessionProvider.overrideWithValue(session),
+          engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+        ],
+      );
+      addTearDown(container.dispose);
+      return container;
+    }
+
+    test('项目忙到重试用完：只写日志，不弹错误通知', () async {
+      final session = _FakeProjectSession()
+        ..startReviewError = const EngineException(
+          'PROJECT_BUSY',
+          '项目正在读取，请稍后重试',
+        );
+      final container = containerFor(session);
+      final notifier = container.read(projectProvider.notifier);
+
+      await notifier.startReview('candidate-1');
+
+      expect(session.startReviewCalls, ['candidate-1']);
+      expect(container.read(noticeProvider), isEmpty, reason: '只记日志');
+    });
+
+    test('其它错误照旧弹通知', () async {
+      final session = _FakeProjectSession()
+        ..startReviewError = const EngineException('ENGINE_ERROR', '引擎出错');
+      final container = containerFor(session);
+
+      await container.read(projectProvider.notifier).startReview('candidate-1');
+
+      expect(container.read(noticeProvider), isNotEmpty);
+    });
+  });
+
   group('ProjectNotifier.selectVideo', () {
     ProviderContainer containerFor(_FakeProjectSession session) {
       final container = ProviderContainer(
@@ -1612,12 +1650,17 @@ class _FakeProjectSession extends ProjectSession {
     'statistics': statistics,
   };
 
+  /// 为「项目忙时不弹通知」用例准备的异常。
+  Object? startReviewError;
+
   @override
   Future<JsonMap> startReview(
     String candidateId, {
     String? reviewStartedAt,
   }) async {
     startReviewCalls.add(candidateId);
+    final error = startReviewError;
+    if (error != null) throw error;
     return <String, dynamic>{
       'review_started_at': '2026-08-07T01:00:00.000+00:00',
     };

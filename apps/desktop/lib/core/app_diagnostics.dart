@@ -148,12 +148,22 @@ Player createLoggedPlayer(String where) {
     appLog('error', 'player', '$where 播放器报错: $error');
   });
   player.stream.log.listen((entry) {
-    if (entry.level == 'error' || entry.level == 'fatal') {
-      appLog('error', 'player', '$where mpv ${entry.prefix}: ${entry.text.trim()}');
+    if (entry.level != 'error' && entry.level != 'fatal') return;
+    final text = entry.text.trim();
+    // mpv 对没注册过的 OSC 属性报的这一条是已知无害提示，降成 debug：
+    // 它此前被记成 error，还会被当成「界面卡顿时最后一步」，把排查带偏。
+    if (isHarmlessMpvLog(text)) {
+      appLog('debug', 'player', '$where mpv ${entry.prefix}: $text');
+      return;
     }
+    appLog('error', 'player', '$where mpv ${entry.prefix}: $text');
   });
   return player;
 }
+
+/// mpv 的已知无害提示（只认这两条原文，其它一律照常记 error）。
+bool isHarmlessMpvLog(String text) =>
+    text.contains('property not found _setProperty(osc, 1)');
 
 /// 销毁播放器并记一行；[where] 说明是哪个页面。
 Future<void> disposeLoggedPlayer(Player player, String where) async {

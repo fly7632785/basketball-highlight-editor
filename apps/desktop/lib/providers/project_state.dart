@@ -2281,6 +2281,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
     try {
       await ref.read(projectSessionProvider).startReview(id);
     } catch (error) {
+      // 只是记录审核耗时，忙到重试用完也不该打断用户：只写日志，不弹通知。
+      if (error is EngineException && error.code == 'PROJECT_BUSY') {
+        appLog('warn', 'review', '开始记录审核耗时被跳过（项目忙）: $error');
+        return;
+      }
       _pushNotice('开始记录审核耗时失败：$error', NoticeSeverity.error);
     }
   }
