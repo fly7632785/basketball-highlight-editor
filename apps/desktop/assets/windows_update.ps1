@@ -135,7 +135,12 @@ function Assert-NoReparseAncestors([string]$Path) {
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
             throw 'Automatic updates do not support linked installation directories.'
         }
-        $item = $item.Parent
+        # FileInfo has Directory rather than Parent; directory ancestors use Parent.
+        if ($item -is [IO.FileInfo]) {
+            $item = $item.Directory
+        } else {
+            $item = $item.Parent
+        }
     }
 }
 
