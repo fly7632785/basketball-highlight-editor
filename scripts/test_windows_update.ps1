@@ -89,7 +89,8 @@ try {
     $personal = Join-Path $root 'my-project'
     [void][IO.Directory]::CreateDirectory($personal)
     [IO.File]::WriteAllText((Join-Path $personal 'project.sqlite'), 'precious data', $Utf8)
-    Expect-Failure { Assert-ReleaseTree $root } 'Extra folder'
+    # Files inside an unlisted folder are reported first; the update is blocked either way.
+    Expect-Failure { Assert-ReleaseTree $root } 'Extra*my-project'
     Assert ((Get-Content -LiteralPath (Join-Path $personal 'project.sqlite') -Raw) -eq 'precious data') 'Personal data was changed'
     Remove-Item -LiteralPath $personal -Recurse -Force
     $extra = Join-Path $root 'personal.mp4'
