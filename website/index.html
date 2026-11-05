@@ -14,7 +14,7 @@
 <link rel="canonical" href="https://bhe.jafir.top/">
 <link rel="alternate" hreflang="zh-CN" href="https://bhe.jafir.top/">
 <link rel="alternate" hreflang="en" href="https://bhe.jafir.top/en/">
-<link rel="alternate" hreflang="x-default" href="https://bhe.jafir.top/">
+<link rel="alternate" hreflang="x-default" href="https://bhe.jafir.top/en/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Basketball Highlight Editor">
 <meta property="og:locale" content="zh_CN">
@@ -34,11 +34,25 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <script>
   (function () {
-    const saved = localStorage.getItem("bhe-language");
-    const browserLanguage = (navigator.language || "").toLowerCase();
-    if (saved === "en" || (!saved && !browserLanguage.startsWith("zh"))) {
-      window.location.replace("/en/");
-    }
+    try {
+      var params;
+      try { params = new URLSearchParams(window.location.search); } catch (e) { params = null; }
+      var forced = params ? params.get("lang") : null;
+      var saved = null;
+      try { saved = localStorage.getItem("bhe-language"); } catch (e) {}
+      if (forced === "zh" || forced === "en") {
+        try { localStorage.setItem("bhe-language", forced); } catch (e) {}
+        saved = forced;
+      }
+      if (saved === "en") {
+        window.location.replace("/en/");
+        return;
+      }
+      if (saved === "zh") return;
+      var langs = navigator.languages || [];
+      var first = (langs[0] || navigator.language || "").toLowerCase();
+      if (!first.startsWith("zh")) window.location.replace("/en/");
+    } catch (e) {}
   })();
 </script>
 
