@@ -6,6 +6,7 @@ import 'package:bhe_core/bhe_core.dart';
 import 'package:flutter/services.dart';
 
 import 'app_log.dart';
+import 'windows_update_process.dart';
 
 abstract class UpdateInstallSession {
   Future<void> commit();
@@ -34,9 +35,8 @@ class WindowsUpdateInstaller {
     final session = FileUpdateInstallSession(directory);
     try {
       final script = await rootBundle.loadString('assets/windows_update.ps1');
-      final helper = await File(
-        '${directory.path}/update.ps1',
-      ).writeAsString(script, flush: true);
+      final helper = await File('${directory.path}/update.ps1')
+          .writeAsString(script, flush: true);
       final request = await File('${directory.path}/request.json')
           .writeAsString(
             jsonEncode({
@@ -49,27 +49,12 @@ class WindowsUpdateInstaller {
             }),
             flush: true,
           );
-      // Use the OS copy, not a powershell.exe found in the application/PATH.
-      final systemRoot = Platform.environment['SystemRoot'] ?? r'C:\Windows';
-      await Process.start(
-        '$systemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-WindowStyle',
-          'Hidden',
-          '-File',
-          helper.path,
-          '-RequestPath',
-          request.path,
-          '-LogDirectory',
-          engineLogDirectory(Platform.environment),
-        ],
-        workingDirectory: directory.path,
-        mode: ProcessStartMode.detached,
+      final process = await startWindowsUpdateHelper(
+        helper: helper,
+        request: request,
+        directory: directory,
       );
+      session.watchHelperExit(process.exitCode);
       await session.waitUntilStarted();
       await session.waitUntilReady();
       return session;
@@ -86,6 +71,11 @@ class FileUpdateInstallSession implements UpdateInstallSession {
   FileUpdateInstallSession(this.directory);
 
   final Directory directory;
+  int? _helperExitCode;
+
+  void watchHelperExit(Future<int> exitCode) {
+    unawaited(exitCode.then((code) => _helperExitCode = code));
+  }
 
   Future<void> waitUntilStarted() =>
       _waitForMarker('started', const Duration(seconds: 20));
@@ -102,6 +92,12 @@ class FileUpdateInstallSession implements UpdateInstallSession {
         throw UpdateException(await error.readAsString());
       }
       if (await File('${directory.path}/$marker').exists()) return;
+      final exitCode = _helperExitCode;
+      if (exitCode != null) {
+        throw UpdateException(
+          '更新助手提前退出（退出码 $exitCode），请查看 ${directory.path}/helper.stderr.log',
+        );
+      }
       await Future<void>.delayed(const Duration(milliseconds: 200));
     }
     throw const UpdateException('准备更新超时，请打开所在文件夹手动更新');
