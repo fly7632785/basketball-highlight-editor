@@ -172,11 +172,24 @@ function Assert-ReleaseTree([string]$Root, [string]$Version = '') {
         Assert-SafeRelativePath $path
         if (!$directories.Add($path)) { throw "Duplicate release directory: $path" }
     }
+    # The walk below removes visited entries; keep the full set to tell
+    # inventoried directories from machine-created ones during cleanup.
+    $knownDirectories = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in $directories) { [void]$knownDirectories.Add($path) }
     foreach ($required in @('BHE.exe', 'flutter_windows.dll', 'data/app.so', 'data/icudtl.dat', 'runtime/python/python.exe')) {
         if (!$files.Contains($required)) { throw "Invalid release: $required is missing." }
     }
     $pending = New-Object 'System.Collections.Generic.Stack[string]'
     $pending.Push($Root)
+    # Python regenerates __pycache__ bytecode caches inside the bundled
+    # runtime whenever any interpreter runs without PYTHONDONTWRITEBYTECODE
+    # (manual debugging, pip installs). Machine-derived cache content is
+    # cleaned instead of failing the update; every other extra file or
+    # folder still blocks the update as foreign content.
+    $cacheFiles = New-Object 'System.Collections.Generic.List[string]'
+    $cacheDirectories = New-Object 'System.Collections.Generic.List[string]'
+    $extraFolders = New-Object 'System.Collections.Generic.List[string]'
+    $foreignFiles = New-Object 'System.Collections.Generic.List[string]'
     while ($pending.Count -gt 0) {
         $directory = $pending.Pop()
         # One literal .NET enumeration per directory avoids tens of thousands
@@ -188,17 +201,110 @@ function Assert-ReleaseTree([string]$Root, [string]$Version = '') {
                 throw "Linked file or folder found: $relative. Please update manually."
             }
             if ($item.Attributes -band [IO.FileAttributes]::Directory) {
-                if (!$directories.Remove($relative)) {
-                    throw "Extra folder found: $relative. Move personal files outside BHE before updating."
+                if (!$directories.Remove($relative) -and $item.Name -eq '__pycache__') {
+                    $cacheDirectories.Add($relative)
+                    continue
                 }
                 $pending.Push($item.FullName)
+                if (!$knownDirectories.Contains($relative)) {
+                    $extraFolders.Add($relative)
+                }
             } elseif (!$files.Remove($relative)) {
-                throw "Extra file found: $relative. Move personal files outside BHE before updating."
+                if ($relative -match '(^|/)__pycache__/[^/]+\.pyc$') {
+                    $cacheFiles.Add($relative)
+                } else {
+                    $foreignFiles.Add($relative)
+                }
             }
         }
     }
-    foreach ($missing in $files) { throw "Release file missing: $missing" }
-    foreach ($missing in $directories) { throw "Release directory missing: $missing" }
+    if ($foreignFiles.Count -gt 0) {
+        throw "Extra file found: $($foreignFiles[0]). Move personal files outside BHE before updating."
+    }
+    # An extra folder counts as cache-derived only when bytecode caches sit
+    # beneath it; an empty folder has no cache evidence and still blocks.
+    $cachesBeneath = @{}
+    foreach ($folder in $extraFolders) { $cachesBeneath[$folder] = 0 }
+    foreach ($item in @($cacheFiles) + @($cacheDirectories)) {
+        $ancestor = $item
+        while ($ancestor -match '/') {
+            $ancestor = $ancestor -replace '/[^/]+$', ''
+            if ($cachesBeneath.ContainsKey($ancestor)) { $cachesBeneath[$ancestor]++ }
+        }
+    }
+    foreach ($folder in $extraFolders) {
+        if ($cachesBeneath[$folder] -gt 0) { continue }
+        $covered = $false
+        foreach ($other in $extraFolders) {
+            if ($other -ne $folder -and $cachesBeneath[$other] -gt 0 -and
+                $folder.StartsWith($other + '/', [StringComparison]::OrdinalIgnoreCase)) {
+                $covered = $true
+                break
+            }
+        }
+        if (!$covered) {
+            throw "Extra folder found: $folder. Move personal files outside BHE before updating."
+        }
+    }
+    if ($cacheDirectories.Count -gt 0 -or $cacheFiles.Count -gt 0 -or $extraFolders.Count -gt 0) {
+        foreach ($relative in $cacheDirectories) {
+            if ($cachesBeneath[$relative] -gt 0) { continue }
+            $path = Join-Path $Root $relative
+            # Skipped subtrees were never reparse-scanned; Remove-Item -Recurse
+            # in Windows PowerShell 5.1 follows links and would delete through them.
+            $link = Get-ChildItem -LiteralPath $path -Recurse -Force -Attributes ReparsePoint |
+                Select-Object -First 1
+            if ($null -ne $link) {
+                throw "Linked file or folder found: $($link.FullName.Substring($Root.Length + 1)). Please update manually."
+            }
+            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        foreach ($folder in ($extraFolders | Sort-Object { $_.Length } -Descending)) {
+            if ($cachesBeneath[$folder] -eq 0) { continue }
+            $path = Join-Path $Root $folder
+            # A wider extra folder deleted above already removed this one.
+            if (!(Test-Path -LiteralPath $path -PathType Container)) { continue }
+            # Skipped subtrees were never reparse-scanned; Remove-Item -Recurse
+            # in Windows PowerShell 5.1 follows links and would delete through them.
+            $link = Get-ChildItem -LiteralPath $path -Recurse -Force -Attributes ReparsePoint |
+                Select-Object -First 1
+            if ($null -ne $link) {
+                throw "Linked file or folder found: $($link.FullName.Substring($Root.Length + 1)). Please update manually."
+            }
+            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        foreach ($relative in $cacheFiles) {
+            Remove-Item -LiteralPath (Join-Path $Root $relative) -Force -ErrorAction SilentlyContinue
+        }
+        # Cache removal can leave machine-created parent directories empty
+        # (an uninstalled pip package, a fresh interpreter import path).
+        # Prune only empty, non-inventored ancestors of cleaned entries.
+        $cacheFolders = @($cacheDirectories | Where-Object { $cachesBeneath[$_] -eq 0 }) +
+            @($extraFolders | Where-Object { $cachesBeneath[$_] -gt 0 })
+        foreach ($relative in $cacheFolders) {
+            $parent = $relative
+            while ($parent -match '/') {
+                $parent = $parent -replace '/[^/]+$', ''
+                $path = Join-Path $Root $parent
+                if ($knownDirectories.Contains($parent)) { break }
+                if (!(Test-Path -LiteralPath $path -PathType Container)) { break }
+                if ([IO.Directory]::GetFileSystemEntries($path).Count -gt 0) { break }
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Write-UpdateLog 'preflight' 'cleaned' "Removed $($cacheDirectories.Count) cache folders, $($cacheFiles.Count) cache files, and $($extraFolders.Count) cache-only folders."
+    }
+    # Inventory drift inside __pycache__ is ignored in both directions:
+    # releases have shipped with some bundled caches and cleaned installs
+    # legitimately lack cache entries their inventory still lists.
+    foreach ($missing in $files) {
+        if ($missing -match '(^|/)__pycache__/[^/]+\.pyc$') { continue }
+        throw "Release file missing: $missing"
+    }
+    foreach ($missing in $directories) {
+        if ($missing -match '(^|/)__pycache__$') { continue }
+        throw "Release directory missing: $missing"
+    }
 }
 
 function Expand-VerifiedPackage([string]$Archive, [string]$Destination) {
