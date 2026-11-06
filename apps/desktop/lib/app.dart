@@ -19,6 +19,7 @@ import 'router/app_router.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
 import 'core/app_log.dart';
+import 'core/draft_flush_registry.dart';
 
 class CourtsideApp extends ConsumerStatefulWidget {
   const CourtsideApp({super.key});
@@ -119,6 +120,12 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
     unawaited(_confirmWindowClose());
   }
 
+  /// 真正退出前先让导入页把待写草稿落盘（没有导入页时无操作，超时也放行）。
+  Future<bool> _prepareForShutdown() async {
+    await flushDraftBeforeShutdown();
+    return ref.read(projectProvider.notifier).prepareForShutdown();
+  }
+
   Future<void> _confirmWindowClose() async {
     if (_confirmingClose) return;
     _confirmingClose = true;
@@ -127,9 +134,7 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
       final dialogContext = router.routerDelegate.navigatorKey.currentContext;
       if (dialogContext == null || !dialogContext.mounted) {
         appLog('info', 'app', '关闭保护 无界面可确认，直接准备退出');
-        final ready = await ref
-            .read(projectProvider.notifier)
-            .prepareForShutdown();
+        final ready = await _prepareForShutdown();
         if (ready) await windowManager.destroy();
         return;
       }
@@ -176,9 +181,7 @@ class _CourtsideAppState extends ConsumerState<CourtsideApp>
         '关闭保护 用户选择=${action == 'exit' ? '退出' : '返回'} 分析中=$analyzing 导出中=$exporting 忙=$busy',
       );
       if (action != 'exit') return;
-      final ready = await ref
-          .read(projectProvider.notifier)
-          .prepareForShutdown();
+      final ready = await _prepareForShutdown();
       if (!ready) return;
       await windowManager.destroy();
     } finally {

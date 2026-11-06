@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:desktop/core/draft_flush_registry.dart';
 import 'package:desktop/features/import_video/import_video_screen.dart';
 import 'package:desktop/providers/notice_provider.dart';
 import 'package:desktop/providers/onboarding_provider.dart';
@@ -15,8 +16,12 @@ class _DraftNotifier extends ProjectNotifier {
   Completer<void>? gate;
   bool failNextSave = false;
 
+  ProjectState? initialState;
+
   @override
-  ProjectState build() => ProjectState(
+  ProjectState build() => initialState ?? _defaultState();
+
+  ProjectState _defaultState() => ProjectState(
     video: {
       'id': 'v1',
       'duration_ms': 60000,
@@ -34,6 +39,69 @@ class _DraftNotifier extends ProjectNotifier {
       'after_seconds': 1,
     },
   );
+
+
+  /// 多段项目：两段视频，让最后一步出现「保存这一段的设置」。
+  static ProjectState multiVideoState() => ProjectState(
+    video: const {
+      'id': 'v1',
+      'duration_ms': 60000,
+      'width': 1920,
+      'height': 1080,
+      'source_path': '/v/v1.mp4',
+      'analysis_start_ms': 0,
+      'analysis_end_ms': 60000,
+    },
+    videos: const [
+      {
+        'id': 'v1',
+        'duration_ms': 60000,
+        'source_path': '/v/v1.mp4',
+        'analysis_start_ms': 0,
+        'analysis_end_ms': 60000,
+      },
+      {
+        'id': 'v2',
+        'duration_ms': 30000,
+        'source_path': '/v/v2.mp4',
+        'analysis_start_ms': 0,
+        'analysis_end_ms': 30000,
+      },
+    ],
+    workflowDraft: const {
+      'step': 3,
+      'roi': {'x1': 100, 'y1': 100, 'x2': 900, 'y2': 900},
+      'before_seconds': 3,
+      'after_seconds': 1,
+    },
+  );
+
+  int applyCalls = 0;
+
+  @override
+  Future<bool> applyWorkflowDraft(Map<String, dynamic> draft) async {
+    applyCalls++;
+    return true;
+  }
+
+  @override
+  Future<void> propagateHoopToFollowingParts(String videoId) async {}
+
+  @override
+  Future<void> clearWorkflowDraft() async {
+    clearCalls++;
+  }
+
+  int clearCalls = 0;
+
+  /// 模拟切换当前视频（草稿只在同一个视频里有效）。给一个没有路径的视频，
+  /// 免得页面去起真实播放器。
+  void switchVideo(String id) {
+    state = state.copyWith(
+      video: {'id': id, 'duration_ms': 30000},
+      videoPath: null,
+    );
+  }
 
   @override
   Future<Map<String, dynamic>?> loadWorkflowDraft() async => null;
@@ -171,5 +239,106 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pump();
     expect(notifier.saves.length, 2);
+  });
+
+  testWidgets('多段「保存这一段的设置」后，到点的旧草稿不会再写一次', (tester) async {
+    final notifier = _DraftNotifier()
+      ..initialState = _DraftNotifier.multiVideoState();
+    final (fake, _) = await _pumpImport(tester, notifier: notifier);
+    expect(fake, same(notifier));
+
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('import-save-segment')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(notifier.applyCalls, 1);
+    final afterApply = notifier.saves.length;
+    expect(notifier.saves.last['before_seconds'], 4);
+
+    // 定时器到点：已应用并清除的草稿不能再被写回。
+    await tester.pump(const Duration(seconds: 2));
+    expect(notifier.saves.length, afterApply);
+  });
+
+  testWidgets('卸载页面时最新草稿接在在途保存后面写出，顺序正确', (tester) async {
+    final (notifier, _) = await _pumpImport(tester);
+    final gate = Completer<void>();
+    notifier.gate = gate;
+
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(notifier.saves.length, 1);
+
+    // 旧保存还挂着时再改一次，然后离开页面。
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump();
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SizedBox())));
+    await tester.pump();
+    expect(notifier.saves.length, 1);
+
+    gate.complete();
+    notifier.gate = null;
+    await tester.pump();
+    await tester.pump();
+    expect(notifier.saves.length, 2);
+    expect(notifier.saves[0]['before_seconds'], 4);
+    expect(notifier.saves[1]['before_seconds'], 5);
+  });
+
+  testWidgets('离开页面时保存失败会推全局通知', (tester) async {
+    final notifier = _DraftNotifier()..failNextSave = true;
+    final (_, container) = await _pumpImport(tester, notifier: notifier);
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump();
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SizedBox())));
+    await tester.pump();
+    await tester.pump();
+    expect(notifier.saves.length, 1);
+    expect(
+      container
+          .read(noticeProvider)
+          .any((notice) => notice.title.contains('配置草稿保存失败')),
+      isTrue,
+    );
+  });
+
+  testWidgets('调度后切换视频，到点不写入旧会话', (tester) async {
+    final (notifier, _) = await _pumpImport(tester);
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump();
+    notifier.switchVideo('v2');
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(notifier.saves, isEmpty);
+  });
+
+  testWidgets('关闭应用前 flush 把待写草稿写出去', (tester) async {
+    resetDraftFlushForTest();
+    final (notifier, _) = await _pumpImport(tester);
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump();
+    expect(notifier.saves, isEmpty);
+
+    await flushDraftBeforeShutdown();
+    await tester.pump();
+    expect(notifier.saves.length, 1);
+    expect(notifier.saves.single['before_seconds'], 4);
+  });
+
+  test('关闭前 flush 超时也放行退出', () async {
+    resetDraftFlushForTest();
+    var finished = false;
+    registerDraftFlush(() async {
+      await Future<void>.delayed(const Duration(seconds: 30));
+      finished = true;
+    });
+    final watch = Stopwatch()..start();
+    await flushDraftBeforeShutdown(timeout: const Duration(milliseconds: 50));
+    watch.stop();
+    expect(finished, isFalse);
+    expect(watch.elapsedMilliseconds, lessThan(2000));
+    resetDraftFlushForTest();
   });
 }
