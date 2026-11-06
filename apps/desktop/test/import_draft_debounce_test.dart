@@ -1,0 +1,175 @@
+import 'dart:async';
+
+import 'package:desktop/features/import_video/import_video_screen.dart';
+import 'package:desktop/providers/notice_provider.dart';
+import 'package:desktop/providers/onboarding_provider.dart';
+import 'package:desktop/providers/project_state.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// 记录草稿保存调用，可让保存挂起（模拟在途）或失败一次。
+class _DraftNotifier extends ProjectNotifier {
+  final saves = <Map<String, dynamic>>[];
+  Completer<void>? gate;
+  bool failNextSave = false;
+
+  @override
+  ProjectState build() => ProjectState(
+    video: {
+      'id': 'v1',
+      'duration_ms': 60000,
+      'width': 1920,
+      'height': 1080,
+      'source_path': '/v/v1.mp4',
+      'analysis_start_ms': 0,
+      'analysis_end_ms': 60000,
+    },
+    // 直接落在确认页（step 3），那里有能连续点击的秒数加减。
+    workflowDraft: const {
+      'step': 3,
+      'roi': {'x1': 100, 'y1': 100, 'x2': 900, 'y2': 900},
+      'before_seconds': 3,
+      'after_seconds': 1,
+    },
+  );
+
+  @override
+  Future<Map<String, dynamic>?> loadWorkflowDraft() async => null;
+
+  @override
+  Future<void> saveWorkflowDraft(Map<String, dynamic> draft) async {
+    saves.add(Map<String, dynamic>.from(draft));
+    final pending = gate;
+    if (pending != null) await pending.future;
+    if (failNextSave) {
+      failNextSave = false;
+      throw StateError('引擎写盘失败');
+    }
+  }
+}
+
+Finder _increase(String selector) => find.descendant(
+  of: find.byKey(Key(selector)),
+  matching: find.byKey(const ValueKey('increase')),
+);
+
+int _shownSeconds(WidgetTester tester, String selector) {
+  final text = tester
+      .widgetList<Text>(
+        find.descendant(of: find.byKey(Key(selector)), matching: find.byType(Text)),
+      )
+      .map((widget) => widget.data ?? '')
+      .firstWhere((data) => data.contains('秒'));
+  return int.parse(RegExp(r'\d+').firstMatch(text)!.group(0)!);
+}
+
+Future<(_DraftNotifier, ProviderContainer)> _pumpImport(
+  WidgetTester tester, {
+  _DraftNotifier? notifier,
+}) async {
+  SharedPreferences.setMockInitialValues({
+    onboardingStepsPrefsKey: allOnboardingStepIds,
+  });
+  tester.view.physicalSize = const Size(1400, 1000);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final fake = notifier ?? _DraftNotifier();
+  final container = ProviderContainer(
+    overrides: [projectProvider.overrideWith(() => fake)],
+  );
+  addTearDown(container.dispose);
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: const MaterialApp(home: Scaffold(body: ImportVideoScreen())),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return (fake, container);
+}
+
+void main() {
+  testWidgets('快速连续改动只保存少数几次，最后保存的是最新内容', (tester) async {
+    final (notifier, _) = await _pumpImport(tester);
+    for (var i = 0; i < 50; i++) {
+      await tester.tap(_increase('clip-before'), warnIfMissed: false);
+      await tester.pump();
+    }
+    final latest = _shownSeconds(tester, 'clip-before');
+    // 去抖窗口内不该发保存请求。
+    expect(notifier.saves, isEmpty);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(notifier.saves.length, lessThanOrEqualTo(3));
+    expect(notifier.saves.last['before_seconds'], latest);
+  });
+
+  testWidgets('切步骤立即保存并等待完成，不丢未落盘的改动', (tester) async {
+    final (notifier, _) = await _pumpImport(tester);
+    await tester.tap(_increase('clip-after'), warnIfMissed: false);
+    await tester.pump();
+    final latest = _shownSeconds(tester, 'clip-after');
+    expect(notifier.saves, isEmpty);
+
+    // 回上一步：这一步是离散操作，必须马上保存，不能等去抖。
+    await tester.tap(find.textContaining('上一步').last);
+    await tester.pump();
+    expect(notifier.saves, isNotEmpty);
+    expect(notifier.saves.last['after_seconds'], latest);
+    expect(notifier.saves.last['step'], 2);
+  });
+
+  testWidgets('保存在途时的新改动不会被丢掉', (tester) async {
+    final notifier = _DraftNotifier();
+    final (fake, _) = await _pumpImport(tester, notifier: notifier);
+    expect(fake, same(notifier));
+    final gate = Completer<void>();
+    notifier.gate = gate;
+
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(notifier.saves.length, 1);
+    final first = notifier.saves.last['before_seconds'];
+
+    // 第一次保存还挂着，此时再改一次。
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump();
+    final latest = _shownSeconds(tester, 'clip-before');
+    expect(latest, isNot(first));
+    await tester.pump(const Duration(milliseconds: 500));
+    // 同一时刻只能有一个保存在途，第二次改动要排队而不是并发发出去。
+    expect(notifier.saves.length, 1);
+
+    gate.complete();
+    notifier.gate = null;
+    await tester.pump();
+    await tester.pump();
+    expect(notifier.saves.length, 2);
+    expect(notifier.saves.last['before_seconds'], latest);
+  });
+
+  testWidgets('保存失败会提示，且不会反复重试', (tester) async {
+    final notifier = _DraftNotifier()..failNextSave = true;
+    final (_, container) = await _pumpImport(tester, notifier: notifier);
+
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(notifier.saves.length, 1);
+    expect(
+      container
+          .read(noticeProvider)
+          .any((notice) => notice.title.contains('配置草稿保存失败')),
+      isTrue,
+    );
+
+    // 失败后仍能继续保存，但失败的那次不会自动重试。
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(notifier.saves.length, 2);
+  });
+}

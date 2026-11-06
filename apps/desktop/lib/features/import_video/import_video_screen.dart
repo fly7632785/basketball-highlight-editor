@@ -271,6 +271,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       '篮筐=${_roi == null ? '(未设置)' : _rectLog(_roi!)} 篮网=${_netRoi == null ? '(未设置)' : _rectLog(_netRoi!)}';
 
   Future<void> _persistDraft({int? step}) async {
+    if (!mounted) return;
     if (ref.read(projectProvider).video == null) return;
     try {
       await ref
@@ -289,6 +290,43 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
             ),
           );
     }
+  }
+
+  /// 拖动中的草稿保存：停手 400ms 才发一次，且同一时刻只有一个保存在途。
+  /// 保存在途时又有新变更，只记脏，等这次完成后接着保存最新内容。
+  static const _draftDebounce = Duration(milliseconds: 400);
+  Timer? _draftDebounceTimer;
+  bool _draftDirty = false;
+  int? _draftPendingStep;
+  Future<void> _draftChain = Future<void>.value();
+
+  void _scheduleDraftSave() {
+    _draftDirty = true;
+    _draftDebounceTimer?.cancel();
+    _draftDebounceTimer = Timer(_draftDebounce, () {
+      _draftDebounceTimer = null;
+      unawaited(_flushDraft());
+    });
+  }
+
+  /// 立即保存待写内容（不等去抖），并等它完成；没有待写内容时不发请求。
+  Future<void> _saveDraftNow({int? step}) {
+    _draftDirty = true;
+    if (step != null) _draftPendingStep = step;
+    return _flushDraft();
+  }
+
+  Future<void> _flushDraft() {
+    _draftDebounceTimer?.cancel();
+    _draftDebounceTimer = null;
+    _draftChain = _draftChain.then((_) async {
+      if (!_draftDirty) return;
+      _draftDirty = false;
+      final step = _draftPendingStep;
+      _draftPendingStep = null;
+      await _persistDraft(step: step);
+    });
+    return _draftChain;
   }
 
   Future<void> _selectVideo() async {
@@ -558,7 +596,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       _step = 1;
       _showExistingDraft = false;
     });
-    await _persistDraft(step: 1);
+    await _saveDraftNow(step: 1);
   }
 
   Future<void> _relinkSegment(String videoId) async {
@@ -585,12 +623,26 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     _draftLoaded = true;
     _syncFromState(ref.read(projectProvider));
     setState(() => _step = 1);
-    await _persistDraft(step: 1);
+    await _saveDraftNow(step: 1);
   }
 
   @override
   void dispose() {
     _previewPlaybackTimer?.cancel();
+    // 离开导入页：不等去抖，立即把还没写的草稿发出去（dispose 不能 await）。
+    _draftDebounceTimer?.cancel();
+    _draftDebounceTimer = null;
+    if (_draftDirty && ref.read(projectProvider).video != null) {
+      _draftDirty = false;
+      final draft = _draft(step: _draftPendingStep);
+      _draftPendingStep = null;
+      final notifier = ref.read(projectProvider.notifier);
+      unawaited(
+        notifier.saveWorkflowDraft(draft).catchError((Object error) {
+          appLog('warn', 'import', '离开导入页保存草稿失败: $error');
+        }),
+      );
+    }
     super.dispose();
   }
 
@@ -651,7 +703,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     final from = _step;
     setState(() => _step = next);
     _logStep(from, '下一步');
-    await _persistDraft(step: next);
+    await _saveDraftNow(step: next);
     // 进入检测区域步骤时,标记画面落在分析范围内,而不是停在片头或范围之外。
     if (next == 2) {
       final state = ref.read(projectProvider);
@@ -670,7 +722,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     final from = _step;
     setState(() => _step = next);
     _logStep(from, '上一步');
-    await _persistDraft(step: next);
+    await _saveDraftNow(step: next);
   }
 
   bool _canLeaveStep(int step) {
@@ -712,6 +764,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
         'after=${_afterSeconds}s 已有候选=${state.candidates.length} $_roiLogSummary()');
     setState(() => _applying = true);
     try {
+      await _saveDraftNow();
       final applied = await ref
           .read(projectProvider.notifier)
           .applyWorkflowDraft(_backendDraft(step: _step));
@@ -1237,7 +1290,7 @@ KeyedSubtree(
     final from = _step;
     setState(() => _step = index);
     _logStep(from, '点步骤条');
-    unawaited(_persistDraft(step: index));
+    unawaited(_saveDraftNow(step: index));
   }
 
   Widget _buildStep(BuildContext context, ProjectState state, bool busy) {
@@ -1298,7 +1351,7 @@ KeyedSubtree(
               'import',
               '调整分析范围 $start-$end ms',
             );
-            unawaited(_persistDraft());
+            _scheduleDraftSave();
           },
         );
       case 2:
@@ -1343,7 +1396,7 @@ KeyedSubtree(
               'import',
               '修改${_editingNet ? '篮网' : '篮筐'}区域 ${_rectLog(value)} 已经用户编辑=${_editingNet || _netUserEdited}',
             );
-            unawaited(_persistDraft());
+            _scheduleDraftSave();
           },
           onResetCurrent: () {
             setState(() {
@@ -1366,7 +1419,7 @@ KeyedSubtree(
                 }
               }
             });
-            unawaited(_persistDraft());
+            _scheduleDraftSave();
           },
         );
       case 3:
@@ -1390,15 +1443,15 @@ KeyedSubtree(
           onAnalysisModeChanged: (mode) {
             setState(() => _analysisMode = mode);
             appLog('info', 'import', '选择分析模式 $mode');
-            unawaited(_persistDraft());
+            _scheduleDraftSave();
           },
           onBeforeSecondsChanged: (seconds) {
             setState(() => _beforeSeconds = seconds);
-            unawaited(_persistDraft());
+            _scheduleDraftSave();
           },
           onAfterSecondsChanged: (seconds) {
             setState(() => _afterSeconds = seconds);
-            unawaited(_persistDraft());
+            _scheduleDraftSave();
           },
           onEditStep: busy ? null : _goToEarlierStep,
         );
