@@ -20,6 +20,7 @@ import '../../providers/onboarding_provider.dart';
 import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../core/engine_session.dart';
+import '../../core/project_session.dart';
 import '../../core/roi_geometry.dart';
 import '../../core/video_orientation.dart';
 import '../../core/video_segments.dart';
@@ -300,15 +301,47 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   Timer? _draftDebounceTimer;
   bool _draftDirty = false;
   int? _draftPendingStep;
-  String? _draftVideoId;
+  // 草稿只属于某个项目的某段视频：记下调度（或离页入队）时的身份，
+  // 真正执行时若会话已经换了项目/换过视频，这次写入直接丢弃。
+  ProjectSession? _draftSession;
+  ({String? projectId, String? videoId})? _draftTarget;
   Future<void> _draftChain = Future<void>.value();
   String _leaveDraftFailureText = '离开导入页时未能保存这次改动';
 
-  /// 记脏时一并记住当前视频：草稿只在同一个视频里才有意义。
+  static ({String? projectId, String? videoId}) _draftTargetOf(
+    ProjectSession session,
+  ) => (projectId: session.projectId, videoId: session.videoId);
+
+  /// 记脏时一并记住当前项目与视频的身份。
   void _markDraftDirty({int? step}) {
     _draftDirty = true;
-    _draftVideoId = ref.read(projectProvider).video?['id']?.toString();
+    final session = ref.read(projectSessionProvider);
+    _draftSession = session;
+    _draftTarget = _draftTargetOf(session);
     if (step != null) _draftPendingStep = step;
+  }
+
+  void _clearDraftIdentity() {
+    _draftTarget = null;
+    _draftSession = null;
+  }
+
+  /// 排队的写入是否还属于当前会话；会话对象是活的，切项目/切视频都会更新它。
+  bool _draftTargetStillCurrent(
+    ProjectSession session,
+    ({String? projectId, String? videoId}) target,
+  ) {
+    final now = _draftTargetOf(session);
+    final same = now == target;
+    if (!same) {
+      appLog(
+        'info',
+        'import',
+        '草稿 跳过过期写入 调度时项目=${target.projectId} 视频=${target.videoId} '
+            '当前项目=${now.projectId} 视频=${now.videoId ?? '(无)'}',
+      );
+    }
+    return same;
   }
 
   void _scheduleDraftSave() {
@@ -329,17 +362,18 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   Future<void> _flushDraft() {
     _draftDebounceTimer?.cancel();
     _draftDebounceTimer = null;
+    final session = _draftSession;
+    final target = _draftTarget;
     _draftChain = _draftChain.then((_) async {
       if (!_draftDirty) return;
-      final videoId = _draftVideoId;
-      _draftDirty = false;
-      _draftVideoId = null;
       final step = _draftPendingStep;
+      _draftDirty = false;
       _draftPendingStep = null;
-      // 调度之后已经换了视频/项目：这次写入属于上一个会话，丢弃。
-      final current = ref.read(projectProvider).video?['id']?.toString();
-      if (videoId != null && current != videoId) {
-        appLog('info', 'import', '草稿 跳过过期写入 调度时视频=$videoId 当前=${current ?? '(无)'}');
+      _clearDraftIdentity();
+      // 调度之后已经换了项目/视频：这次写入属于上一个会话，丢弃。
+      if (session != null &&
+          target != null &&
+          !_draftTargetStillCurrent(session, target)) {
         return;
       }
       await _persistDraft(step: step);
@@ -352,10 +386,11 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   Future<void> _settleDraftBefore() async {
     _draftDebounceTimer?.cancel();
     _draftDebounceTimer = null;
-    if (_draftDirty) await _flushDraft();
+    // 即使当前没有待写内容也要等在途保存结束，否则 apply/清除会和它交叉。
+    await (_draftDirty ? _flushDraft() : _draftChain);
     _draftDirty = false;
     _draftPendingStep = null;
-    _draftVideoId = null;
+    _clearDraftIdentity();
   }
 
   /// 关闭应用前的最后一次写入：只把还没写的内容发出去，不等去抖。
@@ -645,6 +680,8 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   }
 
   Future<void> _relinkMissingVideo() async {
+    await _settleDraftBefore();
+    if (!mounted) return;
     final group = XTypeGroup(
       label: context.bheText('视频'),
       extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
@@ -672,12 +709,15 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   void deactivate() {
     if (_draftDirty && ref.read(projectProvider).video != null) {
       final draft = _draft(step: _draftPendingStep);
+      final session = ref.read(projectSessionProvider);
+      final target = _draftTargetOf(session);
       _draftDirty = false;
       _draftPendingStep = null;
-      _draftVideoId = null;
+      _clearDraftIdentity();
       final notifier = ref.read(projectProvider.notifier);
       final notices = ref.read(noticeProvider.notifier);
       _draftChain = _draftChain.then((_) async {
+        if (!_draftTargetStillCurrent(session, target)) return;
         try {
           await notifier.saveWorkflowDraft(draft);
         } catch (error) {

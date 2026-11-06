@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:desktop/core/draft_flush_registry.dart';
+import 'package:desktop/core/engine_session.dart';
+import 'package:desktop/core/project_session.dart';
 import 'package:desktop/features/import_video/import_video_screen.dart';
 import 'package:desktop/providers/notice_provider.dart';
 import 'package:desktop/providers/onboarding_provider.dart';
@@ -118,6 +120,26 @@ class _DraftNotifier extends ProjectNotifier {
   }
 }
 
+/// 不真的连引擎：日志/草稿相关调用都不会落到这里。
+class _SilentTransport implements EngineTransport {
+  @override
+  Future<Map<String, dynamic>> request(
+    String command,
+    Map<String, dynamic> payload,
+  ) async => <String, dynamic>{};
+}
+
+/// 可控的项目会话：`restore` 模拟切项目/切视频，脚本据它判断草稿归属。
+ProjectSession _fakeSession({String? projectId, String? videoId}) =>
+    ProjectSession(EngineSession(_SilentTransport()))
+      ..restore(
+        ProjectSessionCheckpoint(
+          projectRoot: projectId == null ? null : '/projects/$projectId',
+          projectId: projectId,
+          videoId: videoId,
+        ),
+      );
+
 Finder _increase(String selector) => find.descendant(
   of: find.byKey(Key(selector)),
   matching: find.byKey(const ValueKey('increase')),
@@ -136,6 +158,7 @@ int _shownSeconds(WidgetTester tester, String selector) {
 Future<(_DraftNotifier, ProviderContainer)> _pumpImport(
   WidgetTester tester, {
   _DraftNotifier? notifier,
+  ProjectSession? session,
 }) async {
   SharedPreferences.setMockInitialValues({
     onboardingStepsPrefsKey: allOnboardingStepIds,
@@ -145,7 +168,10 @@ Future<(_DraftNotifier, ProviderContainer)> _pumpImport(
   addTearDown(tester.view.reset);
   final fake = notifier ?? _DraftNotifier();
   final container = ProviderContainer(
-    overrides: [projectProvider.overrideWith(() => fake)],
+    overrides: [
+      projectProvider.overrideWith(() => fake),
+      if (session != null) projectSessionProvider.overrideWithValue(session),
+    ],
   );
   addTearDown(container.dispose);
   await tester.pumpWidget(
@@ -305,13 +331,79 @@ void main() {
   });
 
   testWidgets('调度后切换视频，到点不写入旧会话', (tester) async {
-    final (notifier, _) = await _pumpImport(tester);
+    final session = _fakeSession(projectId: 'p1', videoId: 'v1');
+    final (notifier, _) = await _pumpImport(tester, session: session);
     await tester.tap(_increase('clip-before'), warnIfMissed: false);
     await tester.pump();
+    // 真实切换视频会同时改状态和会话，这里两个都改。
     notifier.switchVideo('v2');
+    session.restore(
+      const ProjectSessionCheckpoint(
+        projectRoot: '/projects/p1',
+        projectId: 'p1',
+        videoId: 'v2',
+      ),
+    );
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pump();
     expect(notifier.saves, isEmpty);
+  });
+
+  testWidgets('离页排队的旧草稿不会写进切换后的项目', (tester) async {
+    final session = _fakeSession(projectId: 'p1', videoId: 'v1');
+    final notifier = _DraftNotifier();
+    await _pumpImport(tester, notifier: notifier, session: session);
+    final gate = Completer<void>();
+    notifier.gate = gate;
+
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(notifier.saves.length, 1); // 属于 p1/v1 的保存在途
+
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump();
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SizedBox())));
+    await tester.pump();
+    expect(notifier.saves.length, 1); // 离页的那次排在后面
+
+    // 换项目：会话身份变了，排队中的旧草稿不能再写。
+    session.restore(
+      const ProjectSessionCheckpoint(
+        projectRoot: '/projects/p2',
+        projectId: 'p2',
+        videoId: 'v2',
+      ),
+    );
+    gate.complete();
+    notifier.gate = null;
+    await tester.pump();
+    await tester.pump();
+    expect(notifier.saves.length, 1);
+  });
+
+  testWidgets('在途保存没完成时，应用草稿要等它结束', (tester) async {
+    final notifier = _DraftNotifier()
+      ..initialState = _DraftNotifier.multiVideoState();
+    await _pumpImport(tester, notifier: notifier);
+    final gate = Completer<void>();
+    notifier.gate = gate;
+
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(notifier.saves.length, 1);
+
+    await tester.tap(find.byKey(const Key('import-save-segment')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(notifier.applyCalls, 0); // 保存还挂着，apply 不能先跑
+
+    gate.complete();
+    notifier.gate = null;
+    await tester.pump();
+    await tester.pump();
+    expect(notifier.applyCalls, 1);
   });
 
   testWidgets('关闭应用前 flush 把待写草稿写出去', (tester) async {
