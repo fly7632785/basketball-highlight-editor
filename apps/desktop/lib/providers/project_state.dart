@@ -19,6 +19,7 @@ import 'notice_provider.dart';
 import 'session_provider.dart';
 import 'sidebar_provider.dart';
 import '../core/app_log.dart';
+import '../core/draft_flush_registry.dart';
 
 const recentProjectRootsPrefsKey = 'basketball_recent_project_roots';
 
@@ -390,6 +391,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
       () async {
         final generation = ++_projectLoadGeneration;
         await ref.read(engineBootstrapProvider.notifier).ensure();
+        if (_disposed || generation != _projectLoadGeneration) return;
+        // 新建项目同样会换会话身份，先等导入页把当前草稿写给原项目。
+        await flushDraftBeforeShutdown();
         if (_disposed || generation != _projectLoadGeneration) return;
         final session = ref.read(projectSessionProvider);
         final checkpoint = session.checkpoint();
@@ -1019,6 +1023,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }) async {
     var opened = false;
     appLog('info', 'project', '打开项目');
+    // 会话身份一变，排在导入页队列里的草稿就成了过期写入；先等它写完（超时 2 秒放行）。
+    await flushDraftBeforeShutdown();
     await flushReviewQueue();
     await _runBusy(() async {
       final generation = ++_projectLoadGeneration;

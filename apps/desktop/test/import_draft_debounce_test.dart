@@ -4,6 +4,7 @@ import 'package:desktop/core/draft_flush_registry.dart';
 import 'package:desktop/core/engine_session.dart';
 import 'package:desktop/core/project_session.dart';
 import 'package:desktop/features/import_video/import_video_screen.dart';
+import 'package:desktop/providers/session_provider.dart';
 import 'package:desktop/providers/notice_provider.dart';
 import 'package:desktop/providers/onboarding_provider.dart';
 import 'package:desktop/providers/project_state.dart';
@@ -15,6 +16,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// 记录草稿保存调用，可让保存挂起（模拟在途）或失败一次。
 class _DraftNotifier extends ProjectNotifier {
   final saves = <Map<String, dynamic>>[];
+  /// 与 transport 共享的时间线，用来断言「先写完草稿再切项目」。
+  List<String>? timeline;
   Completer<void>? gate;
   bool failNextSave = false;
 
@@ -111,8 +114,10 @@ class _DraftNotifier extends ProjectNotifier {
   @override
   Future<void> saveWorkflowDraft(Map<String, dynamic> draft) async {
     saves.add(Map<String, dynamic>.from(draft));
+    timeline?.add('save:start');
     final pending = gate;
     if (pending != null) await pending.future;
+    timeline?.add('save:done');
     if (failNextSave) {
       failNextSave = false;
       throw StateError('引擎写盘失败');
@@ -127,6 +132,39 @@ class _SilentTransport implements EngineTransport {
     String command,
     Map<String, dynamic> payload,
   ) async => <String, dynamic>{};
+}
+
+/// 记录引擎命令顺序；open_project 返回一个最小可用的项目载荷。
+class _RecordingTransport implements EngineTransport {
+  _RecordingTransport(this.timeline);
+
+  final List<String> timeline;
+
+  @override
+  Future<Map<String, dynamic>> request(
+    String command,
+    Map<String, dynamic> payload,
+  ) async {
+    timeline.add('cmd:$command');
+    if (command != 'open_project') return <String, dynamic>{};
+    final root = payload['project_root']?.toString() ?? '';
+    return <String, dynamic>{
+      'project_root': root,
+      'project': {'id': root.split('/').last, 'name': root.split('/').last},
+    };
+  }
+}
+
+/// 引擎启动在测试里不真的启动。
+class _StubBootstrap extends EngineBootstrapNotifier {
+  @override
+  AsyncValue<bool> build() => const AsyncData<bool>(true);
+
+  @override
+  Future<void> ensure({
+    String? runtimeRootOverride,
+    String? pythonExecutableOverride,
+  }) async {}
 }
 
 /// 可控的项目会话：`restore` 模拟切项目/切视频，脚本据它判断草稿归属。
@@ -170,6 +208,7 @@ Future<(_DraftNotifier, ProviderContainer)> _pumpImport(
   final container = ProviderContainer(
     overrides: [
       projectProvider.overrideWith(() => fake),
+      engineBootstrapProvider.overrideWith(_StubBootstrap.new),
       if (session != null) projectSessionProvider.overrideWithValue(session),
     ],
   );
@@ -347,6 +386,123 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pump();
     expect(notifier.saves, isEmpty);
+  });
+
+  testWidgets('拖动后在去抖窗口内切换项目：草稿写给原项目', (tester) async {
+    final timeline = <String>[];
+    final session = ProjectSession(EngineSession(_RecordingTransport(timeline)))
+      ..restore(
+        const ProjectSessionCheckpoint(
+          projectRoot: '/projects/p1',
+          projectId: 'p1',
+          videoId: 'v1',
+        ),
+      );
+    final notifier = _DraftNotifier()..timeline = timeline;
+    final (_, container) = await _pumpImport(
+      tester,
+      notifier: notifier,
+      session: session,
+    );
+
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump();
+    final dragged = _shownSeconds(tester, 'clip-before');
+    expect(notifier.saves, isEmpty); // 还在去抖窗口里
+
+    final opened = await container
+        .read(projectProvider.notifier)
+        .openProject('/projects/p2');
+    expect(opened, isTrue);
+    expect(notifier.saves.single['before_seconds'], dragged);
+    expect(
+      timeline.indexOf('cmd:open_project'),
+      greaterThan(timeline.indexOf('save:done')),
+    );
+    expect(session.projectId, 'p2');
+  });
+
+  testWidgets('切换项目时有在途保存：等它写完再切', (tester) async {
+    final timeline = <String>[];
+    final session = ProjectSession(EngineSession(_RecordingTransport(timeline)))
+      ..restore(
+        const ProjectSessionCheckpoint(
+          projectRoot: '/projects/p1',
+          projectId: 'p1',
+          videoId: 'v1',
+        ),
+      );
+    final notifier = _DraftNotifier()..timeline = timeline;
+    final (_, container) = await _pumpImport(
+      tester,
+      notifier: notifier,
+      session: session,
+    );
+    final gate = Completer<void>();
+    notifier.gate = gate;
+
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(notifier.saves.length, 1); // 保存在途
+
+    final opened = container
+        .read(projectProvider.notifier)
+        .openProject('/projects/p2');
+    await tester.pump();
+    await tester.pump();
+    expect(timeline.contains('cmd:open_project'), isFalse);
+
+    gate.complete();
+    notifier.gate = null;
+    expect(await opened, isTrue);
+    expect(timeline.contains('cmd:open_project'), isTrue);
+    expect(
+      timeline.indexOf('cmd:open_project'),
+      greaterThan(timeline.indexOf('save:done')),
+    );
+  });
+
+  testWidgets('切换项目时保存卡住：2 秒后放行', (tester) async {
+    final timeline = <String>[];
+    final session = ProjectSession(EngineSession(_RecordingTransport(timeline)))
+      ..restore(
+        const ProjectSessionCheckpoint(
+          projectRoot: '/projects/p1',
+          projectId: 'p1',
+          videoId: 'v1',
+        ),
+      );
+    final notifier = _DraftNotifier()..timeline = timeline;
+    final (_, container) = await _pumpImport(
+      tester,
+      notifier: notifier,
+      session: session,
+    );
+    notifier.gate = Completer<void>(); // 永不释放
+
+    await tester.tap(_increase('clip-before'), warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(notifier.saves.length, 1);
+
+    var opened = false;
+    unawaited(
+      container
+          .read(projectProvider.notifier)
+          .openProject('/projects/p2')
+          .then((value) => opened = value),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1900));
+    expect(opened, isFalse); // 还在等保存
+    expect(timeline.contains('cmd:open_project'), isFalse);
+
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(opened, isTrue); // 超时放行
+    expect(timeline.contains('cmd:open_project'), isTrue);
   });
 
   testWidgets('离页排队的旧草稿不会写进切换后的项目', (tester) async {
