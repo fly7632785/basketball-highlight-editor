@@ -97,6 +97,11 @@ class Win32Window {
 
   // window handle for hosted content.
   HWND child_content_ = nullptr;
+
+  // Set when the window is deactivated; consumed on the next activation to
+  // restore the Flutter child window's default IME context (see
+  // win32_window.cpp, flutter/flutter#190042).
+  bool deactivated_since_last_activation_ = false;
 };
 
 #endif  // RUNNER_WIN32_WINDOW_H_
