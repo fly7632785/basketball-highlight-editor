@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'app_log.dart';
+import 'engine_session.dart' show JsonMap;
 import 'player_audio_settings.dart';
 import 'diagnostics.dart' show appVersion;
 
@@ -186,11 +187,57 @@ Timer watchPlayerReadyTimeout(
 String playerReadyTimeoutLine(String where, Duration timeout) =>
     '$where 打开后 ${timeout.inSeconds} 秒仍未就绪';
 
+/// `video` 里色彩信息为 HDR（PQ/HLG + 10bit + BT.2020）时给 mpv 设色调映射。
+/// 判定与引擎 color_plan 的前半段一致；ffmpeg 滤镜是否可用由 mpv 自己决定。
+bool isHdrVideoForPlayer(JsonMap? video) {
+  if (video == null) return false;
+  final pix = (video['pix_fmt'] ?? '').toString().toLowerCase();
+  final transfer = (video['color_transfer'] ?? '').toString().toLowerCase();
+  final primaries = (video['color_primaries'] ?? '').toString().toLowerCase();
+  final space = (video['color_space'] ?? '').toString().toLowerCase();
+  if (pix.isEmpty || pix == 'unknown' || transfer.isEmpty || transfer == 'unknown') {
+    return false;
+  }
+  if (transfer != 'smpte2084' && transfer != 'arib-std-b67') return false;
+  if (!RegExp(r'(?:p10|p010)(?:le|be)?$').hasMatch(pix)) return false;
+  if (primaries != 'bt2020') return false;
+  return space == 'bt2020nc' || space == 'bt2020c';
+}
+
+/// HDR 时给 mpv 设的最小色调映射属性集，与导出 ffmpeg 的 hable + bt709 对齐。
+const hdrToneMappingProperties = <String, String>{
+  'tone-mapping': 'hable',
+  'hdr-compute-peak': 'yes',
+  'target-trc': 'bt.1886',
+  'target-prim': 'bt.709',
+};
+
+/// 逐条设置，某条失败只记日志、不影响打开播放，也不影响其余属性。
+Future<void> applyHdrToneMapping(Player player, String where, JsonMap? video) async {
+  if (!isHdrVideoForPlayer(video)) return;
+  final platform = player.platform;
+  if (platform is! NativePlayer) return;
+  for (final entry in hdrToneMappingProperties.entries) {
+    try {
+      await platform.setProperty(entry.key, entry.value);
+    } catch (error) {
+      appLog('warn', 'player', '$where 设置 mpv ${entry.key} 失败（忽略）: $error');
+    }
+  }
+}
+
 /// 带耗时地记录打开视频：播放器 open 慢或失败时，日志里能看出是哪个文件类型、卡了多久。
-Future<void> openLoggedMedia(Player player, String where, String path) async {
+/// 传了 [video] 且是 HDR 时，打开前先按 [applyHdrToneMapping] 设色调映射。
+Future<void> openLoggedMedia(
+  Player player,
+  String where,
+  String path, {
+  JsonMap? video,
+}) async {
   final watch = Stopwatch()..start();
   final dot = path.lastIndexOf('.');
   final ext = dot < 0 ? '?' : path.substring(dot + 1).toLowerCase();
+  await applyHdrToneMapping(player, where, video);
   try {
     await player.open(Media(Uri.file(path).toString()), play: false);
     appLog('info', 'player', '$where 打开视频 ext=$ext 用时 ${watch.elapsedMilliseconds}ms');

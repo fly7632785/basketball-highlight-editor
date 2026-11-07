@@ -198,4 +198,87 @@ void main() {
       expect(log(), isNot(contains('卡顿前最后记录的一步：[warn]')));
     });
   });
+
+  group('HDR 判定（决定是否给 mpv 设色调映射）', () {
+    Map<String, dynamic> video(Map<String, dynamic> overrides) => {
+      'pix_fmt': 'yuv420p10le',
+      'color_transfer': 'smpte2084',
+      'color_primaries': 'bt2020',
+      'color_space': 'bt2020nc',
+      ...overrides,
+    };
+
+    test('没有视频信息时不是 HDR', () {
+      expect(isHdrVideoForPlayer(null), isFalse);
+    });
+
+    test('普通 8bit SDR 不是 HDR', () {
+      expect(
+        isHdrVideoForPlayer(video({
+          'pix_fmt': 'yuv420p',
+          'color_transfer': 'bt709',
+          'color_primaries': 'bt709',
+          'color_space': 'bt709',
+        })),
+        isFalse,
+      );
+    });
+
+    test('PQ + 10bit + BT.2020 是 HDR', () {
+      expect(isHdrVideoForPlayer(video({})), isTrue);
+    });
+
+    test('HLG 用 p010le 也是 HDR', () {
+      expect(
+        isHdrVideoForPlayer(video({
+          'pix_fmt': 'p010le',
+          'color_transfer': 'arib-std-b67',
+        })),
+        isTrue,
+      );
+    });
+
+    test('bt2020c 也算 HDR，大小写不敏感', () {
+      expect(
+        isHdrVideoForPlayer(video({
+          'pix_fmt': 'YUV420P10LE',
+          'color_transfer': 'SMPTE2084',
+          'color_primaries': 'BT2020',
+          'color_space': 'BT2020C',
+        })),
+        isTrue,
+      );
+    });
+
+    test('缺色彩元数据时保守判为非 HDR', () {
+      expect(
+        isHdrVideoForPlayer({'pix_fmt': 'yuv420p10le', 'color_transfer': 'unknown'}),
+        isFalse,
+      );
+      expect(isHdrVideoForPlayer({'pix_fmt': 'yuv420p10le'}), isFalse);
+    });
+
+    test('10bit + PQ 但非 BT.2020 色彩空间不算 HDR', () {
+      expect(
+        isHdrVideoForPlayer(video({
+          'color_primaries': 'bt709',
+          'color_space': 'bt709',
+        })),
+        isFalse,
+      );
+      expect(
+        isHdrVideoForPlayer(video({
+          'pix_fmt': 'yuv420p', // 8bit
+        })),
+        isFalse,
+      );
+    });
+
+    test('色调映射属性与导出对齐', () {
+      expect(hdrToneMappingProperties['tone-mapping'], 'hable');
+      expect(hdrToneMappingProperties['target-prim'], 'bt.709');
+      expect(hdrToneMappingProperties['target-trc'], 'bt.1886');
+    });
+  });
+
 }

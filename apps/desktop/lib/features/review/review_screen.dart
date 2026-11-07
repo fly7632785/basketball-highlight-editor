@@ -10,6 +10,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
 import '../../core/app_diagnostics.dart';
+import '../../core/engine_session.dart' show JsonMap;
 import '../../core/player_audio_settings.dart';
 
 import '../feedback/feedback_dialog.dart';
@@ -496,6 +497,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final result = await _showRangeDialog(
       (dialogContext) => _ClipRangeDialog(
         videoPath: ref.read(projectProvider).videoPath,
+        video: ref.read(projectProvider).video,
         frameSize: _videoFrameSize(ref.read(projectProvider).video),
         rotation: _videoRotation(ref.read(projectProvider).video),
         startMs: _clipStart(candidate),
@@ -535,6 +537,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final result = await _showRangeDialog(
       (dialogContext) => _ClipRangeDialog(
         videoPath: state.videoPath,
+        video: state.video,
         frameSize: _videoFrameSize(state.video),
         rotation: _videoRotation(state.video),
         startMs: startMs,
@@ -1915,7 +1918,12 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
         return;
       }
       await matchPlayerToSourceRotation(player, rotation: widget.rotation);
-      await openLoggedMedia(player, '审核页', path);
+      await openLoggedMedia(
+        player,
+        '审核页',
+        path,
+        video: ref.read(projectProvider).video,
+      );
       if (!_isCurrent(generation)) return;
       final readyWatch = _readyWatch = watchPlayerReadyTimeout('审核页');
       try {
@@ -3917,6 +3925,7 @@ class _InspectorDecision extends StatelessWidget {
 class _ClipRangeDialog extends StatefulWidget {
   const _ClipRangeDialog({
     required this.videoPath,
+    this.video,
     required this.frameSize,
     this.rotation = 0,
     required this.startMs,
@@ -3931,6 +3940,7 @@ class _ClipRangeDialog extends StatefulWidget {
   });
 
   final String? videoPath;
+  final JsonMap? video;
   final Size frameSize;
   final int rotation;
   final int startMs;
@@ -4036,7 +4046,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
         }
       });
       await matchPlayerToSourceRotation(player, rotation: widget.rotation);
-      await openLoggedMedia(player, '审核页', path);
+      await openLoggedMedia(player, '审核页', path, video: widget.video);
       // 等媒体元数据就绪后再 seek:open 后立即 seek 在加载较慢时
       // (Windows 软件解码)会被丢弃,导致播放从 0 开始而非片段起点。
       await waitForPlayableDuration(

@@ -2306,7 +2306,12 @@ class _DetectionStepState extends ConsumerState<_DetectionStep> {
         setState(() => _playing = playing);
       });
       await matchPlayerToSourceRotation(_player!, rotation: widget.rotation);
-      await openLoggedMedia(_player!, '导入页', path);
+      await openLoggedMedia(
+        _player!,
+        '导入页',
+        path,
+        video: ref.read(projectProvider).video,
+      );
       final readyWatch = _readyWatch = watchPlayerReadyTimeout('导入页');
       try {
         await waitForPlayableDuration(
@@ -3463,7 +3468,12 @@ class _AnalysisRangeEditorState extends ConsumerState<_AnalysisRangeEditor> {
     });
     try {
       await matchPlayerToSourceRotation(player, rotation: widget.rotation);
-      await openLoggedMedia(player, '导入页', path);
+      await openLoggedMedia(
+        player,
+        '导入页',
+        path,
+        video: ref.read(projectProvider).video,
+      );
       _playbackRequested = false;
       await player.pause();
       if (mounted &&
