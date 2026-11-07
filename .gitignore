@@ -44,3 +44,6 @@ models/*.onnx
 models/*.onnx.names.json
 /bin/
 /.zcode/
+
+# Private outcome review bundles contain videos and human annotations.
+/local-review-data/
