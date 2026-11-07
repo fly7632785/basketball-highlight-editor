@@ -212,18 +212,61 @@ const hdrToneMappingProperties = <String, String>{
   'target-prim': 'bt.709',
 };
 
-/// 逐条设置，某条失败只记日志、不影响打开播放，也不影响其余属性。
-Future<void> applyHdrToneMapping(Player player, String where, JsonMap? video) async {
-  if (!isHdrVideoForPlayer(video)) return;
-  final platform = player.platform;
-  if (platform is! NativePlayer) return;
-  for (final entry in hdrToneMappingProperties.entries) {
+/// HDR 用过后切到非 HDR 源片时恢复成 mpv 默认值，避免 SDR 仍被 bt.1886 等属性影响。
+const hdrToneMappingResetProperties = <String, String>{
+  'tone-mapping': 'auto',
+  'hdr-compute-peak': 'auto',
+  'target-trc': 'auto',
+  'target-prim': 'auto',
+};
+
+/// 记下「这个 player 上设过 HDR 属性」。弱引用，player 释放后自动失效。
+final Expando<bool> _hdrAppliedByPlayer = Expando<bool>('hdrToneMappingApplied');
+
+/// 按当前视频决定要设哪些属性，并逐条设置（每条单独 try/catch，失败只记日志并继续）。
+///
+/// 返回设置之后「这个 player 上是否留有 HDR 属性」：
+/// - HDR 且此前没设过：写 [hdrToneMappingProperties]，返回 true；
+/// - HDR 且已设过：不重复设置，返回 true；
+/// - 非 HDR 且已设过：写 [hdrToneMappingResetProperties]，返回 false（复位后清标记）；
+/// - 非 HDR 且从没设过：一条都不调，返回 false。
+///
+/// 独立成函数是为了能脱离真实 Player 测试（本仓库没有 PlatformPlayer 的假实现）。
+Future<bool> applyToneMappingStep({
+  required bool alreadyApplied,
+  required JsonMap? video,
+  required String where,
+  required Future<void> Function(String name, String value) setProperty,
+}) async {
+  Map<String, String> plan;
+  if (isHdrVideoForPlayer(video)) {
+    if (alreadyApplied) return true;
+    plan = hdrToneMappingProperties;
+  } else {
+    if (!alreadyApplied) return false;
+    plan = hdrToneMappingResetProperties;
+  }
+  for (final entry in plan.entries) {
     try {
-      await platform.setProperty(entry.key, entry.value);
+      await setProperty(entry.key, entry.value);
     } catch (error) {
       appLog('warn', 'player', '$where 设置 mpv ${entry.key} 失败（忽略）: $error');
     }
   }
+  return isHdrVideoForPlayer(video);
+}
+
+/// 逐条设置，某条失败只记日志、不影响打开播放，也不影响其余属性。
+Future<void> applyHdrToneMapping(Player player, String where, JsonMap? video) async {
+  final platform = player.platform;
+  if (platform is! NativePlayer) return;
+  final applied = await applyToneMappingStep(
+    alreadyApplied: _hdrAppliedByPlayer[player] ?? false,
+    video: video,
+    where: where,
+    setProperty: platform.setProperty,
+  );
+  _hdrAppliedByPlayer[player] = applied;
 }
 
 /// 带耗时地记录打开视频：播放器 open 慢或失败时，日志里能看出是哪个文件类型、卡了多久。
