@@ -306,17 +306,20 @@ void Win32Window::CancelPendingUiTasks() {
 }
 
 void Win32Window::PostUiTask(HWND window, std::function<void()> task) {
-  if (!window || !task || s_window_destroyed_.load()) {
+  if (!window || !task) {
     return;
   }
-  UINT id;
-  {
-    std::lock_guard<std::mutex> lock(s_ui_tasks_mutex_);
-    id = ++s_next_ui_task_id_;
-    s_ui_tasks_.emplace(id, std::move(task));
+  // One lock covers the destroyed check, the enqueue and the send so a
+  // concurrent WM_DESTROY cannot leave a task behind: either the message is
+  // queued before the destroy cleanup runs (and is dropped together with
+  // the rest) or PostMessage fails here and the task is removed.
+  std::lock_guard<std::mutex> lock(s_ui_tasks_mutex_);
+  if (s_window_destroyed_.load()) {
+    return;
   }
+  UINT id = ++s_next_ui_task_id_;
+  s_ui_tasks_.emplace(id, std::move(task));
   if (!PostMessage(window, WM_APP, static_cast<WPARAM>(id), 0)) {
-    std::lock_guard<std::mutex> lock(s_ui_tasks_mutex_);
     s_ui_tasks_.erase(id);
   }
 }
