@@ -4,7 +4,9 @@
 #include <windows.h>
 
 #include <functional>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 
 // A class abstraction for a high DPI-aware Win32 Window. Intended to be
@@ -55,6 +57,10 @@ class Win32Window {
   // Return a RECT representing the bounds of the current client area.
   RECT GetClientArea();
 
+  // Runs |task| on the window's message pump thread (the platform thread).
+  // Background threads use this to deliver results without racing the pump.
+  static void PostUiTask(HWND window, std::function<void()> task);
+
  protected:
   // Processes and route salient window messages for mouse handling,
   // size change and DPI. Delegates handling of these to member overloads that
@@ -97,6 +103,11 @@ class Win32Window {
 
   // window handle for hosted content.
   HWND child_content_ = nullptr;
+
+  // Pending tasks posted by background threads, keyed by message id.
+  static std::map<UINT, std::function<void()>> s_ui_tasks_;
+  static std::mutex s_ui_tasks_mutex_;
+  static UINT s_next_ui_task_id_;
 };
 
 #endif  // RUNNER_WIN32_WINDOW_H_

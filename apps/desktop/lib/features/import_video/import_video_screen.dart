@@ -33,6 +33,7 @@ import '../../theme/tokens.dart';
 import '../review/media_readiness.dart';
 import 'player_roster_picker.dart';
 import '../../core/app_log.dart';
+import '../../core/bhe_file_dialog.dart';
 
 const _beforeSecondOptions = <int>[0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15];
 const _afterSecondOptions = <int>[1, 2, 3, 4, 5, 6, 8, 10, 12, 15];
@@ -334,7 +335,10 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
     final pickWatch = Stopwatch()..start();
     appLog('info', 'import', '打开选择视频对话框');
     if (existingVideo == null) {
-      final files = await openFiles(acceptedTypeGroups: [group]);
+      final files = await BheFileDialog.openFiles(
+        typeLabel: group.label ?? '视频',
+        extensions: group.extensions ?? const [],
+      );
       appLog('info', 'import', '选择视频对话框结束 选了 ${files.length} 个 用时 ${pickWatch.elapsedMilliseconds}ms');
       if (files.isEmpty || !mounted) return;
       if (files.length > 1) {
@@ -344,7 +348,10 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       }
       return;
     }
-    final file = await openFile(acceptedTypeGroups: [group]);
+    final file = await BheFileDialog.openFile(
+      typeLabel: group.label ?? '视频',
+      extensions: group.extensions ?? const [],
+    );
     appLog('info', 'import', '选择视频对话框结束 选了 ${file == null ? 0 : 1} 个 用时 ${pickWatch.elapsedMilliseconds}ms');
     if (file == null || !mounted) return;
     await _importVideoPath(file.path);
@@ -365,15 +372,9 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
 
   Future<void> _addVideos() async {
     appLog('info', 'import', '打开添加视频对话框');
-    final files = await openFiles(
-      acceptedTypeGroups: [
-        XTypeGroup(
-          label: context.bheText('视频'),
-          extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
-          mimeTypes: ['video/*'],
-          uniformTypeIdentifiers: ['public.movie'],
-        ),
-      ],
+    final files = await BheFileDialog.openFiles(
+      typeLabel: context.bheText('视频'),
+      extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
     );
     appLog('info', 'import', '添加视频对话框结束 选了 ${files.length} 个');
     if (files.isEmpty || !mounted) return;
@@ -576,7 +577,10 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
       mimeTypes: ['video/*'],
       uniformTypeIdentifiers: ['public.movie'],
     );
-    final file = await openFile(acceptedTypeGroups: [group]);
+    final file = await BheFileDialog.openFile(
+      typeLabel: group.label ?? '视频',
+      extensions: group.extensions ?? const [],
+    );
     if (file == null || !mounted) return;
     final relinked = await ref
         .read(projectProvider.notifier)

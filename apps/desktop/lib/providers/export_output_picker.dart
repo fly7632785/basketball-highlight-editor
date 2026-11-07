@@ -1,20 +1,19 @@
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../core/bhe_file_dialog.dart';
 
 final exportOutputPickerProvider = Provider((ref) => ExportOutputPicker());
 
 /// Keeps the native modal boundary replaceable in export regression tests.
 class ExportOutputPicker {
   Future<String?> mergedPath({required String typeLabel}) async {
-    final location = await getSaveLocation(
+    return BheFileDialog.getSaveLocation(
       suggestedName: 'highlights.mp4',
-      acceptedTypeGroups: [
-        XTypeGroup(label: typeLabel, extensions: ['mp4']),
-      ],
+      typeLabel: typeLabel,
+      extensions: ['mp4'],
     );
-    return location?.path;
   }
 
   Future<String?> directory({required String confirmLabel}) =>
-      getDirectoryPath(confirmButtonText: confirmLabel);
+      BheFileDialog.getDirectoryPath(confirmLabel: confirmLabel);
 }
