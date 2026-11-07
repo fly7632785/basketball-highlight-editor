@@ -805,6 +805,12 @@ def test_candidate_previews_use_at_most_two_ffmpeg_processes(
             return "", ""
 
     monkeypatch.setattr("engine.python.basketball_engine.service.subprocess.Popen", FakeProcess)
+    # L127：抽帧前会先 inspect 源片判 HDR；fake 环境没有真 ffprobe，
+    # 让 run 直接报错，_preview_frame_vf 应回退到纯缩放（不映射）。
+    monkeypatch.setattr(
+        "engine.python.basketball_engine.service.subprocess.run",
+        lambda *a, **k: (_ for _ in ()).throw(subprocess.CalledProcessError(1, "ffprobe")),
+    )
 
     counts = service._prepare_candidate_previews(
         store=store,

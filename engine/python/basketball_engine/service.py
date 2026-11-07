@@ -41,7 +41,7 @@ from .adapters.export import (
     trajectory_points,
     validate_output_file,
 )
-from .adapters.hdr import color_plan, HDR_UNKNOWN
+from .adapters.hdr import color_plan, hdr_filter_available, HDR_UNKNOWN, TONEMAP_FILTER
 from .adapters.runtime_preflight import DetectorPreflight, runtime_error
 from basketball_highlight.runtime_errors import is_runtime_failure
 from .protocol import ProtocolError
@@ -1015,6 +1015,25 @@ class EngineService:
             raise ProtocolError("VIDEO_NOT_FOUND", str(exc)) from exc
         return {"video": video}
 
+    def _preview_frame_vf(self, source: Path) -> str:
+        """抽帧用的 -vf：HDR 源片先做与导出一致的 SDR 色调映射，再缩放。
+
+        判定复用 color_plan（PQ/HLG+10bit+BT.2020 且 ffmpeg 有 zscale/tonemap）；
+        不满足条件时不映射，保持原行为。代理视频是 SDR，不走这里。
+        """
+        try:
+            info = self.inspect_video({"video_path": str(source)})
+            tonemap, warning = color_plan(info)
+            if warning:
+                log_diagnostic(f"preview color warning: {warning}")
+        except (ProtocolError, OSError) as exc:
+            log_diagnostic(f"preview HDR probe failed: {exc}")
+            return "scale=640:-2"
+        if not tonemap:
+            return "scale=640:-2"
+        log_diagnostic(f"preview tonemap enabled: {source.name}")
+        return f"{TONEMAP_FILTER},scale=640:-2"
+
     def extract_preview(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         store = self._require_store(payload)
         identity = self._project_identity(store)
@@ -1064,10 +1083,12 @@ class EngineService:
             except (ProtocolError, OSError, ValueError, TypeError):
                 check_cancelled()
         def extract(frame: Path, offset: int) -> None:
+            # 源片可能显 HDR（PQ/HLG），抽帧时与导出同条件映射到 SDR；代理已是 SDR。
+            vf = self._preview_frame_vf(frame) if frame == source else "scale=640:-2"
             command = [
                 resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
                 "-ss", f"{offset / 1000:.3f}", "-i", str(frame),
-                "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3", str(temporary_path),
+                "-frames:v", "1", "-vf", vf, "-q:v", "3", str(temporary_path),
             ]
             subprocess.run(command, check=True, capture_output=True, stdin=subprocess.DEVNULL,
                            text=True, encoding="utf-8", errors="replace", timeout=20)
@@ -1143,10 +1164,12 @@ class EngineService:
             temporary_path = output_path.with_name(
                 f".{output_path.stem}.{job_id}.{index}.tmp{output_path.suffix}"
             )
+            # 分析结束后对原片抽候选封面：HDR 源与导出同条件映射到 SDR，避免过曝。
+            vf = self._preview_frame_vf(source)
             command = [
                 resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
                 "-ss", f"{time_ms / 1000:.3f}", "-i", str(source),
-                "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3",
+                "-frames:v", "1", "-vf", vf, "-q:v", "3",
                 str(temporary_path),
             ]
             popen_kwargs: Dict[str, Any] = {
