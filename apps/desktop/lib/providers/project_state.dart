@@ -1,10 +1,10 @@
 // lib/providers/project_state.dart
 import '../core/app_diagnostics.dart';
-import '../core/bhe_file_dialog.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/widgets.dart' show Rect;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -765,8 +765,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
     String? relinkVideoButtonLabel,
     String? videoTypeLabel,
   }) async {
-    final root = await BheFileDialog.getDirectoryPath(
-      confirmLabel: openProjectButtonLabel ?? '打开项目',
+    final root = await getDirectoryPath(
+      confirmButtonText: openProjectButtonLabel ?? '打开项目',
     );
     if (root == null) return false;
     return openProject(
@@ -1039,10 +1039,14 @@ class ProjectNotifier extends Notifier<ProjectState> {
             video['source_exists'] == false ||
             !File(sourcePath).existsSync();
         if (sourceMissing) {
-          final replacementFile = await BheFileDialog.openFile(
-            confirmLabel: relinkVideoButtonLabel ?? '重新定位视频',
-            typeLabel: videoTypeLabel ?? '视频',
-            extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
+          final replacementFile = await openFile(
+            confirmButtonText: relinkVideoButtonLabel ?? '重新定位视频',
+            acceptedTypeGroups: [
+              XTypeGroup(
+                label: videoTypeLabel ?? '视频',
+                extensions: ['mp4', 'mov', 'm4v', 'avi', 'mkv'],
+              ),
+            ],
           );
           final replacement = replacementFile?.path;
           if (replacement != null && replacement.isNotEmpty) {

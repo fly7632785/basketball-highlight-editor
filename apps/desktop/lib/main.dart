@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
@@ -9,6 +10,7 @@ import 'app.dart';
 import 'core/app_diagnostics.dart';
 import 'core/player_audio_settings.dart';
 import 'core/app_errors.dart';
+import 'core/threaded_file_selector.dart';
 import 'providers/session_provider.dart';
 import 'providers/theme_provider.dart';
 import 'theme/app_colors.dart';
@@ -18,6 +20,11 @@ void main() => runWithAppErrorLogging(_startApp);
 Future<void> _startApp() async {
   WidgetsFlutterBinding.ensureInitialized();
   AppDiagnostics.start();
+  // Windows 的文件对话框在专用 STA 线程上打开,shell 卡死(如半死的映射
+  // 网络盘)时界面保持可操作;测试与 macOS 沿用默认实现。
+  if (Platform.isWindows) {
+    FileSelectorPlatform.instance = ThreadedFileSelectorWindows();
+  }
   MediaKit.ensureInitialized();
   // 音量/静音设置在界面出现前读好，播放器创建时就能套用。
   await playerAudioSettings.load();

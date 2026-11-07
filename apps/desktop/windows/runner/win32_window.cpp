@@ -58,6 +58,7 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
 std::map<UINT, std::function<void()>> Win32Window::s_ui_tasks_;
 std::mutex Win32Window::s_ui_tasks_mutex_;
 UINT Win32Window::s_next_ui_task_id_ = 0;
+std::atomic<bool> Win32Window::s_window_destroyed_(false);
 
 // Manages the Win32Window's window class registration.
 class WindowClassRegistrar {
@@ -186,6 +187,9 @@ Win32Window::MessageHandler(HWND hwnd,
                             LPARAM const lparam) noexcept {
   switch (message) {
     case WM_DESTROY:
+      // The engine and window are going away; replies held by background
+      // threads must never run against them.
+      Win32Window::CancelPendingUiTasks();
       window_handle_ = nullptr;
       Destroy();
       if (quit_on_close_) {
@@ -295,8 +299,14 @@ void Win32Window::OnDestroy() {
   // No-op; provided for subclasses.
 }
 
+void Win32Window::CancelPendingUiTasks() {
+  std::lock_guard<std::mutex> lock(s_ui_tasks_mutex_);
+  s_window_destroyed_.store(true);
+  s_ui_tasks_.clear();
+}
+
 void Win32Window::PostUiTask(HWND window, std::function<void()> task) {
-  if (!window || !task) {
+  if (!window || !task || s_window_destroyed_.load()) {
     return;
   }
   UINT id;

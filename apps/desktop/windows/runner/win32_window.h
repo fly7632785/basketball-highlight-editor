@@ -3,6 +3,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <functional>
 #include <map>
 #include <memory>
@@ -59,7 +60,12 @@ class Win32Window {
 
   // Runs |task| on the window's message pump thread (the platform thread).
   // Background threads use this to deliver results without racing the pump.
+  // Tasks are dropped once the window is destroyed.
   static void PostUiTask(HWND window, std::function<void()> task);
+
+  // Drops every pending task; called from WM_DESTROY so replies addressed to
+  // a dead engine are never executed.
+  static void CancelPendingUiTasks();
 
  protected:
   // Processes and route salient window messages for mouse handling,
@@ -108,6 +114,7 @@ class Win32Window {
   static std::map<UINT, std::function<void()>> s_ui_tasks_;
   static std::mutex s_ui_tasks_mutex_;
   static UINT s_next_ui_task_id_;
+  static std::atomic<bool> s_window_destroyed_;
 };
 
 #endif  // RUNNER_WIN32_WINDOW_H_
