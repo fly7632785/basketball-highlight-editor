@@ -86,8 +86,10 @@ class ThreadedFileSelectorWindows extends FileSelectorPlatform {
     String method,
     Map<String, Object?> arguments,
   ) async {
+    final watch = Stopwatch()..start();
+    appLog('info', 'file_dialog', '打开选择窗口 method=$method');
     try {
-      return await _channel
+      final result = await _channel
           .invokeMethod<T>(method, arguments)
           .timeout(_dialogTimeout, onTimeout: () {
         appLog(
@@ -98,9 +100,19 @@ class ThreadedFileSelectorWindows extends FileSelectorPlatform {
         );
         return null;
       });
+      appLog(
+        'info',
+        'file_dialog',
+        '选择窗口结束 method=$method result=${result == null ? '取消/超时' : '有结果'}'
+        ' 用时 ${watch.elapsedMilliseconds}ms',
+      );
+      return result;
     } on TimeoutException {
+      appLog('warn', 'file_dialog', '选择窗口超时 method=$method');
       return null;
     } on PlatformException catch (error) {
+      appLog('warn', 'file_dialog',
+          '选择窗口失败 method=$method code=${error.code}');
       if (error.code == 'dialog_already_open') {
         throw Exception('上一个选择窗口还没有关闭,请先关闭它再重试');
       }

@@ -1,4 +1,4 @@
-#include "file_dialog.h"
+﻿#include "file_dialog.h"
 
 #include <flutter/encodable_value.h>
 #include <flutter/flutter_engine.h>
@@ -156,6 +156,38 @@ VOID CALLBACK CancelTimerProc(HWND, UINT, UINT_PTR timer_id, DWORD) {
   }
 }
 
+// Restore watchdog on the PLATFORM thread: independent of the picker
+// thread's pump. Even if the picker thread wedges before its in-pump
+// cancel timer, this fires (the platform thread keeps pumping messages)
+// and re-enables the main window, so the Dart escape hatch always holds.
+constexpr UINT_PTR kRestoreTimerId = 0x4249;
+
+VOID CALLBACK RestoreTimerProc(HWND hwnd, UINT, UINT_PTR timer_id,
+                               DWORD) {
+  if (hwnd && IsWindow(hwnd)) {
+    EnableWindow(hwnd, TRUE);
+  }
+  KillTimer(hwnd, timer_id);
+}
+
+std::wstring ModuleDirectory() {
+  wchar_t path[MAX_PATH] = {};
+  GetModuleFileNameW(nullptr, path, MAX_PATH);
+  std::wstring dir(path);
+  size_t slash = dir.find_last_of(L"\\/");
+  return slash == std::wstring::npos ? std::wstring()
+                                     : dir.substr(0, slash);
+}
+
+bool IsRemotePath(const std::wstring& path) {
+  if (path.rfind(L"\\\\", 0) == 0) return true;  // UNC
+  if (path.size() >= 2 && path[1] == L':') {
+    wchar_t root[4] = {path[0], L':', L'\\', L'\0'};
+    return GetDriveTypeW(root) == DRIVE_REMOTE;
+  }
+  return false;
+}
+
 // Runs on the dedicated STA thread; the caller has initialized COM for this
 // thread. Throws on unexpected failures so the caller reports an error
 // instead of mistaking them for a cancellation; returns an empty vector when
@@ -197,12 +229,20 @@ std::vector<std::string> ShowDialog(const PickerArgs& args, HWND owner) {
   if (args.save && !args.initial_name.empty()) {
     file_dialog->SetFileName(args.initial_name.c_str());
   }
-  if (!args.pick_folder && !args.initial_directory.empty()) {
-    ComPtr<IShellItem> folder;
-    HRESULT hr = SHCreateItemFromParsingName(args.initial_directory.c_str(),
-                                             nullptr, IID_PPV_ARGS(&folder));
-    if (SUCCEEDED(hr) && folder) {
-      file_dialog->SetFolder(folder.Get());
+  // Default the dialog to a local folder: automatic enumeration of a stale
+  // mapped network drive is the main hang vector, so UNC or DRIVE_REMOTE
+  // requests fall back to the (always local) application folder. Users can
+  // still navigate to network locations manually.
+  std::wstring folder = args.initial_directory;
+  if (folder.empty() || IsRemotePath(folder)) {
+    folder = ModuleDirectory();
+  }
+  if (!folder.empty() && !IsRemotePath(folder)) {
+    ComPtr<IShellItem> folder_item;
+    HRESULT hr = SHCreateItemFromParsingName(folder.c_str(), nullptr,
+                                             IID_PPV_ARGS(&folder_item));
+    if (SUCCEEDED(hr) && folder_item) {
+      file_dialog->SetFolder(folder_item.Get());
     }
   }
   if (!args.ok_label.empty()) {
@@ -326,10 +366,38 @@ void Register(flutter::FlutterEngine* engine, HWND owner) {
         PickerArgs args = ParseArgs(args_map, call.method_name());
         // Release the session slot on every exit path below; the picker
         // thread itself cannot be terminated safely once Show is running.
+        // The boxed reply lives outside the spawn closure so a failed
+        // thread creation can still answer the pending call.
+        auto reply_box = std::make_shared<std::unique_ptr<MethodResult>>(
+            std::move(reply));
+        auto finish = [channel, owner,
+                       method = call.method_name(),
+                       reply_box](std::optional<std::vector<std::string>>
+                                      paths) {
+          // Platform thread: drops the restore timer, answers the call and
+          // releases the session slot on every completed path.
+          KillTimer(owner, kRestoreTimerId);
+          ReplyWith(*channel, method, paths, std::move(*reply_box), owner);
+          std::lock_guard<std::mutex> lock(s_state_mutex);
+          s_session_active = false;
+        };
         auto spawn = [channel, owner, method = call.method_name(), args,
-                      reply = std::move(reply)]() mutable {
+                      finish]() mutable {
           s_session_owner.store(owner);
           std::optional<std::vector<std::string>> paths;
+          // COM init/uninit strictly paired on this thread.
+          HRESULT com_init = CoInitializeEx(nullptr,
+                                            COINIT_APARTMENTTHREADED |
+                                                COINIT_DISABLE_OLE1DDE);
+          struct ComGuard {
+            bool active;
+            ~ComGuard() {
+              if (active) CoUninitialize();
+            }
+          } com_guard{SUCCEEDED(com_init)};
+          if (!com_guard.active) {
+            return;  // paths stays unset; the reply below is an error.
+          }
           try {
             // Bounded cancel: this thread timer fires inside the dialog's
             // own message pump (see CancelTimerProc) even while Show runs,
@@ -352,31 +420,19 @@ void Register(flutter::FlutterEngine* engine, HWND owner) {
           if (!IsWindow(owner)) {
             return;
           }
-          // std::function needs copyable callables; box the move-only
-          // pieces. A late reply after the Dart timeout is simply ignored
-          // by the abandoned Future.
-          auto boxed_reply =
-              std::make_shared<std::unique_ptr<MethodResult>>(
-                  std::move(reply));
-          auto boxed_paths =
-              std::make_shared<std::optional<std::vector<std::string>>>(
-                  std::move(paths));
           Win32Window::PostUiTask(
               owner,
-              [channel, owner, method, boxed_paths, boxed_reply]() {
-                ReplyWith(*channel, method, *boxed_paths,
-                          std::move(*boxed_reply), owner);
+              [finish, paths = std::move(paths)]() mutable {
+                finish(std::move(paths));
               });
         };
         try {
           std::thread(std::move(spawn)).detach();
         } catch (...) {
-          {
-            std::lock_guard<std::mutex> lock(s_state_mutex);
-            s_session_active = false;
-          }
+          // The failed constructor moved the spawn closure away, but the
+          // outer reply_box still owns the pending reply.
           s_session_owner.store(nullptr);
-          reply->Error("dialog_error", "could not start the picker thread");
+          finish(std::nullopt);
         }
       });
 }
