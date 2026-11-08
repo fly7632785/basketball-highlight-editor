@@ -3,8 +3,11 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <functional>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 
 // A class abstraction for a high DPI-aware Win32 Window. Intended to be
@@ -55,6 +58,15 @@ class Win32Window {
   // Return a RECT representing the bounds of the current client area.
   RECT GetClientArea();
 
+  // Runs |task| on the window's message pump thread (the platform thread).
+  // Background threads use this to deliver results without racing the pump.
+  // Tasks are dropped once the window is destroyed.
+  static void PostUiTask(HWND window, std::function<void()> task);
+
+  // Drops every pending task; called from WM_DESTROY so replies addressed to
+  // a dead engine are never executed.
+  static void CancelPendingUiTasks();
+
  protected:
   // Processes and route salient window messages for mouse handling,
   // size change and DPI. Delegates handling of these to member overloads that
@@ -102,6 +114,12 @@ class Win32Window {
   // restore the Flutter child window's default IME context (see
   // win32_window.cpp, flutter/flutter#190042).
   bool deactivated_since_last_activation_ = false;
+
+  // Pending tasks posted by background threads, keyed by message id.
+  static std::map<UINT, std::function<void()>> s_ui_tasks_;
+  static std::mutex s_ui_tasks_mutex_;
+  static UINT s_next_ui_task_id_;
+  static std::atomic<bool> s_window_destroyed_;
 };
 
 #endif  // RUNNER_WIN32_WINDOW_H_

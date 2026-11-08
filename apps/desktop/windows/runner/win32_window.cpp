@@ -56,6 +56,11 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
 
 }  // namespace
 
+std::map<UINT, std::function<void()>> Win32Window::s_ui_tasks_;
+std::mutex Win32Window::s_ui_tasks_mutex_;
+UINT Win32Window::s_next_ui_task_id_ = 0;
+std::atomic<bool> Win32Window::s_window_destroyed_(false);
+
 // Manages the Win32Window's window class registration.
 class WindowClassRegistrar {
  public:
@@ -183,6 +188,9 @@ Win32Window::MessageHandler(HWND hwnd,
                             LPARAM const lparam) noexcept {
   switch (message) {
     case WM_DESTROY:
+      // The engine and window are going away; replies held by background
+      // threads must never run against them.
+      Win32Window::CancelPendingUiTasks();
       window_handle_ = nullptr;
       Destroy();
       if (quit_on_close_) {
@@ -234,6 +242,23 @@ Win32Window::MessageHandler(HWND hwnd,
     case WM_DWMCOLORIZATIONCOLORCHANGED:
       UpdateTheme(hwnd);
       return 0;
+
+    case WM_APP: {
+      std::function<void()> task;
+      {
+        std::lock_guard<std::mutex> lock(s_ui_tasks_mutex_);
+        auto it = s_ui_tasks_.find(static_cast<UINT>(wparam));
+        if (it == s_ui_tasks_.end()) {
+          return 0;
+        }
+        task = std::move(it->second);
+        s_ui_tasks_.erase(it);
+      }
+      if (task) {
+        task();
+      }
+      return 0;
+    }
   }
 
   return DefWindowProc(window_handle_, message, wparam, lparam);
@@ -288,6 +313,31 @@ bool Win32Window::OnCreate() {
 
 void Win32Window::OnDestroy() {
   // No-op; provided for subclasses.
+}
+
+void Win32Window::CancelPendingUiTasks() {
+  std::lock_guard<std::mutex> lock(s_ui_tasks_mutex_);
+  s_window_destroyed_.store(true);
+  s_ui_tasks_.clear();
+}
+
+void Win32Window::PostUiTask(HWND window, std::function<void()> task) {
+  if (!window || !task) {
+    return;
+  }
+  // One lock covers the destroyed check, the enqueue and the send so a
+  // concurrent WM_DESTROY cannot leave a task behind: either the message is
+  // queued before the destroy cleanup runs (and is dropped together with
+  // the rest) or PostMessage fails here and the task is removed.
+  std::lock_guard<std::mutex> lock(s_ui_tasks_mutex_);
+  if (s_window_destroyed_.load()) {
+    return;
+  }
+  UINT id = ++s_next_ui_task_id_;
+  s_ui_tasks_.emplace(id, std::move(task));
+  if (!PostMessage(window, WM_APP, static_cast<WPARAM>(id), 0)) {
+    s_ui_tasks_.erase(id);
+  }
 }
 
 void Win32Window::UpdateTheme(HWND const window) {
