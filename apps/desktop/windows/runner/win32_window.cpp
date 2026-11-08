@@ -2,6 +2,7 @@
 
 #include <dwmapi.h>
 #include <flutter_windows.h>
+#include <imm.h>
 
 #include "resource.h"
 
@@ -211,7 +212,22 @@ Win32Window::MessageHandler(HWND hwnd,
 
     case WM_ACTIVATE:
       if (child_content_ != nullptr) {
-        SetFocus(child_content_);
+        if (LOWORD(wparam) == WA_INACTIVE) {
+          deactivated_since_last_activation_ = true;
+        } else {
+          SetFocus(child_content_);
+          // flutter/flutter#190042: after this window loses and regains focus,
+          // the IMM32-to-TSF session bound to the Flutter child HWND can go
+          // stale: the IME profile still switches, but Windows stops producing
+          // WM_IME_*COMPOSITION, so Chinese/Japanese input dies until the app
+          // restarts. Restoring the default input context rebuilds that
+          // session; no composition can be in progress here because the focus
+          // change already cancelled it.
+          if (deactivated_since_last_activation_) {
+            deactivated_since_last_activation_ = false;
+            ImmAssociateContextEx(child_content_, nullptr, IACE_DEFAULT);
+          }
+        }
       }
       return 0;
 
