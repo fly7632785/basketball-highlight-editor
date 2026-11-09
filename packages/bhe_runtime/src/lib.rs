@@ -559,6 +559,18 @@ struct CoarseCrossingDiagnostics {
     rejected_interpolation: usize,
     rejected_rim_corridor: usize,
     rejected_deduplication: usize,
+    rim_center_y: f32,
+    rim_left_x: f32,
+    rim_right_x: f32,
+    rim_width_px: f32,
+    above_clearance_norm: f32,
+    point_y_min: f32,
+    point_y_max: f32,
+    point_x_min: f32,
+    point_x_max: f32,
+    points_above_rim_center: usize,
+    frame_width: u32,
+    frame_height: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -852,6 +864,20 @@ impl RuntimeSession {
                 self.stable_rim_box_count
             },
             "rim_calibrated": self.rim_calibrated,
+            "coarse_geometry": {
+                "rim_center_y": self.coarse_crossing_diagnostics.rim_center_y,
+                "rim_left_x": self.coarse_crossing_diagnostics.rim_left_x,
+                "rim_right_x": self.coarse_crossing_diagnostics.rim_right_x,
+                "rim_width_px": self.coarse_crossing_diagnostics.rim_width_px,
+                "above_clearance_norm": self.coarse_crossing_diagnostics.above_clearance_norm,
+                "point_y_min": self.coarse_crossing_diagnostics.point_y_min,
+                "point_y_max": self.coarse_crossing_diagnostics.point_y_max,
+                "point_x_min": self.coarse_crossing_diagnostics.point_x_min,
+                "point_x_max": self.coarse_crossing_diagnostics.point_x_max,
+                "points_above_rim_center": self.coarse_crossing_diagnostics.points_above_rim_center,
+                "frame_width": self.coarse_crossing_diagnostics.frame_width,
+                "frame_height": self.coarse_crossing_diagnostics.frame_height,
+            },
             "crossing_pair_count": self.coarse_crossing_diagnostics.pair_count,
             "crossing_event_count": if self.config.coarse_mode {
                 self.coarse_crossing_diagnostics.crossing_event_count
@@ -2735,6 +2761,18 @@ fn coarse_crossing_candidates(
     let mut candidates = Vec::new();
     let mut diagnostics = CoarseCrossingDiagnostics {
         ball_point_count: ordered.len(),
+        rim_center_y: rim_y,
+        rim_left_x: rim.left,
+        rim_right_x: rim.right,
+        rim_width_px,
+        above_clearance_norm: above_clearance,
+        point_y_min: ordered.iter().map(|p| p.2).fold(f32::INFINITY, f32::min),
+        point_y_max: ordered.iter().map(|p| p.2).fold(f32::NEG_INFINITY, f32::max),
+        point_x_min: ordered.iter().map(|p| p.1).fold(f32::INFINITY, f32::min),
+        point_x_max: ordered.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max),
+        points_above_rim_center: ordered.iter().filter(|p| p.2 < rim_y).count(),
+        frame_width,
+        frame_height,
         ..CoarseCrossingDiagnostics::default()
     };
 
