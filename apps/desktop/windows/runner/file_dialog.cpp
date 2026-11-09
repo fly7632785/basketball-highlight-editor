@@ -34,6 +34,9 @@ constexpr char kChannelName[] = "bhe/native_file_dialog";
 // re-enables the main window.
 constexpr UINT_PTR kCancelTimerId = 0x4248;
 constexpr DWORD kDialogWatchdogMs = 90 * 1000;
+// Platform-thread watchdog: fires slightly after the in-pump cancel timer so
+// the main window is re-enabled even when the picker thread never pumps.
+constexpr DWORD kRestoreWatchdogMs = 90 * 1000 + 500;
 
 // Single-dialog policy: at most one native picker at a time, owned by the
 // main window. If the shell stalls before the dialog window is even created,
@@ -356,6 +359,11 @@ void Register(flutter::FlutterEngine* engine, HWND owner) {
           }
           s_session_active = true;
           s_session_owner.store(owner);
+          // Platform-thread restore watchdog: independent of the picker
+          // thread's pump, so a wedged shell cannot leave the window grey.
+          // Dropped by finish() on every completed path.
+          SetTimer(owner, kRestoreTimerId, kRestoreWatchdogMs,
+                   &RestoreTimerProc);
         }
         EncodableMap args_map;
         if (call.arguments() != nullptr) {
@@ -396,7 +404,14 @@ void Register(flutter::FlutterEngine* engine, HWND owner) {
             }
           } com_guard{SUCCEEDED(com_init)};
           if (!com_guard.active) {
-            return;  // paths stays unset; the reply below is an error.
+            // COM unavailable on this thread: hand the failure to the
+            // platform thread so the call is answered with an error and the
+            // session slot is released.
+            s_session_owner.store(nullptr);
+            Win32Window::PostUiTask(owner, [finish]() mutable {
+              finish(std::nullopt);
+            });
+            return;
           }
           try {
             // Bounded cancel: this thread timer fires inside the dialog's
