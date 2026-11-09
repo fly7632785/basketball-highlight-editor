@@ -496,6 +496,8 @@ pub struct RuntimeSession {
     rim_roi: Roi,
     rim_calibrated: bool,
     rim_observations: Vec<Detection>,
+    /// 篮筐观测所用的坐标基准（与球点归一化的 source 尺寸一致）。
+    rim_observation_dims: (u32, u32),
     stable_rim_box_count: usize,
     coarse_crossing_diagnostics: CoarseCrossingDiagnostics,
     net_rim_compatible: bool,
@@ -787,6 +789,7 @@ impl RuntimeSession {
             rim_roi,
             rim_calibrated,
             rim_observations: Vec::new(),
+            rim_observation_dims: (1, 1),
             stable_rim_box_count: 0,
             coarse_crossing_diagnostics: CoarseCrossingDiagnostics::default(),
             frame_width: 1,
@@ -911,15 +914,15 @@ impl RuntimeSession {
             // used by the native-frame verifier.
             let coarse_rim = coarse_rim_from_observations(
                 &self.rim_observations,
-                self.frame_width,
-                self.frame_height,
+                self.rim_observation_dims.0,
+                self.rim_observation_dims.1,
             )
             .unwrap_or_else(|| self.rim_roi.clone());
             let (candidates, diagnostics) = coarse_crossing_candidates(
                 &self.coarse_points,
                 &coarse_rim,
-                self.frame_width,
-                self.frame_height,
+                self.rim_observation_dims.0,
+                self.rim_observation_dims.1,
                 &self.config,
             );
             self.coarse_crossing_diagnostics = diagnostics;
@@ -1734,6 +1737,7 @@ impl RuntimeSession {
             return;
         }
         self.rim_observations.extend(observations);
+        self.rim_observation_dims = (width.max(1), height.max(1));
         // The PC coarse scan takes a median over the entire proxy video.
         // Keep that complete observation set in coarse mode; the fine
         // streaming path only needs a bounded history for online calibration.
