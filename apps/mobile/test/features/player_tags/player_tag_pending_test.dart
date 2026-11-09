@@ -74,14 +74,8 @@ void main() {
         }
         expect(entered.isCompleted, isTrue);
         expect(find.byType(LinearProgressIndicator), findsWidgets);
-        expect(
-          tester
-              .widget<FilledButton>(
-                find.widgetWithText(FilledButton, l10n.text('应用标签')),
-              )
-              .onPressed,
-          isNull,
-        );
+        expect(find.text(l10n.text('应用标签')), findsNothing);
+        expect(tester.widget<InkWell>(find.byKey(const ValueKey('player-select-Alice'))).onTap, isNull);
         expect(
           tester
               .widget<OutlinedButton>(

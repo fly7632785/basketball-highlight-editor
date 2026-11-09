@@ -54,6 +54,9 @@ void main() {
             await tester.tap(find.byKey(const ValueKey('project-name-rename')));
             await tester.pump();
             await tester.pump(const Duration(milliseconds: 300));
+            await tester.tap(find.byKey(const ValueKey('project-action-renameProject')));
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 300));
             expect(tester.takeException(), isNull);
             await tester.enterText(find.byType(TextField).last, '   ');
             await tester.tap(find.text(l10n.text('保存')).last);
@@ -75,10 +78,10 @@ void main() {
             await waitProjectWrites(tester, f.state.pendingProjectWrites);
             expect(f.state.project.name, 'New name');
             expect(f.state.recentProjects.first.name, 'New name');
-            await tester.tap(find.byType(PopupMenuButton<String>));
+            await tester.tap(find.byKey(const ValueKey('project-name-rename')));
             await tester.pump();
             await tester.pump(const Duration(milliseconds: 300));
-            await tester.tap(find.text(l10n.text('重命名项目')).last);
+            await tester.tap(find.byKey(const ValueKey('project-action-renameProject')));
             await tester.pump();
             await tester.pump(const Duration(milliseconds: 300));
             expect(

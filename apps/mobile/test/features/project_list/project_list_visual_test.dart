@@ -85,11 +85,11 @@ void main() {
           ),
         );
         await tester.pump();
-        await tester.tap(find.byTooltip(english ? 'More' : '更多').first);
+        await tester.tap(find.byKey(const ValueKey('project-name-rename')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 500));
         await tester.runAsync(() async {
-          await tester.tap(find.text(english ? 'Projects' : '项目列表').last);
+          await tester.tap(find.byKey(const ValueKey('project-action-projects')));
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 500));
           await Future<void>.delayed(const Duration(milliseconds: 200));

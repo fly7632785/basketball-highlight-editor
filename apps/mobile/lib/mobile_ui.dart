@@ -502,24 +502,30 @@ class _TopBar extends StatelessWidget {
               ),
             ),
           ),
-          if (state.project.video != null || state.recentProjects.any((p) => p.id == state.project.id))
-            Flexible(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: InkWell(
-                  key: const ValueKey('project-name-rename'),
-                  onTap: section == _WorkspaceSection.project ? () => _showProjectRename(context, state) : null,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                    child: Align(alignment: Alignment.centerRight, child: Text(
-                      state.project.name,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.right,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    )),
-                  ),
-                ),
+          Flexible(
+            child: InkWell(
+              key: const ValueKey('project-name-rename'),
+              onTap: () => _showProjectActions(context, state),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Flexible(child: Text(
+                    state.project.video != null || state.recentProjects.any((p) => p.id == state.project.id)
+                        ? state.project.name : context.bheText('项目列表'),
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  )),
+                  const Icon(LucideIcons.chevronDown, size: 16),
+                ]),
               ),
+            ),
+          ),
+          if (section == _WorkspaceSection.review)
+            IconButton(
+              key: const ValueKey('review-undo-top'),
+              onPressed: state.canUndoReview ? () => unawaited(state.undoReview()) : null,
+              tooltip: context.bheText('撤销上一步'),
+              icon: const Icon(LucideIcons.rotateCcw, size: 19),
             ),
           if (onOpenExport != null)
             IconButton(
@@ -532,21 +538,6 @@ class _TopBar extends StatelessWidget {
             tooltip: l10n?.newProject ?? '新建项目',
             icon: const Icon(LucideIcons.plus, size: 20),
           ),
-          PopupMenuButton<Locale>(
-            tooltip: l10n?.switchLanguage ?? '切换语言',
-            icon: const Icon(LucideIcons.languages, size: 20),
-            onSelected: onLocaleChanged,
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                value: BheLocale.zh,
-                child: Text(l10n?.languageChinese ?? '简体中文'),
-              ),
-              PopupMenuItem(
-                value: BheLocale.en,
-                child: Text(l10n?.languageEnglish ?? 'English'),
-              ),
-            ],
-          ),
           PopupMenuButton<String>(
             tooltip: l10n?.more ?? '更多操作',
             icon: const Icon(LucideIcons.ellipsis, size: 20),
@@ -555,29 +546,18 @@ class _TopBar extends StatelessWidget {
                 case 'theme':
                   onToggleTheme();
                   break;
-                case 'new':
-                  onCreateProject();
-                  break;
-                case 'projects':
-                  await _showProjectList(context, state);
-                  break;
-                case 'closeProject':
-                  if (_canManageProjects(context, state) && !await state.closeManagedProject() && context.mounted) _projectActionFailed(context, state);
-                  break;
-                case 'import':
-                  if (_canManageProjects(context, state)) {
-                    await state.importProject(requireIdle: true);
-                    if (context.mounted && state.projectManagementBlockReason != null) _canManageProjects(context, state);
-                  }
-                  break;
-                case 'delete':
-                  if (_canManageProjects(context, state)) await _confirmManagedDelete(context, state, state.project);
-                  break;
-                case 'renameProject':
-                  await _showProjectRename(context, state);
-                  break;
-                case 'undo':
-                  await state.undoReview();
+                case 'language':
+                  final locale = await showDialog<Locale>(
+                    context: context,
+                    builder: (dialog) => SimpleDialog(
+                      title: Text(context.bheText('语言')),
+                      children: [
+                        SimpleDialogOption(onPressed: () => Navigator.pop(dialog, BheLocale.zh), child: const Text('简体中文')),
+                        SimpleDialogOption(onPressed: () => Navigator.pop(dialog, BheLocale.en), child: const Text('English')),
+                      ],
+                    ),
+                  );
+                  if (locale != null) onLocaleChanged(locale);
                   break;
                 case 'update':
                   onCheckUpdate();
@@ -593,67 +573,89 @@ class _TopBar extends StatelessWidget {
               }
             },
             itemBuilder: (context) => [
-              if (section == _WorkspaceSection.review) ...[
-                PopupMenuItem(
-                  value: 'undo',
-                  enabled: state.canUndoReview,
-                  child: Text(context.bheText('撤销上一步')),
-                ),
-                const PopupMenuDivider(),
-              ],
-              PopupMenuItem(
-                value: 'projects',
-                child: Text(context.bheText('项目列表')),
-              ),
-              PopupMenuItem(
-                value: 'new',
-                enabled: !state.pickerBusy,
-                child: Text(l10n?.newProject ?? '新建项目'),
-              ),
-              PopupMenuItem(
-                value: 'import',
-                enabled: !state.pickerBusy,
-                child: Text(l10n?.openPackage ?? '打开项目包'),
-              ),
-              PopupMenuItem(
-                value: 'renameProject',
-                enabled: state.project.video != null || state.recentProjects.any((p) => p.id == state.project.id),
-                child: Text(context.bheText('重命名项目')),
-              ),
-              PopupMenuItem(
-                value: 'closeProject',
-                enabled: state.project.video != null || state.recentProjects.any((p) => p.id == state.project.id),
-                child: Text(context.bheText('关闭项目')),
-              ),
-              PopupMenuItem(
-                value: 'delete',
-                child: Text(
-                  l10n?.deleteProject ?? '删除项目',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              ),
-              const PopupMenuDivider(),
               PopupMenuItem(
                 value: 'theme',
-                child: Text(context.bheText(dark ? '切换浅色主题' : '切换深色主题')),
+                child: Text(Localizations.localeOf(context).languageCode == 'zh'
+                    ? '主题 · ${dark ? '深色' : '浅色'}'
+                    : 'Theme · ${dark ? 'Dark' : 'Light'}'),
+              ),
+              PopupMenuItem(
+                value: 'language',
+                child: Text(Localizations.localeOf(context).languageCode == 'zh' ? '语言 · 简体中文' : 'Language · English'),
               ),
               PopupMenuItem(
                 value: 'update',
                 child: Text(context.bheText('检查更新')),
               ),
               PopupMenuItem(
-                value: 'about',
-                child: Text(context.bheText('关于')),
-              ),
-              PopupMenuItem(
                 value: 'diagnostics',
                 child: Text(context.bheText('反馈与诊断')),
+              ),
+              PopupMenuItem(
+                value: 'about',
+                child: Text(context.bheText('关于')),
               ),
             ],
           ),
         ],
       ),
     );
+  }
+}
+
+Future<void> _showProjectActions(BuildContext context, MobileAppState state) async {
+  final hasProject = state.project.video != null || state.recentProjects.any((p) => p.id == state.project.id);
+  final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+  final action = await showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (sheet) {
+      Widget row(String id, String label, {bool enabled = true, bool danger = false}) => InkWell(
+        key: ValueKey('project-action-$id'),
+        onTap: enabled ? () => Navigator.pop(sheet, id) : null,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 52),
+          padding: const EdgeInsets.fromLTRB(16, 0, 4, 0),
+          alignment: Alignment.centerLeft,
+          child: Text(label, style: TextStyle(color: danger ? Theme.of(context).colorScheme.error : enabled ? null : Theme.of(context).disabledColor)),
+        ),
+      );
+      Widget group(List<Widget> rows) => Material(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: Column(children: [for (final (i, item) in rows.indexed) ...[
+          if (i > 0) const Padding(padding: EdgeInsets.only(left: 16), child: Divider(height: 1)), item,
+        ]]),
+      );
+      return _SheetFrame(title: context.bheText('项目列表'), child: Column(children: [
+        group([
+          row('projects', context.bheText('项目列表')),
+          if (hasProject) row('renameProject', context.bheText('重命名项目')),
+          row('import', l10n?.openPackage ?? '打开项目包', enabled: !state.pickerBusy),
+          if (hasProject) row('closeProject', context.bheText('关闭项目')),
+        ]),
+        if (hasProject) ...[
+          const SizedBox(height: 12),
+          group([row('delete', l10n?.deleteProject ?? '删除项目', danger: true)]),
+        ],
+      ]));
+    },
+  );
+  if (!context.mounted) return;
+  switch (action) {
+    case 'projects': await _showProjectList(context, state);
+    case 'renameProject': await _showProjectRename(context, state);
+    case 'import':
+      if (_canManageProjects(context, state)) {
+        await state.importProject(requireIdle: true);
+        if (context.mounted && state.projectManagementBlockReason != null) _canManageProjects(context, state);
+      }
+    case 'closeProject':
+      if (_canManageProjects(context, state) && !await state.closeManagedProject() && context.mounted) _projectActionFailed(context, state);
+    case 'delete':
+      if (_canManageProjects(context, state)) await _confirmManagedDelete(context, state, state.project);
   }
 }
 
@@ -4107,12 +4109,31 @@ Future<void> _showPlayerPicker(
   );
   if (value == null || !context.mounted || session != state.projectSession) return;
   final normalized = value.trim();
-  if (normalized.isEmpty) {
-    await state.setCandidatePlayer(candidate.id, null);
-  } else {
-    if (!await state.addPlayer(normalized) || session != state.projectSession) return;
-    await state.setCandidatePlayer(candidate.id, normalized);
+  final player = normalized.isEmpty ? null : normalized;
+  if (player == candidate.player) return;
+  if (player != null && !state.project.players.contains(player)) {
+    final added = await state.addPlayer(player);
+    if (!context.mounted || session != state.projectSession) return;
+    if (!added) {
+      _showReviewSaveFailure(context, state.diagnosticError);
+      return;
+    }
   }
+  final saved = await state.setCandidatePlayer(candidate.id, player);
+  if (!context.mounted || session != state.projectSession) return;
+  if (!saved) {
+    _showReviewSaveFailure(context, state.reviewDiagnosticError);
+    return;
+  }
+  final zh = Localizations.localeOf(context).languageCode == 'zh';
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 84),
+      content: Text(player == null ? (zh ? '已清除标签' : 'Tag cleared') : (zh ? '已标记为 $player' : 'Tagged $player')),
+      action: SnackBarAction(label: context.bheText('撤销'), onPressed: () => unawaited(state.undoReview())),
+    ));
 }
 
 
