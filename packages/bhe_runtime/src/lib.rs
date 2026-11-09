@@ -514,6 +514,8 @@ pub struct RuntimeSession {
     /// associate tracks: `find_candidate_crossings` evaluates this flattened
     /// sequence directly. Keep it separate from the refined-track state.
     coarse_points: Vec<BallPoint>,
+    coarse_rim_samples: Vec<serde_json::Value>,
+    coarse_ball_samples: Vec<serde_json::Value>,
     next_track_id: u64,
     legacy_track_id: Option<u64>,
     candidates: Vec<Candidate>,
@@ -800,6 +802,8 @@ impl RuntimeSession {
             tracks: Vec::new(),
             ball_history: Vec::new(),
             coarse_points: Vec::new(),
+            coarse_rim_samples: Vec::new(),
+            coarse_ball_samples: Vec::new(),
             next_track_id: 1,
             legacy_track_id: None,
             candidates: Vec::new(),
@@ -881,6 +885,8 @@ impl RuntimeSession {
                 "frame_width": self.coarse_crossing_diagnostics.frame_width,
                 "frame_height": self.coarse_crossing_diagnostics.frame_height,
             },
+            "coarse_rim_samples": self.coarse_rim_samples,
+            "coarse_ball_samples": self.coarse_ball_samples,
             "crossing_pair_count": self.coarse_crossing_diagnostics.pair_count,
             "crossing_event_count": if self.config.coarse_mode {
                 self.coarse_crossing_diagnostics.crossing_event_count
@@ -1409,6 +1415,14 @@ impl RuntimeSession {
                 processed_frames: self.processed_frames,
             });
         }
+        self.capture_coarse_samples(
+            &detections,
+            time_ms,
+            source_width,
+            source_height,
+            (analysis_frame.width() as f32 * scale).round().max(1.0) as u32,
+            (analysis_frame.height() as f32 * scale).round().max(1.0) as u32,
+        );
         self.update_rim_from_detections(&detections, source_width, source_height);
         let balls: Vec<_> = detections
             .iter()
@@ -1575,6 +1589,18 @@ impl RuntimeSession {
             if self.config.detection_only {
                 continue;
             }
+            self.capture_coarse_samples(
+                &detections,
+                frame.time_ms,
+                frame.source_width,
+                frame.source_height,
+                (frame.analysis_frame.width() as f32 * frame.scale)
+                    .round()
+                    .max(1.0) as u32,
+                (frame.analysis_frame.height() as f32 * frame.scale)
+                    .round()
+                    .max(1.0) as u32,
+            );
             self.update_rim_from_detections(&detections, frame.source_width, frame.source_height);
             let balls: Vec<_> = detections
                 .iter()
@@ -1724,6 +1750,51 @@ impl RuntimeSession {
         Some(track_id)
     }
 
+    fn capture_coarse_samples(
+        &mut self,
+        detections: &[Detection],
+        time_ms: i64,
+        width: u32,
+        height: u32,
+        inference_width: u32,
+        inference_height: u32,
+    ) {
+        if !self.config.coarse_mode {
+            return;
+        }
+        let (width, height) = (width.max(1), height.max(1));
+        let sample = |d: &Detection| {
+            let (x, y) = center(d);
+            serde_json::json!({
+                "time_ms": time_ms,
+                "class_id": d.class_id,
+                "confidence": d.confidence,
+                "source_width": width,
+                "source_height": height,
+                "inference_width": inference_width,
+                "inference_height": inference_height,
+                "box_xyxy_pixels": [d.x1, d.y1, d.x2, d.y2],
+                "center_pixels": [x, y],
+                "center_normalized": [x / width as f32, y / height as f32],
+            })
+        };
+        for rim in detections.iter().filter(|d| d.class_id == 1) {
+            if self.coarse_rim_samples.len() >= 5 {
+                break;
+            }
+            self.coarse_rim_samples.push(sample(rim));
+        }
+        if self.coarse_ball_samples.len() < 5 {
+            if let Some(ball) = detections
+                .iter()
+                .filter(|d| d.class_id == 0)
+                .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
+            {
+                self.coarse_ball_samples.push(sample(ball));
+            }
+        }
+    }
+
     fn update_rim_from_detections(&mut self, detections: &[Detection], width: u32, height: u32) {
         // A supplied rim is the user's/desktop-calibrated geometry contract;
         // never let a later model box silently replace it. Auto calibration
@@ -1736,17 +1807,24 @@ impl RuntimeSession {
         if observations.is_empty() {
             return;
         }
+        if self.config.coarse_mode {
+            // A reader can switch from proxy frames to full-resolution EOS
+            // fallback frames. Keep every box in the first observed frame's
+            // pixel space, just as ball points use each frame's dimensions.
+            append_coarse_rim_observations(
+                &mut self.rim_observations,
+                &mut self.rim_observation_dims,
+                observations,
+                width,
+                height,
+            );
+            return;
+        }
         self.rim_observations.extend(observations);
         self.rim_observation_dims = (width.max(1), height.max(1));
-        // The PC coarse scan takes a median over the entire proxy video.
-        // Keep that complete observation set in coarse mode; the fine
-        // streaming path only needs a bounded history for online calibration.
-        if !self.config.coarse_mode && self.rim_observations.len() > 64 {
+        if self.rim_observations.len() > 64 {
             let keep_from = self.rim_observations.len() - 64;
             self.rim_observations.drain(..keep_from);
-        }
-        if self.config.coarse_mode {
-            return;
         }
         if let Some(supplied) = self.config.rim.clone() {
             self.update_local_rim(&supplied, width, height);
@@ -2771,9 +2849,15 @@ fn coarse_crossing_candidates(
         rim_width_px,
         above_clearance_norm: above_clearance,
         point_y_min: ordered.iter().map(|p| p.2).fold(f32::INFINITY, f32::min),
-        point_y_max: ordered.iter().map(|p| p.2).fold(f32::NEG_INFINITY, f32::max),
+        point_y_max: ordered
+            .iter()
+            .map(|p| p.2)
+            .fold(f32::NEG_INFINITY, f32::max),
         point_x_min: ordered.iter().map(|p| p.1).fold(f32::INFINITY, f32::min),
-        point_x_max: ordered.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max),
+        point_x_max: ordered
+            .iter()
+            .map(|p| p.1)
+            .fold(f32::NEG_INFINITY, f32::max),
         points_above_rim_center: ordered.iter().filter(|p| p.2 < rim_y).count(),
         frame_width,
         frame_height,
@@ -5300,6 +5384,31 @@ fn estimate_local_rim(
     Some((rim, net_compatible))
 }
 
+fn append_coarse_rim_observations(
+    stored: &mut Vec<Detection>,
+    dimensions: &mut (u32, u32),
+    observations: Vec<Detection>,
+    width: u32,
+    height: u32,
+) {
+    if observations.is_empty() {
+        return;
+    }
+    let (width, height) = (width.max(1), height.max(1));
+    if stored.is_empty() {
+        *dimensions = (width, height);
+    }
+    let scale_x = dimensions.0 as f32 / width as f32;
+    let scale_y = dimensions.1 as f32 / height as f32;
+    stored.extend(observations.into_iter().map(|mut detection| {
+        detection.x1 *= scale_x;
+        detection.x2 *= scale_x;
+        detection.y1 *= scale_y;
+        detection.y2 *= scale_y;
+        detection
+    }));
+}
+
 /// Matches `generate_candidates.py::_hoops_from`: median detector box
 /// geometry over the complete coarse scan, without the refined plane offset.
 fn coarse_rim_from_observations(
@@ -5508,6 +5617,138 @@ mod tests {
             right: 0.6,
             bottom: 0.7,
         }
+    }
+
+    #[test]
+    fn coarse_crossing_survives_full_size_final_frame() {
+        // Representative proxy-frame boxes from the iOS diagnostic log. Its
+        // batched output does not include per-box class or confidence, so the
+        // two ball classes below are selected by geometry and use test scores.
+        let rim = Detection {
+            class_id: 1,
+            confidence: 0.8,
+            x1: 493.0001,
+            y1: 290.59076,
+            x2: 509.4239,
+            y2: 312.91418,
+        };
+        let above = Detection {
+            class_id: 0,
+            confidence: 0.8,
+            x1: 510.49347,
+            y1: 282.91742,
+            x2: 518.3059,
+            y2: 294.67078,
+        };
+        let below = Detection {
+            class_id: 0,
+            confidence: 0.8,
+            x1: 493.03372,
+            y1: 399.643,
+            x2: 503.58554,
+            y2: 418.52414,
+        };
+        let mut rims = Vec::new();
+        let mut dims = (1, 1);
+        append_coarse_rim_observations(&mut rims, &mut dims, vec![rim.clone(); 4], 960, 720);
+        let mut full_size_rim = rim.clone();
+        full_size_rim.x1 *= 2.0;
+        full_size_rim.x2 *= 2.0;
+        full_size_rim.y1 *= 2.0;
+        full_size_rim.y2 *= 2.0;
+        append_coarse_rim_observations(&mut rims, &mut dims, vec![full_size_rim], 1920, 1440);
+        let coarse_rim = coarse_rim_from_observations(&rims, dims.0, dims.1).unwrap();
+        let points = vec![
+            point(
+                11_000,
+                center(&above).0 / 960.0,
+                center(&above).1 / 720.0,
+                0.8,
+            ),
+            point(
+                11_800,
+                center(&below).0 / 960.0,
+                center(&below).1 / 720.0,
+                0.8,
+            ),
+        ];
+        let config: RuntimeConfig = serde_json::from_value(serde_json::json!({
+            "model_path": "unused.onnx", "hoop_roi": roi(), "net_roi": roi(), "coarse_mode": true
+        }))
+        .unwrap();
+        let (candidates, diagnostics) =
+            coarse_crossing_candidates(&points, &coarse_rim, dims.0, dims.1, &config);
+        println!("dims={dims:?} rim={coarse_rim:?} first_points={points:?}");
+        assert_eq!(dims, (960, 720));
+        assert!((diagnostics.rim_center_y - (301.75247 / 720.0)).abs() < 0.0001);
+        assert!((diagnostics.rim_left_x - (493.0001 / 960.0)).abs() < 0.0001);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].event_ms, 11_400);
+        assert_eq!(diagnostics.crossing_event_count, 1);
+        // Before the fix, the last full-size frame supplied this denominator
+        // for all earlier proxy-frame hoop boxes.
+        let wrong_rim = coarse_rim_from_observations(&rims, 1920, 1440).unwrap();
+        let (before, _) = coarse_crossing_candidates(&points, &wrong_rim, 1920, 1440, &config);
+        assert!(before.is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires BHE_L155_MODEL and a host ONNX Runtime library"]
+    fn replay_coarse_runtime_session_with_mixed_frame_sizes() {
+        let model = std::env::var("BHE_L155_MODEL").expect("set BHE_L155_MODEL");
+        let config: RuntimeConfig = serde_json::from_value(serde_json::json!({
+            "model_path": model, "hoop_roi": roi(), "net_roi": roi(), "coarse_mode": true
+        }))
+        .unwrap();
+        let mut session = RuntimeSession::new(config).unwrap();
+        let hoop = Detection {
+            class_id: 1,
+            confidence: 0.8,
+            x1: 493.0001,
+            y1: 290.59076,
+            x2: 509.4239,
+            y2: 312.91418,
+        };
+        for time in 0..6 {
+            let ball = Detection {
+                class_id: 0,
+                confidence: 0.9,
+                x1: 510.49347,
+                y1: 282.91742,
+                x2: 518.3059,
+                y2: 294.67078,
+            };
+            session.capture_coarse_samples(&[hoop.clone(), ball], time * 200, 960, 720, 460, 722);
+            session.update_rim_from_detections(std::slice::from_ref(&hoop), 960, 720);
+        }
+        assert_eq!(session.coarse_rim_samples.len(), 5);
+        assert_eq!(session.coarse_ball_samples.len(), 5);
+        assert_eq!(session.coarse_ball_samples[0]["source_width"], 960);
+        assert_eq!(session.coarse_ball_samples[0]["inference_width"], 460);
+        let mut last = hoop.clone();
+        last.x1 *= 2.0;
+        last.x2 *= 2.0;
+        last.y1 *= 2.0;
+        last.y2 *= 2.0;
+        session.update_rim_from_detections(&[last], 1920, 1440);
+        session.coarse_points.extend([
+            point(11_000, 514.3997 / 960.0, 288.7941 / 720.0, 0.8),
+            point(11_800, 498.3096 / 960.0, 409.0836 / 720.0, 0.8),
+        ]);
+        let response = session.finish().unwrap();
+        println!(
+            "dims={:?} rim_y={} rim_left={} points={:?} candidates={}",
+            session.rim_observation_dims,
+            session.coarse_crossing_diagnostics.rim_center_y,
+            session.coarse_crossing_diagnostics.rim_left_x,
+            session.coarse_points,
+            response.candidates.len()
+        );
+        assert_eq!(session.rim_observation_dims, (960, 720));
+        assert!(
+            (session.coarse_crossing_diagnostics.rim_center_y - 301.75247 / 720.0).abs() < 0.0001
+        );
+        assert_eq!(response.candidates.len(), 1);
     }
 
     #[test]
