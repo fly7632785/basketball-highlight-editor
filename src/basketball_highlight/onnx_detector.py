@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -210,6 +211,17 @@ def load_names(onnx_path: Path) -> dict[int, str]:
     return dict(DEFAULT_NAMES)
 
 
+def _new_session(
+    onnx_path: Path, options: Any, providers: list[Any],
+):
+    """建一个 ORT 会话；单独一层，CPU 回退在测试里可以换掉它。"""
+    import onnxruntime as ort
+
+    return ort.InferenceSession(
+        str(onnx_path), sess_options=options, providers=providers,
+    )
+
+
 class OnnxDetector:
     """ORT 会话封装，提供 ``predict()`` 以替代 ultralytics 模型对象。"""
 
@@ -353,7 +365,29 @@ class OnnxDetector:
             meta.append((scale, offset_x, offset_y))
         batch = np.concatenate(tensors, axis=0) if len(tensors) > 1 else tensors[0]
         self._check_input_shape(batch)
-        outputs = self.session.run(None, {self.input_name: batch})
+        try:
+            outputs = self.session.run(None, {self.input_name: batch})
+        except Exception as error:
+            # 非 CPU 后端在遇到坏帧/驱动异常时会抛错，而且错误信息常被当作
+            # UTF-8 解（典型：GBK 驱动消息触发 UnicodeDecodeError 0xb2）。
+            # 一次坏帧不该让整次分析失败：退回 CPU 重建会话重跑一次，并记下
+            # 原始异常 repr 便于定位。
+            if self.provider == "CPUExecutionProvider":
+                raise
+            print(
+                f"inference on {self.provider} failed ({error!r}); "
+                "rebuilding a CPU session and retrying",
+                file=sys.stderr,
+            )
+            self._switch_to_cpu()
+            try:
+                outputs = self.session.run(None, {self.input_name: batch})
+            except Exception as cpu_error:
+                print(
+                    f"inference on CPU also failed ({cpu_error!r}); giving up",
+                    file=sys.stderr,
+                )
+                raise error from cpu_error
         raw = outputs[0]
 
         results: list[Result] = []
@@ -368,6 +402,22 @@ class OnnxDetector:
             boxes = [Box(class_id, score, xyxy) for class_id, score, xyxy in detections]
             results.append(Result(boxes, self.names))
         return results
+
+    def _switch_to_cpu(self) -> None:
+        """丢掉加速后端会话，换成 CPU 会话重建（回退只做一次）。"""
+        import onnxruntime as ort
+
+        options = ort.SessionOptions()
+        options.log_severity_level = 3
+        self.session = _new_session(
+            self.onnx_path, options, ["CPUExecutionProvider"],
+        )
+        self.device = "cpu"
+        self.provider = (self.session.get_providers() or ["CPUExecutionProvider"])[0]
+        model_input = self.session.get_inputs()[0]
+        self.input_name = model_input.name
+        self.input_shape = tuple(model_input.shape or ())
+        self.max_batch = max(1, BACKEND_MAX_BATCH["cpu"])
 
     def _check_input_shape(self, batch: np.ndarray) -> None:
         """静态模型收到不匹配的输入时给出人话错误，而不是把 ORT 的报错原样丢上去。
