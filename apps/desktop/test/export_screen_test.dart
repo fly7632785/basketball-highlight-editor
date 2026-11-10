@@ -419,7 +419,7 @@ void main() {
       await tester.tap(merge);
       await tester.pump();
       expect(tester.widget<CsButton>(merge).onPressed, isNull);
-      expect(find.text('正在准备输出位置…'), findsOneWidget);
+      expect(find.text('请在弹出的窗口中选择保存位置'), findsOneWidget);
       await tester.pump();
       expect(picker.calls, 1);
       expect(videoSurfaceHidden.value, isTrue);
