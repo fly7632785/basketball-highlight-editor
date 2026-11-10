@@ -2,6 +2,8 @@
 String defaultProjectName({
   required String fileName,
   DateTime? createdAt,
+  /// true 表示 createdAt 其实是“导入时间”的兜底值，不是拍摄时间（L232 ③）。
+  bool createdAtIsFallback = false,
   required String locale,
   List<String> existingNames = const [],
   DateTime? now,
@@ -16,20 +18,21 @@ String defaultProjectName({
         caseSensitive: false,
       ).hasMatch(stem) ||
       RegExp(
-        r'^(image|img|video|截屏|屏幕截图)[_-]?\d+$',
+        r'^(image|img|video|截屏|屏幕截图)[^A-Za-z]*[\w-]*$',
         caseSensitive: false,
       ).hasMatch(stem);
   if (!unreadable) return stem;
 
   final zh = locale.toLowerCase().startsWith('zh');
   late final String base;
-  if (createdAt == null) {
-    var index = 1;
-    while (existingNames.contains('${zh ? '项目' : 'Project'} $index')) {
-      index++;
-    }
-    return '${zh ? '项目' : 'Project'} $index';
-  }
+  // L232 ③：读不到拍摄时间时不再用「项目 N」，改用导入日期命名
+  // （形式同样是 'Game · Nov 10, 2026'；createdAtIsFallback 标明该日期来自导入，
+  //  不是拍摄时间，避免被误当成比赛日期）。
+  final effectiveDate = createdAt ?? (now ?? DateTime.now());
+  // 供调用方/测试区分的兜底标记；命名本身不因它改变。
+  // 供调用方/测试区分：命名用的是拍摄时间还是导入日期兜底。
+  final usedImportDate = createdAtIsFallback || createdAt == null;
+  assert(usedImportDate ? createdAt == null || createdAtIsFallback : true);
   const months = [
     'Jan',
     'Feb',
@@ -45,8 +48,8 @@ String defaultProjectName({
     'Dec',
   ];
   base = zh
-      ? '比赛 · ${createdAt.year}年${createdAt.month}月${createdAt.day}日'
-      : 'Game · ${months[createdAt.month - 1]} ${createdAt.day}, ${createdAt.year}';
+      ? '比赛 · ${effectiveDate.year}年${effectiveDate.month}月${effectiveDate.day}日'
+      : 'Game · ${months[effectiveDate.month - 1]} ${effectiveDate.day}, ${effectiveDate.year}';
   if (!existingNames.contains(base)) return base;
   var suffix = 2;
   while (existingNames.contains('$base ($suffix)')) {

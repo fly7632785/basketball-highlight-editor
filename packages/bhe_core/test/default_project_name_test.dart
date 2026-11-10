@@ -1,5 +1,5 @@
 import 'package:bhe_core/bhe_core.dart';
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 
 void main() {
   final date = DateTime(2026, 11, 6);
@@ -39,7 +39,8 @@ void main() {
       'Game · Nov 6, 2026 (2)',
     );
   });
-  test('missing capture date uses Project N even when now is fixed', () {
+  // L232 ③：读不到拍摄时间 → 用导入日期（不再有 "Project N"）。
+  test('missing capture date uses the import date', () {
     expect(
       defaultProjectName(
         fileName: 'IMG_0001.mp4',
@@ -47,20 +48,52 @@ void main() {
         locale: 'en',
         now: date,
       ),
-      'Project 1',
+      'Game · Nov 6, 2026',
     );
     expect(
       defaultProjectName(
         fileName: 'IMG_0002.mp4',
         createdAt: null,
         locale: 'en',
-        existingNames: ['Project 1'],
+        existingNames: ['Game · Nov 6, 2026'],
         now: date,
       ),
-      'Project 2',
+      'Game · Nov 6, 2026 (2)',
     );
   });
   test('export filename sanitizes path separators and punctuation', () {
     expect(safeFileName('Game/Nov:6'), 'Game-Nov-6');
+  });
+
+  // L232 ③：读不到拍摄时间时改用导入日期，不再出现「项目 N」。
+  test('no capture date falls back to import date, not Project N', () {
+    final name = defaultProjectName(
+      fileName: 'image_30CA7383-7EE6-4F7A-9A2B-1793960471.mp4',
+      locale: 'en',
+      now: DateTime(2026, 11, 10),
+    );
+    expect(name, 'Game · Nov 10, 2026');
+    expect(name.contains('Project'), isFalse);
+  });
+
+  test('same fallback date gets a numeric suffix', () {
+    final name = defaultProjectName(
+      fileName: 'image_30CA7383-7EE6-4F7A-9A2B-1793960471.mp4',
+      locale: 'zh',
+      now: DateTime(2026, 11, 10),
+      existingNames: const ['比赛 · 2026年11月10日'],
+    );
+    expect(name, '比赛 · 2026年11月10日 (2)');
+  });
+
+  test('explicit fallback flag is accepted for import-date naming', () {
+    final name = defaultProjectName(
+      fileName: 'IMG_0001.mp4',
+      locale: 'en',
+      createdAt: DateTime(2026, 11, 10),
+      createdAtIsFallback: true,
+      existingNames: const [],
+    );
+    expect(name, 'Game · Nov 10, 2026');
   });
 }
