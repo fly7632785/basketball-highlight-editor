@@ -2771,11 +2771,18 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
                     fontWeight: FontWeight.w600,
                   ),
                 )),
-                Text(
-                  '$included/${_candidates.length}',
-                  style: TextStyle(
-                    color: BhePalette.orange.withValues(alpha: .9),
-                    fontSize: 12,
+                // L225：窄屏/横屏下这段统计会撑破 Row（RenderFlex overflow），
+                // 改成可收缩 + 省略，不挤掉左侧标题。
+                Flexible(
+                  child: Text(
+                    '$included/${_candidates.length}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                    style: TextStyle(
+                      color: BhePalette.orange.withValues(alpha: .9),
+                      fontSize: 12,
+                    ),
                   ),
                 ),
               ],
