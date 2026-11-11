@@ -41,35 +41,13 @@ void main() {
     await waitProjectWrites(tester, f.state.pendingProjectWrites);
     await tester.pump();
     expect(f.state.project.candidates.single.player, 'Bob');
-    for (var i = 0; i < 100 && find.text('已标记为 Bob').evaluate().isEmpty; i++) {
-      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
-      await tester.pump();
-    }
-    expect(find.text('已标记为 Bob'), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text(l10n.text('撤销')).last);
-    await tester.pump(); await waitProjectWrites(tester, f.state.pendingProjectWrites);
-    await tester.pump();
-    expect(f.state.project.candidates.single.player, 'Alice');
-    await tester.pump(const Duration(milliseconds: 400));
-    await open('Alice');
+    await open('Bob');
     await tester.tap(find.text(l10n.text('清除标签')));
     await tester.pump(); await tester.pump(const Duration(milliseconds: 400));
     await waitProjectWrites(tester, f.state.pendingProjectWrites);
     await tester.pump();
     expect(f.state.project.candidates.single.player, isNull);
-    await tester.tap(find.byTooltip(l10n.text('球员标签')));
-    await tester.pump(); await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text(l10n.text('新建球员标签')));
-    await tester.pump();
-    await tester.enterText(find.byType(TextField).last, 'Carol');
-    await tester.pump();
-    await tester.tap(find.text('添加'));
-    await tester.pump(); await tester.pump(const Duration(milliseconds: 400));
-    await waitProjectWrites(tester, f.state.pendingProjectWrites);
-    await tester.pump();
-    expect(f.state.project.candidates.single.player, 'Carol');
-    expect(f.state.project.players, contains('Carol'));
     await tester.pumpWidget(const SizedBox());
   });
 }

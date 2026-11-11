@@ -4137,17 +4137,7 @@ Future<void> _showPlayerPicker(
   if (!context.mounted || session != state.projectSession) return;
   if (!saved) {
     _showReviewSaveFailure(context, state.reviewDiagnosticError);
-    return;
   }
-  final zh = Localizations.localeOf(context).languageCode == 'zh';
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(
-      behavior: SnackBarBehavior.floating,
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 84),
-      content: Text(player == null ? (zh ? '已清除标签' : 'Tag cleared') : (zh ? '已标记为 $player' : 'Tagged $player')),
-      action: SnackBarAction(label: context.bheText('撤销'), onPressed: () => unawaited(state.undoReview())),
-    ));
 }
 
 
