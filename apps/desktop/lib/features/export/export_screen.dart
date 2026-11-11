@@ -15,6 +15,7 @@ import '../../components/cs_progress_track.dart';
 import '../../components/onboarding_guide.dart';
 import '../../providers/onboarding_provider.dart';
 import '../../core/app_log.dart';
+import '../../core/windows_shell_reveal.dart';
 import '../../providers/project_state.dart';
 import '../../providers/playback_coordinator.dart';
 import '../../providers/export_output_picker.dart';
@@ -1395,11 +1396,9 @@ Future<void> _openDirectory(
         mode: ProcessStartMode.detached,
       );
     } else if (Platform.isWindows) {
-      await Process.start(
-        'explorer.exe',
-        target == null ? <String>[directory] : <String>['/select,$target'],
-        mode: ProcessStartMode.detached,
-      );
+      // explorer /select, 的命令行解析对正斜杠、空格和引号都很挑剔,任一
+      // 形式解析失败都会回退打开「文档」;改走 shell API,行为一致。
+      openInWindowsExplorer(directory: directory, select: target);
     } else if (Platform.isLinux) {
       await Process.start('xdg-open', <String>[
         directory,
