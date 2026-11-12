@@ -77,24 +77,37 @@ class _ReviewActionBar extends StatelessWidget {
               child: Wrap(
                 alignment: WrapAlignment.spaceBetween,
                 crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 12,
+                runSpacing: 4,
                 children: [
                   Text(
                     l10n?.currentTime(_formatMs(position.round())) ??
                         '当前 ${_formatMs(position.round())}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
-                  Text(
-                    clipOnly
-                        ? (l10n?.clipTime(
-                                _formatMs(candidate.startMs),
-                                _formatMs(candidate.endMs),
-                              ) ??
-                              '片段 ${_formatMs(candidate.startMs)} — ${_formatMs(candidate.endMs)}')
-                        : (l10n?.fullVideoTime(
-                                _formatMs(fullDuration.round()),
-                              ) ??
-                              '全片 ${_formatMs(fullDuration.round())}'),
-                    style: Theme.of(context).textTheme.bodySmall,
+                  Builder(
+                    builder: (context) {
+                      // 旧版本项目数据可能遗留 startMs > endMs，显示时统一按先小后大。
+                      final startMs = candidate.startMs < candidate.endMs
+                          ? candidate.startMs
+                          : candidate.endMs;
+                      final endMs = candidate.startMs < candidate.endMs
+                          ? candidate.endMs
+                          : candidate.startMs;
+                      return Text(
+                        clipOnly
+                            ? (l10n?.clipTime(
+                                    _formatMs(startMs),
+                                    _formatMs(endMs),
+                                  ) ??
+                                  '片段 ${_formatMs(startMs)} — ${_formatMs(endMs)}')
+                            : (l10n?.fullVideoTime(
+                                    _formatMs(fullDuration.round()),
+                                  ) ??
+                                  '全片 ${_formatMs(fullDuration.round())}'),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      );
+                    },
                   ),
                 ],
               ),
