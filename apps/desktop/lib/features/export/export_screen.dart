@@ -1383,22 +1383,23 @@ Future<void> _openDirectory(
   String? targetPath,
 }) async {
   final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
-  // 导出历史里点「打开目录」：只记目录是否存在的结论，不记完整路径。
-  appLog('info', 'export', '导出历史 打开目录 目标存在=${targetPath != null && File(targetPath).existsSync()}');
   try {
-    final String? target = targetPath == null || !File(targetPath).existsSync()
-        ? null
-        : targetPath;
     if (Platform.isMacOS) {
+      final String? target = targetPath == null || !File(targetPath).existsSync()
+          ? null
+          : targetPath;
       await Process.start(
         'open',
         target == null ? <String>[directory] : <String>['-R', target],
         mode: ProcessStartMode.detached,
       );
     } else if (Platform.isWindows) {
-      // shell API 在后台 isolate 执行(NAS 掉线/资源管理器卡住不冻结
-      // 界面),正斜杠路径在内部归一化为反斜杠;失败时抛异常走统一提示。
-      await openInWindowsExplorer(directory: directory, select: target);
+      // 不在界面线程做任何存在性检查:NAS 掉线时 File(...).existsSync()
+      // 会同步阻塞到网络超时,界面会冻住。targetPath 原样交给后台
+      // isolate,由 windows_shell_reveal.dart 在 isolate 内判断,文件
+      // 不存在时仅打开目录;正斜杠路径在内部归一化为反斜杠;失败时抛
+      // 异常走统一提示。
+      await openInWindowsExplorer(directory: directory, select: targetPath);
     } else if (Platform.isLinux) {
       await Process.start('xdg-open', <String>[
         directory,
