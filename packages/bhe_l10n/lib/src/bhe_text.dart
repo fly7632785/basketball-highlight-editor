@@ -431,6 +431,8 @@ String _englishDuration(String value) => value
     .trim();
 
 const _englishText = <String, String>{
+  '请在弹出的窗口中选择保存位置': 'Please choose where to save in the window that opens',
+  '找回保存窗口': 'Bring save window to front',
   '第三方开源许可': 'Third-party notices',
   '已调整': 'Edited',
   '重叠': 'Overlap',
