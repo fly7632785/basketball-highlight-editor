@@ -2636,7 +2636,7 @@ def test_coarse_overlay_uses_nearest_ball_independent_of_detection_order():
 
 
 def test_tracking_association_has_a_new_consistent_algorithm_version():
-    assert ANALYSIS_ALGORITHM_VERSION == "python-v2.15-crop-scale-clamp"
+    assert ANALYSIS_ALGORITHM_VERSION == "python-v2.16-rim-band-seeds"
     assert refine_dynamic_candidates.ALGORITHM_VERSION == ANALYSIS_ALGORITHM_VERSION
 
 

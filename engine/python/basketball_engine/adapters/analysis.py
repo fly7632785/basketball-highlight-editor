@@ -267,7 +267,7 @@ def build_pipeline_commands(
     cache_dir: Path,
     proxy_width: int = 960,
     proxy_height: int = 720,
-    proxy_fps: float = 5.0,
+    proxy_fps: float = 10.0,
     proxy_scale: float = 1.0,
     coarse_scale: int = 4,
     refine_sample_fps: float = 10.0,
@@ -312,6 +312,9 @@ def build_pipeline_commands(
         [
             sys.executable, _script(repo_root, "generate_candidates.py"),
             "--detections", str(coarse_detections), "--output", str(coarse_candidates),
+            # 弱种子候选(筐带单次目击)只应交给 refine 密扫裁决;
+            # 快速模式粗扫直出、没有精化兜底,不发种子,行为不变。
+            *(["--rim-band-seeds"] if include_refinement else []),
         ],
     ]
     if include_refinement:

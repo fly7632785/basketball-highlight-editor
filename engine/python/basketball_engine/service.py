@@ -1635,7 +1635,9 @@ class EngineService:
             else:
                 proxy_width = int(payload.get("proxy_width", 960))
                 proxy_height = int(payload.get("proxy_height", 720))
-                proxy_fps = float(payload.get("proxy_fps", 5))
+                # 10fps:5fps 下一次出手常只留单侧检测点,配不成筐上/下对,
+                # 小球/远景/集锦视频大量漏检;翻倍采样实测把候选从 2 提到 5。
+                proxy_fps = float(payload.get("proxy_fps", 10))
             source_width = int(video.get("width") or 0)
             source_height = int(video.get("height") or 0)
             if source_width <= 0 or source_height <= 0:
