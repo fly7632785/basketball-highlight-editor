@@ -67,6 +67,8 @@ class _BheMobileAppState extends State<BheMobileApp> {
   final _navigatorKey = GlobalKey<NavigatorState>();
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
   Timer? _updateCheckTimer;
+  Timer? _closeNoticeTimer;
+  bool _showCloseNotice = false;
   _WorkspaceSection section = _WorkspaceSection.project;
   bool dark = true;
   Locale _locale = BheLocale.fromSystem(
@@ -144,6 +146,17 @@ class _BheMobileAppState extends State<BheMobileApp> {
   }
 
   void _handleStateChange() {
+    if (state.projectTransitioning && state.closingProject) {
+      _closeNoticeTimer ??= Timer(const Duration(milliseconds: 600), () {
+        if (mounted && state.projectTransitioning && state.closingProject) {
+          setState(() => _showCloseNotice = true);
+        }
+      });
+    } else {
+      _closeNoticeTimer?.cancel();
+      _closeNoticeTimer = null;
+      if (_showCloseNotice && mounted) setState(() => _showCloseNotice = false);
+    }
     final warning = state.exportHistoryWarning;
     if (warning != _lastHistoryWarning) {
       _lastHistoryWarning = warning;
@@ -255,6 +268,7 @@ class _BheMobileAppState extends State<BheMobileApp> {
   @override
   void dispose() {
     _updateCheckTimer?.cancel();
+    _closeNoticeTimer?.cancel();
     updater.dispose();
     state.removeListener(_handleStateChange);
     if (widget.appState == null) { state.dispose(); }
@@ -313,7 +327,7 @@ class _BheMobileAppState extends State<BheMobileApp> {
           absorbing: state.projectTransitioning,
           child: Opacity(opacity: state.projectTransitioning ? .55 : 1, child: child),
         ),
-        if (state.projectTransitioning)
+        if (state.projectTransitioning && (!state.closingProject || _showCloseNotice))
           Positioned(top: 0, left: 0, right: 0, child: SafeArea(
             child: Material(
               key: const ValueKey('project-transition-notice'),

@@ -400,6 +400,8 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   int _projectTransitions = 0;
   int _projectIntent = 0;
   bool get projectTransitioning => _projectTransitions != 0;
+  int _closingProjects = 0;
+  bool get closingProject => _closingProjects > 0;
 
   int _newProjectIntent() => ++_projectIntent;
   bool _isProjectIntent(int intent) => !_disposed && intent == _projectIntent;
