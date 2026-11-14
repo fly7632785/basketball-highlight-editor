@@ -918,17 +918,22 @@ impl RuntimeSession {
             // detection from the complete proxy scan.  The coarse rim plane
             // is the detector-box centre, not the refined physical rim plane
             // used by the native-frame verifier.
-            let coarse_rim = coarse_rim_from_observations(
+            let observed_rim = coarse_rim_from_observations(
                 &self.rim_observations,
                 self.rim_observation_dims.0,
                 self.rim_observation_dims.1,
-            )
-            .unwrap_or_else(|| self.rim_roi.clone());
+            );
+            // A configured fallback has no observation pixel space. Its pixel
+            // thresholds must use the actual frame dimensions instead.
+            let (coarse_rim, (frame_width, frame_height)) = match observed_rim {
+                Some(rim) => (rim, self.rim_observation_dims),
+                None => (self.rim_roi.clone(), (self.frame_width, self.frame_height)),
+            };
             let (candidates, diagnostics) = coarse_crossing_candidates(
                 &self.coarse_points,
                 &coarse_rim,
-                self.rim_observation_dims.0,
-                self.rim_observation_dims.1,
+                frame_width,
+                frame_height,
                 &self.config,
             );
             self.coarse_crossing_diagnostics = diagnostics;
@@ -5749,6 +5754,42 @@ mod tests {
             (session.coarse_crossing_diagnostics.rim_center_y - 301.75247 / 720.0).abs() < 0.0001
         );
         assert_eq!(response.candidates.len(), 1);
+    }
+
+    #[test]
+    #[ignore = "requires BHE_L155_MODEL and a host ONNX Runtime library"]
+    fn l370_coarse_fallback_without_hoop_boxes() {
+        let model = std::env::var("BHE_L155_MODEL").expect("set BHE_L155_MODEL");
+        let config: RuntimeConfig = serde_json::from_value(serde_json::json!({
+            "model_path": model,
+            "hoop_roi": {"left": 0.45, "top": 0.49, "right": 0.55, "bottom": 0.51},
+            "net_roi": {"left": 0.0, "top": 0.0, "right": 1.0, "bottom": 1.0},
+            "coarse_mode": true
+        }))
+        .unwrap();
+        let mut session = RuntimeSession::new(config).unwrap();
+        session.frame_width = 960;
+        session.frame_height = 720;
+        session.processed_frames = 2;
+        session.update_rim_from_detections(&[], 960, 720);
+        session.coarse_points.extend([
+            point(1000, 0.5, 0.4, 0.9),
+            point(1800, 0.5, 0.6, 0.9),
+        ]);
+        assert!(session.rim_observations.is_empty());
+        let response = session.finish().unwrap();
+        println!(
+            "no hoop boxes; frames=960x720; fallback rim={:?}; candidates={}",
+            session.rim_roi,
+            response.candidates.len()
+        );
+        assert_eq!(
+            response.candidates.len(),
+            1,
+            "valid configured rim must still produce its crossing when the model detects balls but no hoop"
+        );
+        assert_eq!(session.coarse_crossing_diagnostics.frame_width, 960);
+        assert_eq!(session.coarse_crossing_diagnostics.frame_height, 720);
     }
 
     #[test]
