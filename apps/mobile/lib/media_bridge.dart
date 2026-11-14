@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:bhe_core/bhe_core.dart';
 import 'package:flutter/services.dart';
@@ -16,9 +17,23 @@ String clipFileName(int index, Candidate candidate, {String projectName = 'Proje
     '_',
   );
   player = player.replaceAll(RegExp(r'^[ ._]+|[ ._]+$'), '');
-  if (player.length > 40) player = player.substring(0, 40);
-  final prefix = 'BHE-${safeFileName(projectName)}-highlights';
-  return player.isEmpty ? '$prefix-$name.mp4' : '$prefix-${name}_$player.mp4';
+  player = String.fromCharCodes(player.runes.take(40));
+  final suffix = player.isEmpty
+      ? '-highlights-$name.mp4'
+      : '-highlights-${name}_$player.mp4';
+  // Reserve the complete identifying suffix before shortening the project
+  // name. Count UTF-8 bytes and keep whole code points, including emoji.
+  final projectByteBudget = 255 - utf8.encode('BHE-$suffix').length;
+  final project = StringBuffer();
+  var projectBytes = 0;
+  for (final rune in safeFileName(projectName).runes) {
+    final character = String.fromCharCode(rune);
+    final bytes = utf8.encode(character).length;
+    if (projectBytes + bytes > projectByteBudget) break;
+    project.write(character);
+    projectBytes += bytes;
+  }
+  return 'BHE-$project$suffix';
 }
 
 class _ExportRun {
