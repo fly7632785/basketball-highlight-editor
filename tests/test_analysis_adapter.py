@@ -90,6 +90,12 @@ def test_pipeline_commands_can_skip_refinement_for_fast_mode(tmp_path: Path):
         for command in commands
         for part in command
     )
+    # 快速模式粗扫直出、没有 refine 裁决,不发弱种子。
+    assert all(
+        "--rim-band-seeds" not in part
+        for command in commands
+        for part in command
+    )
 
 
 def test_pipeline_commands_use_existing_scripts(tmp_path: Path):
@@ -109,6 +115,8 @@ def test_pipeline_commands_use_existing_scripts(tmp_path: Path):
     assert commands[1][1].endswith("scan_video.py")
     assert commands[2][1].endswith("generate_candidates.py")
     assert commands[3][1].endswith("refine_dynamic_candidates.py")
+    # 有精化兜底时,粗扫的筐带单次目击也发弱种子,交给 refine 密扫裁决。
+    assert "--rim-band-seeds" in commands[2]
 
 
 def test_pipeline_commands_normalize_float_roi_arguments(tmp_path: Path):

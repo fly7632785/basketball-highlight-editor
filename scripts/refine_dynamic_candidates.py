@@ -22,7 +22,7 @@ from cache_io import read_json_cache, write_json_cache
 
 
 DETECTION_CACHE_VERSION = "python-v2.5-white-net-region"
-ALGORITHM_VERSION = "python-v2.15-crop-scale-clamp"
+ALGORITHM_VERSION = "python-v2.16-rim-band-seeds"
 REFINED_SCHEMA_VERSION = 3
 
 
@@ -345,7 +345,7 @@ def main(args):
         fallback_trajectory = []
         if not matches:
             above = coarse.get("above") if isinstance(coarse, dict) else None
-            if isinstance(above, dict):
+            if isinstance(above, dict) and above.get("x") is not None and above.get("y") is not None:
                 anchor = {
                     "time": float(above.get("time", coarse["time"])),
                     "x": float(above["x"]) * args.proxy_scale,

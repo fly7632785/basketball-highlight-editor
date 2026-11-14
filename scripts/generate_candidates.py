@@ -29,6 +29,12 @@ def parse_args():
         default=30.0,
         help="篮筐漂移检测窗口;各窗口 rim 一致(固定机位)时回退全局估计,行为不变",
     )
+    parser.add_argument(
+        "--rim-band-seeds",
+        action="store_true",
+        help="筐带单次目击也发弱种子候选,交给 refine 密扫裁决;"
+        "仅精化启用时由管线传入,快速模式(粗扫直出)不发种子",
+    )
     return parser.parse_args()
 
 
@@ -71,6 +77,62 @@ def estimate_rim(records, confidence):
             "No hoop detections found; check the ROI or provide a manual rim calibration."
         )
     return rim
+
+
+def find_rim_band_seeds(records, rim, pair_candidates, dedupe_sec=2.0, max_seeds=100):
+    """筐带单次目击的弱种子候选(--rim-band-seeds 时启用)。
+
+    粗扫采样下,一次出手常常只留下单侧检测点(筐上或筐下各一帧),凑不齐
+    find_candidate_crossings 要求的 above/below 对——小球、远景或集锦视频
+    因此大量漏检(实测 36 秒集锦只出 2 个候选,而 refine 密扫能确认 7 个
+    穿框)。把「球出现在筐带」本身作为候选交给 refine:refine 在候选
+    ±window 内以 10fps 密扫重新判定穿框,串不出轨迹的种子会被丢弃,
+    误报的代价只是多跑几个精化窗口。
+    """
+    width = max(1.0, float(rim["width"]))
+    height = max(1.0, float(rim.get("height", 20)))
+    center_x = float(rim["center_x"])
+    rim_y = float(rim["rim_y"])
+    x_min, x_max = center_x - width * 1.5, center_x + width * 1.5
+    y_min, y_max = rim_y - height * 4.0, rim_y + height * 4.0
+    anchors = [float(candidate["time"]) for candidate in pair_candidates]
+    sightings = []
+    for record in records:
+        for detection in record.get("detections", []):
+            if detection["name"] != "ball":
+                continue
+            x, y = detection["center"]
+            if not (x_min <= x <= x_max and y_min <= y <= y_max):
+                continue
+            sightings.append({
+                "time": float(record["time"]),
+                "x_cross": int(round(x)),
+                # 与配对候选的 above/below 同构(扁平 x/y/time):refine 的
+                # 兜底轨迹路径直接读 above["x"] 做锚点,原始检测格式会崩。
+                "above": {
+                    "time": float(record["time"]),
+                    "x": float(x),
+                    "y": float(y),
+                    "confidence": float(detection.get("confidence", 0.0)),
+                },
+                "below": None,
+                "seed": "rim_band_sighting",
+            })
+    # 筐上目击(下落弧线,比筐下静态误检更像出手)优先,其次置信度。
+    sightings.sort(key=lambda item: (
+        0 if item["above"]["y"] < rim_y else 1,
+        -float(item["above"]["confidence"]),
+        item["time"],
+    ))
+    seeds = []
+    for sighting in sightings:
+        if len(seeds) >= max_seeds:
+            break
+        if any(abs(sighting["time"] - anchor) < dedupe_sec for anchor in anchors):
+            continue
+        anchors.append(sighting["time"])
+        seeds.append(sighting)
+    return seeds
 
 
 def _rims_compatible(left, right):
@@ -158,6 +220,10 @@ def main(args):
                 )
             )
         candidates = dedupe_candidates(candidates, 0.8)
+    seeds = []
+    if args.rim_band_seeds:
+        seeds = find_rim_band_seeds(data["records"], rim, candidates)
+        candidates = candidates + seeds
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({
@@ -169,6 +235,8 @@ def main(args):
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"rim={rim} mode={rim_mode} drift_windows={len(drift_windows)}")
     print(f"candidates={len(candidates)}")
+    if args.rim_band_seeds:
+        print(f"seeds={len(seeds)}")
     for candidate in candidates:
         print(f"{candidate['time']:.2f}s x_cross={candidate['x_cross']}")
 
