@@ -278,6 +278,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   String preparingVideoMessage = '';
   bool analysing = false;
   String? exportHistoryWarning;
+  String? gallerySaveNotice;
   String? _historyActiveMode;
   int _historyPlannedCount = 0;
   DateTime? _historyExportStartedAt;
@@ -2633,6 +2634,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     diagnosticError = null;
     errorMessage = null;
     exportHistoryWarning = null;
+    gallerySaveNotice = null;
     _historyActiveMode = null;
     _historyPlannedCount = 0;
     _historyExportStartedAt = null;
@@ -2648,6 +2650,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       }
       progress = 1;
       progressMessage = '已保存 ${selectedPaths.length} 个片段到相册';
+      gallerySaveNotice = progressMessage;
     } on Object catch (error, stack) {
       if (current()) {
         recordDiagnosticFailure(error, stack, operation: 'export');

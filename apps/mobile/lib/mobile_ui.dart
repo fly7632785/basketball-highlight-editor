@@ -28,6 +28,7 @@ import 'features/game_stats/game_stats.dart';
 
 export 'mobile_theme.dart' show BhePalette, bheTheme;
 
+part 'features/toast/bhe_toast.dart';
 part 'features/video_source/video_source_notice.dart';
 part 'features/diagnostics/diagnostic_sheet.dart';
 part 'features/video_source/review_video_source.dart';
@@ -80,6 +81,7 @@ class _BheMobileAppState extends State<BheMobileApp> {
   bool _wasExporting = false;
   bool _starPromptHandled = false;
   String? _lastHistoryWarning;
+  String? _lastGallerySaveNotice;
 
   @override
   void initState() {
@@ -100,6 +102,10 @@ class _BheMobileAppState extends State<BheMobileApp> {
       SnackBar(
         content: Text(context.bheText('发现新版本 v$version')),
         behavior: SnackBarBehavior.floating,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+        ),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         duration: const Duration(seconds: 8),
         action: SnackBarAction(
           label: context.bheText('查看'),
@@ -158,6 +164,18 @@ class _BheMobileAppState extends State<BheMobileApp> {
       if (_showCloseNotice && mounted) setState(() => _showCloseNotice = false);
     }
     final warning = state.exportHistoryWarning;
+    final gallerySaveNotice = state.gallerySaveNotice;
+    if (gallerySaveNotice != _lastGallerySaveNotice) {
+      _lastGallerySaveNotice = gallerySaveNotice;
+      if (gallerySaveNotice != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || state.gallerySaveNotice != gallerySaveNotice) return;
+          final context = _navigatorKey.currentContext;
+          if (context == null || !context.mounted) return;
+          showBheToast(context, context.bheText(gallerySaveNotice));
+        });
+      }
+    }
     if (warning != _lastHistoryWarning) {
       _lastHistoryWarning = warning;
       if (warning != null) {
@@ -168,20 +186,24 @@ class _BheMobileAppState extends State<BheMobileApp> {
           if (context == null || !context.mounted) return;
           _messengerKey.currentState?.showSnackBar(SnackBar(
             behavior: SnackBarBehavior.floating,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.all(Radius.circular(12)),
+            ),
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             content: Text(context.bheText(warning)),
             action: SnackBarAction(label: context.bheText('反馈'), onPressed: () => showMobileDiagnostics(context, error: diagnostic)),
           ));
         });
       }
     }
-    final exportCompleted =
+    final gallerySaved =
         _wasExporting &&
         !state.exporting &&
         state.exportedPaths.isNotEmpty &&
         state.errorMessage == null &&
         !state.exportCancelled;
     _wasExporting = state.exporting;
-    if (exportCompleted) unawaited(_maybeShowStarPrompt());
+    if (gallerySaved) unawaited(_maybeShowStarPrompt());
 
     final projectChanged = state.project.id != _lastProjectId;
     if (projectChanged) {
@@ -290,21 +312,15 @@ class _BheMobileAppState extends State<BheMobileApp> {
       return;
     }
     _lastBackPress = now;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            Localizations.of<BheLocalizations>(
-                  context,
-                  BheLocalizations,
-                )?.pressBackAgainToExit ??
-                '再按一次返回键退出 BHE',
-          ),
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
-        ),
-      );
+    showBheToast(
+      context,
+      Localizations.of<BheLocalizations>(
+            context,
+            BheLocalizations,
+          )?.pressBackAgainToExit ??
+          '再按一次返回键退出 BHE',
+      duration: const Duration(seconds: 2),
+    );
   }
 
   @override
@@ -2032,7 +2048,7 @@ class _ReviewViewState extends State<_ReviewView> {
 
   ({String id, bool last, Future<ReviewActionResult> saved})? _reviewAt(String id, CandidateSelection selection) {
     if (state.projectTransitioning) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.bheText('正在切换项目，请稍候'))));
+      showBheToast(context, context.bheText('正在切换项目，请稍候'));
       return null;
     }
     final items = candidates;
@@ -2053,7 +2069,7 @@ class _ReviewViewState extends State<_ReviewView> {
           if (restored >= 0) unawaited(_select(restored));
         }
         if (state.reviewNotice != '保存失败，请重试') {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.bheText('本次审核未保存'))));
+          showBheToast(context, context.bheText('本次审核未保存'));
         }
         return;
       }
