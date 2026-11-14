@@ -61,7 +61,59 @@ void main() {
   );
 
   test(
-    'share plugin failures are retained and shown as safe export errors',
+    'share plugin failures retain the share operation and share-specific text',
+    () async {
+      final fixture = MobileVideoFixture();
+      await fixture.init();
+      const channel = MethodChannel('dev.fluttercommunity.plus/share');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect((call.arguments as Map)['mimeTypes'], ['video/mp4']);
+        throw PlatformException(
+          code: 'SHARE_FAILED',
+          message: 'TECHNICAL /private/person/goal.mp4',
+        );
+      });
+      try {
+        fixture.state.exportedPaths = ['not-read.mp4'];
+        await fixture.state.shareExportedFiles();
+        expect(fixture.state.diagnosticError?.error, isA<PlatformException>());
+        expect(fixture.state.diagnosticError?.operation, 'share');
+        expect(
+          fixture.state.diagnosticError?.error.toString(),
+          contains('TECHNICAL /private/person/goal.mp4'),
+        );
+        expect(fixture.state.errorMessage, '无法打开分享面板，请重试。');
+        expect(fixture.state.errorMessage, isNot(contains('视频导出')));
+        expect(fixture.state.exporting, isFalse);
+      } finally {
+        messenger.setMockMethodCallHandler(channel, null);
+        await fixture.close();
+      }
+    },
+  );
+
+  test('dismissed share sheet is not reported as a failure', () async {
+    final fixture = MobileVideoFixture();
+    await fixture.init();
+    const channel = MethodChannel('dev.fluttercommunity.plus/share');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (_) async => '');
+    try {
+      fixture.state.exportedPaths = ['not-read.mp4'];
+      await fixture.state.shareExportedFiles();
+      expect(fixture.state.diagnosticError, isNull);
+      expect(fixture.state.errorMessage, isNull);
+    } finally {
+      messenger.setMockMethodCallHandler(channel, null);
+      await fixture.close();
+    }
+  });
+
+  test(
+    'successful share keeps export complete without recording an error',
     () async {
       final fixture = MobileVideoFixture();
       await fixture.init();
@@ -70,16 +122,40 @@ void main() {
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       messenger.setMockMethodCallHandler(
         channel,
-        (_) async => throw PlatformException(
-          code: 'SHARE_FAILED',
-          message: 'TECHNICAL /private/person/goal.mp4',
-        ),
+        (_) async => 'target.app',
       );
       try {
         fixture.state.exportedPaths = ['not-read.mp4'];
         await fixture.state.shareExportedFiles();
-        expect(fixture.state.diagnosticError?.error, isA<PlatformException>());
-        expect(fixture.state.errorMessage, '出错了：视频导出未完成，请重试。');
+        expect(fixture.state.diagnosticError, isNull);
+        expect(fixture.state.errorMessage, isNull);
+        expect(fixture.state.exportedPaths, ['not-read.mp4']);
+      } finally {
+        messenger.setMockMethodCallHandler(channel, null);
+        await fixture.close();
+      }
+    },
+  );
+
+  test(
+    'photo permission denial is classified as a gallery save failure',
+    () async {
+      final fixture = MobileVideoFixture();
+      await fixture.init();
+      const channel = MethodChannel('com.bhe.bhe/mobile_media');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'saveToLibrary');
+        throw PlatformException(
+          code: 'PHOTO_PERMISSION_DENIED',
+          message: 'photo permission denied',
+        );
+      });
+      try {
+        await fixture.state.saveExportedFiles(paths: ['not-read.mp4']);
+        expect(fixture.state.diagnosticError?.operation, 'gallery.save');
+        expect(fixture.state.errorMessage, '没有相册保存权限，请在系统设置中允许 BHE 添加照片。');
         expect(fixture.state.exporting, isFalse);
       } finally {
         messenger.setMockMethodCallHandler(channel, null);

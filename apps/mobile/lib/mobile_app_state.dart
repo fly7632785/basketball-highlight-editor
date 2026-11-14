@@ -2299,10 +2299,10 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       await SharePlus.instance.share(ShareParams(files: [XFile(package.path)]));
     } on Object catch (error, stack) {
       if (current()) {
-        recordDiagnosticFailure(error, stack, operation: 'export');
+        recordDiagnosticFailure(error, stack, operation: 'share');
         notifyListeners();
       } else {
-        MobileDiagnostics.instance.error(error, stack, operation: 'export');
+        MobileDiagnostics.instance.error(error, stack, operation: 'share');
       }
     }
   }
@@ -2611,10 +2611,10 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     if (selectedPaths.isEmpty) return;
     try {
       await SharePlus.instance.share(
-        ShareParams(files: selectedPaths.map(XFile.new).toList()),
+        ShareParams(files: selectedPaths.map((path) => XFile(path, mimeType: 'video/mp4')).toList()),
       );
     } on Object catch (error, stack) {
-      recordDiagnosticFailure(error, stack, operation: 'export');
+      recordDiagnosticFailure(error, stack, operation: 'share');
       notifyListeners();
     }
   }
@@ -2653,9 +2653,9 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       gallerySaveNotice = progressMessage;
     } on Object catch (error, stack) {
       if (current()) {
-        recordDiagnosticFailure(error, stack, operation: 'export');
+        recordDiagnosticFailure(error, stack, operation: 'gallery.save');
       } else {
-        MobileDiagnostics.instance.error(error, stack, operation: 'export');
+        MobileDiagnostics.instance.error(error, stack, operation: 'gallery.save');
       }
     } finally {
       if (current()) {

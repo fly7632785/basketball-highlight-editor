@@ -387,10 +387,13 @@ class NativeMediaExportEngine implements MobileExportEngine {
     try {
       await _channel.invokeMethod<void>('saveToLibrary', {'path': path});
     } on MissingPluginException {
-      throw const MobileExportException('当前平台尚未注册相册保存模块。');
+      throw const MobileDiagnosticException(
+        MobileExportException('当前平台尚未注册相册保存模块。'),
+        'gallery.save',
+      );
     } on PlatformException catch (error, stack) {
-      MobileDiagnostics.instance.error(error, stack, operation: 'export');
-      throw MobileDiagnosticException(error, 'export');
+      MobileDiagnostics.instance.error(error, stack, operation: 'gallery.save');
+      throw MobileDiagnosticException(error, 'gallery.save');
     }
   }
 }
