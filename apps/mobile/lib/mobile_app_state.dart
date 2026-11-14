@@ -760,6 +760,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     bool fromPicker = false,
     bool replace = false,
     String? name,
+    String? projectName,
     int? projectIntent,
   }) async {
     bool current() =>
@@ -788,7 +789,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         final next = before.copyWith(
           video: video,
           name: replace
-              ? video.name.replaceFirst(RegExp(r'\.[^.]+$'), '')
+              ? (projectName ?? video.name.replaceFirst(RegExp(r'\.[^.]+$'), ''))
               : before.name,
           clearHoopRoi: replace,
           clearRimRoi: replace,
@@ -1532,6 +1533,11 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     try {
       preparingVideoMessage = '正在保存视频到本机';
       notifyListeners();
+      final projectName = defaultProjectName(
+        fileName: name ?? path.split(Platform.pathSeparator).last,
+        locale: Platform.localeName,
+        existingNames: recentProjects.map((item) => item.name).toList(),
+      );
       await _storeVideo(
         path,
         project,
@@ -1539,6 +1545,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         fromPicker: true,
         replace: true,
         name: name,
+        projectName: projectName,
         projectIntent: projectIntent,
       );
       if (!_isCurrentVideoPreparation(
@@ -2383,6 +2390,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         video: project.video!,
         candidates: candidates,
         outputDirectory: outputDirectory,
+        projectName: project.name,
       )) {
         if (!current()) return;
         if (firstUpdate && exportCancelled) await exportEngine.cancel();

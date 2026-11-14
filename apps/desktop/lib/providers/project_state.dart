@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:bhe_core/bhe_core.dart';
 import 'package:flutter/widgets.dart' show Rect;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -394,10 +395,20 @@ class ProjectNotifier extends Notifier<ProjectState> {
         final session = ref.read(projectSessionProvider);
         final checkpoint = session.checkpoint();
         final source = File(path).absolute;
-        final stem = source.uri.pathSegments.last.replaceFirst(
-          RegExp(r'\.[^.]+$'),
-          '',
-        );
+      JsonMap inspected = {};
+      try {
+        final payload = await session.inspectVideo(videoPath: path);
+        inspected = (payload['video'] as Map?)?.cast<String, dynamic>() ?? payload;
+      } on Object {
+        // Optional capture-date metadata must not block importing a video.
+      }
+      final stem = defaultProjectName(
+        fileName: source.uri.pathSegments.last,
+        createdAt: DateTime.tryParse(inspected['recorded_at']?.toString() ?? ''),
+        locale: Platform.localeName,
+        existingNames: state.recentProjects
+            .map((project) => project['name']?.toString() ?? '').toList(),
+      );
         var knownRoot = state.knownProjectsRoot ?? _projectsRoot;
         final folderName = '$stem-${DateTime.now().millisecondsSinceEpoch}';
         var projectRoot = '$knownRoot/$folderName';

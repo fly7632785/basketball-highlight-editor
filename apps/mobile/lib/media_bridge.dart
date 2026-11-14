@@ -8,7 +8,7 @@ import 'features/diagnostics/mobile_diagnostics.dart';
 import 'features/export/native_export_result.dart';
 import 'features/operation_status/task_stop_status.dart';
 
-String clipFileName(int index, Candidate candidate) {
+String clipFileName(int index, Candidate candidate, {String projectName = 'Project'}) {
   final name =
       'goal_${index.toString().padLeft(3, '0')}_${(candidate.eventMs / 1000).toStringAsFixed(2)}s';
   var player = (candidate.player ?? '').replaceAll(
@@ -17,7 +17,8 @@ String clipFileName(int index, Candidate candidate) {
   );
   player = player.replaceAll(RegExp(r'^[ ._]+|[ ._]+$'), '');
   if (player.length > 40) player = player.substring(0, 40);
-  return player.isEmpty ? '$name.mp4' : '${name}_$player.mp4';
+  final prefix = 'BHE-${safeFileName(projectName)}-highlights';
+  return player.isEmpty ? '$prefix-$name.mp4' : '$prefix-${name}_$player.mp4';
 }
 
 class _ExportRun {
@@ -106,6 +107,7 @@ class NativeMediaExportEngine implements MobileExportEngine {
     required VideoInfo video,
     required List<Candidate> candidates,
     required String outputDirectory,
+    String projectName = 'Project',
   }) async* {
     if (candidates.isEmpty) return;
     final run = _ExportRun();
@@ -126,7 +128,7 @@ class NativeMediaExportEngine implements MobileExportEngine {
       Future<void> exportOne(Candidate candidate) async {
         if (failed || run.cancelled) return;
         final index = candidates.indexOf(candidate) + 1;
-        final outputPath = '$outputDirectory/${clipFileName(index, candidate)}';
+        final outputPath = '$outputDirectory/${clipFileName(index, candidate, projectName: projectName)}';
         try {
           run.nativeId = candidate.id;
           run.nativeGeneration++;

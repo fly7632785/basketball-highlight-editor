@@ -829,7 +829,7 @@ class _TestOutputPicker extends ExportOutputPicker {
   var calls = 0;
   Object? failure;
   @override
-  Future<String?> mergedPath({required String typeLabel}) {
+  Future<String?> mergedPath({required String typeLabel, String projectName = 'Project'}) {
     calls++;
     if (failure != null) throw failure!;
     return result.future;

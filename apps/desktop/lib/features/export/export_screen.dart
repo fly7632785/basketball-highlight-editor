@@ -602,7 +602,10 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
           .withNativeDialog(() async {
             if (!mounted || !TickerMode.valuesOf(context).enabled) return null;
             return merge
-                ? picker.mergedPath(typeLabel: context.bheText('视频'))
+                ? picker.mergedPath(
+                    typeLabel: context.bheText('视频'),
+                    projectName: ref.read(projectProvider).statistics?['project']?['name']?.toString() ?? 'Project',
+                  )
                 : picker.directory(confirmLabel: context.bheText('选择输出目录'));
           }, onPrepareTimeout: () {
             log('warn', '准备阶段超过时限，直接弹出选择框');

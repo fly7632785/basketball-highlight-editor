@@ -29,6 +29,7 @@ abstract interface class MobileExportEngine {
     required VideoInfo video,
     required List<Candidate> candidates,
     required String outputDirectory,
+    String projectName = 'Project',
   });
 
   Stream<ExportProgress> mergeClips({
@@ -50,6 +51,7 @@ class MobileExportEngineUnavailable implements MobileExportEngine {
     required VideoInfo video,
     required List<Candidate> candidates,
     required String outputDirectory,
+    String projectName = 'Project',
   }) => Stream<ExportProgress>.error(
     const MobileExportException('移动端视频剪辑引擎尚未接入。'),
   );
