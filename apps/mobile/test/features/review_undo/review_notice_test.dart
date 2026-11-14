@@ -81,20 +81,8 @@ void main() {
             expect(find.byType(SnackBar), findsNothing);
             expect(tester.takeException(), isNull);
             expect(tester.getRect(keep), before);
-            await tester.tap(find.byType(PopupMenuButton<String>).first);
-            await tester.pumpAndSettle();
-            final undo = find.text(localizations.text('撤销上一步'));
-            expect(
-              tester
-                  .widget<PopupMenuItem<String>>(
-                    find.ancestor(
-                      of: undo,
-                      matching: find.byType(PopupMenuItem<String>),
-                    ),
-                  )
-                  .enabled,
-              isTrue,
-            );
+            final undo = find.byKey(const ValueKey('review-undo-top'));
+            expect(tester.widget<IconButton>(undo).onPressed, isNotNull);
             await tester.tap(undo);
             await tester.pump();
             await waitProjectWrites(tester, fixture.state.pendingProjectWrites);
