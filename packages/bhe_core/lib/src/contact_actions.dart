@@ -1,4 +1,4 @@
-const feedbackEmail = 'melody7632785@gmail.com';
+const feedbackEmail = 'hanzexi0411@gmail.com';
 
 String feedbackMailto({String? appVersion, bool english = false}) {
   final subject = Uri.encodeComponent(english ? 'BHE feedback' : 'BHE 反馈');

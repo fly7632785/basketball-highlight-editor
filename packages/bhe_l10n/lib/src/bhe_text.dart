@@ -431,6 +431,9 @@ String _englishDuration(String value) => value
     .trim();
 
 const _englishText = <String, String>{
+  '请在弹出的窗口中选择保存位置': 'Please choose where to save in the window that opens',
+  '找回保存窗口': 'Bring save window to front',
+  '第三方开源许可': 'Third-party notices',
   '已调整': 'Edited',
   '重叠': 'Overlap',
   '诊断信息暂时不可用。': 'Diagnostics are temporarily unavailable.',
@@ -466,6 +469,9 @@ const _englishText = <String, String>{
   '这个视频的格式手机无法处理。': 'This phone cannot process this video format.',
   '出错了：视频分析未完成，请重试。': 'Something went wrong: video analysis did not finish. Please try again.',
   '出错了：视频导出未完成，请重试。': 'Something went wrong: video export did not finish. Please try again.',
+  '无法打开分享面板，请重试。': "Couldn't open the share sheet. Please try again.",
+  '无法保存到相册，请重试。': "Couldn't save to Photos. Please try again.",
+  '没有相册保存权限，请在系统设置中允许 BHE 添加照片。': 'BHE does not have permission to save to Photos. Allow photo access in Settings and try again.',
   '出错了：更新操作未完成，请重试。': 'Something went wrong: the update did not finish. Please try again.',
   '出错了：操作未完成，请重试。': 'Something went wrong: the operation did not finish. Please try again.',
   '重命名项目': 'Rename project',

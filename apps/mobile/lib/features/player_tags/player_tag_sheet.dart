@@ -206,59 +206,47 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
                 style: Theme.of(context).textTheme.bodySmall,
               )
             else ...[
-              for (final player in _players)
-                Row(
-                  children: [
-                    Expanded(
-                      child: InkWell(
+              Material(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+                clipBehavior: Clip.antiAlias,
+                child: Column(children: [
+                  for (final (index, player) in _players.indexed) ...[
+                    if (index > 0) const Padding(
+                      padding: EdgeInsets.only(left: 16),
+                      child: Divider(height: 1),
+                    ),
+                    Row(children: [
+                      Expanded(child: InkWell(
                         key: ValueKey('player-select-$player'),
-                        onTap: _saving
-                            ? null
-                            : () => setState(() {
-                                _selected = _selected == player ? null : player;
-                                _input.clear();
-                              }),
+                        onTap: _saving ? null : () => _close(player),
                         child: Container(
-                          constraints: const BoxConstraints(minHeight: 48),
-                          alignment: Alignment.centerLeft,
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  player,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              if (_selected == player)
-                                const Icon(LucideIcons.check, size: 18),
-                            ],
-                          ),
+                          constraints: const BoxConstraints(minHeight: 52),
+                          padding: const EdgeInsets.fromLTRB(16, 0, 4, 0),
+                          color: _selected == player ? BhePalette.orange.withValues(alpha: .10) : null,
+                          child: Row(children: [
+                            Expanded(child: Text(player, overflow: TextOverflow.ellipsis,
+                              style: _selected == player ? const TextStyle(color: BhePalette.orange, fontWeight: FontWeight.bold) : null)),
+                            if (_selected == player) const Icon(LucideIcons.check, size: 18, color: BhePalette.orange),
+                          ]),
                         ),
+                      )),
+                      PopupMenuButton<String>(
+                        key: ValueKey('player-menu-$player'),
+                        tooltip: context.bheText('更多操作'),
+                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                        icon: const Icon(LucideIcons.ellipsis),
+                        enabled: !_saving,
+                        onSelected: (action) => _managePlayer(player, action),
+                        itemBuilder: (context) => [
+                          PopupMenuItem(value: 'rename', child: Text(context.bheText('重命名'))),
+                          PopupMenuItem(value: 'delete', child: Text(context.bheText('删除'))),
+                        ],
                       ),
-                    ),
-                    PopupMenuButton<String>(
-                      key: ValueKey('player-menu-$player'),
-                      tooltip: context.bheText('更多操作'),
-                      constraints: const BoxConstraints(
-                        minWidth: 48,
-                        minHeight: 48,
-                      ),
-                      icon: const Icon(LucideIcons.ellipsis),
-                      enabled: !_saving,
-                      onSelected: (action) => _managePlayer(player, action),
-                      itemBuilder: (context) => [
-                        PopupMenuItem(
-                          value: 'rename',
-                          child: Text(context.bheText('重命名')),
-                        ),
-                        PopupMenuItem(
-                          value: 'delete',
-                          child: Text(context.bheText('删除')),
-                        ),
-                      ],
-                    ),
+                    ]),
                   ],
-                ),
+                ]),
+              ),
             ],
             const SizedBox(height: 14),
             if (_creating)
@@ -270,13 +258,14 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
                 decoration: InputDecoration(
                   labelText: context.bheText('新建球员标签'),
                   hintText: context.bheText('例如 #10 Kobe'),
-                  prefixIcon: Icon(LucideIcons.tag, size: 18),
+                  prefixIcon: const Icon(LucideIcons.tag, size: 18),
+                  suffixIcon: TextButton(
+                    onPressed: _saving || _input.text.trim().isEmpty ? null : () => _close(_input.text.trim()),
+                    child: Text(Localizations.localeOf(context).languageCode == 'zh' ? '添加' : 'Add'),
+                  ),
                 ),
-                onChanged: (value) {
-                  final next = value.trim().isEmpty ? null : value.trim();
-                  if (_selected != next) setState(() => _selected = next);
-                },
-                onSubmitted: (value) => _close(value.trim()),
+                onChanged: (_) => setState(() {}),
+                onSubmitted: (value) { if (value.trim().isNotEmpty) _close(value.trim()); },
               )
             else
               Row(
@@ -299,24 +288,9 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
                 ],
               ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _saving ? null : () => _close(''),
-                    child: Text(context.bheText('清除标签')),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: _saving
-                        ? null
-                        : () => _close(_selected ?? _input.text.trim()),
-                    child: Text(context.bheText('应用标签')),
-                  ),
-                ),
-              ],
+            OutlinedButton(
+              onPressed: _saving || _selected == null ? null : () => _close(''),
+              child: Text(context.bheText('清除标签')),
             ),
           ],
         ),

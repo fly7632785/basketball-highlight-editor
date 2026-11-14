@@ -115,9 +115,9 @@ void main() {
           return;
         }
         if (scenario == 'undo') {
-          await tester.tap(find.byType(PopupMenuButton<String>).first);
-          await tester.pumpAndSettle();
-          await tester.tap(find.text(l10n.text('撤销上一步')));
+          final undo = find.byKey(const ValueKey('review-undo-top'));
+          expect(tester.widget<IconButton>(undo).onPressed, isNotNull);
+          await tester.tap(undo);
           await tester.pump();
           await waitProjectWrites(tester, f.state.pendingProjectWrites);
         }

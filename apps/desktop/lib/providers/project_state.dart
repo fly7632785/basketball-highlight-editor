@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:bhe_core/bhe_core.dart';
 import 'package:flutter/widgets.dart' show Rect;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -394,10 +395,20 @@ class ProjectNotifier extends Notifier<ProjectState> {
         final session = ref.read(projectSessionProvider);
         final checkpoint = session.checkpoint();
         final source = File(path).absolute;
-        final stem = source.uri.pathSegments.last.replaceFirst(
-          RegExp(r'\.[^.]+$'),
-          '',
-        );
+      JsonMap inspected = {};
+      try {
+        final payload = await session.inspectVideo(videoPath: path);
+        inspected = (payload['video'] as Map?)?.cast<String, dynamic>() ?? payload;
+      } on Object {
+        // Optional capture-date metadata must not block importing a video.
+      }
+      final stem = defaultProjectName(
+        fileName: source.uri.pathSegments.last,
+        createdAt: DateTime.tryParse(inspected['recorded_at']?.toString() ?? ''),
+        locale: Platform.localeName,
+        existingNames: state.recentProjects
+            .map((project) => project['name']?.toString() ?? '').toList(),
+      );
         var knownRoot = state.knownProjectsRoot ?? _projectsRoot;
         final folderName = '$stem-${DateTime.now().millisecondsSinceEpoch}';
         var projectRoot = '$knownRoot/$folderName';
@@ -889,14 +900,66 @@ class ProjectNotifier extends Notifier<ProjectState> {
     await _reviewQueue;
   }
 
+  /// L194：带返回 id 的提示（用于延迟显示/主动撤销场景）。
+  String _pushNoticeWithId(
+    String title,
+    NoticeSeverity severity, {
+    Duration duration = const Duration(seconds: 4),
+  }) {
+    final id =
+        'project-${DateTime.now().microsecondsSinceEpoch}-${_noticeCounter++}';
+    if (_disposed) return id;
+    appLog(
+      switch (severity) {
+        NoticeSeverity.error => 'error',
+        NoticeSeverity.warning => 'warn',
+        _ => 'info',
+      },
+      'notice',
+      title,
+    );
+    ref.read(noticeProvider.notifier).push(
+      NoticeMessage(id: id, severity: severity, title: title, duration: duration),
+    );
+    return id;
+  }
+
+  void _dismissNotice(String id) {
+    if (_disposed) return;
+    ref.read(noticeProvider.notifier).dismiss(id);
+  }
+
   Future<bool> closeProjectSafely() async {
     if (_closingProject || _disposed) return false;
     _closingProject = true;
     final generation = _projectLoadGeneration;
-    _pushNotice('正在保存修改并关闭项目…', NoticeSeverity.info);
+    // L194：关闭慢于 600ms 才显示提示，结束即撤销；快路径用户无感。
+    String? pendingNoticeId;
+    Timer? noticeTimer;
+    void scheduleNotice() {
+      noticeTimer = Timer(const Duration(milliseconds: 600), () {
+        pendingNoticeId = _pushNoticeWithId(
+          '正在保存修改并关闭项目…',
+          NoticeSeverity.info,
+          duration: const Duration(days: 1),
+        );
+      });
+    }
+
+    scheduleNotice();
+    void dismissPending() {
+      noticeTimer?.cancel();
+      if (pendingNoticeId != null) _dismissNotice(pendingNoticeId!);
+      pendingNoticeId = null;
+    }
+
     try {
-      await _busyOperation.timeout(const Duration(seconds: 30));
-      await flushReviewQueue().timeout(const Duration(seconds: 30));
+      try {
+        await _busyOperation.timeout(const Duration(seconds: 30));
+        await flushReviewQueue().timeout(const Duration(seconds: 30));
+      } finally {
+        dismissPending();
+      }
       if (_disposed || generation != _projectLoadGeneration) return false;
       if (state.busy) {
         _pushNotice('请先等待当前操作结束或取消正在运行的任务', NoticeSeverity.info);
@@ -908,6 +971,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
       if (!_disposed) _pushNotice('关闭项目失败：$error', NoticeSeverity.error);
       return false;
     } finally {
+      dismissPending();
       _closingProject = false;
     }
   }
@@ -2664,7 +2728,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }) {
     if (_disposed) return Future<void>.value();
     if (_closingProject) {
-      _pushNotice('正在保存修改并关闭项目…', NoticeSeverity.info);
+      // L194：关闭期间不再推同文案提示（closeProjectSafely 自己管理延迟提示）。
       return Future<void>.value();
     }
     final generation = _projectLoadGeneration;

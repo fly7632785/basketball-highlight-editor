@@ -278,6 +278,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   String preparingVideoMessage = '';
   bool analysing = false;
   String? exportHistoryWarning;
+  String? gallerySaveNotice;
   String? _historyActiveMode;
   int _historyPlannedCount = 0;
   DateTime? _historyExportStartedAt;
@@ -400,6 +401,8 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   int _projectTransitions = 0;
   int _projectIntent = 0;
   bool get projectTransitioning => _projectTransitions != 0;
+  int _closingProjects = 0;
+  bool get closingProject => _closingProjects > 0;
 
   int _newProjectIntent() => ++_projectIntent;
   bool _isProjectIntent(int intent) => !_disposed && intent == _projectIntent;
@@ -683,8 +686,15 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
 
   String? get analysisStartBlockReason =>
       _heavyTaskBlockReason(startingAnalysis: true);
-  String? get exportStartBlockReason =>
-      _heavyTaskBlockReason(startingAnalysis: false);
+  String? get exportStartBlockReason {
+    // A timed-out prior export remains serialized by NativeMediaExportEngine's
+    // global ticket gate. Rejecting a new export here strands an eligible
+    // waiter instead of letting it wait for that gate to drain.
+    if (hasUncertainAnalysis) return '上次任务尚未确认结束，请先确认停止。';
+    if (analysing) return '正在分析，请等待分析结束。';
+    if (exporting) return '正在导出，请等待导出结束。';
+    return null;
+  }
 
   bool get canStartAnalysis =>
       hasVideo &&
@@ -760,6 +770,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     bool fromPicker = false,
     bool replace = false,
     String? name,
+    String? projectName,
     int? projectIntent,
   }) async {
     bool current() =>
@@ -788,7 +799,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         final next = before.copyWith(
           video: video,
           name: replace
-              ? video.name.replaceFirst(RegExp(r'\.[^.]+$'), '')
+              ? (projectName ?? video.name.replaceFirst(RegExp(r'\.[^.]+$'), ''))
               : before.name,
           clearHoopRoi: replace,
           clearRimRoi: replace,
@@ -1532,6 +1543,11 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     try {
       preparingVideoMessage = '正在保存视频到本机';
       notifyListeners();
+      final projectName = defaultProjectName(
+        fileName: name ?? path.split(Platform.pathSeparator).last,
+        locale: Platform.localeName,
+        existingNames: recentProjects.map((item) => item.name).toList(),
+      );
       await _storeVideo(
         path,
         project,
@@ -1539,6 +1555,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         fromPicker: true,
         replace: true,
         name: name,
+        projectName: projectName,
         projectIntent: projectIntent,
       );
       if (!_isCurrentVideoPreparation(
@@ -2289,10 +2306,10 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       await SharePlus.instance.share(ShareParams(files: [XFile(package.path)]));
     } on Object catch (error, stack) {
       if (current()) {
-        recordDiagnosticFailure(error, stack, operation: 'export');
+        recordDiagnosticFailure(error, stack, operation: 'share');
         notifyListeners();
       } else {
-        MobileDiagnostics.instance.error(error, stack, operation: 'export');
+        MobileDiagnostics.instance.error(error, stack, operation: 'share');
       }
     }
   }
@@ -2383,6 +2400,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         video: project.video!,
         candidates: candidates,
         outputDirectory: outputDirectory,
+        projectName: project.name,
       )) {
         if (!current()) return;
         if (firstUpdate && exportCancelled) await exportEngine.cancel();
@@ -2600,10 +2618,10 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     if (selectedPaths.isEmpty) return;
     try {
       await SharePlus.instance.share(
-        ShareParams(files: selectedPaths.map(XFile.new).toList()),
+        ShareParams(files: selectedPaths.map((path) => XFile(path, mimeType: 'video/mp4')).toList()),
       );
     } on Object catch (error, stack) {
-      recordDiagnosticFailure(error, stack, operation: 'export');
+      recordDiagnosticFailure(error, stack, operation: 'share');
       notifyListeners();
     }
   }
@@ -2623,6 +2641,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     diagnosticError = null;
     errorMessage = null;
     exportHistoryWarning = null;
+    gallerySaveNotice = null;
     _historyActiveMode = null;
     _historyPlannedCount = 0;
     _historyExportStartedAt = null;
@@ -2638,11 +2657,12 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       }
       progress = 1;
       progressMessage = '已保存 ${selectedPaths.length} 个片段到相册';
+      gallerySaveNotice = progressMessage;
     } on Object catch (error, stack) {
       if (current()) {
-        recordDiagnosticFailure(error, stack, operation: 'export');
+        recordDiagnosticFailure(error, stack, operation: 'gallery.save');
       } else {
-        MobileDiagnostics.instance.error(error, stack, operation: 'export');
+        MobileDiagnostics.instance.error(error, stack, operation: 'gallery.save');
       }
     } finally {
       if (current()) {

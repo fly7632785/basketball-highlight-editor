@@ -3,9 +3,7 @@ part of '../../mobile_ui.dart';
 bool _canManageProjects(BuildContext context, MobileAppState state) {
   final reason = state.projectManagementBlockReason;
   if (reason == null) return true;
-  ScaffoldMessenger.of(
-    context,
-  ).showSnackBar(SnackBar(content: Text(context.bheText(reason))));
+  showBheToast(context, context.bheText(reason));
   return false;
 }
 
@@ -57,14 +55,13 @@ Future<void> _confirmManagedDelete(
     if (state.projectManagementBlockReason != null) {
       _projectActionFailed(context, state);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.bheText('删除未完成，部分文件可能已移除，请刷新项目列表。')),
-          action: SnackBarAction(
-            label: context.bheText('反馈'),
-            onPressed: () =>
-                showMobileDiagnostics(context, error: state.diagnosticError),
-          ),
+      showBheToast(
+        context,
+        context.bheText('删除未完成，部分文件可能已移除，请刷新项目列表。'),
+        action: SnackBarAction(
+          label: context.bheText('反馈'),
+          onPressed: () =>
+              showMobileDiagnostics(context, error: state.diagnosticError),
         ),
       );
     }
@@ -73,17 +70,16 @@ Future<void> _confirmManagedDelete(
 
 void _projectActionFailed(BuildContext context, MobileAppState state) {
   final reason = state.projectManagementBlockReason;
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(context.bheText(reason ?? '保存失败，请重试')),
-      action: reason == null
-          ? SnackBarAction(
-              label: context.bheText('反馈'),
-              onPressed: () =>
-                  showMobileDiagnostics(context, error: state.diagnosticError),
-            )
-          : null,
-    ),
+  showBheToast(
+    context,
+    context.bheText(reason ?? '保存失败，请重试'),
+    action: reason == null
+        ? SnackBarAction(
+            label: context.bheText('反馈'),
+            onPressed: () =>
+                showMobileDiagnostics(context, error: state.diagnosticError),
+          )
+        : null,
   );
 }
 

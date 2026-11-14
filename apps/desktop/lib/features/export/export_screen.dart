@@ -13,6 +13,7 @@ import '../../components/cs_card.dart';
 import '../../components/cs_empty_state.dart';
 import '../../components/cs_progress_track.dart';
 import '../../components/onboarding_guide.dart';
+import '../../components/recover_save_window_button.dart';
 import '../../providers/onboarding_provider.dart';
 import '../../core/app_log.dart';
 import '../../providers/project_state.dart';
@@ -412,7 +413,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               constraints: const BoxConstraints(maxWidth: 300),
               child: Text(
                 _choosingOutput
-                    ? context.bheText('正在准备输出位置…')
+                    ? context.bheText('请在弹出的窗口中选择保存位置')
                     : exportRunning
                     ? l10n?.text('导出任务在后台运行，返回审核后仍可继续修改候选。') ??
                           '导出任务在后台运行，返回审核后仍可继续修改候选。'
@@ -422,6 +423,8 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                 ),
               ),
             ),
+            if (_choosingOutput && Platform.isMacOS)
+              RecoverSaveWindowButton(visible: _choosingOutput),
           ],
         ),
         if (state.candidates.isNotEmpty) ...[
@@ -602,7 +605,10 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
           .withNativeDialog(() async {
             if (!mounted || !TickerMode.valuesOf(context).enabled) return null;
             return merge
-                ? picker.mergedPath(typeLabel: context.bheText('视频'))
+                ? picker.mergedPath(
+                    typeLabel: context.bheText('视频'),
+                    projectName: ref.read(projectProvider).statistics?['project']?['name']?.toString() ?? 'Project',
+                  )
                 : picker.directory(confirmLabel: context.bheText('选择输出目录'));
           }, onPrepareTimeout: () {
             log('warn', '准备阶段超过时限，直接弹出选择框');

@@ -12,14 +12,13 @@ Future<void> _showProjectRename(
   if (value == null || !context.mounted || state.project.id != id) return;
   final saved = await state.renameProject(value);
   if (!saved && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(context.bheText('保存失败，请重试')),
-        action: SnackBarAction(
-          label: context.bheText('反馈'),
-          onPressed: () =>
-              showMobileDiagnostics(context, error: state.diagnosticError),
-        ),
+    showBheToast(
+      context,
+      context.bheText('保存失败，请重试'),
+      action: SnackBarAction(
+        label: context.bheText('反馈'),
+        onPressed: () =>
+            showMobileDiagnostics(context, error: state.diagnosticError),
       ),
     );
   }

@@ -141,10 +141,23 @@ class _PlayerGroupsSheetState extends State<_PlayerGroupsSheet> {
               ),
             if (widget.state.playerGroups.isEmpty)
               Text(context.bheText('还没有分组。把当前项目的球员存为分组后，其他项目可以一键导入。')),
-            for (final group in widget.state.playerGroups)
+            if (widget.state.playerGroups.isNotEmpty)
+              Material(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+                clipBehavior: Clip.antiAlias,
+                child: Column(children: [
+                  for (final (index, group) in widget.state.playerGroups.indexed) ...[
+                    if (index > 0) const Padding(padding: EdgeInsets.only(left: 16), child: Divider(height: 1)),
               ListTile(
                 key: ValueKey('player-group-${group.name}'),
-                contentPadding: EdgeInsets.zero,
+                contentPadding: const EdgeInsets.fromLTRB(16, 0, 4, 0),
+                minTileHeight: 52,
+                onTap: _busy || !widget.allowImport ? null : () async {
+                  if (await _run(() => widget.state.importPlayers(group.players), project: true) && context.mounted) {
+                    Navigator.pop(context);
+                  }
+                },
                 title: Text(group.name, overflow: TextOverflow.ellipsis),
                 subtitle: Text(
                   group.players.join('、'),
@@ -208,6 +221,9 @@ class _PlayerGroupsSheetState extends State<_PlayerGroupsSheet> {
                     ),
                   ],
                 ),
+              ),
+                  ],
+                ]),
               ),
             const SizedBox(height: 14),
             OutlinedButton.icon(

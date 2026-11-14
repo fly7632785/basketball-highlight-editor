@@ -34,7 +34,7 @@ void main() {
     final state = MobileAppState(
       analysisEngine: const MobileAnalysisEngineUnavailable(),
     );
-    await pumpEventQueue();
+    await state.groupsReady;
     expect(state.playerGroups.single.name, '周六队');
 
     await state.addPlayer('罗斯');

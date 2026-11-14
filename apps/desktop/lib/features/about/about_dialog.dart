@@ -39,7 +39,7 @@ class _CourtsideAboutDialog extends StatelessWidget {
         constraints: const BoxConstraints(maxWidth: 460),
         child: Padding(
           padding: const EdgeInsets.all(Spacing.xl),
-          child: Column(
+          child: SingleChildScrollView(child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -106,6 +106,51 @@ class _CourtsideAboutDialog extends StatelessWidget {
               ),
               _InfoRow(label: context.bheText('运行日志'), value: logDirectory),
               const SizedBox(height: Spacing.lg),
+              Material(
+                  color: c.surface2,
+                  clipBehavior: Clip.antiAlias,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: c.border),
+                  ),
+                  child: InkWell(
+                    key: const ValueKey('about-third-party-notices'),
+                    onTap: () => showLicensePage(
+                      context: context,
+                      applicationName: 'BHE',
+                      applicationVersion: 'v$appVersion',
+
+                    ),
+                    child: SizedBox(
+                      height: 44,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        child: Row(
+                          children: [
+                            Icon(
+                              LucideIcons.scrollText,
+                              size: 17,
+                              color: c.textSecondary,
+                            ),
+                            const SizedBox(width: Spacing.sm),
+                            Expanded(
+                              child: Text(
+                                l10n?.text('第三方开源许可') ?? '第三方开源许可',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
+                            Icon(
+                              LucideIcons.chevronRight,
+                              size: 18,
+                              color: c.textSecondary,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: Spacing.md),
               Wrap(
                 alignment: WrapAlignment.end,
                 spacing: Spacing.sm,
@@ -116,6 +161,9 @@ class _CourtsideAboutDialog extends StatelessWidget {
                       await Directory(logDirectory).create(recursive: true);
                       await openExternalUri(logDirectory);
                     },
+                    style: TextButton.styleFrom(
+                      foregroundColor: c.textPrimary, minimumSize: const Size(44, 44),
+                    ),
                     icon: const Icon(LucideIcons.folderOpen, size: 17),
                     label: Text(context.bheText('打开日志目录')),
                   ),
@@ -125,26 +173,41 @@ class _CourtsideAboutDialog extends StatelessWidget {
                       navigator.pop();
                       showUpdateDialog(navigator.context);
                     },
+                    style: TextButton.styleFrom(
+                      foregroundColor: c.textPrimary, minimumSize: const Size(44, 44),
+                    ),
                     icon: const Icon(LucideIcons.circleArrowUp, size: 17),
                     label: Text(context.bheText('检查更新')),
                   ),
-                  FilledButton.icon(
+                  OutlinedButton.icon(
                     onPressed: () {
                       final navigator = Navigator.of(context);
                       navigator.pop();
                       showFeedbackDialog(navigator.context);
                     },
+                    style: _aboutOutlinedButtonStyle(context),
                     icon: const Icon(LucideIcons.mail, size: 17),
                     label: Text(l10n?.sendFeedback ?? '发送反馈'),
                   ),
                 ],
               ),
             ],
-          ),
+          )),
         ),
       ),
     );
   }
+}
+
+ButtonStyle _aboutOutlinedButtonStyle(BuildContext context) {
+  final c = AppColors.of(context);
+  return OutlinedButton.styleFrom(
+    foregroundColor: c.textPrimary,
+    minimumSize: const Size(44, 44),
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    side: const BorderSide(color: Color(0xFF6B7180)),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+  );
 }
 
 class _InfoRow extends StatelessWidget {

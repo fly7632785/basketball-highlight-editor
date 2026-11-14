@@ -43,9 +43,9 @@ void main() {
       );
       expect(tester.getRect(rail).bottom, closeTo(800, 1));
       expect(find.byKey(const ValueKey('review-notice-surface')), findsNothing);
-      await tester.tap(find.byType(PopupMenuButton<String>).first);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text(l10n.text('撤销上一步')));
+      final undo = find.byKey(const ValueKey('review-undo-top'));
+      expect(tester.widget<IconButton>(undo).onPressed, isNotNull);
+      await tester.tap(undo);
       await tester.pump();
       await waitProjectWrites(tester, fixture.state.pendingProjectWrites);
       await tester.pump();

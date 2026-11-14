@@ -70,6 +70,10 @@ fi
 cp "$FFMPEG" "$OUT/bin/ffmpeg"
 cp "$FFPROBE" "$OUT/bin/ffprobe"
 
+# Ultralytics reads the .git worktree pointer only for optional metadata. In a
+# sandboxed app that read can be denied; it must not prevent importing YOLO.
+"$PYTHON_RUNTIME/bin/python3" "$ROOT/scripts/patch_ultralytics_git.py" "$OUT/python"
+
 "$OUT/python/bin/python3" "$OUT/scripts/check_runtime.py" \
   --root "$OUT" \
   --python "$OUT/python/bin/python3" \

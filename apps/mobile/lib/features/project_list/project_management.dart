@@ -9,6 +9,8 @@ extension MobileProjectManagement on MobileAppState {
     final currentId = project.id, session = _projectSession;
     final intent = _newProjectIntent();
     var done = false;
+    _closingProjects++;
+    try {
     await _withProjectTransition(intent, () async {
       await _mutations.run(() async {
         if (!_isProjectIntent(intent) ||
@@ -24,6 +26,10 @@ extension MobileProjectManagement on MobileAppState {
         _notifyProjectManagement();
       });
     });
+    } finally {
+      _closingProjects--;
+      _notifyProjectManagement();
+    }
     return done;
   }
 

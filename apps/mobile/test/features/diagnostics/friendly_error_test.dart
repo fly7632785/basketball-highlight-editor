@@ -99,6 +99,26 @@ void main() {
       isNull,
     );
   });
+
+  test(
+    'share failures and photo permission denial have action-specific text',
+    () {
+      expect(
+        friendlyMobileError(
+          StateError('share transport failed'),
+          operation: 'share',
+        ).message,
+        '无法打开分享面板，请重试。',
+      );
+      expect(
+        friendlyMobileError(
+          PlatformException(code: 'PHOTO_PERMISSION_DENIED'),
+          operation: 'gallery.save',
+        ).message,
+        '没有相册保存权限，请在系统设置中允许 BHE 添加照片。',
+      );
+    },
+  );
   test('new dynamic and unknown error sentences are fully localized', () async {
     final english = await BheLocalizations.delegate.load(const Locale('en'));
     expect(
@@ -106,6 +126,14 @@ void main() {
       'This phone cannot process this video format (HEVC).',
     );
     expect(english.text('出错了：视频分析未完成，请重试。'), isNot(contains('出错')));
+    expect(
+      english.text('无法打开分享面板，请重试。'),
+      "Couldn't open the share sheet. Please try again.",
+    );
+    expect(
+      english.text('没有相册保存权限，请在系统设置中允许 BHE 添加照片。'),
+      contains('permission to save to Photos'),
+    );
   });
 
   test(

@@ -21,9 +21,7 @@ void main() {
       tester,
     ) async {
       tester.binding.platformDispatcher.localeTestValue = Locale(language);
-      addTearDown(
-        tester.binding.platformDispatcher.clearLocaleTestValue,
-      );
+      addTearDown(tester.binding.platformDispatcher.clearLocaleTestValue);
       await tester.binding.setSurfaceSize(const Size(360, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -42,16 +40,13 @@ void main() {
         find.textContaining(english ? 'Dev build' : '开发版'),
         findsOneWidget,
       );
-      // 引擎版本行存在（原生不可用时显示占位，不隐藏行）。
+      // 测试环境未注入原生引擎版本时，按 L216 规则隐藏该行。
       expect(
         find.textContaining(english ? 'Analysis engine version' : '分析引擎版本'),
-        findsOneWidget,
+        findsNothing,
       );
       // 反馈入口复用现有反馈。
-      expect(
-        find.text(english ? 'Report now' : '现在反馈'),
-        findsOneWidget,
-      );
+      expect(find.text(english ? 'Report now' : '现在反馈'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }

@@ -109,16 +109,23 @@ void main() {
           findsNothing,
         );
         await capture('idle');
-        await tester.tap(menu);
-        await tester.pumpAndSettle();
-        final undo = find.text('撤销上一步').last;
-        final item = find
-            .ancestor(of: undo, matching: find.byType(PopupMenuItem<String>))
-            .last;
-        expect(tester.widget<PopupMenuItem<String>>(item).enabled, isFalse);
+        final undoButton = find.byKey(const ValueKey('review-undo-top'));
+        if (landscape) {
+          await tester.tap(menu);
+          await tester.pumpAndSettle();
+          final undo = find.text('撤销上一步').last;
+          final item = find
+              .ancestor(of: undo, matching: find.byType(PopupMenuItem<String>))
+              .last;
+          expect(tester.widget<PopupMenuItem<String>>(item).enabled, isFalse);
+        } else {
+          expect(tester.widget<IconButton>(undoButton).onPressed, isNull);
+        }
         await capture('menu_disabled');
-        await tester.binding.handlePopRoute();
-        await tester.pumpAndSettle();
+        if (landscape) {
+          await tester.binding.handlePopRoute();
+          await tester.pumpAndSettle();
+        }
         await tester.runAsync(
           () => fixture.state.toggleCandidate(
             'goal',
@@ -128,25 +135,31 @@ void main() {
         await tester.pump();
         expect(tester.getRect(keep), initialRect);
         expect(find.byType(SnackBar), findsNothing);
-        await tester.tap(menu);
-        await tester.pumpAndSettle();
-        final enabledUndo = find.text('撤销上一步').last;
-        expect(
-          tester
-              .widget<PopupMenuItem<String>>(
-                find
-                    .ancestor(
-                      of: enabledUndo,
-                      matching: find.byType(PopupMenuItem<String>),
-                    )
-                    .last,
-              )
-              .enabled,
-          isTrue,
-        );
+        if (landscape) {
+          await tester.tap(menu);
+          await tester.pumpAndSettle();
+          final enabledUndo = find.text('撤销上一步').last;
+          expect(
+            tester
+                .widget<PopupMenuItem<String>>(
+                  find
+                      .ancestor(
+                        of: enabledUndo,
+                        matching: find.byType(PopupMenuItem<String>),
+                      )
+                      .last,
+                )
+                .enabled,
+            isTrue,
+          );
+        } else {
+          expect(tester.widget<IconButton>(undoButton).onPressed, isNotNull);
+        }
         await capture('menu_enabled');
-        await tester.binding.handlePopRoute();
-        await tester.pumpAndSettle();
+        if (landscape) {
+          await tester.binding.handlePopRoute();
+          await tester.pumpAndSettle();
+        }
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(
               const MethodChannel('plugins.flutter.io/path_provider'),

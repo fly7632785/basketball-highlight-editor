@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:bhe_core/bhe_core.dart';
 import 'package:flutter/services.dart';
@@ -8,7 +9,7 @@ import 'features/diagnostics/mobile_diagnostics.dart';
 import 'features/export/native_export_result.dart';
 import 'features/operation_status/task_stop_status.dart';
 
-String clipFileName(int index, Candidate candidate) {
+String clipFileName(int index, Candidate candidate, {String projectName = 'Project'}) {
   final name =
       'goal_${index.toString().padLeft(3, '0')}_${(candidate.eventMs / 1000).toStringAsFixed(2)}s';
   var player = (candidate.player ?? '').replaceAll(
@@ -16,8 +17,23 @@ String clipFileName(int index, Candidate candidate) {
     '_',
   );
   player = player.replaceAll(RegExp(r'^[ ._]+|[ ._]+$'), '');
-  if (player.length > 40) player = player.substring(0, 40);
-  return player.isEmpty ? '$name.mp4' : '${name}_$player.mp4';
+  player = String.fromCharCodes(player.runes.take(40));
+  final suffix = player.isEmpty
+      ? '-highlights-$name.mp4'
+      : '-highlights-${name}_$player.mp4';
+  // Reserve the complete identifying suffix before shortening the project
+  // name. Count UTF-8 bytes and keep whole code points, including emoji.
+  final projectByteBudget = 255 - utf8.encode('BHE-$suffix').length;
+  final project = StringBuffer();
+  var projectBytes = 0;
+  for (final rune in safeFileName(projectName).runes) {
+    final character = String.fromCharCode(rune);
+    final bytes = utf8.encode(character).length;
+    if (projectBytes + bytes > projectByteBudget) break;
+    project.write(character);
+    projectBytes += bytes;
+  }
+  return 'BHE-$project$suffix';
 }
 
 class _ExportRun {
@@ -106,6 +122,7 @@ class NativeMediaExportEngine implements MobileExportEngine {
     required VideoInfo video,
     required List<Candidate> candidates,
     required String outputDirectory,
+    String projectName = 'Project',
   }) async* {
     if (candidates.isEmpty) return;
     final run = _ExportRun();
@@ -126,7 +143,7 @@ class NativeMediaExportEngine implements MobileExportEngine {
       Future<void> exportOne(Candidate candidate) async {
         if (failed || run.cancelled) return;
         final index = candidates.indexOf(candidate) + 1;
-        final outputPath = '$outputDirectory/${clipFileName(index, candidate)}';
+        final outputPath = '$outputDirectory/${clipFileName(index, candidate, projectName: projectName)}';
         try {
           run.nativeId = candidate.id;
           run.nativeGeneration++;
@@ -385,10 +402,13 @@ class NativeMediaExportEngine implements MobileExportEngine {
     try {
       await _channel.invokeMethod<void>('saveToLibrary', {'path': path});
     } on MissingPluginException {
-      throw const MobileExportException('当前平台尚未注册相册保存模块。');
+      throw const MobileDiagnosticException(
+        MobileExportException('当前平台尚未注册相册保存模块。'),
+        'gallery.save',
+      );
     } on PlatformException catch (error, stack) {
-      MobileDiagnostics.instance.error(error, stack, operation: 'export');
-      throw MobileDiagnosticException(error, 'export');
+      MobileDiagnostics.instance.error(error, stack, operation: 'gallery.save');
+      throw MobileDiagnosticException(error, 'gallery.save');
     }
   }
 }
