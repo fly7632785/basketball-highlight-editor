@@ -676,7 +676,7 @@ class _RenameProjectButton extends StatelessWidget {
     final c = AppColors.of(context);
     return IconButton(
       icon: const Icon(LucideIcons.pencil, size: 16),
-      tooltip: '重命名项目',
+      tooltip: context.bheText('重命名项目'),
       visualDensity: VisualDensity.compact,
       color: c.textTertiary,
       onPressed: () => showProjectNameDialog(
