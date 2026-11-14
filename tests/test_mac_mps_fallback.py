@@ -43,7 +43,7 @@ def test_other_platform_auto_policy_is_unchanged(monkeypatch, system, machine, e
 
 
 @pytest.mark.parametrize("machine,expected", [("x86_64", "cpu"), ("arm64", "mps")])
-def test_coreml_missing_model_does_not_restore_mps_on_intel(tmp_path, monkeypatch, machine, expected):
+def test_coreml_missing_model_keeps_platform_fallback(tmp_path, monkeypatch, machine, expected):
     monkeypatch.setattr(inference.sys, "platform", "darwin")
     monkeypatch.setattr(inference.platform, "machine", lambda: machine)
     fake = type(sys)("ultralytics")
