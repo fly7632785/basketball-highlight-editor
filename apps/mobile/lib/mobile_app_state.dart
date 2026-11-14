@@ -686,8 +686,15 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
 
   String? get analysisStartBlockReason =>
       _heavyTaskBlockReason(startingAnalysis: true);
-  String? get exportStartBlockReason =>
-      _heavyTaskBlockReason(startingAnalysis: false);
+  String? get exportStartBlockReason {
+    // A timed-out prior export remains serialized by NativeMediaExportEngine's
+    // global ticket gate. Rejecting a new export here strands an eligible
+    // waiter instead of letting it wait for that gate to drain.
+    if (hasUncertainAnalysis) return '上次任务尚未确认结束，请先确认停止。';
+    if (analysing) return '正在分析，请等待分析结束。';
+    if (exporting) return '正在导出，请等待导出结束。';
+    return null;
+  }
 
   bool get canStartAnalysis =>
       hasVideo &&

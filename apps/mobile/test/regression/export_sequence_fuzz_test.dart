@@ -272,6 +272,15 @@ void main() {
       final failures = outcomes
           .where((x) => (x['errors'] as List).isNotEmpty)
           .toList();
+      if (start <= 5 && start + count > 5) {
+        final seed5 = outcomes.singleWhere((outcome) => outcome['seed'] == 5);
+        expect(
+          seed5['errors'],
+          isEmpty,
+          reason:
+              'fixed regression: queued export after switch and return (seed 5)',
+        );
+      }
       final data = {
         'base': 'current checkout',
         'outcomes': outcomes,
