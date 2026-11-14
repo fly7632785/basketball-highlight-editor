@@ -1069,8 +1069,10 @@ class EngineService:
                 "-ss", f"{offset / 1000:.3f}", "-i", str(frame),
                 "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3", str(temporary_path),
             ]
+            # NAS/共享文件夹上的 4K HEVC 首帧 seek 可能远慢于本地文件,
+            # 20 秒不够;放宽到 60 秒,避免网络视频预览误报失败。
             subprocess.run(command, check=True, capture_output=True, stdin=subprocess.DEVNULL,
-                           text=True, encoding="utf-8", errors="replace", timeout=20)
+                           text=True, encoding="utf-8", errors="replace", timeout=60)
             if not temporary_path.is_file() or temporary_path.stat().st_size == 0:
                 raise OSError("预览帧未生成")
         try:
