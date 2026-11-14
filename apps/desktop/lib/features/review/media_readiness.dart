@@ -3,30 +3,60 @@ import 'dart:async';
 /// 等待媒体时长变为正数（media_kit 完成元数据探测）后才认为可播放。
 ///
 /// 网络位置（NAS/共享文件夹）上的视频首次探测元数据可能远慢于本地
-/// 文件：每次尝试给 [timeout]，共 [retries] + 1 次（默认 3 × 15 秒 =
-/// 45 秒），全部超时才判定失败，并抛出带原因的 [MediaReadinessTimeout]。
+/// 文件：保留 [timeout] × ([retries] + 1) 的总等待额度（默认 45 秒），
+/// 只建立一个订阅。[cancelled] 完成时立即退出并清理订阅。
 Future<Duration> waitForPlayableDuration({
   required Duration current,
   required Stream<Duration> updates,
   Duration timeout = const Duration(seconds: 15),
   int retries = 2,
+  Future<void>? cancelled,
 }) async {
   if (current > Duration.zero) return Future<Duration>.value(current);
-  var attempt = 0;
-  while (true) {
-    try {
-      return await updates
-          .firstWhere((duration) => duration > Duration.zero)
-          .timeout(timeout);
-    } on TimeoutException {
-      if (attempt >= retries) {
-        throw MediaReadinessTimeout(
-          (timeout.inMilliseconds * (retries + 1) / 1000).round(),
-        );
+  final result = Completer<Duration>();
+  final totalTimeout = timeout * (retries < 0 ? 1 : retries + 1);
+  final subscription = updates.listen(
+    (duration) {
+      if (duration > Duration.zero && !result.isCompleted) {
+        result.complete(duration);
       }
-      attempt += 1;
+    },
+    onError: (Object error, StackTrace stack) {
+      if (!result.isCompleted) result.completeError(error, stack);
+    },
+    onDone: () {
+      if (!result.isCompleted) {
+        result.completeError(StateError('No playable media duration'));
+      }
+    },
+  );
+  final timer = Timer(totalTimeout, () {
+    if (!result.isCompleted) {
+      result.completeError(
+        MediaReadinessTimeout((totalTimeout.inMilliseconds / 1000).round()),
+      );
     }
+  });
+  cancelled?.then<void>(
+    (_) {
+      if (!result.isCompleted) {
+        result.completeError(const MediaReadinessCancelled());
+      }
+    },
+    onError: (Object error, StackTrace stack) {
+      if (!result.isCompleted) result.completeError(error, stack);
+    },
+  );
+  try {
+    return await result.future;
+  } finally {
+    timer.cancel();
+    await subscription.cancel();
   }
+}
+
+class MediaReadinessCancelled implements Exception {
+  const MediaReadinessCancelled();
 }
 
 /// 等待媒体元数据超时。

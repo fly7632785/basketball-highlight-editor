@@ -1633,6 +1633,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
   int _mediaGeneration = 0;
   bool _disposed = false;
   Future<void> _mediaQueue = Future<void>.value();
+  Completer<void>? _mediaReadinessCancellation;
   int _playbackToken = 0;
   Timer? _annotationHintTimer;
   Timer? _readyWatch;
@@ -1770,6 +1771,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
   void dispose() {
     widget.controller._detach(this);
     _disposed = true;
+    _cancelMediaReadiness();
     _mediaGeneration++;
     _playbackToken++;
     _annotationHintTimer?.cancel();
@@ -1803,6 +1805,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
     bool playAfterOpen = false,
     bool recreatePlayer = false,
   }) {
+    _cancelMediaReadiness();
     final generation = ++_mediaGeneration;
     _playbackToken++;
     return _enqueueMediaAction(() async {
@@ -1830,6 +1833,14 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
       if (!_isCurrent(generation)) return;
       await _open(path, generation, playAfterOpen: playAfterOpen);
     });
+  }
+
+  void _cancelMediaReadiness() {
+    final cancellation = _mediaReadinessCancellation;
+    _mediaReadinessCancellation = null;
+    if (cancellation != null && !cancellation.isCompleted) {
+      cancellation.complete();
+    }
   }
 
   void _reloadVideo() {
@@ -1918,15 +1929,23 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
       await openLoggedMedia(player, '审核页', path);
       if (!_isCurrent(generation)) return;
       final readyWatch = _readyWatch = watchPlayerReadyTimeout('审核页');
+      final cancellation = _mediaReadinessCancellation = Completer<void>();
       try {
         await waitForPlayableDuration(
           current: player.state.duration,
           updates: player.stream.duration,
+          cancelled: cancellation.future,
         );
+      } on MediaReadinessCancelled {
+        return;
       } on Object catch (error) {
         appLog('warn', 'player', '审核页 等待视频就绪失败: $error');
         rethrow;
       } finally {
+        if (identical(_mediaReadinessCancellation, cancellation)) {
+          _mediaReadinessCancellation = null;
+        }
+        if (!cancellation.isCompleted) cancellation.complete();
         readyWatch.cancel();
         if (identical(_readyWatch, readyWatch)) _readyWatch = null;
       }
@@ -3948,6 +3967,7 @@ class _ClipRangeDialog extends StatefulWidget {
 }
 
 class _ClipRangeDialogState extends State<_ClipRangeDialog> {
+  final _mediaReadinessCancellation = Completer<void>();
   Player? _player;
   VideoController? _controller;
   StreamSubscription<Duration>? _positionSubscription;
@@ -4037,12 +4057,15 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
       });
       await matchPlayerToSourceRotation(player, rotation: widget.rotation);
       await openLoggedMedia(player, '审核页', path);
+      if (!mounted || !identical(player, _player)) return;
       // 等媒体元数据就绪后再 seek:open 后立即 seek 在加载较慢时
       // (Windows 软件解码)会被丢弃,导致播放从 0 开始而非片段起点。
       await waitForPlayableDuration(
         current: player.state.duration,
         updates: player.stream.duration,
+        cancelled: _mediaReadinessCancellation.future,
       );
+      if (!mounted || !identical(player, _player)) return;
       await player.seek(Duration(milliseconds: _startMs));
       if (mounted && identical(player, _player)) {
         setState(() => _ready = true);
@@ -4054,6 +4077,7 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
 
   @override
   void dispose() {
+    _mediaReadinessCancellation.complete();
     unawaited(_positionSubscription?.cancel());
     unawaited(_playingSubscription?.cancel());
     _scrubTimer?.cancel();
