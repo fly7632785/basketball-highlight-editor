@@ -107,6 +107,10 @@ class DetectorPreflight:
         self._lock = threading.Lock()
 
     def ensure(self, repo_root, model_path, device, cancel_check=None, process_callback=None):
+        # Use the safe backend in both the child command and cache key. An old
+        # auto -> MPS result must not be reused on Intel macOS.
+        if device == "auto" and platform.system() == "Darwin" and platform.machine() == "x86_64":
+            device = "cpu"
         model_path = Path(model_path).resolve()
         info = model_path.stat()
         key = (device, str(model_path), info.st_size, info.st_mtime_ns)
@@ -116,7 +120,7 @@ class DetectorPreflight:
         try:
             if cancel_check and cancel_check():
                 raise PipelineCancelled("JOB_CANCELLED")
-            if key in self._ready:
+            if key in self._ready and not (device == "cpu" and self._ready[key]["device"] != "cpu"):
                 log_diagnostic(f"detector preflight cache hit requested={device} device={self._ready[key]['device']}")
                 return {**self._ready[key], "cached": True}
             result = check_detector(repo_root, model_path, device, cancel_check, process_callback)

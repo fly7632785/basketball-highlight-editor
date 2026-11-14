@@ -4,7 +4,8 @@
 1. ``select_device()`` 返回 ``cpu | cuda | mps | dml | coreml``；
 2. ``load_detector()`` 返回一个拥有 ``predict()`` 的对象。
 
-优先级（``auto``）：cuda > dml > coreml > mps > cpu。CUDA 比 DML 快（1.95 vs 2.88 ms/张），
+Intel macOS 的 ``auto`` 固定使用 CPU，避免缺失的 MPS 算子中断分析。
+其他平台优先级（``auto``）：cuda > dml > coreml > mps > cpu。CUDA 比 DML 快（1.95 vs 2.88 ms/张），
 所以装了 CUDA 版 torch 的机器应该走 CUDA；DML 只负责"有显卡但 torch 是 CPU 版"这个
 Windows 上最常见的情况。``coreml`` 排在 mps 前面：Apple Silicon 上端到端比 mps 快约 30%
 （粗扫/精筛/复核三段合计 99.2s → 69.2s），基准见
@@ -152,6 +153,10 @@ def coreml_available(model_path: str | Path | None = None) -> bool:
     return static_onnx_path_for(model_path).is_file()
 
 
+def _intel_macos() -> bool:
+    return sys.platform == "darwin" and platform.machine() == "x86_64"
+
+
 def resolve_device(requested: str = "auto", model_path: str | Path | None = None) -> str:
     """把 ``auto`` 解析成具体设备；显式请求不可用时降级到 cpu。
 
@@ -169,6 +174,10 @@ def resolve_device(requested: str = "auto", model_path: str | Path | None = None
         requested = "auto"
     if requested != "auto":
         return requested
+
+    # Intel wheels can report MPS available while lacking torchvision NMS.
+    if _intel_macos():
+        return "cpu"
 
     if _cuda_possible() and _torch_cuda_available():
         return "cuda"
@@ -239,6 +248,7 @@ def _load_detector(
     if target == "coreml":
         from .onnx_detector import OnnxDetector
 
+        fallback_target = "cpu" if _intel_macos() else "mps"
         onnx_path = static_onnx_path_for(path)
         if onnx_path.is_file():
             # 方形 letterbox 是硬要求：静态模型只吃 1×3×640×640，rect 输入直接报错。
@@ -250,15 +260,15 @@ def _load_detector(
                 raise
             except Exception as error:
                 # 静态模型是可选产物，损坏或 ORT 读不了时不能让整次分析失败。
-                print(f"device=coreml failed to load {onnx_path.name} ({error}); falling back to mps", file=sys.stderr)
+                print(f"device=coreml failed to load {onnx_path.name} ({error}); falling back to {fallback_target}", file=sys.stderr)
             else:
                 if detector.device == "coreml":
                     _remember("coreml")
                     return detector
-                # CoreML EP 没建起来时 ORT 只剩单张 CPU，比 mps 慢，退回合并前的 torch/mps。
+                # CoreML EP 没建起来时退回 torch；Intel 保持 CPU，其他平台沿用 MPS。
                 print(
                     "device=coreml unavailable at session level "
-                    f"(providers={detector.provider}); falling back to mps",
+                    f"(providers={detector.provider}); falling back to {fallback_target}",
                     file=sys.stderr,
                 )
         else:
@@ -267,7 +277,7 @@ def _load_detector(
                 f"(run scripts/export_mobile_model.py --imgsz 640 --batch 1); falling back",
                 file=sys.stderr,
             )
-        target = "mps"
+        target = fallback_target
 
     try:
         from ultralytics import YOLO
