@@ -496,6 +496,8 @@ pub struct RuntimeSession {
     rim_roi: Roi,
     rim_calibrated: bool,
     rim_observations: Vec<Detection>,
+    stable_rim_box_count: usize,
+    coarse_crossing_diagnostics: CoarseCrossingDiagnostics,
     net_rim_compatible: bool,
     frame_width: u32,
     frame_height: u32,
@@ -543,6 +545,20 @@ pub struct RuntimeSession {
     provider_registered: String,
     provider_precision: String,
     session_init_ms: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct CoarseCrossingDiagnostics {
+    ball_point_count: usize,
+    pair_count: usize,
+    crossing_event_count: usize,
+    rejected_above_gate: usize,
+    rejected_nonpositive_gap: usize,
+    rejected_max_gap: usize,
+    rejected_below_or_descent: usize,
+    rejected_interpolation: usize,
+    rejected_rim_corridor: usize,
+    rejected_deduplication: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -759,6 +775,8 @@ impl RuntimeSession {
             rim_roi,
             rim_calibrated,
             rim_observations: Vec::new(),
+            stable_rim_box_count: 0,
+            coarse_crossing_diagnostics: CoarseCrossingDiagnostics::default(),
             frame_width: 1,
             frame_height: 1,
             last_time_ms: 0,
@@ -809,6 +827,49 @@ impl RuntimeSession {
         &self.candidates
     }
 
+    fn decision_diagnostics(&self) -> serde_json::Value {
+        serde_json::json!({
+            "mode": if self.config.coarse_mode { "coarse" } else { "fine" },
+            "ball_track_count": if self.config.coarse_mode {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!(self.tracks.len())
+            },
+            "coarse_ball_point_count": if self.config.coarse_mode {
+                serde_json::json!(self.coarse_crossing_diagnostics.ball_point_count)
+            } else {
+                serde_json::Value::Null
+            },
+            "rim_box_observation_count": self.rim_observations.len(),
+            "stable_rim_cluster_box_count": if self.config.coarse_mode {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!(self.stable_rim_box_count)
+            },
+            "rim_boxes_used_for_estimate": if self.config.coarse_mode {
+                self.rim_observations.len()
+            } else {
+                self.stable_rim_box_count
+            },
+            "rim_calibrated": self.rim_calibrated,
+            "crossing_pair_count": self.coarse_crossing_diagnostics.pair_count,
+            "crossing_event_count": if self.config.coarse_mode {
+                self.coarse_crossing_diagnostics.crossing_event_count
+            } else {
+                self.candidates.len()
+            },
+            "gate_rejections": {
+                "above_clearance": self.coarse_crossing_diagnostics.rejected_above_gate,
+                "nonpositive_time_gap": self.coarse_crossing_diagnostics.rejected_nonpositive_gap,
+                "max_time_gap": self.coarse_crossing_diagnostics.rejected_max_gap,
+                "below_clearance_or_descent": self.coarse_crossing_diagnostics.rejected_below_or_descent,
+                "crossing_interpolation": self.coarse_crossing_diagnostics.rejected_interpolation,
+                "rim_corridor": self.coarse_crossing_diagnostics.rejected_rim_corridor,
+                "candidate_deduplication": self.coarse_crossing_diagnostics.rejected_deduplication,
+            }
+        })
+    }
+
     /// Flushes the short post-crossing verification window after the last
     /// decoded frame. Streaming callers otherwise leave a candidate near the
     /// analysis end in `pending`, while the desktop batch engine resolves the
@@ -828,15 +889,17 @@ impl RuntimeSession {
                 self.frame_height,
             )
             .unwrap_or_else(|| self.rim_roi.clone());
+            let (candidates, diagnostics) = coarse_crossing_candidates(
+                &self.coarse_points,
+                &coarse_rim,
+                self.frame_width,
+                self.frame_height,
+                &self.config,
+            );
+            self.coarse_crossing_diagnostics = diagnostics;
             return Ok(FrameResponse {
                 detections: Vec::new(),
-                candidates: coarse_crossing_candidates(
-                    &self.coarse_points,
-                    &coarse_rim,
-                    self.frame_width,
-                    self.frame_height,
-                    &self.config,
-                ),
+                candidates,
                 processed_frames: self.processed_frames,
             });
         }
@@ -1748,6 +1811,7 @@ impl RuntimeSession {
             y2: median_f32(&mut bottom),
         };
         self.rim_roi = hoop_detection_to_rim(&selected_bbox, width, height);
+        self.stable_rim_box_count = selected.len();
         self.rim_calibrated = true;
     }
 
@@ -2654,7 +2718,7 @@ fn coarse_crossing_candidates(
     frame_width: u32,
     frame_height: u32,
     config: &RuntimeConfig,
-) -> Vec<Candidate> {
+) -> (Vec<Candidate>, CoarseCrossingDiagnostics) {
     let frame_width_f = frame_width.max(1) as f32;
     let frame_height_f = frame_height.max(1) as f32;
     let rim_y = (rim.top + rim.bottom) / 2.0;
@@ -2669,26 +2733,41 @@ fn coarse_crossing_candidates(
     let mut ordered = points.to_vec();
     ordered.sort_by_key(|point| point.0);
     let mut candidates = Vec::new();
+    let mut diagnostics = CoarseCrossingDiagnostics {
+        ball_point_count: ordered.len(),
+        ..CoarseCrossingDiagnostics::default()
+    };
 
     for (index, above) in ordered.iter().copied().enumerate() {
         if above.2 > rim_y - above_clearance {
+            diagnostics.rejected_above_gate += ordered.len() - index - 1;
             continue;
         }
-        for below in ordered[index + 1..].iter().copied() {
+        for (below_index, below) in ordered.iter().copied().enumerate().skip(index + 1) {
+            diagnostics.pair_count += 1;
             let gap_ms = below.0 - above.0;
             if gap_ms <= 0 {
+                diagnostics.rejected_nonpositive_gap += 1;
                 continue;
             }
             if gap_ms > 2_500 {
+                diagnostics.rejected_max_gap += ordered.len() - below_index;
                 break;
             }
-            if below.2 < rim_y + below_clearance || below.2 - above.2 < minimum_descent {
+            if below.2 < rim_y + below_clearance {
+                diagnostics.rejected_below_or_descent += 1;
+                continue;
+            }
+            if below.2 - above.2 < minimum_descent {
+                diagnostics.rejected_below_or_descent += 1;
                 continue;
             }
             let Some((_, crossing_x)) = crossing_at_rim(above, below, rim_y) else {
+                diagnostics.rejected_interpolation += 1;
                 continue;
             };
             if crossing_x < rim_left - crossing_margin || crossing_x > rim_right + crossing_margin {
+                diagnostics.rejected_rim_corridor += 1;
                 continue;
             }
             // Python's coarse event is the midpoint, rounded to centiseconds,
@@ -2698,6 +2777,7 @@ fn coarse_crossing_candidates(
                 .last()
                 .is_some_and(|candidate: &Candidate| event_ms - candidate.event_ms <= 800)
             {
+                diagnostics.rejected_deduplication += 1;
                 break;
             }
             let crossing = EvidencePoint {
@@ -2760,10 +2840,11 @@ fn coarse_crossing_candidates(
                 gates: serde_json::json!({}),
                 verification: serde_json::json!({}),
             });
+            diagnostics.crossing_event_count += 1;
             break;
         }
     }
-    candidates
+    (candidates, diagnostics)
 }
 
 fn evidence_point(point: BallPoint) -> EvidencePoint {
@@ -6439,11 +6520,26 @@ pub unsafe extern "C" fn bhe_runtime_finish_session(session: *mut RuntimeSession
     if session.is_null() {
         return std::ptr::null_mut();
     }
-    let output = match (*session)
-        .finish()
-        .and_then(|response| serde_json::to_string(&response).map_err(RuntimeError::from))
-    {
-        Ok(output) => output,
+    let output = match (*session).finish() {
+        Ok(response) => {
+            let mut value = match serde_json::to_value(response) {
+                Ok(value) => value,
+                Err(error) => {
+                    return CString::new(
+                        serde_json::json!({"error": error.to_string()}).to_string(),
+                    )
+                    .unwrap()
+                    .into_raw()
+                }
+            };
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "decision_diagnostics".into(),
+                    (*session).decision_diagnostics(),
+                );
+            }
+            value.to_string()
+        }
         Err(error) => serde_json::json!({"error": error.to_string()}).to_string(),
     };
     CString::new(output).unwrap().into_raw()
