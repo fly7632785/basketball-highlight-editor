@@ -186,13 +186,33 @@ Timer watchPlayerReadyTimeout(
 String playerReadyTimeoutLine(String where, Duration timeout) =>
     '$where 打开后 ${timeout.inSeconds} 秒仍未就绪';
 
+/// 把本地文件路径转成传给 mpv 的地址。
+///
+/// Windows 的 UNC 路径(`\\server\share\...` 或 `//server/share/...`)不能经
+/// `Uri.file` 转换:那会产出 `file://server/share/...`,而 mpv 的 file://
+/// 协议不支持网络主机名——loadfile 之后直接回到 idle、不报错、元数据永远
+/// 探测不到,NAS/共享文件夹里的视频因此黑屏(用随包的 libmpv 实测:`file://`
+/// +主机名的两种写法都打不开,原始 UNC 路径 0.3 秒出时长)。UNC 直接把原始
+/// 路径交给 mpv(media_kit 的 [Media] 原样透传),mpv 原生支持反斜杠和非
+/// ASCII 字符;其余路径(盘符、macOS/Linux)维持 file:// URI 不变,是已验证
+/// 可用的形式。
+String mpvLocationFor(String path, {required bool isWindows}) {
+  if (isWindows && (path.startsWith(r'\\') || path.startsWith('//'))) {
+    return path;
+  }
+  return Uri.file(path).toString();
+}
+
 /// 带耗时地记录打开视频：播放器 open 慢或失败时，日志里能看出是哪个文件类型、卡了多久。
 Future<void> openLoggedMedia(Player player, String where, String path) async {
   final watch = Stopwatch()..start();
   final dot = path.lastIndexOf('.');
   final ext = dot < 0 ? '?' : path.substring(dot + 1).toLowerCase();
   try {
-    await player.open(Media(Uri.file(path).toString()), play: false);
+    await player.open(
+      Media(mpvLocationFor(path, isWindows: Platform.isWindows)),
+      play: false,
+    );
     appLog('info', 'player', '$where 打开视频 ext=$ext 用时 ${watch.elapsedMilliseconds}ms');
   } catch (error) {
     appLog('error', 'player', '$where 打开视频失败 ext=$ext 用时 ${watch.elapsedMilliseconds}ms: $error');

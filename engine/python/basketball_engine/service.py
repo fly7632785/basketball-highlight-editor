@@ -1069,8 +1069,35 @@ class EngineService:
                 "-ss", f"{offset / 1000:.3f}", "-i", str(frame),
                 "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "3", str(temporary_path),
             ]
-            subprocess.run(command, check=True, capture_output=True, stdin=subprocess.DEVNULL,
-                           text=True, encoding="utf-8", errors="replace", timeout=20)
+            # NAS/共享文件夹上的 4K HEVC 首帧 seek 可能远慢于本地文件,
+            # 20 秒不够;放宽到 60 秒,避免网络视频预览误报失败。
+            check_cancelled()
+            options = dict(stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+            if os.name == "nt":
+                options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            else:
+                options["start_new_session"] = True
+            process = subprocess.Popen(command, **options)
+            started = time.monotonic()
+            try:
+                while True:
+                    check_cancelled()
+                    remaining = 60 - (time.monotonic() - started)
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(command, 60)
+                    try:
+                        stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+                check_cancelled()
+                if process.returncode:
+                    raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
+            finally:
+                if process.poll() is None:
+                    terminate_process(process)
+                process.communicate()
             if not temporary_path.is_file() or temporary_path.stat().st_size == 0:
                 raise OSError("预览帧未生成")
         try:
@@ -1078,6 +1105,7 @@ class EngineService:
                 extract(frame_input, frame_time_ms)
             except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
                 temporary_path.unlink(missing_ok=True)
+                check_cancelled()
                 if frame_input == source:
                     raise
                 self._check_project_identity(store, identity)

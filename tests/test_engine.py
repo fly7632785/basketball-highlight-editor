@@ -1419,7 +1419,7 @@ def test_extract_preview_generates_frame_and_reuses_cached_frame(tmp_path: Path,
     def fail_if_called(*args, **kwargs):
         raise AssertionError("cached preview should not invoke ffmpeg")
 
-    monkeypatch.setattr("basketball_engine.service.subprocess.run", fail_if_called)
+    monkeypatch.setattr("basketball_engine.service.subprocess.Popen", fail_if_called)
     cached = service.handle(
         "extract_preview",
         {"project_root": str(project_root), "video_id": video["id"], "time_ms": 200},
@@ -1484,13 +1484,13 @@ def test_export_still_checks_content_when_metadata_matches(tmp_path: Path):
 
 def _preview_commands(monkeypatch):
     commands = []
-    real_run = subprocess.run
+    real_popen = subprocess.Popen
 
     def spy(command, *args, **kwargs):
         commands.append(command)
-        return real_run(command, *args, **kwargs)
+        return real_popen(command, *args, **kwargs)
 
-    monkeypatch.setattr("basketball_engine.service.subprocess.run", spy)
+    monkeypatch.setattr("basketball_engine.service.subprocess.Popen", spy)
     return commands
 
 
@@ -2912,12 +2912,12 @@ def test_invalid_proxy_falls_back_to_original(tmp_path, monkeypatch, damage):
 
 def test_proxy_extract_without_frame_retries_source(tmp_path, monkeypatch):
     service, root, video, source, proxy = _project_with_proxy(tmp_path, 1000, 7000)
-    real_run = subprocess.run
+    real_popen = subprocess.Popen
     def run(command, *args, **kwargs):
         if str(proxy.resolve()) in command and '-frames:v' in command:
-            return subprocess.CompletedProcess(command, 0)
-        return real_run(command, *args, **kwargs)
-    monkeypatch.setattr('basketball_engine.service.subprocess.run', run)
+            return real_popen([sys.executable, '-c', 'pass'], *args, **kwargs)
+        return real_popen(command, *args, **kwargs)
+    monkeypatch.setattr('basketball_engine.service.subprocess.Popen', run)
     result = service.extract_preview({'project_root':str(root), 'video_id':video['id'], 'time_ms':3000})
     assert Path(result['path']).stat().st_size > 0
 

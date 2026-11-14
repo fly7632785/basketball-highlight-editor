@@ -695,6 +695,44 @@ void main() {
     expect(duration, const Duration(seconds: 9));
   });
 
+  test('元数据迟到时通过重试拿到时长(NAS 慢盘场景)', () async {
+    final controller = StreamController<Duration>.broadcast();
+    final expectation = expectLater(
+      waitForPlayableDuration(
+        current: Duration.zero,
+        updates: controller.stream,
+        timeout: const Duration(milliseconds: 80),
+        retries: 2,
+      ),
+      completion(const Duration(seconds: 30)),
+    );
+    // 第一次尝试超时后才补发时长:验证重试会重新订阅并接受迟到的值。
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    controller.add(const Duration(seconds: 30));
+    await expectation;
+    await controller.close();
+  });
+
+  test('重试耗尽后抛出带原因的友好超时异常', () async {
+    final controller = StreamController<Duration>.broadcast();
+    await expectLater(
+      waitForPlayableDuration(
+        current: Duration.zero,
+        updates: controller.stream,
+        timeout: const Duration(milliseconds: 60),
+        retries: 1,
+      ),
+      throwsA(
+        isA<MediaReadinessTimeout>().having(
+          (error) => error.toString(),
+          'message',
+          contains('NAS'),
+        ),
+      ),
+    );
+    await controller.close();
+  });
+
   testWidgets(
     'shows analysis progress instead of an unexplained waiting state',
     (tester) async {
