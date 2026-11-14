@@ -2710,6 +2710,78 @@ def _run_standard_analysis(service, store, video, model):
     )
 
 
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_rim_band_seed_fallback_requires_confirmation_for_high_confidence(
+    tmp_path: Path, monkeypatch, confirmed,
+):
+    import generate_candidates
+
+    service, store, video, model = _analysis_fixture(tmp_path)
+
+    def detection(name, x, y, confidence):
+        return {
+            "name": name, "center": [x, y], "confidence": confidence,
+            "xyxy": [x - 10, y - 5, x + 10, y + 5],
+        }
+
+    # A high-confidence single sighting and a real, separate crossing.
+    records = [
+        {"time": t, "detections": [
+            detection("hoop", 50, 70, .9), detection("ball", 50, y, conf),
+        ]}
+        for t, y, conf in [(7.0, 50, .99), (14.0, 40, .8), (14.5, 100, .8)]
+    ]
+
+    def run(commands, refined_output, *_args, **_kwargs):
+        # Exercise the real standard-mode flag and candidate generator,
+        # rather than injecting an already-normalized seed into the store.
+        command = commands[2]
+        assert "--rim-band-seeds" in command
+        detections = Path(commands[1][commands[1].index("--output") + 1])
+        detections.parent.mkdir(parents=True, exist_ok=True)
+        detections.write_text(json.dumps({
+            "video": str(tmp_path / "source.mp4"), "model": str(model),
+            "records": records,
+        }), encoding="utf-8")
+        with monkeypatch.context() as args:
+            args.setattr(sys, "argv", command[1:])
+            generate_candidates.main(generate_candidates.parse_args())
+        coarse = json.loads(Path(command[command.index("--output") + 1]).read_text())
+        assert len(coarse["candidates"]) == 2
+        assert sum(item.get("seed") == "rim_band_sighting"
+                   for item in coarse["candidates"]) == 1
+        refined = {"results": [{"refined": ([{
+            "time": 7.0, "score": .95, "confidence": "high", "verdict": "made",
+        }] if confirmed else [])}]}
+        Path(refined_output).write_text(json.dumps(refined), encoding="utf-8")
+        return {"refined": refined, "logs": [], "stage_timings_ms": {}}
+
+    monkeypatch.setattr("engine.python.basketball_engine.service.run_pipeline", run)
+    monkeypatch.setattr(service, "_verify_rim_crossings", lambda **_: None)
+    monkeypatch.setattr(service, "_prepare_candidate_previews", lambda **_: {"generated": 0})
+
+    _, candidates = _run_standard_analysis(service, store, video, model)
+
+    assert len(candidates) == 2
+    seed = candidates[7000]
+    evidence = json.loads(seed["evidence_json"])
+    if confirmed:
+        assert seed["confidence"] == "high"
+        assert seed["score"] == .95
+        assert "fallback_reason" not in evidence
+    else:
+        assert seed["confidence"] == "low"
+        assert seed["score"] == 0.0
+        assert evidence["fallback_reason"] == "unconfirmed_rim_band_sighting"
+        assert evidence["coarse_detection_confidence"] == .99
+    assert seed["review_status"] == "pending"
+    assert seed["selection_status"] == "included"
+    crossing = next(item for time_ms, item in candidates.items() if time_ms != 7000)
+    assert crossing["confidence"] == "high"
+    assert crossing["score"] == .8
+    assert "fallback_reason" not in json.loads(crossing["evidence_json"])
+
+
 def test_standard_analysis_auto_excludes_candidates_that_fail_the_rim_check(
     tmp_path: Path,
     monkeypatch,

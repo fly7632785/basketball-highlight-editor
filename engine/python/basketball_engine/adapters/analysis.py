@@ -141,6 +141,12 @@ def flatten_coarse_matches(data: Dict[str, Any], dedupe_seconds: float = 2.0) ->
                 )
         if confidences:
             normalized["coarse_crossing"] = True
+        if normalized.get("seed") == "rim_band_sighting":
+            # A confident ball sighting is not a confirmed crossing. Keep
+            # the original detection confidence as evidence, not a goal score.
+            normalized["confidence"] = "low"
+            normalized["score"] = 0.0
+            normalized["fallback_reason"] = "unconfirmed_rim_band_sighting"
         matches.append(normalized)
     return dedupe_candidates(matches, dedupe_seconds)
 
