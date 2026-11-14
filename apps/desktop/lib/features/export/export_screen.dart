@@ -1396,9 +1396,9 @@ Future<void> _openDirectory(
         mode: ProcessStartMode.detached,
       );
     } else if (Platform.isWindows) {
-      // explorer /select, 的命令行解析对正斜杠、空格和引号都很挑剔,任一
-      // 形式解析失败都会回退打开「文档」;改走 shell API,行为一致。
-      openInWindowsExplorer(directory: directory, select: target);
+      // shell API 在后台 isolate 执行(NAS 掉线/资源管理器卡住不冻结
+      // 界面),正斜杠路径在内部归一化为反斜杠;失败时抛异常走统一提示。
+      await openInWindowsExplorer(directory: directory, select: target);
     } else if (Platform.isLinux) {
       await Process.start('xdg-open', <String>[
         directory,

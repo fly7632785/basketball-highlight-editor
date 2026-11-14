@@ -1,16 +1,64 @@
 import 'dart:ffi' as ffi;
+import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
+
+/// 归一化传给 shell API 的 Windows 路径。
+///
+/// 导出历史里存的路径用正斜杠(`/`),而 SHParseDisplayName 对
+/// 混合分隔符路径很挑剔。全部替换为反斜杠;UNC 前缀 `//nas/share`
+/// 会被正确转换成 `\\nas\share`。
+String normalizeWindowsShellPath(String path) =>
+    path.replaceAll('/', r'\');
 
 /// 在资源管理器里打开 [directory](目录模式),或打开所在文件夹并选中
 /// [select](文件定位模式)。
 ///
-/// 不走 `explorer.exe /select,<路径>` 命令行:该解析对正斜杠、空格和引号
-/// 都很挑剔,任一形式解析失败时资源管理器会回退打开「文档」,曾导致导出
-/// 后「打开目录」定位不到文件。改用 shell API(SHParseDisplayName +
-/// SHOpenFolderAndSelectItems / ShellExecuteW),路径以宽字符传递,行为在
-/// Win10/Win11 上一致。
-void openInWindowsExplorer({required String directory, String? select}) {
+/// - 整个 shell 调用在后台 isolate 执行:资源管理器卡住、NAS 掉线、
+///   路径指向已离线的网络盘时,界面线程不受影响。
+/// - 路径先经 [normalizeWindowsShellPath] 归一化为反斜杠。
+/// - 不走 `explorer.exe /select,<路径>` 命令行:该解析对正斜杠、空格和
+///   引号都很挑剔,任一形式解析失败时资源管理器会回退打开「文档」。
+///   改用 shell API(SHParseDisplayName + SHOpenFolderAndSelectItems /
+///   ShellExecuteW),路径以宽字符传递,行为在 Win10/Win11 上一致。
+/// - ShellExecuteW / SHOpenFolderAndSelectItems 失败时抛出带错误码的
+///   异常,调用方的 try/catch 可捕获提示。
+Future<void> openInWindowsExplorer({
+  required String directory,
+  String? select,
+}) {
+  return Isolate.run(() {
+    _revealSync(directory: directory, select: select);
+  });
+}
+
+/// shell 调用失败的异常,携带可读的错误描述。
+class ShellRevealException implements Exception {
+  const ShellRevealException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// ShellExecuteW 返回值 ≤ 32 表示失败,常见码翻译为可读描述。
+String _shellExecuteError(int code) {
+  const known = <int, String>{
+    2: '文件未找到',
+    3: '路径未找到(可能已掉线或被移除)',
+    5: '拒绝访问',
+    8: '内存不足',
+    26: 'DDE 会话失败',
+    28: 'DDE 会话超时(NAS 或网络路径可能离线)',
+    31: '没有关联的打开方式',
+    32: '所需的动态库未找到',
+  };
+  final hint = known[code];
+  return 'ShellExecuteW 失败 (code=$code${hint == null ? '' : ': $hint'})';
+}
+
+void _revealSync({required String directory, String? select}) {
   final ole32 = ffi.DynamicLibrary.open('ole32.dll');
   final coInitializeEx =
       ole32
@@ -18,11 +66,17 @@ void openInWindowsExplorer({required String directory, String? select}) {
             ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint32),
             int Function(ffi.Pointer<ffi.Void>, int)
           >('CoInitializeEx');
-  // 平台线程由 Flutter 引擎初始化过 COM(STA);这里再次调用只增加引用
-  // 计数(S_FALSE),不配对释放,避免影响引擎自身的 COM 生命周期。
+  // 后台 isolate 的线程没有初始化过 COM;STA 是 shell 对话框/选中
+  // 逻辑要求的线程模型。线程随 isolate 结束销毁,COM 资源由系统回收,
+  // 不配对 CoUninitialize 也是安全的。
   coInitializeEx(ffi.nullptr, 2 /* COINIT_APARTMENTTHREADED */);
 
   final shell32 = ffi.DynamicLibrary.open('shell32.dll');
+  final ilFree =
+      shell32.lookupFunction<
+        ffi.Void Function(ffi.Pointer<ffi.Void>),
+        void Function(ffi.Pointer<ffi.Void>)
+      >('ILFree');
   final shellExecuteW =
       shell32.lookupFunction<
         ffi.IntPtr Function(
@@ -75,11 +129,12 @@ void openInWindowsExplorer({required String directory, String? select}) {
         )
       >('SHOpenFolderAndSelectItems');
 
-  void shellOpen(String path) {
+  // 目录模式与文件选中模式都经此收口;返回 false 表示 shell 明确报错。
+  void shellOpen(String path, void Function() reportFailure) {
     final pathPtr = path.toNativeUtf16();
     final verbPtr = 'open'.toNativeUtf16();
     try {
-      shellExecuteW(
+      final result = shellExecuteW(
         0,
         verbPtr.cast<ffi.Uint16>(),
         pathPtr.cast<ffi.Uint16>(),
@@ -87,18 +142,28 @@ void openInWindowsExplorer({required String directory, String? select}) {
         ffi.nullptr,
         5 /* SW_SHOWNORMAL */,
       );
+      // 返回值 > 32 为成功(HINSTANCE);≤ 32 是 SE_ERR_* 错误码。
+      if (result <= 32) reportFailure();
     } finally {
       malloc.free(verbPtr);
       malloc.free(pathPtr);
     }
   }
 
-  if (select == null || select.isEmpty) {
-    shellOpen(directory);
+  // 导出历史里存的路径用正斜杠,shell API 需要反斜杠。
+  final nativeDirectory = normalizeWindowsShellPath(directory);
+  final nativeSelect = (select == null || select.isEmpty)
+      ? null
+      : normalizeWindowsShellPath(select);
+
+  if (nativeSelect == null) {
+    shellOpen(nativeDirectory, () {
+      throw ShellRevealException(_shellExecuteError(3));
+    });
     return;
   }
 
-  final namePtr = select.toNativeUtf16();
+  final namePtr = nativeSelect.toNativeUtf16();
   final pidl = calloc<ffi.Pointer<ffi.Uint16>>();
   try {
     final hr = parseDisplayName(
@@ -110,11 +175,23 @@ void openInWindowsExplorer({required String directory, String? select}) {
     );
     if (hr < 0 || pidl.value == ffi.nullptr) {
       // 路径解析失败时目录还是照常打开(不带选中),总好过落到「文档」。
-      shellOpen(directory);
+      shellOpen(nativeDirectory, () {
+        throw ShellRevealException(_shellExecuteError(3));
+      });
       return;
     }
-    openAndSelect(pidl.value, 0, ffi.nullptr, 0);
+    final hrOpen = openAndSelect(pidl.value, 0, ffi.nullptr, 0);
+    if (hrOpen < 0) {
+      throw ShellRevealException(
+        'SHOpenFolderAndSelectItems 失败 (hr=0x${hrOpen.toUnsigned(32).toRadixString(16)})',
+      );
+    }
   } finally {
+    // SHParseDisplayName 成功时通过 CoTaskMemAlloc 分配了 PIDL,
+    // 必须用 ILFree 释放,否则每次定位文件都泄漏一块 shell 内存。
+    if (pidl.value != ffi.nullptr) {
+      ilFree(pidl.value.cast<ffi.Void>());
+    }
     calloc.free(pidl);
     malloc.free(namePtr);
   }
