@@ -431,6 +431,7 @@ String _englishDuration(String value) => value
     .trim();
 
 const _englishText = <String, String>{
+  '第三方开源许可': 'Third-party notices',
   '已调整': 'Edited',
   '重叠': 'Overlap',
   '诊断信息暂时不可用。': 'Diagnostics are temporarily unavailable.',

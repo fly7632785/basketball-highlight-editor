@@ -4822,7 +4822,7 @@ Future<void> _showAboutDialog(BuildContext context, MobileAppState state) async 
     context: context,
     builder: (dialogContext) => AlertDialog(
       title: Text(dialogContext.bheText('关于')),
-      content: Column(
+      content: SingleChildScrollView(child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -4831,18 +4831,67 @@ Future<void> _showAboutDialog(BuildContext context, MobileAppState state) async 
             '${mobileAppVersion == 'dev' ? dialogContext.bheText('开发版') : mobileAppVersion}',
           ),
           const SizedBox(height: 8),
-          Text(
-            '${dialogContext.bheText('分析引擎版本')}：'
-            '${engineVersion ?? dialogContext.bheText('获取失败')}',
+          if (engineVersion != null)
+            Text('${dialogContext.bheText('分析引擎版本')}：$engineVersion'),
+          const Divider(height: 28),
+          const SizedBox(height: 8),
+          Material(
+            color: Theme.of(dialogContext).brightness == Brightness.dark
+                ? BhePalette.surface2
+                : Theme.of(dialogContext).colorScheme.surface,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(
+                color: Theme.of(dialogContext).brightness == Brightness.dark
+                    ? const Color(0xFF31343F)
+                    : const Color(0xFFE5E7EB),
+              ),
+            ),
+            child: InkWell(
+              key: const ValueKey('about-third-party-notices'),
+              onTap: () => showLicensePage(
+                context: dialogContext,
+                applicationName: 'BHE',
+                applicationVersion: 'v$mobileAppVersion',
+              ),
+              child: SizedBox(
+                height: 52,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          Localizations.localeOf(dialogContext).languageCode == 'zh'
+                              ? '第三方许可'
+                              : 'Third-party notices',
+                        ),
+                      ),
+                      Icon(
+                        LucideIcons.chevronRight,
+                        size: 18,
+                        color: Theme.of(dialogContext).colorScheme.onSurface,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
-      ),
+      )),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext),
+          style: TextButton.styleFrom(
+            foregroundColor: Theme.of(dialogContext).colorScheme.onSurface,
+            minimumSize: const Size(64, 44),
+          ),
           child: Text(l10n?.text('关闭') ?? '关闭'),
         ),
-        TextButton(
+        OutlinedButton(
+          style: _aboutOutlinedStyle(dialogContext, const Size(96, 44)),
           onPressed: () {
             Navigator.pop(dialogContext);
             unawaited(
@@ -4855,6 +4904,19 @@ Future<void> _showAboutDialog(BuildContext context, MobileAppState state) async 
     ),
   );
 }
+
+ButtonStyle _aboutOutlinedStyle(BuildContext context, Size minimumSize) {
+  final dark = Theme.of(context).brightness == Brightness.dark;
+  return OutlinedButton.styleFrom(
+    foregroundColor: Theme.of(context).colorScheme.onSurface,
+    minimumSize: minimumSize,
+    side: BorderSide(
+      color: dark ? const Color(0xFF6B7180) : const Color(0xFF6B7280),
+    ),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+  );
+}
+
 
 class _UpdateSheet extends StatelessWidget {
   const _UpdateSheet({required this.updater, required this.state});
