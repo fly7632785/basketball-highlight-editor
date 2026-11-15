@@ -237,6 +237,10 @@ def apply_rim_checks(
     for match, check in zip(matches, apply_video_occlusion(checks)):
         # Coarse fallbacks are candidates the refine stage did not confirm.
         match["rim_check"] = keep_unless_seen(check, refined=not match.get("coarse_crossing"))
+        if match["rim_check"].get("status") == "unsure":
+            match["confidence"] = "low"
+            match["score"] = 0.0
+            match["confidence_reason"] = "rim_check_insufficient_evidence"
 
 
 def build_rim_check_command(

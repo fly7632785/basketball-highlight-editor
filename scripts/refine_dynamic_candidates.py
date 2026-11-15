@@ -22,7 +22,7 @@ from cache_io import read_json_cache, write_json_cache
 
 
 DETECTION_CACHE_VERSION = "python-v2.5-white-net-region"
-ALGORITHM_VERSION = "python-v2.16-rim-band-seeds"
+ALGORITHM_VERSION = "python-v2.17-rim-check-insufficient-evidence"
 REFINED_SCHEMA_VERSION = 3
 
 

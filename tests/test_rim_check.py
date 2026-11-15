@@ -2,6 +2,7 @@ from basketball_highlight.rim_check import (
     apply_video_occlusion,
     assess_rim_crossing,
     keep_unless_seen,
+    rejection_reason,
     net_motion_score,
     skipped_result,
     tight_crop_box,
@@ -186,12 +187,28 @@ def rejected(reason, **features):
     return {"status": "rejected", "reason": reason, **features}
 
 
-def test_an_unseen_ball_excludes_only_when_refine_did_not_see_a_crossing_either():
+def test_missing_observations_never_prove_a_miss():
     for reason in ("no_crossing", "no_entry", "no_exit"):
         assert keep_unless_seen(rejected(reason), refined=True)["status"] == "unsure"
-        assert keep_unless_seen(rejected(reason), refined=False)["status"] == "rejected"
+        assert keep_unless_seen(rejected(reason), refined=False)["status"] == "unsure"
         # A ball fell toward the rim, but a player or the rim hid what happened.
         assert keep_unless_seen(rejected(reason, ball_approached=True), refined=False)["status"] == "unsure"
+
+
+def test_observed_misses_take_precedence_over_missing_entry_or_exit():
+    incomplete = {
+        "entry": False, "x_cross": 0.0, "x_exit": None,
+        "reached_net_bottom": False, "rebound": False, "hidden_frames": 2,
+        "track_points": 12, "track_span": 2.0,
+    }
+    for evidence, reason in [
+        ({"rebound": True}, "rebound"),
+        ({"x_exit": 1.0}, "exit_off_center"),
+        ({"x_cross": 1.0}, "off_center"),
+    ]:
+        crossing = {**incomplete, **evidence}
+        assert rejection_reason(crossing) == reason
+        assert keep_unless_seen(rejected(reason, **crossing), refined=False)["status"] == "rejected"
 
 
 def test_a_ball_falling_toward_the_rim_is_noticed_even_when_it_is_lost_at_the_rim():

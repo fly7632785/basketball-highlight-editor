@@ -2635,8 +2635,8 @@ def test_coarse_overlay_uses_nearest_ball_independent_of_detection_order():
     assert far_first["trajectory"][1]["x"] == 105.0
 
 
-def test_tracking_association_has_a_new_consistent_algorithm_version():
-    assert ANALYSIS_ALGORITHM_VERSION == "python-v2.16-rim-band-seeds"
+def test_rim_check_policy_has_a_new_consistent_algorithm_version():
+    assert ANALYSIS_ALGORITHM_VERSION == "python-v2.17-rim-check-insufficient-evidence"
     assert refine_dynamic_candidates.ALGORITHM_VERSION == ANALYSIS_ALGORITHM_VERSION
 
 
@@ -2708,6 +2708,61 @@ def _run_standard_analysis(service, store, video, model):
         json.loads(finished["checkpoint_json"]),
         {candidate["event_time_ms"]: candidate for candidate in store.list_candidates(video["id"])},
     )
+
+
+def test_below_only_rim_evidence_keeps_coarse_candidate_low_and_pending(tmp_path, monkeypatch):
+    from .test_rim_check import RIM, fall
+
+    service, store, video, model = _analysis_fixture(tmp_path)
+
+    def run(commands, output, *_args, **kwargs):
+        if kwargs.get("stage_names") == ("verify_rim_crossing",):
+            command = commands[0]
+            inputs = json.loads(Path(command[command.index("--candidates") + 1]).read_text())["candidates"]
+            frames = {
+                5.0: fall(x_start=1.2, x_end=.9),
+                10.0: fall(hidden={6, 7}),
+                # L386's 19.05s failure shape: only a falling track below the rim.
+                19.05: fall()[8:],
+            }
+            result = {"results": [{"frames": frames[item["time"]]} for item in inputs]}
+        else:
+            scan = Path(commands[1][commands[1].index("--output") + 1])
+            coarse = Path(commands[2][commands[2].index("--output") + 1])
+            scan.parent.mkdir(parents=True, exist_ok=True)
+            scan.write_text(json.dumps({"records": []}), encoding="utf-8")
+            coarse.write_text(json.dumps({"rim": RIM, "candidates": [{
+                "time": 19.05, "rim": RIM,
+                "above": {"time": 18.9, "x": 500, "y": 280, "confidence": .99},
+                "below": {"time": 19.2, "x": 500, "y": 350, "confidence": .99},
+            }]}), encoding="utf-8")
+            result = {"results": [{"refined": [
+                {"time": t, "score": .9, "confidence": "high", "overlay": {"rim": RIM}}
+                for t in (5.0, 10.0)
+            ]}]}
+        Path(output).write_text(json.dumps(result), encoding="utf-8")
+        return {"refined": result, "logs": [], "stage_timings_ms": {}}
+
+    monkeypatch.setattr("engine.python.basketball_engine.service.run_pipeline", run)
+    monkeypatch.setattr(service, "_prepare_candidate_previews", lambda **_: {"generated": 0})
+    _, candidates = _run_standard_analysis(service, store, video, model)
+
+    unknown = candidates[19050]
+    evidence = json.loads(unknown["evidence_json"])
+    assert unknown["confidence"] == "low" and unknown["score"] == 0
+    assert unknown["review_status"] == "pending" and unknown["selection_status"] == "included"
+    assert evidence["confidence_reason"] == "rim_check_insufficient_evidence"
+    assert evidence["rim_check"]["reason"] == "no_crossing"
+    assert evidence["rim_check"]["ball_approached"] is False
+    assert candidates[5000]["review_status"] == "excluded"
+    assert candidates[5000]["review_reason"] == "auto_rim_check"
+    assert candidates[10000]["confidence"] == "high"
+
+    # Reanalysis must not undo a human exclusion just because evidence is uncertain.
+    store.review_candidate(unknown["id"], "excluded", reason="rim_out")
+    _, candidates = _run_standard_analysis(service, store, video, model)
+    assert candidates[19050]["review_status"] == "excluded"
+    assert candidates[19050]["review_reason"] == "rim_out"
 
 
 @pytest.mark.parametrize("confirmed", [False, True])

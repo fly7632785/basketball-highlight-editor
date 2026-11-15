@@ -391,16 +391,18 @@ def test_rim_checks_reject_a_still_net_for_a_video_where_the_net_never_hides_the
     )["auto_review_status"] == "excluded"
 
 
-def test_rim_checks_exclude_an_unseen_crossing_only_when_refine_did_not_see_it_either():
+def test_rim_checks_keep_unseen_crossings_low_even_without_refine_confirmation():
     matches = [{"time": 0.0}, {"time": 1.0, "coarse_crossing": {"time": 1.0}}]
     inputs = [{"time": match["time"], "rim": RIM} for match in matches]
     output = {"results": [{"status": "rejected", "frames": [[] for _ in range(16)]} for _ in matches]}
     apply_rim_checks(matches, inputs, output)
     assert [(match["rim_check"]["status"], match["rim_check"]["reason"]) for match in matches] == [
-        ("unsure", "no_crossing"), ("rejected", "no_crossing"),
+        ("unsure", "no_crossing"), ("unsure", "no_crossing"),
     ]
+    assert all(match["confidence"] == "low" and match["score"] == 0 for match in matches)
+    assert all(match["confidence_reason"] == "rim_check_insufficient_evidence" for match in matches)
     rows = [candidate_to_row(match, "video-1", "roi-1", 20_000, 0.5, 0.5, "v1") for match in matches]
-    assert [row["auto_review_status"] for row in rows] == [None, "excluded"]
+    assert [row["auto_review_status"] for row in rows] == [None, None]
 
 
 def test_run_pipeline_reuses_completed_manifest_stage(tmp_path: Path):
