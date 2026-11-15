@@ -593,3 +593,78 @@ def test_torch_and_ort_failures_have_a_final_runtime_error(tmp_path, monkeypatch
     with pytest.raises(inference.DetectorRuntimeUnavailable) as failure:
         inference.load_detector(model, device=device)
     assert isinstance(failure.value.__cause__, error_type)
+
+
+def _ort_with_a_failing_dml_session(tmp_path, monkeypatch, *, cpu_fails):
+    """注入假的 onnxruntime：DML 会话 run 就抛 UnicodeDecodeError，CPU 会话正常。"""
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"onnx")
+    calls: list[str] = []
+
+    def output():
+        values = np.zeros((1, 6, 20), dtype=np.float32)
+        values[0, 0, 0] = 320.0
+        values[0, 1, 0] = 320.0
+        values[0, 2, 0] = 100.0
+        values[0, 3, 0] = 100.0
+        values[0, 4, 0] = 0.9   # ball
+        values[0, 5, 0] = 0.05  # hoop
+        return [values]
+
+    class Session:
+        def __init__(self, path, sess_options=None, providers=None):
+            self.providers = list(providers or [])
+            calls.append(self.providers[0])
+
+        def get_providers(self):
+            return self.providers
+
+        def get_inputs(self):
+            return [type("Input", (), {"name": "images", "shape": ["batch", 3, "height", "width"]})()]
+
+        def run(self, output_names, feeds):
+            if self.providers[0] != "CPUExecutionProvider":
+                # 复现真机现象：GBK 的驱动错误信息被当成 UTF-8 解。
+                raise UnicodeDecodeError("utf-8", b"\xb2\xe2", 0, 1, "invalid start byte")
+            if cpu_fails:
+                raise RuntimeError("cpu run failed")
+            return output()
+
+    fake_ort = type(sys)("onnxruntime")
+    fake_ort.InferenceSession = Session
+    fake_ort.SessionOptions = lambda: type("Options", (), {})()
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+    return OnnxDetector(model, device="dml", names={0: "ball", 1: "hoop"}), calls
+
+
+def test_a_dml_run_failure_rebuilds_a_cpu_session_and_retries(tmp_path, monkeypatch, capsys):
+    detector, calls = _ort_with_a_failing_dml_session(
+        tmp_path, monkeypatch, cpu_fails=False,
+    )
+    image = np.zeros((64, 64, 3), dtype=np.uint8)
+
+    results = detector.predict([image], imgsz=64)
+
+    assert calls == ["DmlExecutionProvider", "CPUExecutionProvider"]
+    assert detector.device == "cpu"
+    assert detector.provider == "CPUExecutionProvider"
+    assert len(results) == 1
+    assert [box.cls for box in results[0].boxes] == [[0]]
+    # 原始异常要原样记下来，否则只能看到一句「推理失败」。
+    stderr = capsys.readouterr().err
+    assert "UnicodeDecodeError" in stderr
+    assert "invalid start byte" in stderr
+
+
+def test_a_cpu_run_failure_after_the_fallback_is_raised_unchanged(tmp_path, monkeypatch):
+    detector, calls = _ort_with_a_failing_dml_session(
+        tmp_path, monkeypatch, cpu_fails=True,
+    )
+    image = np.zeros((64, 64, 3), dtype=np.uint8)
+
+    with pytest.raises(UnicodeDecodeError):
+        detector.predict([image], imgsz=64)
+
+    # 只回退一次，不能无限重建会话。
+    assert calls == ["DmlExecutionProvider", "CPUExecutionProvider"]
+    assert detector.device == "cpu"

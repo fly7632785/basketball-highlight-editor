@@ -198,4 +198,159 @@ void main() {
       expect(log(), isNot(contains('卡顿前最后记录的一步：[warn]')));
     });
   });
+
+  group('HDR 判定（决定是否给 mpv 设色调映射）', () {
+    Map<String, dynamic> video(Map<String, dynamic> overrides) => {
+      'pix_fmt': 'yuv420p10le',
+      'color_transfer': 'smpte2084',
+      'color_primaries': 'bt2020',
+      'color_space': 'bt2020nc',
+      ...overrides,
+    };
+
+    test('没有视频信息时不是 HDR', () {
+      expect(isHdrVideoForPlayer(null), isFalse);
+    });
+
+    test('普通 8bit SDR 不是 HDR', () {
+      expect(
+        isHdrVideoForPlayer(video({
+          'pix_fmt': 'yuv420p',
+          'color_transfer': 'bt709',
+          'color_primaries': 'bt709',
+          'color_space': 'bt709',
+        })),
+        isFalse,
+      );
+    });
+
+    test('PQ + 10bit + BT.2020 是 HDR', () {
+      expect(isHdrVideoForPlayer(video({})), isTrue);
+    });
+
+    test('HLG 用 p010le 也是 HDR', () {
+      expect(
+        isHdrVideoForPlayer(video({
+          'pix_fmt': 'p010le',
+          'color_transfer': 'arib-std-b67',
+        })),
+        isTrue,
+      );
+    });
+
+    test('bt2020c 也算 HDR，大小写不敏感', () {
+      expect(
+        isHdrVideoForPlayer(video({
+          'pix_fmt': 'YUV420P10LE',
+          'color_transfer': 'SMPTE2084',
+          'color_primaries': 'BT2020',
+          'color_space': 'BT2020C',
+        })),
+        isTrue,
+      );
+    });
+
+    test('缺色彩元数据时保守判为非 HDR', () {
+      expect(
+        isHdrVideoForPlayer({'pix_fmt': 'yuv420p10le', 'color_transfer': 'unknown'}),
+        isFalse,
+      );
+      expect(isHdrVideoForPlayer({'pix_fmt': 'yuv420p10le'}), isFalse);
+    });
+
+    test('10bit + PQ 但非 BT.2020 色彩空间不算 HDR', () {
+      expect(
+        isHdrVideoForPlayer(video({
+          'color_primaries': 'bt709',
+          'color_space': 'bt709',
+        })),
+        isFalse,
+      );
+      expect(
+        isHdrVideoForPlayer(video({
+          'pix_fmt': 'yuv420p', // 8bit
+        })),
+        isFalse,
+      );
+    });
+
+    test('色调映射属性与导出对齐', () {
+      expect(hdrToneMappingProperties['tone-mapping'], 'hable');
+      expect(hdrToneMappingProperties['target-prim'], 'bt.709');
+      expect(hdrToneMappingProperties['target-trc'], 'bt.1886');
+    });
+  });
+
+
+  group('HDR 用过后切到 SDR 要复位（同一个播放器）', () {
+    Map<String, dynamic> hdr() => {
+      'pix_fmt': 'yuv420p10le',
+      'color_transfer': 'smpte2084',
+      'color_primaries': 'bt2020',
+      'color_space': 'bt2020nc',
+    };
+    Map<String, dynamic> sdr() => {
+      'pix_fmt': 'yuv420p',
+      'color_transfer': 'bt709',
+      'color_primaries': 'bt709',
+      'color_space': 'bt709',
+    };
+
+    /// 模拟一个 player：记录属性写入，`applied` 就是 Expando 里记的标记。
+    Future<List<List<String>>> run(
+      List<Map<String, dynamic>?> videos, {
+      Set<String> throwOn = const {},
+    }) async {
+      final calls = <List<String>>[];
+      var applied = false;
+      for (final video in videos) {
+        applied = await applyToneMappingStep(
+          alreadyApplied: applied,
+          video: video,
+          where: '测试',
+          setProperty: (name, value) async {
+            calls.add([name, value]);
+            if (throwOn.contains(name)) throw StateError('写入 $name 失败');
+          },
+        );
+      }
+      return calls;
+    }
+
+    test('从未设过的播放器放 SDR：一次 setProperty 都不调', () async {
+      expect(await run([sdr(), sdr()]), isEmpty);
+      expect(await run([null]), isEmpty);
+    });
+
+    test('HDR 后再 SDR：复位调用 4 次且值为 auto', () async {
+      final calls = await run([hdr(), sdr()]);
+      expect(calls.length, 8); // 先设 4 条 HDR，再复位 4 条
+      expect(calls.take(4).map((c) => c[0]).toSet(), hdrToneMappingProperties.keys.toSet());
+      final reset = calls.skip(4).toList();
+      expect(reset.length, 4);
+      expect(reset.map((c) => c[0]).toSet(), hdrToneMappingResetProperties.keys.toSet());
+      expect(reset.every((c) => c[1] == 'auto'), isTrue);
+    });
+
+    test('复位时某条抛异常：其余仍写完，标记仍清除', () async {
+      final calls = await run([hdr(), sdr()], throwOn: {'target-trc'});
+      final reset = calls.skip(4).map((c) => c[0]).toList();
+      // target-trc 抛了异常，但后面两条 target-prim 照样写入。
+      expect(reset, ['tone-mapping', 'hdr-compute-peak', 'target-trc', 'target-prim']);
+      // 复位后标记应清除：再来一次 SDR 不应该再调。
+      final again = await run([hdr(), sdr(), sdr()]);
+      expect(again.skip(8), isEmpty);
+    });
+
+    test('复位后再放 SDR：不再调用 setProperty', () async {
+      final calls = await run([hdr(), sdr(), sdr(), sdr()]);
+      expect(calls.length, 8); // 只有第一次 HDR 的 4 条和第一次复位的 4 条
+    });
+
+    test('HDR 之后再 HDR：不重复设置', () async {
+      final calls = await run([hdr(), hdr()]);
+      expect(calls.length, 4);
+    });
+  });
+
 }

@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'app_log.dart';
+import 'engine_session.dart' show JsonMap;
 import 'player_audio_settings.dart';
 import 'diagnostics.dart' show appVersion;
 
@@ -203,11 +204,100 @@ String mpvLocationFor(String path, {required bool isWindows}) {
   return Uri.file(path).toString();
 }
 
+/// `video` 里色彩信息为 HDR（PQ/HLG + 10bit + BT.2020）时给 mpv 设色调映射。
+/// 判定与引擎 color_plan 的前半段一致；ffmpeg 滤镜是否可用由 mpv 自己决定。
+bool isHdrVideoForPlayer(JsonMap? video) {
+  if (video == null) return false;
+  final pix = (video['pix_fmt'] ?? '').toString().toLowerCase();
+  final transfer = (video['color_transfer'] ?? '').toString().toLowerCase();
+  final primaries = (video['color_primaries'] ?? '').toString().toLowerCase();
+  final space = (video['color_space'] ?? '').toString().toLowerCase();
+  if (pix.isEmpty || pix == 'unknown' || transfer.isEmpty || transfer == 'unknown') {
+    return false;
+  }
+  if (transfer != 'smpte2084' && transfer != 'arib-std-b67') return false;
+  if (!RegExp(r'(?:p10|p010)(?:le|be)?$').hasMatch(pix)) return false;
+  if (primaries != 'bt2020') return false;
+  return space == 'bt2020nc' || space == 'bt2020c';
+}
+
+/// HDR 时给 mpv 设的最小色调映射属性集，与导出 ffmpeg 的 hable + bt709 对齐。
+const hdrToneMappingProperties = <String, String>{
+  'tone-mapping': 'hable',
+  'hdr-compute-peak': 'yes',
+  'target-trc': 'bt.1886',
+  'target-prim': 'bt.709',
+};
+
+/// HDR 用过后切到非 HDR 源片时恢复成 mpv 默认值，避免 SDR 仍被 bt.1886 等属性影响。
+const hdrToneMappingResetProperties = <String, String>{
+  'tone-mapping': 'auto',
+  'hdr-compute-peak': 'auto',
+  'target-trc': 'auto',
+  'target-prim': 'auto',
+};
+
+/// 记下「这个 player 上设过 HDR 属性」。弱引用，player 释放后自动失效。
+final Expando<bool> _hdrAppliedByPlayer = Expando<bool>('hdrToneMappingApplied');
+
+/// 按当前视频决定要设哪些属性，并逐条设置（每条单独 try/catch，失败只记日志并继续）。
+///
+/// 返回设置之后「这个 player 上是否留有 HDR 属性」：
+/// - HDR 且此前没设过：写 [hdrToneMappingProperties]，返回 true；
+/// - HDR 且已设过：不重复设置，返回 true；
+/// - 非 HDR 且已设过：写 [hdrToneMappingResetProperties]，返回 false（复位后清标记）；
+/// - 非 HDR 且从没设过：一条都不调，返回 false。
+///
+/// 独立成函数是为了能脱离真实 Player 测试（本仓库没有 PlatformPlayer 的假实现）。
+Future<bool> applyToneMappingStep({
+  required bool alreadyApplied,
+  required JsonMap? video,
+  required String where,
+  required Future<void> Function(String name, String value) setProperty,
+}) async {
+  Map<String, String> plan;
+  if (isHdrVideoForPlayer(video)) {
+    if (alreadyApplied) return true;
+    plan = hdrToneMappingProperties;
+  } else {
+    if (!alreadyApplied) return false;
+    plan = hdrToneMappingResetProperties;
+  }
+  for (final entry in plan.entries) {
+    try {
+      await setProperty(entry.key, entry.value);
+    } catch (error) {
+      appLog('warn', 'player', '$where 设置 mpv ${entry.key} 失败（忽略）: $error');
+    }
+  }
+  return isHdrVideoForPlayer(video);
+}
+
+/// 逐条设置，某条失败只记日志、不影响打开播放，也不影响其余属性。
+Future<void> applyHdrToneMapping(Player player, String where, JsonMap? video) async {
+  final platform = player.platform;
+  if (platform is! NativePlayer) return;
+  final applied = await applyToneMappingStep(
+    alreadyApplied: _hdrAppliedByPlayer[player] ?? false,
+    video: video,
+    where: where,
+    setProperty: platform.setProperty,
+  );
+  _hdrAppliedByPlayer[player] = applied;
+}
+
 /// 带耗时地记录打开视频：播放器 open 慢或失败时，日志里能看出是哪个文件类型、卡了多久。
-Future<void> openLoggedMedia(Player player, String where, String path) async {
+/// 传了 [video] 且是 HDR 时，打开前先按 [applyHdrToneMapping] 设色调映射。
+Future<void> openLoggedMedia(
+  Player player,
+  String where,
+  String path, {
+  JsonMap? video,
+}) async {
   final watch = Stopwatch()..start();
   final dot = path.lastIndexOf('.');
   final ext = dot < 0 ? '?' : path.substring(dot + 1).toLowerCase();
+  await applyHdrToneMapping(player, where, video);
   try {
     await player.open(
       Media(mpvLocationFor(path, isWindows: Platform.isWindows)),
