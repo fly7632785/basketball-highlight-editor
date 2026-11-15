@@ -1413,17 +1413,31 @@ class _ReviewViewState extends State<_ReviewView> {
     String? rim,
     String? player,
   }) async {
+    final anchorMs = controller?.value.isPlaying == true
+        ? controller!.value.position.inMilliseconds
+        : selected?.startMs ?? 0;
     _cancelCompletionPrompt();
     setState(() {
       statusFilter = status ?? statusFilter;
       rimFilter = rim ?? rimFilter;
       playerFilter = player ?? playerFilter;
-      selectedIndex = 0;
-      _selectedId = null;
+      final items = candidates;
+      final nearest = nearestReviewCandidate(
+        items,
+        anchorMs: anchorMs,
+        startMs: (candidate) => candidate.startMs,
+      );
+      selectedIndex = nearest == null ? 0 : items.indexOf(nearest);
+      _selectedId = nearest?.id;
       _completionPromptShown = false;
     });
-    final first = selected;
-    if (first != null) await _replay(first);
+    final candidate = selected;
+    if (candidate != null) {
+      unawaited(_scrollToSelected());
+      await _replay(candidate);
+    } else {
+      await _pausePlayback();
+    }
   }
 
   Candidate? get selected {
