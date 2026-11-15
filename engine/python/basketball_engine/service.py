@@ -1895,7 +1895,7 @@ class EngineService:
                     # 优先使用精化阶段已扫出的高清轨迹;不可用时退回
                     # 粗扫记录的速度门限串联轨迹。
                     overlay = None
-                    for fallback in refined_fallbacks:
+                    for fallback in sorted(refined_fallbacks, key=lambda item: abs(item["time"] - extra_time)):
                         if abs(fallback["time"] - extra_time) <= 1.0:
                             overlay = self._refined_fallback_overlay(
                                 extra, fallback,

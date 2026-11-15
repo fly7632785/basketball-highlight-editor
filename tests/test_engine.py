@@ -2663,7 +2663,7 @@ def test_coarse_overlay_uses_nearest_ball_independent_of_detection_order():
 
 
 def test_rim_check_policy_has_a_new_consistent_algorithm_version():
-    assert ANALYSIS_ALGORITHM_VERSION == "python-v2.17-rim-check-insufficient-evidence"
+    assert ANALYSIS_ALGORITHM_VERSION == "python-v2.18-ordered-rim-band-seeds"
     assert refine_dynamic_candidates.ALGORITHM_VERSION == ANALYSIS_ALGORITHM_VERSION
 
 
@@ -2862,6 +2862,56 @@ def test_rim_band_seed_fallback_requires_confirmation_for_high_confidence(
     assert crossing["confidence"] == "high"
     assert crossing["score"] == .8
     assert "fallback_reason" not in json.loads(crossing["evidence_json"])
+
+
+def test_separate_below_then_above_seeds_reach_rim_review_independently(tmp_path, monkeypatch):
+    import generate_candidates
+    from .test_rim_check import ball
+
+    service, store, video, model = _analysis_fixture(tmp_path)
+    records = [{"time": t, "detections": [
+        {"name": "hoop", "center": [500, 300], "confidence": .9, "xyxy": [475, 290, 525, 310]},
+        {"name": "ball", "center": [x, y], "confidence": confidence, "xyxy": [x-5, y-5, x+5, y+5]},
+    ]} for t, x, y, confidence in [(19.2, 500, 325, .7), (20.0, 530, 270, .9)]]
+
+    def run(commands, output, *_args, **kwargs):
+        if kwargs.get("stage_names") == ("verify_rim_crossing",):
+            command = commands[0]
+            inputs = json.loads(Path(command[command.index("--candidates")+1]).read_text())["candidates"]
+            assert [item["time"] for item in inputs] == [19.2, 20.0]
+            result = {"results": [{"frames": [
+                [ball(0.0 if item["time"] == 19.2 else 1.2, y, rim=item["rim"])]
+                for y in ([.5, .75, 1.0, 1.25] if item["time"] == 19.2
+                          else [-1.5 + step * .25 for step in range(16)])
+            ]} for item in inputs]}
+        else:
+            command = commands[2]
+            detections = Path(commands[1][commands[1].index("--output")+1])
+            detections.parent.mkdir(parents=True, exist_ok=True)
+            detections.write_text(json.dumps({"video": "source.mp4", "model": str(model), "records": records}))
+            with monkeypatch.context() as args:
+                args.setattr(sys, "argv", command[1:])
+                generate_candidates.main(generate_candidates.parse_args())
+            coarse = json.loads(Path(command[command.index("--output")+1]).read_text())
+            result = {"results": [{
+                "coarse": candidate, "refined": [],
+                "rim_local": {"center_x": 500, "rim_y": 300, "width": 50, "height": 20},
+                "fallback_trajectory": [{"time": candidate["time"] + dt, "x": 500, "y": 325 + dt*30}
+                                        for dt in (0, .1, .2)],
+            } for candidate in coarse["candidates"]]}
+        Path(output).write_text(json.dumps(result))
+        return {"refined": result, "logs": [], "stage_timings_ms": {}}
+
+    monkeypatch.setattr("engine.python.basketball_engine.service.run_pipeline", run)
+    monkeypatch.setattr(service, "_prepare_candidate_previews", lambda **_: {"generated": 0})
+    _, candidates = _run_standard_analysis(service, store, video, model)
+    assert set(candidates) == {19200, 20000}
+    assert candidates[19200]["review_status"] == "pending"
+    assert candidates[19200]["confidence"] == "low" and candidates[19200]["score"] == 0
+    assert candidates[20000]["review_status"] == "excluded"
+    for time_ms in (19200, 20000):
+        evidence = json.loads(candidates[time_ms]["evidence_json"])
+        assert evidence["overlay"]["trajectory"][0]["time"] == time_ms / 1000
 
 
 def test_standard_analysis_auto_excludes_candidates_that_fail_the_rim_check(

@@ -148,7 +148,12 @@ def flatten_coarse_matches(data: Dict[str, Any], dedupe_seconds: float = 2.0) ->
             normalized["score"] = 0.0
             normalized["fallback_reason"] = "unconfirmed_rim_band_sighting"
         matches.append(normalized)
-    return dedupe_candidates(matches, dedupe_seconds)
+    # The generator already separates weak sightings by observation order.
+    # A time-only second merge would erase adjacent below/above seed events
+    # before each can receive its own dense rim review.
+    seeds = [match for match in matches if match.get("seed") == "rim_band_sighting"]
+    crossings = [match for match in matches if match.get("seed") != "rim_band_sighting"]
+    return sorted(dedupe_candidates(crossings, dedupe_seconds) + seeds, key=lambda match: float(match["time"]))
 
 
 def candidate_to_row(

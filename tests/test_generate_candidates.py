@@ -43,3 +43,16 @@ def test_estimate_rim_still_fails_when_no_hoop_is_detected():
         assert "No hoop detections found" in str(error)
     else:
         raise AssertionError("estimate_rim should fail without hoop detections")
+
+
+def test_later_above_rim_seed_cannot_suppress_an_earlier_below_rim_sighting():
+    module = _load_module()
+    rim = {"center_x": 500, "rim_y": 300, "width": 50, "height": 20}
+    records = [
+        {"time": time, "detections": [{"name": "ball", "center": [500, y], "confidence": confidence}]}
+        for time, y, confidence in [(19.2, 325, .7), (20.0, 275, .9), (20.3, 330, .8)]
+    ]
+    seeds = module.find_rim_band_seeds(records, rim, [])
+    assert sorted(item["time"] for item in seeds) == [19.2, 20.0]
+    # A paired crossing still accounts for nearby sightings on either side.
+    assert module.find_rim_band_seeds(records, rim, [{"time": 19.5}]) == []
