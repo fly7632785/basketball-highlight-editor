@@ -740,6 +740,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   @override
   void dispose() {
     _previewPlaybackTimer?.cancel();
+    retainPendingDraftWrite(_draftChain);
     unregisterDraftFlush(_flushDraftForShutdown);
     _draftDebounceTimer?.cancel();
     _draftDebounceTimer = null;

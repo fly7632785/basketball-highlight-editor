@@ -224,6 +224,72 @@ Future<(_DraftNotifier, ProviderContainer)> _pumpImport(
 }
 
 void main() {
+  // L402 的时序对照：离页不能让打开项目或退出跳过旧项目的保存尾任务。
+  for (final leave in [false, true]) {
+    testWidgets('latest draft is preserved before project open leave=$leave', (
+      tester,
+    ) async {
+      resetDraftFlushForTest();
+      final timeline = <String>[];
+      final session = ProjectSession(EngineSession(_RecordingTransport(timeline)))
+        ..restore(const ProjectSessionCheckpoint(
+          projectRoot: '/projects/p1',
+          projectId: 'p1',
+          videoId: 'v1',
+        ));
+      final notifier = _DraftNotifier()..timeline = timeline;
+      final (_, container) = await _pumpImport(
+        tester,
+        notifier: notifier,
+        session: session,
+      );
+      final gate = Completer<void>();
+      notifier.gate = gate;
+      await tester.tap(_increase('clip-before'), warnIfMissed: false);
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
+      expect(notifier.saves.length, 1);
+      await tester.tap(_increase('clip-before'), warnIfMissed: false);
+      await tester.pump();
+      final latest = _shownSeconds(tester, 'clip-before');
+      if (leave) {
+        await tester.pumpWidget(
+          const MaterialApp(home: Scaffold(body: SizedBox())),
+        );
+      }
+      await tester.pump();
+      var shutdownReturned = false;
+      final shutdown = flushDraftBeforeShutdown().then((_) {
+        shutdownReturned = true;
+      });
+      await tester.pump();
+      final returnedBeforeWrite = shutdownReturned;
+      final openFuture = container
+          .read(projectProvider.notifier)
+          .openProject('/projects/p2');
+      await tester.pump();
+      await tester.pump();
+      final openedBeforeSave = timeline.contains('cmd:open_project');
+      gate.complete();
+      notifier.gate = null;
+      await tester.pump();
+      await tester.pump();
+      expect(await openFuture, isTrue);
+      await shutdown;
+      await tester.pump();
+      expect(notifier.saves.map((draft) => draft['before_seconds']), [4, latest]);
+      expect(latest, 5);
+      expect(openedBeforeSave, isFalse);
+      expect(returnedBeforeWrite, isFalse);
+      expect(
+        timeline.lastIndexOf('save:done'),
+        lessThan(timeline.indexOf('cmd:open_project')),
+      );
+      expect(session.projectId, 'p2');
+      resetDraftFlushForTest();
+    });
+  }
+
   testWidgets('快速连续改动只保存少数几次，最后保存的是最新内容', (tester) async {
     final (notifier, _) = await _pumpImport(tester);
     for (var i = 0; i < 50; i++) {
