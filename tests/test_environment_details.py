@@ -79,7 +79,7 @@ def test_probe_failures_are_independent(failed, monkeypatch):
 
     monkeypatch.setattr(diag, failed, fail)
     value = diag.environment_summary()
-    assert value.startswith('environment engine=0.1.0 ')
+    assert value.startswith(f'environment engine={diag.__version__} ')
     assert value.endswith('algorithm=' + ANALYSIS_ALGORITHM_VERSION)
     if failed != '_cpu_name':
         assert 'cpu_name="CPU"' in value
