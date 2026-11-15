@@ -304,6 +304,13 @@ def keep_unless_seen(result, refined):
             result.get("track_points", 0) >= MIN_OFF_CENTER_TRACK_POINTS
             and result.get("track_span", 0.0) >= MIN_OFF_CENTER_TRACK_SPAN
         )
+        # A short off-center track is inconclusive, but must not hide a
+        # witnessed side exit or rebound from that same crossing.
+        if not proven:
+            if result.get("x_exit") is not None and abs(result["x_exit"]) > MAX_EXIT_OFFSET:
+                return {**result, "reason": "exit_off_center"}
+            if result.get("rebound"):
+                return {**result, "reason": "rebound"}
     elif reason == "not_occluded":
         proven = (result.get("occluded_share") or 0.0) >= STRONG_OCCLUDED_SHARE
     else:

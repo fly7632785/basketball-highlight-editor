@@ -231,6 +231,18 @@ def test_an_off_center_fall_reports_how_far_the_ball_fell():
     assert result["track_span"] == 3.75
 
 
+def test_weak_off_center_does_not_hide_independent_counterevidence():
+    for evidence, reason in [
+        ({"x_exit": 1.0}, "exit_off_center"),
+        ({"rebound": True}, "rebound"),
+    ]:
+        result = rejected("off_center", track_points=9, track_span=1.25, **evidence)
+        for refined in (False, True):
+            judged = keep_unless_seen(result, refined=refined)
+            assert judged["status"] == "rejected"
+            assert judged["reason"] == reason
+
+
 def test_a_visible_ball_excludes_only_where_the_net_hides_nearly_every_make():
     assert keep_unless_seen(rejected("not_occluded", occluded_share=0.7), refined=True)["status"] == "unsure"
     assert keep_unless_seen(rejected("not_occluded", occluded_share=0.86), refined=True)["status"] == "rejected"

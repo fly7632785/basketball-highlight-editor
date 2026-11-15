@@ -17,6 +17,33 @@ from engine.python.basketball_engine.storage import ProjectStore
 from engine.python.basketball_engine.protocol import ProtocolError, parse_request
 
 
+@pytest.mark.parametrize("x", [0.0, 0.9])
+@pytest.mark.parametrize("coarse_crossing", [False, True])
+def test_short_rim_track_with_observed_rebound_or_side_exit_stays_excluded(
+    tmp_path, x, coarse_crossing
+):
+    from engine.python.basketball_engine.adapters import analysis as adapter
+    from basketball_highlight.rim_check import assess_rim_crossing
+    from tests.test_rim_check import RIM, ball
+
+    frames = [[ball(x, y)] for y in [-0.05, 0.2, 0.5, 0.85, 1.1, 0.7, 0.3, 0.7, 1.2]]
+    raw = assess_rim_crossing(frames, RIM)
+    assert raw["rebound"] is True and raw["entry"] is False
+    assert raw["track_points"] == 9 and raw["track_span"] == 1.25
+    matches = [{"time": 10.0, "coarse_crossing": coarse_crossing, "score": 0.9, "confidence": "high"}]
+    adapter.apply_rim_checks(matches, [{"time": 10.0, "rim": RIM}], {"results": [{"frames": frames}]})
+    service, store, video, model = _analysis_fixture(tmp_path)
+    store.replace_candidates(video["id"], [])
+    row = adapter.candidate_to_row(
+        matches[0], video["id"], store.active_roi(video["id"])["id"], 20000, 3, 1, "probe"
+    )
+    store.replace_candidates(video["id"], [row])
+    persisted = store.list_candidates(video["id"])[0]
+    assert persisted["review_status"] == "excluded"
+    assert persisted["selection_status"] == "excluded"
+    assert matches[0]["rim_check"]["reason"] == ("exit_off_center" if x else "rebound")
+
+
 def test_inspect_video_rejects_non_object_ffprobe_output(tmp_path: Path, monkeypatch):
     source = tmp_path / "invalid-metadata.mp4"
     source.write_bytes(b"video")
