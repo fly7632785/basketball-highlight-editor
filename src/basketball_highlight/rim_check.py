@@ -18,9 +18,9 @@ A candidate is excluded only on what the detector saw: a ball crossing
 outside the rim, leaving the side of the net, bouncing up, staying in front
 of a net that hides makes, or a net that did not move. A small or blurred
 ball drops out near the rim, and players or an orange jersey can block or
-imitate it, so "the ball was not seen" excludes a candidate only when the
-refine stage did not see a crossing either and no ball fell toward the rim.
-Other failed checks are "unsure" and stay for review.
+imitate it, so missing observations cannot prove a miss, even when the
+refine stage did not confirm a crossing. Incomplete evidence is "unsure"
+and stays for review.
 
 Coordinates are normalized to the rim: x = (x - center_x) / width and
 y = (y - rim_y) / width. Rims smaller than 30 px are skipped and left for
@@ -211,16 +211,18 @@ def rejection_reason(crossing):
     """Return why a crossing is not a make, or ``None`` for a make."""
     if crossing is None:
         return "no_crossing"
-    if not crossing["entry"]:
-        return "no_entry"
+    # Seen misses take precedence over missing observations. Otherwise an
+    # incomplete entry/exit could hide a witnessed rebound or side exit.
     if abs(crossing["x_cross"]) > MAX_CROSS_OFFSET:
         return "off_center"
-    if crossing["x_exit"] is None or not crossing["reached_net_bottom"]:
-        return "no_exit"
-    if abs(crossing["x_exit"]) > MAX_EXIT_OFFSET:
+    if crossing["x_exit"] is not None and abs(crossing["x_exit"]) > MAX_EXIT_OFFSET:
         return "exit_off_center"
     if crossing["rebound"]:
         return "rebound"
+    if not crossing["entry"]:
+        return "no_entry"
+    if crossing["x_exit"] is None or not crossing["reached_net_bottom"]:
+        return "no_exit"
     if crossing["hidden_frames"] < MIN_HIDDEN_FRAMES:
         return "not_occluded"
     return None
@@ -289,18 +291,26 @@ def assess_rim_crossing(frames, rim, net_motion_series=None):
 def keep_unless_seen(result, refined):
     """Turn a rejection that no detection proves into "unsure".
 
-    ``refined`` tells whether the refine stage saw a crossing.
+    Missing evidence remains uncertain regardless of upstream confirmation.
+    ``refined`` is retained for compatibility with existing callers.
     """
     if result.get("status") != "rejected":
         return result
     reason = result.get("reason")
     if reason in UNSEEN_REASONS:
-        proven = not refined and not result.get("ball_approached")
+        proven = False
     elif reason == "off_center":
         proven = (
             result.get("track_points", 0) >= MIN_OFF_CENTER_TRACK_POINTS
             and result.get("track_span", 0.0) >= MIN_OFF_CENTER_TRACK_SPAN
         )
+        # A short off-center track is inconclusive, but must not hide a
+        # witnessed side exit or rebound from that same crossing.
+        if not proven:
+            if result.get("x_exit") is not None and abs(result["x_exit"]) > MAX_EXIT_OFFSET:
+                return {**result, "reason": "exit_off_center"}
+            if result.get("rebound"):
+                return {**result, "reason": "rebound"}
     elif reason == "not_occluded":
         proven = (result.get("occluded_share") or 0.0) >= STRONG_OCCLUDED_SHARE
     else:

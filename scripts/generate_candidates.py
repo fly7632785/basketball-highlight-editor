@@ -130,7 +130,18 @@ def find_rim_band_seeds(records, rim, pair_candidates, dedupe_sec=2.0, max_seeds
             break
         if any(abs(sighting["time"] - anchor) < dedupe_sec for anchor in anchors):
             continue
-        anchors.append(sighting["time"])
+        # A later sighting above the rim cannot explain an earlier ball
+        # below it: these can be adjacent shots, especially across a cut.
+        if any(
+            abs(sighting["time"] - seed["time"]) < dedupe_sec
+            and not (
+                sighting["time"] < seed["time"]
+                and sighting["above"]["y"] >= rim_y
+                and seed["above"]["y"] < rim_y
+            )
+            for seed in seeds
+        ):
+            continue
         seeds.append(sighting)
     return seeds
 

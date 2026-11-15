@@ -148,7 +148,61 @@ def flatten_coarse_matches(data: Dict[str, Any], dedupe_seconds: float = 2.0) ->
             normalized["score"] = 0.0
             normalized["fallback_reason"] = "unconfirmed_rim_band_sighting"
         matches.append(normalized)
-    return dedupe_candidates(matches, dedupe_seconds)
+    # The generator already separates weak sightings by observation order.
+    # A time-only second merge would erase adjacent below/above seed events
+    # before each can receive its own dense rim review.
+    seeds = [match for match in matches if match.get("seed") == "rim_band_sighting"]
+    crossings = [match for match in matches if match.get("seed") != "rim_band_sighting"]
+    return sorted(dedupe_candidates(crossings, dedupe_seconds) + seeds, key=lambda match: float(match["time"]))
+
+
+def trajectory_crossing(trajectory, rim_y, event_time, *, downward_only=True):
+    """Select the rim-plane crossing nearest this candidate, not the first."""
+    crossings = []
+    for a, b in zip(trajectory, trajectory[1:]):
+        span = float(b["y"]) - float(a["y"])
+        crosses = (
+            float(a["y"]) <= rim_y <= float(b["y"])
+            if downward_only else min(float(a["y"]), float(b["y"])) <= rim_y <= max(float(a["y"]), float(b["y"]))
+        )
+        if abs(span) > 1e-6 and crosses:
+            ratio = (rim_y - float(a["y"])) / span
+            crossings.append({
+                "x": round(float(a["x"]) + ratio * (float(b["x"]) - float(a["x"])), 1),
+                "y": round(rim_y, 1),
+                "time": round(float(a["time"]) + ratio * (float(b["time"]) - float(a["time"])), 3),
+                "valid": False,
+            })
+    return min(crossings, key=lambda crossing: abs(crossing["time"] - event_time), default=None)
+
+
+def dedupe_trajectory_matches(matches: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    """Merge the same rim-plane event, never an entire multi-shot track."""
+    deduped = []
+    events = {}
+    for match in sorted(matches, key=lambda item: float(item["time"])):
+        overlay = match.get("overlay") or {}
+        trajectory = overlay.get("trajectory") or []
+        crossing = overlay.get("crossing") or {}
+        rim_y = (overlay.get("rim") or {}).get("rim_y")
+        if not crossing and rim_y is not None:
+            # A rising fallback can identify one observation event without
+            # claiming a downward crossing or a made basket.
+            crossing = trajectory_crossing(
+                trajectory, float(rim_y), float(match["time"]), downward_only=False,
+            ) or {}
+        key = tuple(crossing.get(field) for field in ("time", "x", "y"))
+        if all(value is not None for value in key):
+            prior = events.get(key)
+            if prior is not None:
+                if len(trajectory) > len((prior.get("overlay") or {}).get("trajectory") or []):
+                    prior["overlay"] = overlay
+                continue
+        kept = dict(match)
+        deduped.append(kept)
+        if all(value is not None for value in key):
+            events[key] = kept
+    return deduped
 
 
 def candidate_to_row(
@@ -237,6 +291,10 @@ def apply_rim_checks(
     for match, check in zip(matches, apply_video_occlusion(checks)):
         # Coarse fallbacks are candidates the refine stage did not confirm.
         match["rim_check"] = keep_unless_seen(check, refined=not match.get("coarse_crossing"))
+        if match["rim_check"].get("status") == "unsure":
+            match["confidence"] = "low"
+            match["score"] = 0.0
+            match["confidence_reason"] = "rim_check_insufficient_evidence"
 
 
 def build_rim_check_command(

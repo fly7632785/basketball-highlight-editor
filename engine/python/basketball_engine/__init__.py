@@ -3,4 +3,4 @@
 __version__ = "0.1.0"
 
 
-ANALYSIS_ALGORITHM_VERSION = "python-v2.16-rim-band-seeds"
+ANALYSIS_ALGORITHM_VERSION = "python-v2.20-rim-crossing-event-dedupe"

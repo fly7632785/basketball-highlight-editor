@@ -22,6 +22,8 @@ from .adapters.analysis import (
     build_pipeline_commands,
     build_rim_check_command,
     candidate_to_row,
+    dedupe_trajectory_matches,
+    trajectory_crossing,
     flatten_coarse_matches,
     flatten_refined_matches,
     PipelineCancelled,
@@ -1484,24 +1486,7 @@ class EngineService:
         if len(traj) < 3 or "rim_y" not in rim or "center_x" not in rim:
             return None
         rim_y = float(rim["rim_y"])
-        crossing = None
-        for a, b in zip(traj, traj[1:]):
-            span = float(b["y"]) - float(a["y"])
-            if abs(span) > 1e-6 and float(a["y"]) <= rim_y <= float(b["y"]):
-                t = (rim_y - float(a["y"])) / span
-                crossing = {
-                    "x": round(
-                        float(a["x"]) + (float(b["x"]) - float(a["x"])) * t, 1
-                    ),
-                    "y": round(rim_y, 1),
-                    "time": round(
-                        float(a["time"])
-                        + (float(b["time"]) - float(a["time"])) * t,
-                        3,
-                    ),
-                    "valid": False,
-                }
-                break
+        crossing = trajectory_crossing(traj, rim_y, float(match["time"]))
         return {
             "rim": {
                 "center_x": round(float(rim.get("center_x", 0.0)), 1),
@@ -1895,7 +1880,7 @@ class EngineService:
                     # 优先使用精化阶段已扫出的高清轨迹;不可用时退回
                     # 粗扫记录的速度门限串联轨迹。
                     overlay = None
-                    for fallback in refined_fallbacks:
+                    for fallback in sorted(refined_fallbacks, key=lambda item: abs(item["time"] - extra_time)):
                         if abs(fallback["time"] - extra_time) <= 1.0:
                             overlay = self._refined_fallback_overlay(
                                 extra, fallback,
@@ -1913,7 +1898,7 @@ class EngineService:
                     if overlay is not None:
                         extra["overlay"] = overlay
                     matches.append(extra)
-                matches.sort(key=lambda match: float(match["time"]))
+                matches = dedupe_trajectory_matches(matches)
                 self._verify_rim_crossings(
                     repo_root=repo_root,
                     source_video=source_video,
