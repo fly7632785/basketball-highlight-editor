@@ -2663,7 +2663,7 @@ def test_coarse_overlay_uses_nearest_ball_independent_of_detection_order():
 
 
 def test_rim_check_policy_has_a_new_consistent_algorithm_version():
-    assert ANALYSIS_ALGORITHM_VERSION == "python-v2.19-trajectory-event-dedupe"
+    assert ANALYSIS_ALGORITHM_VERSION == "python-v2.20-rim-crossing-event-dedupe"
     assert refine_dynamic_candidates.ALGORITHM_VERSION == ANALYSIS_ALGORITHM_VERSION
 
 
@@ -3314,3 +3314,59 @@ def test_one_continuous_ball_track_is_not_split_into_two_fallbacks(tmp_path,monk
     assert len(trajectories)==2 and trajectories[0]==trajectories[1]
     assert rows[0]['event_time_ms']==10200
     assert len(active)==1,'One continuous ball track was retained twice as overlapping low fallback candidates'
+
+
+def test_two_crossings_in_one_fallback_track_are_preserved(tmp_path, monkeypatch):
+    import copy
+    import generate_candidates as gen
+    import refine_dynamic_candidates as refine
+    from engine.python.basketball_engine import service as sm
+    (service, store, video, model) = _analysis_fixture(tmp_path)
+    store.save_roi(video['id'], {'x1': 0, 'y1': 0, 'x2': 960, 'y2': 720})
+    store.replace_candidates(video['id'], [])
+
+    def record(t, y, conf):
+        return {'time': t, 'detections': [{'name': 'hoop', 'center': [500.0, 300.0], 'confidence': 0.9, 'xyxy': [475.0, 290.0, 525.0, 310.0]}, {'name': 'ball', 'center': [500.0, y], 'confidence': conf, 'xyxy': [495.0, y - 5, 505.0, y + 5]}]}
+    coarse_records = [record(10.2, 340.0, 0.7), record(12.2, 280.0, 0.9)]
+    records = [record(t, y, 0.09) for (t, y) in [(9.9, 280.0), (10.0, 300.0), (10.1, 320.0), (10.2, 340.0), (10.7, 370.0), (11.2, 340.0), (11.7, 310.0), (12.2, 280.0), (12.3, 300.0), (12.4, 320.0)]]
+    assert [b['time'] for (a, b) in zip(records, records[1:]) if a['detections'][1]['center'][1] < 300 <= b['detections'][1]['center'][1]] == [10.0, 12.3]
+    monkeypatch.setattr(refine, 'load_yolo_model', lambda _: object())
+    monkeypatch.setattr(refine, 'select_device', lambda _: 'cpu')
+    monkeypatch.setattr(refine, 'load_scan_window', lambda : lambda *a, **k: copy.deepcopy(records))
+    captured = []
+
+    def run(commands, output, *args, **kwargs):
+        if kwargs.get('stage_names') == ('verify_rim_crossing',):
+            command = commands[0]
+            items = json.loads(Path(command[command.index('--candidates') + 1]).read_text())['candidates']
+            result = {'results': [{'frames': []} for item in items]}
+        else:
+            scan = Path(commands[1][commands[1].index('--output') + 1])
+            scan.parent.mkdir(parents=True, exist_ok=True)
+            scan.write_text(json.dumps({'video': video['source_path'], 'model': str(model), 'records': coarse_records}))
+            with monkeypatch.context() as p:
+                p.setattr(sys, 'argv', commands[2][1:])
+                gen.main(gen.parse_args())
+                p.setattr(sys, 'argv', commands[3][1:])
+                refine.main(refine.parse_args())
+            result = json.loads(Path(output).read_text())
+            captured.extend(result['results'])
+            assert all((not item['refined'] for item in captured))
+        Path(output).write_text(json.dumps(result))
+        return {'refined': result, 'logs': [], 'stage_timings_ms': {}}
+    monkeypatch.setattr(sm, 'run_pipeline', run)
+    monkeypatch.setattr(service, '_prepare_candidate_previews', lambda **k: {'generated': 0})
+    payload = {'project_root': str(store.root), 'video_id': video['id'], 'model_path': str(model), 'mode': 'standard', 'conf': 0.08}
+    job = service._create_analysis_job(payload)['job']
+    service._run_analysis(payload, job['id'])
+    final = store.get_job(job['id'])
+    assert final['state'] == 'completed', final
+    rows = store.list_candidates(video['id'])
+    active = [r for r in rows if r['selection_status'] != 'excluded']
+    trajectories = [item['fallback_trajectory'] for item in captured]
+    print(json.dumps({'policy': 'current', 'times_ms': [r['event_time_ms'] for r in rows], 'active': len(active), 'statuses': [r['review_status'] for r in rows], 'confidence': [r['confidence'] for r in rows], 'fallback_trajectories': trajectories}))
+    if len(trajectories) == 2:
+        assert trajectories[0] == trajectories[1]
+    assert len(active) == 2, 'Two distinct downward crossings lost one review candidate'
+    # Existing hoop-box plane calibration is 300 - 20 * .28 = 294.4px.
+    assert [json.loads(row["evidence_json"])["overlay"]["crossing"]["time"] for row in rows] == [9.972, 12.272]

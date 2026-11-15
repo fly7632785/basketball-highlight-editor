@@ -3,4 +3,4 @@
 __version__ = "0.1.0"
 
 
-ANALYSIS_ALGORITHM_VERSION = "python-v2.19-trajectory-event-dedupe"
+ANALYSIS_ALGORITHM_VERSION = "python-v2.20-rim-crossing-event-dedupe"

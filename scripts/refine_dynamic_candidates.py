@@ -22,7 +22,7 @@ from cache_io import read_json_cache, write_json_cache
 
 
 DETECTION_CACHE_VERSION = "python-v2.5-white-net-region"
-ALGORITHM_VERSION = "python-v2.19-trajectory-event-dedupe"
+ALGORITHM_VERSION = "python-v2.20-rim-crossing-event-dedupe"
 REFINED_SCHEMA_VERSION = 3
 
 

@@ -156,28 +156,52 @@ def flatten_coarse_matches(data: Dict[str, Any], dedupe_seconds: float = 2.0) ->
     return sorted(dedupe_candidates(crossings, dedupe_seconds) + seeds, key=lambda match: float(match["time"]))
 
 
+def trajectory_crossing(trajectory, rim_y, event_time, *, downward_only=True):
+    """Select the rim-plane crossing nearest this candidate, not the first."""
+    crossings = []
+    for a, b in zip(trajectory, trajectory[1:]):
+        span = float(b["y"]) - float(a["y"])
+        crosses = (
+            float(a["y"]) <= rim_y <= float(b["y"])
+            if downward_only else min(float(a["y"]), float(b["y"])) <= rim_y <= max(float(a["y"]), float(b["y"]))
+        )
+        if abs(span) > 1e-6 and crosses:
+            ratio = (rim_y - float(a["y"])) / span
+            crossings.append({
+                "x": round(float(a["x"]) + ratio * (float(b["x"]) - float(a["x"])), 1),
+                "y": round(rim_y, 1),
+                "time": round(float(a["time"]) + ratio * (float(b["time"]) - float(a["time"])), 3),
+                "valid": False,
+            })
+    return min(crossings, key=lambda crossing: abs(crossing["time"] - event_time), default=None)
+
+
 def dedupe_trajectory_matches(matches: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
-    """Merge repeated observations of one track, keeping the earlier event."""
+    """Merge the same rim-plane event, never an entire multi-shot track."""
     deduped = []
+    events = {}
     for match in sorted(matches, key=lambda item: float(item["time"])):
         overlay = match.get("overlay") or {}
         trajectory = overlay.get("trajectory") or []
         crossing = overlay.get("crossing") or {}
-        for prior in deduped:
-            prior_overlay = prior.get("overlay") or {}
-            prior_trajectory = prior_overlay.get("trajectory") or []
-            prior_crossing = prior_overlay.get("crossing") or {}
-            same_track = len(trajectory) >= 3 and trajectory == prior_trajectory
-            same_crossing = all(
-                crossing.get(key) is not None and crossing[key] == prior_crossing.get(key)
-                for key in ("time", "x", "y")
-            )
-            if same_track or same_crossing:
-                if len(trajectory) > len(prior_trajectory):
+        rim_y = (overlay.get("rim") or {}).get("rim_y")
+        if not crossing and rim_y is not None:
+            # A rising fallback can identify one observation event without
+            # claiming a downward crossing or a made basket.
+            crossing = trajectory_crossing(
+                trajectory, float(rim_y), float(match["time"]), downward_only=False,
+            ) or {}
+        key = tuple(crossing.get(field) for field in ("time", "x", "y"))
+        if all(value is not None for value in key):
+            prior = events.get(key)
+            if prior is not None:
+                if len(trajectory) > len((prior.get("overlay") or {}).get("trajectory") or []):
                     prior["overlay"] = overlay
-                break
-        else:
-            deduped.append(dict(match))
+                continue
+        kept = dict(match)
+        deduped.append(kept)
+        if all(value is not None for value in key):
+            events[key] = kept
     return deduped
 
 
