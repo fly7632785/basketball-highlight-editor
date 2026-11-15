@@ -1751,10 +1751,26 @@ class _ReviewViewState extends State<_ReviewView> {
   }
 
   Future<void> _scrollToSelected() async {
-    if (selectedIndex >= _candidateKeys.length) return;
+    if (!mounted) return;
+    final index = selectedIndex;
+    final items = candidates;
+    if (index < 0 || index >= items.length) {
+      return;
+    }
+    final id = items[index].id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final target = _candidateKeys[selectedIndex].currentContext;
-      if (target != null && mounted) {
+      if (!mounted) return;
+      final current = candidates;
+      if (selectedIndex != index ||
+          index < 0 ||
+          index >= current.length ||
+          index >= _candidateKeys.length ||
+          current[index].id != id ||
+          selected?.id != id) {
+        return;
+      }
+      final target = _candidateKeys[index].currentContext;
+      if (target != null && target.mounted) {
         Scrollable.ensureVisible(
           target,
           alignment: .45,

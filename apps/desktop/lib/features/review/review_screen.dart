@@ -1088,6 +1088,20 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   }
 
   void _ensureCandidateVisible(String id) {
+    if (!mounted) return;
+    final state = ref.read(projectProvider);
+    final candidates = _filterCandidates(
+      _orderedCandidates(state.candidates),
+      _candidateFilter,
+      playerFilter: _playerFilter,
+      rimFilter: _rimFilter,
+      segmentFilter: _segmentFilter,
+    );
+    if (_selectedCandidate(candidates)?['id']?.toString() != id) return;
+    final index = candidates.indexWhere(
+      (candidate) => candidate['id']?.toString() == id,
+    );
+    if (index < 0) return;
     final targetContext = _candidateRowContexts[id];
     if (targetContext != null && targetContext.mounted) {
       unawaited(
@@ -1101,18 +1115,6 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       return;
     }
     if (!_candidateScrollController.hasClients) return;
-    final state = ref.read(projectProvider);
-    final candidates = _filterCandidates(
-      _orderedCandidates(state.candidates),
-      _candidateFilter,
-      playerFilter: _playerFilter,
-      rimFilter: _rimFilter,
-      segmentFilter: _segmentFilter,
-    );
-    final index = candidates.indexWhere(
-      (candidate) => candidate['id']?.toString() == id,
-    );
-    if (index < 0) return;
     final position = _candidateScrollController.position;
     unawaited(
       _candidateScrollController.animateTo(

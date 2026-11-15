@@ -1831,6 +1831,27 @@ void main() {
     expect(find.text('候选 00:12'), findsOneWidget);
   });
 
+  testWidgets('queued filter scroll is safe after rapid switch to empty', (tester) async {
+    await _pumpReview(tester, ProjectState(
+      job: const {'state': 'completed'},
+      candidates: [for (var i = 0; i < 5; i++) {
+        'id': 'empty-$i', 'event_time_ms': i * 2000,
+        'default_start_ms': i * 2000, 'default_end_ms': i * 2000 + 1000,
+        'review_status': 'pending',
+      }],
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('review-status-included')));
+    await tester.tap(find.byKey(const ValueKey('review-status-excluded')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('candidate-row-empty-0')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('review-status-all')));
+    await tester.pumpAndSettle();
+    expect(find.text('候选 00:00'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('filter switch keeps nearest clip and earlier tie visible', (tester) async {
     const font = String.fromEnvironment('BHE_SCREENSHOT_FONT');
     if (font.isNotEmpty) {
