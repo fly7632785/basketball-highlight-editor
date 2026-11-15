@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
+import 'package:bhe_core/bhe_core.dart' show nearestReviewCandidate;
 import '../../core/app_diagnostics.dart';
 import '../../core/player_audio_settings.dart';
 
@@ -203,6 +204,15 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     String? rim,
     String? segment,
   }) {
+    final previous = _selectedCandidate(_filterCandidates(
+      _orderedCandidates(ref.read(projectProvider).candidates),
+      _candidateFilter,
+      playerFilter: _playerFilter,
+      rimFilter: _rimFilter,
+      segmentFilter: _segmentFilter,
+    ));
+    final anchorMs = _videoController.playingPositionMs ??
+        (previous == null ? 0 : _clipStart(previous));
     setState(() {
       _candidateFilter = status ?? _candidateFilter;
       _playerFilter = player ?? _playerFilter;
@@ -215,13 +225,20 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         rimFilter: _rimFilter,
         segmentFilter: _segmentFilter,
       );
-      _selectedCandidateId = _selectedCandidate(candidates)?['id']?.toString();
+      _selectedCandidateId = nearestReviewCandidate(
+        candidates,
+        anchorMs: anchorMs,
+        startMs: _clipStart,
+      )?['id']?.toString();
+      if (_selectedCandidateId != null) _replayToken++;
     });
     final id = _selectedCandidateId;
     if (id != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _ensureCandidateVisible(id);
       });
+    } else {
+      unawaited(_videoController.pause());
     }
   }
 
@@ -1071,6 +1088,20 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   }
 
   void _ensureCandidateVisible(String id) {
+    if (!mounted) return;
+    final state = ref.read(projectProvider);
+    final candidates = _filterCandidates(
+      _orderedCandidates(state.candidates),
+      _candidateFilter,
+      playerFilter: _playerFilter,
+      rimFilter: _rimFilter,
+      segmentFilter: _segmentFilter,
+    );
+    if (_selectedCandidate(candidates)?['id']?.toString() != id) return;
+    final index = candidates.indexWhere(
+      (candidate) => candidate['id']?.toString() == id,
+    );
+    if (index < 0) return;
     final targetContext = _candidateRowContexts[id];
     if (targetContext != null && targetContext.mounted) {
       unawaited(
@@ -1084,18 +1115,6 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       return;
     }
     if (!_candidateScrollController.hasClients) return;
-    final state = ref.read(projectProvider);
-    final candidates = _filterCandidates(
-      _orderedCandidates(state.candidates),
-      _candidateFilter,
-      playerFilter: _playerFilter,
-      rimFilter: _rimFilter,
-      segmentFilter: _segmentFilter,
-    );
-    final index = candidates.indexWhere(
-      (candidate) => candidate['id']?.toString() == id,
-    );
-    if (index < 0) return;
     final position = _candidateScrollController.position;
     unawaited(
       _candidateScrollController.animateTo(
@@ -2053,6 +2072,10 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
 
   int get currentPositionMs => _player?.state.position.inMilliseconds ?? 0;
 
+  Future<void> pausePlayback() => _enqueueMediaAction(() async {
+    if (mounted && !_disposed) await _player?.pause();
+  });
+
   Future<void> togglePlayPause() async {
     if (!_mayPlay) return;
     final generation = _mediaGeneration;
@@ -2321,6 +2344,12 @@ class _VideoPaneController {
   _VideoPaneState? _state;
 
   int get currentPositionMs => _state?.currentPositionMs ?? 0;
+
+  int? get playingPositionMs => _state?._player?.state.playing == true
+      ? _state!.currentPositionMs
+      : null;
+
+  Future<void> pause() => _state?.pausePlayback() ?? Future.value();
 
   void _attach(_VideoPaneState state) => _state = state;
 

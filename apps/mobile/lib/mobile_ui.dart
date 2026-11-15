@@ -1413,17 +1413,31 @@ class _ReviewViewState extends State<_ReviewView> {
     String? rim,
     String? player,
   }) async {
+    final anchorMs = controller?.value.isPlaying == true
+        ? controller!.value.position.inMilliseconds
+        : selected?.startMs ?? 0;
     _cancelCompletionPrompt();
     setState(() {
       statusFilter = status ?? statusFilter;
       rimFilter = rim ?? rimFilter;
       playerFilter = player ?? playerFilter;
-      selectedIndex = 0;
-      _selectedId = null;
+      final items = candidates;
+      final nearest = nearestReviewCandidate(
+        items,
+        anchorMs: anchorMs,
+        startMs: (candidate) => candidate.startMs,
+      );
+      selectedIndex = nearest == null ? 0 : items.indexOf(nearest);
+      _selectedId = nearest?.id;
       _completionPromptShown = false;
     });
-    final first = selected;
-    if (first != null) await _replay(first);
+    final candidate = selected;
+    if (candidate != null) {
+      unawaited(_scrollToSelected());
+      await _replay(candidate);
+    } else {
+      await _pausePlayback();
+    }
   }
 
   Candidate? get selected {
@@ -1737,10 +1751,26 @@ class _ReviewViewState extends State<_ReviewView> {
   }
 
   Future<void> _scrollToSelected() async {
-    if (selectedIndex >= _candidateKeys.length) return;
+    if (!mounted) return;
+    final index = selectedIndex;
+    final items = candidates;
+    if (index < 0 || index >= items.length) {
+      return;
+    }
+    final id = items[index].id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final target = _candidateKeys[selectedIndex].currentContext;
-      if (target != null && mounted) {
+      if (!mounted) return;
+      final current = candidates;
+      if (selectedIndex != index ||
+          index < 0 ||
+          index >= current.length ||
+          index >= _candidateKeys.length ||
+          current[index].id != id ||
+          selected?.id != id) {
+        return;
+      }
+      final target = _candidateKeys[index].currentContext;
+      if (target != null && target.mounted) {
         Scrollable.ensureVisible(
           target,
           alignment: .45,

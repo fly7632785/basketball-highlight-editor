@@ -4,6 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/rendering.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -16,6 +19,7 @@ import 'package:desktop/providers/onboarding_provider.dart';
 import 'package:desktop/providers/project_state.dart';
 import 'package:desktop/theme/app_colors.dart';
 import 'package:desktop/theme/tokens.dart';
+import 'package:desktop/theme/app_theme.dart';
 
 void main() {
   // 默认当作已看过引导，免得遮罩挡住别的用例；引导本身在 onboarding_test 里测。
@@ -1827,6 +1831,70 @@ void main() {
     expect(find.text('候选 00:12'), findsOneWidget);
   });
 
+  testWidgets('queued filter scroll is safe after rapid switch to empty', (tester) async {
+    await _pumpReview(tester, ProjectState(
+      job: const {'state': 'completed'},
+      candidates: [for (var i = 0; i < 5; i++) {
+        'id': 'empty-$i', 'event_time_ms': i * 2000,
+        'default_start_ms': i * 2000, 'default_end_ms': i * 2000 + 1000,
+        'review_status': 'pending',
+      }],
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('review-status-included')));
+    await tester.tap(find.byKey(const ValueKey('review-status-excluded')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('candidate-row-empty-0')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('review-status-all')));
+    await tester.pumpAndSettle();
+    expect(find.text('候选 00:00'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('filter switch keeps nearest clip and earlier tie visible', (tester) async {
+    const font = String.fromEnvironment('BHE_SCREENSHOT_FONT');
+    if (font.isNotEmpty) {
+      await tester.runAsync(() async {
+        final bytes = await File(font).readAsBytes();
+        for (final family in ['Roboto', 'Inter']) {
+          await (FontLoader(family)..addFont(Future.value(ByteData.sublistView(bytes)))).load();
+        }
+      });
+    }
+    await _pumpReview(tester, ProjectState(
+      job: const {'state': 'completed'},
+      candidates: [for (var i = 0; i < 21; i++) {
+        'id': 'position-$i', 'event_time_ms': i * 2000,
+        'default_start_ms': i * 2000, 'default_end_ms': i * 2000 + 1000,
+        'review_status': i.isOdd ? 'excluded' : 'pending',
+      }],
+    ), locale: const Locale('en'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('review-status-included')));
+    await tester.pumpAndSettle();
+    final last = find.byKey(const ValueKey('candidate-row-position-20'));
+    await tester.scrollUntilVisible(last, 400, scrollable: find.byType(Scrollable).last);
+    await tester.tap(last);
+    await tester.pumpAndSettle();
+    expect(find.text('Candidate 00:40'), findsOneWidget);
+    await _saveFilterPositionEvidence(tester, 'before-included-40s');
+    await tester.tap(find.byKey(const ValueKey('review-status-excluded')));
+    await tester.pumpAndSettle();
+    expect(find.text('Candidate 00:38'), findsOneWidget);
+    final nearest = find.byKey(const ValueKey('candidate-row-position-19'));
+    expect(nearest.hitTestable(), findsOneWidget);
+    await _saveFilterPositionEvidence(tester, 'after-excluded-38s');
+    await tester.tap(find.byKey(const ValueKey('review-status-all')));
+    await tester.pumpAndSettle();
+    expect(find.text('Candidate 00:38'), findsOneWidget);
+    expect(nearest.hitTestable(), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('review-status-included')));
+    await tester.pumpAndSettle();
+    expect(find.text('Candidate 00:36'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('filters candidates without changing their chronological order', (
     tester,
   ) async {
@@ -2110,6 +2178,7 @@ Future<void> _pumpReview(
         projectProvider.overrideWith(() => notifier ?? _ReviewNotifier(state)),
       ],
       child: MaterialApp(
+        theme: const String.fromEnvironment('BHE_FILTER_SCREENSHOTS').isEmpty ? null : appTheme(Brightness.dark),
         locale: locale,
         localizationsDelegates: locale == null
             ? null
@@ -2327,4 +2396,18 @@ class _PlayerLayoutNotifier extends _ReviewNotifier {
       ],
     );
   }
+}
+
+Future<void> _saveFilterPositionEvidence(WidgetTester tester, String name) async {
+  const directory = String.fromEnvironment('BHE_FILTER_SCREENSHOTS');
+  if (directory.isEmpty) return;
+  final boundary = tester.renderObject<RenderRepaintBoundary>(find.byType(RepaintBoundary).first);
+  await tester.runAsync(() async {
+    final image = await boundary.toImage(pixelRatio: 1);
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    final file = File('$directory/desktop-$name.png');
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes(bytes!.buffer.asUint8List());
+    image.dispose();
+  });
 }
