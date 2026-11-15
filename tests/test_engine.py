@@ -2663,7 +2663,7 @@ def test_coarse_overlay_uses_nearest_ball_independent_of_detection_order():
 
 
 def test_rim_check_policy_has_a_new_consistent_algorithm_version():
-    assert ANALYSIS_ALGORITHM_VERSION == "python-v2.18-ordered-rim-band-seeds"
+    assert ANALYSIS_ALGORITHM_VERSION == "python-v2.19-trajectory-event-dedupe"
     assert refine_dynamic_candidates.ALGORITHM_VERSION == ANALYSIS_ALGORITHM_VERSION
 
 
@@ -3271,3 +3271,46 @@ def test_legacy_proxy_without_recorded_size_or_mtime_is_not_reused(tmp_path):
             )
 
     assert service._latest_proxy_video(store, video["id"]) is None
+
+
+def test_one_continuous_ball_track_is_not_split_into_two_fallbacks(tmp_path,monkeypatch):
+    import copy
+    import generate_candidates as gen
+    import refine_dynamic_candidates as refine
+    from engine.python.basketball_engine import service as sm
+    service,store,video,model=_analysis_fixture(tmp_path)
+    store.save_roi(video['id'],{'x1':0,'y1':0,'x2':960,'y2':720})
+    store.replace_candidates(video['id'],[])
+    # One continuously rising ball, no cut or second ball. Later descent is unobserved.
+    records=[{'time':round(10.+i*.1,1),'detections':[
+      {'name':'hoop','center':[500.,300.],'confidence':.9,'xyxy':[475.,290.,525.,310.]},
+      {'name':'ball','center':[500.,325.-10*i],'confidence':.7+.025*i,'xyxy':[495.,320.-10*i,505.,330.-10*i]}
+    ]}for i in range(8)]
+    monkeypatch.setattr(refine,'load_yolo_model',lambda _:object())
+    monkeypatch.setattr(refine,'select_device',lambda _:'cpu')
+    monkeypatch.setattr(refine,'load_scan_window',lambda:lambda *a,**k:copy.deepcopy(records))
+    captured=[]
+    def run(commands,output,*args,**kwargs):
+        if kwargs.get('stage_names')==('verify_rim_crossing',):
+            command=commands[0];items=json.loads(Path(command[command.index('--candidates')+1]).read_text())['candidates']
+            result={'results':[{'frames':[[copy.deepcopy(r['detections'][1])]for r in records]}for item in items]}
+        else:
+            scan=Path(commands[1][commands[1].index('--output')+1]);scan.parent.mkdir(parents=True,exist_ok=True)
+            scan.write_text(json.dumps({'video':video['source_path'],'model':str(model),'records':records}))
+            with monkeypatch.context()as p:
+                p.setattr(sys,'argv',commands[2][1:]);gen.main(gen.parse_args())
+                p.setattr(sys,'argv',commands[3][1:]);refine.main(refine.parse_args())
+            result=json.loads(Path(output).read_text());captured.extend(result['results'])
+            assert all(not item['refined'] for item in captured)
+        Path(output).write_text(json.dumps(result));return {'refined':result,'logs':[],'stage_timings_ms':{}}
+    monkeypatch.setattr(sm,'run_pipeline',run)
+    monkeypatch.setattr(service,'_prepare_candidate_previews',lambda **k:{'generated':0})
+    payload={'project_root':str(store.root),'video_id':video['id'],'model_path':str(model),'mode':'standard'}
+    job=service._create_analysis_job(payload)['job'];service._run_analysis(payload,job['id'])
+    final=store.get_job(job['id']);assert final['state']=='completed',final
+    rows=store.list_candidates(video['id']);active=[r for r in rows if r['selection_status']!='excluded']
+    trajectories=[item['fallback_trajectory']for item in captured]
+    print(json.dumps({'times_ms':[r['event_time_ms']for r in rows],'active':len(active),'statuses':[r['review_status']for r in rows],'confidence':[r['confidence']for r in rows],'fallback_trajectories':trajectories}))
+    assert len(trajectories)==2 and trajectories[0]==trajectories[1]
+    assert rows[0]['event_time_ms']==10200
+    assert len(active)==1,'One continuous ball track was retained twice as overlapping low fallback candidates'

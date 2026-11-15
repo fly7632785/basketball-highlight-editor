@@ -3,4 +3,4 @@
 __version__ = "0.1.0"
 
 
-ANALYSIS_ALGORITHM_VERSION = "python-v2.18-ordered-rim-band-seeds"
+ANALYSIS_ALGORITHM_VERSION = "python-v2.19-trajectory-event-dedupe"

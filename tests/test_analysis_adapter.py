@@ -10,6 +10,7 @@ from engine.python.basketball_engine.adapters.analysis import (
     apply_rim_checks,
     build_pipeline_commands,
     candidate_to_row,
+    dedupe_trajectory_matches,
     flatten_coarse_matches,
     flatten_refined_matches,
     scale_roi_to_proxy,
@@ -67,6 +68,28 @@ def test_flatten_coarse_matches_deduplicates_candidate_events():
     })
 
     assert [match["time"] for match in matches] == [10.8, 20.0]
+
+
+def test_same_crossing_keeps_earlier_candidate_with_fuller_trajectory():
+    crossing = {"time": 10.4, "x": 500, "y": 300}
+    points = [{"time": t, "x": 500, "y": y} for t, y in [(10.2, 280), (10.4, 300), (10.6, 320)]]
+    matches = [
+        {"time": 10.7, "overlay": {"crossing": crossing, "trajectory": points}},
+        {"time": 10.2, "confidence": "low", "score": 0, "overlay": {"crossing": crossing, "trajectory": points[:2]}},
+    ]
+    merged = dedupe_trajectory_matches(matches)
+    assert len(merged) == 1 and merged[0]["time"] == 10.2
+    assert merged[0]["overlay"]["trajectory"] == points
+    assert merged[0]["confidence"] == "low" and merged[0]["score"] == 0
+
+
+@pytest.mark.parametrize("later_crossing", [None, {"time": 10.5, "x": 500, "y": 300}])
+def test_nearby_times_or_missing_tracks_alone_do_not_merge_events(later_crossing):
+    matches = [
+        {"time": 10.2, "overlay": {"crossing": {"time": 10.4, "x": 500, "y": 300}}},
+        {"time": 10.7, "overlay": {"crossing": later_crossing}},
+    ]
+    assert dedupe_trajectory_matches(matches) == matches
 
 
 def test_pipeline_commands_can_skip_refinement_for_fast_mode(tmp_path: Path):

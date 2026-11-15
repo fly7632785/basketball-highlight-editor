@@ -22,6 +22,7 @@ from .adapters.analysis import (
     build_pipeline_commands,
     build_rim_check_command,
     candidate_to_row,
+    dedupe_trajectory_matches,
     flatten_coarse_matches,
     flatten_refined_matches,
     PipelineCancelled,
@@ -1913,7 +1914,7 @@ class EngineService:
                     if overlay is not None:
                         extra["overlay"] = overlay
                     matches.append(extra)
-                matches.sort(key=lambda match: float(match["time"]))
+                matches = dedupe_trajectory_matches(matches)
                 self._verify_rim_crossings(
                     repo_root=repo_root,
                     source_video=source_video,

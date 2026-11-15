@@ -156,6 +156,31 @@ def flatten_coarse_matches(data: Dict[str, Any], dedupe_seconds: float = 2.0) ->
     return sorted(dedupe_candidates(crossings, dedupe_seconds) + seeds, key=lambda match: float(match["time"]))
 
 
+def dedupe_trajectory_matches(matches: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    """Merge repeated observations of one track, keeping the earlier event."""
+    deduped = []
+    for match in sorted(matches, key=lambda item: float(item["time"])):
+        overlay = match.get("overlay") or {}
+        trajectory = overlay.get("trajectory") or []
+        crossing = overlay.get("crossing") or {}
+        for prior in deduped:
+            prior_overlay = prior.get("overlay") or {}
+            prior_trajectory = prior_overlay.get("trajectory") or []
+            prior_crossing = prior_overlay.get("crossing") or {}
+            same_track = len(trajectory) >= 3 and trajectory == prior_trajectory
+            same_crossing = all(
+                crossing.get(key) is not None and crossing[key] == prior_crossing.get(key)
+                for key in ("time", "x", "y")
+            )
+            if same_track or same_crossing:
+                if len(trajectory) > len(prior_trajectory):
+                    prior["overlay"] = overlay
+                break
+        else:
+            deduped.append(dict(match))
+    return deduped
+
+
 def candidate_to_row(
     match: Dict[str, Any],
     video_id: str,
