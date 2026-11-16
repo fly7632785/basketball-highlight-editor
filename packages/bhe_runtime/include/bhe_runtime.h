@@ -8,6 +8,8 @@ typedef struct RuntimeSession RuntimeSession;
 
 bool bhe_runtime_initialize_onnx(const char *library_path);
 RuntimeSession *bhe_runtime_create_session(const char *config);
+/* Last creation error on this thread; free with bhe_runtime_free_string. */
+char *bhe_runtime_session_create_error(void);
 char *bhe_runtime_session_info(RuntimeSession *session);
 char *bhe_runtime_push_frame(RuntimeSession *session, const char *frame);
 /*

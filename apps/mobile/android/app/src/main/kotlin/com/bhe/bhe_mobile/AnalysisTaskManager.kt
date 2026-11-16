@@ -654,8 +654,13 @@ object AnalysisTaskManager {
                         request.optString("optimizedModelPath").takeIf { it.isNotEmpty() }?.let {
                             config.put("optimized_model_path", it)
                         }
-                        session = NativeRuntime.createSession(config.toString())
-                        if (session == 0L) throw IllegalStateException("Rust Runtime 无法加载篮筐复核模型")
+                        session = RimCheckSession.create(
+                            config,
+                            request.getString("modelPath"),
+                            NativeRuntime::createSession,
+                            NativeRuntime::sessionCreateError,
+                            { message -> Log.w(TAG, message) },
+                        )
                     }
                     val first = max(0L, eventMs - RIM_CHECK_WINDOW_MS)
                     val last = min(duration, eventMs + RIM_CHECK_WINDOW_MS)

@@ -9,6 +9,7 @@
 
 extern "C" {
 void* bhe_runtime_create_session(const char* config);
+char* bhe_runtime_session_create_error();
 char* bhe_runtime_session_info(void* session);
 bool bhe_runtime_initialize_onnx(const char* library_path);
 char* bhe_runtime_push_frame(void* session, const char* frame);
@@ -66,6 +67,15 @@ Java_com_bhe_bhe_1mobile_NativeRuntime_createSession(JNIEnv* env, jclass, jstrin
     env->ReleaseStringUTFChars(config, value);
     BHE_LOGI("createSession native returned %p", session);
     return reinterpret_cast<jlong>(session);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_bhe_bhe_1mobile_NativeRuntime_sessionCreateError(JNIEnv* env, jclass) {
+    char* output = bhe_runtime_session_create_error();
+    if (output == nullptr) return env->NewStringUTF("runtime returned no creation error");
+    jstring result = env->NewStringUTF(output);
+    bhe_runtime_free_string(output);
+    return result;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
