@@ -8,6 +8,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
 
 import '../core/app_log.dart';
+import '../features/about/log_directory_action.dart';
 import '../providers/session_provider.dart';
 import '../providers/project_state.dart';
 import '../providers/locale_provider.dart';
@@ -172,6 +173,10 @@ class CsTopBar extends ConsumerWidget {
                 child: Text(l10n?.feedback ?? '反馈'),
               ),
               PopupMenuItem(
+                value: 'logs',
+                child: Text(context.bheText('打开日志目录')),
+              ),
+              PopupMenuItem(
                 value: 'shortcuts',
                 child: Text(context.bheText('快捷键一览')),
               ),
@@ -238,6 +243,10 @@ class CsTopBar extends ConsumerWidget {
     WidgetRef ref,
     String value,
   ) async {
+    if (value == 'logs') {
+      await openLogDirectoryWithFeedback(context);
+      return;
+    }
     if (value == 'reset-onboarding') {
       appLog('info', 'settings', '重置新手引导');
       await ref.read(onboardingProvider.notifier).reset();

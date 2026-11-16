@@ -5,7 +5,8 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
 
 import '../../core/app_log.dart';
-import '../../core/contact_actions.dart';
+import '../../core/contact_actions.dart' show feedbackEmail;
+import 'log_directory_action.dart';
 import '../../core/diagnostics.dart';
 import '../feedback/feedback_dialog.dart';
 import '../update/update_dialog.dart';
@@ -158,8 +159,7 @@ class _CourtsideAboutDialog extends StatelessWidget {
                 children: [
                   TextButton.icon(
                     onPressed: () async {
-                      await Directory(logDirectory).create(recursive: true);
-                      await openExternalUri(logDirectory);
+                      await openLogDirectoryWithFeedback(context);
                     },
                     style: TextButton.styleFrom(
                       foregroundColor: c.textPrimary, minimumSize: const Size(44, 44),

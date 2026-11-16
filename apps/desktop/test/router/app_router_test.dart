@@ -38,6 +38,16 @@ void main() {
   });
 
   group('CsScaffold responsive', () {
+    testWidgets('more menu exposes the log folder directly', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await _pumpHarness(tester);
+      await tester.tap(find.byType(PopupMenuButton<String>).first);
+      await tester.pumpAndSettle();
+      expect(find.text('打开日志目录'), findsOneWidget);
+    });
+
     testWidgets('close project remains clickable while a save is pending', (
       tester,
     ) async {

@@ -1240,6 +1240,10 @@ const _englishText = <String, String>{
   '按视频段筛选': 'Filter by part',
   '运行日志': 'Logs',
   '打开日志目录': 'Open log folder',
+  '无法打开日志目录': 'Could not open log folder',
+  '可以复制下面的路径，在文件管理器中手动打开。':
+      'Copy the path below to open it manually in your file manager.',
+  '复制路径': 'Copy path',
   '存为分组': 'Save as group',
   '例如：周六球队': 'e.g. Saturday team',
   '还没有分组。把当前项目的球员存为分组后，其他项目可以一键导入。':
