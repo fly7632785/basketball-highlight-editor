@@ -97,6 +97,9 @@ object NativeRuntime {
     external fun createSession(config: String): Long
 
     @JvmStatic
+    external fun sessionCreateError(): String
+
+    @JvmStatic
     external fun sessionInfo(session: Long): String
 
     @JvmStatic

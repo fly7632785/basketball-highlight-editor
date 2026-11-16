@@ -6613,6 +6613,23 @@ pub unsafe extern "C" fn bhe_runtime_initialize_onnx(library_path: *const c_char
     }
 }
 
+// Session creation and its error query run synchronously on the JNI caller's
+// thread. Keep failures separate when tuning or analysis runs concurrently.
+thread_local! {
+    static SESSION_CREATE_ERROR: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// Returns an owned copy of this thread's most recent session creation error.
+/// Release the returned string with `bhe_runtime_free_string`.
+#[no_mangle]
+pub extern "C" fn bhe_runtime_session_create_error() -> *mut c_char {
+    SESSION_CREATE_ERROR.with(|error| {
+        CString::new(error.borrow().replace('\0', "\\0"))
+            .unwrap()
+            .into_raw()
+    })
+}
+
 /// Creates a native analysis session from a JSON runtime configuration.
 ///
 /// # Safety
@@ -6620,13 +6637,18 @@ pub unsafe extern "C" fn bhe_runtime_initialize_onnx(library_path: *const c_char
 /// and remains valid for the duration of this call.
 #[no_mangle]
 pub unsafe extern "C" fn bhe_runtime_create_session(config: *const c_char) -> *mut RuntimeSession {
+    SESSION_CREATE_ERROR.with(|error| error.borrow_mut().clear());
     if config.is_null() {
+        SESSION_CREATE_ERROR.with(|error| *error.borrow_mut() = "session config is null".into());
         return std::ptr::null_mut();
     }
     let input = CStr::from_ptr(config).to_string_lossy();
     match create_session_json(&input) {
         Ok(session) => Box::into_raw(Box::new(session)),
-        Err(_) => std::ptr::null_mut(),
+        Err(cause) => {
+            SESSION_CREATE_ERROR.with(|error| *error.borrow_mut() = cause.to_string());
+            std::ptr::null_mut()
+        }
     }
 }
 
@@ -6931,5 +6953,44 @@ pub unsafe extern "C" fn bhe_runtime_judge_rim_checks(input: *const c_char) -> *
 pub unsafe extern "C" fn bhe_runtime_free_string(value: *mut c_char) {
     if !value.is_null() {
         drop(CString::from_raw(value));
+    }
+}
+
+#[cfg(test)]
+mod session_create_error_tests {
+    use super::*;
+
+    fn error_message() -> String {
+        unsafe {
+            let value = bhe_runtime_session_create_error();
+            let message = CStr::from_ptr(value).to_str().unwrap().to_owned();
+            bhe_runtime_free_string(value);
+            message
+        }
+    }
+
+    #[test]
+    fn creation_failure_preserves_cause_and_replaces_previous_error() {
+        unsafe {
+            assert!(bhe_runtime_create_session(std::ptr::null()).is_null());
+            assert_eq!(error_message(), "session config is null");
+            let config = CString::new("{}").unwrap();
+            assert!(bhe_runtime_create_session(config.as_ptr()).is_null());
+            assert!(error_message().contains("missing field"));
+            let config = CString::new(r#"{"model_path":"missing.onnx","hoop_roi":{"left":0.8,"top":0.2,"right":0.1,"bottom":0.4},"net_roi":{"left":0.0,"top":0.0,"right":1.0,"bottom":1.0}}"#).unwrap();
+            assert!(bhe_runtime_create_session(config.as_ptr()).is_null());
+            assert!(error_message().contains("hoop ROI is invalid"));
+        }
+    }
+
+    #[test]
+    fn creation_errors_are_thread_local() {
+        unsafe {
+            bhe_runtime_create_session(std::ptr::null());
+        }
+        std::thread::spawn(|| assert_eq!(error_message(), ""))
+            .join()
+            .unwrap();
+        assert_eq!(error_message(), "session config is null");
     }
 }
