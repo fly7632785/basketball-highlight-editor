@@ -258,7 +258,7 @@ def net_motion_score(series, cross_frame):
     return round(sum(after[-5:]) / len(after[-5:]) - median(before), 3)
 
 
-def assess_rim_crossing(frames, rim, net_motion_series=None):
+def assess_rim_crossing(frames, rim, net_motion_series=None, *, min_rim_width=MIN_RIM_WIDTH_PX):
     """Judge one candidate from per-frame detections in source coordinates.
 
     ``frames`` is the ordered list of consecutive source frames; each item is
@@ -266,12 +266,17 @@ def assess_rim_crossing(frames, rim, net_motion_series=None):
     ``net_motion_series`` comes from ``net_motion.net_motion_series``.
     """
     rim_width = float(rim["width"])
-    if rim_width < MIN_RIM_WIDTH_PX:
+    if rim_width < min_rim_width:
         return skipped_result("small_rim", rim_width)
     if not frames:
         return skipped_result("no_frames", rim_width)
     frames_balls = _drop_static([_frame_balls(detections, rim) for detections in frames])
     tracks = _build_tracks(frames_balls)
+    return _assess_tracks(frames, rim, net_motion_series, tracks)
+
+
+def _assess_tracks(frames, rim, net_motion_series, tracks):
+    rim_width = float(rim["width"])
     crossings = [crossing for track in tracks for crossing in _track_crossings(track, tracks)]
     best = min(crossings, key=_rank) if crossings else None
     reason = rejection_reason(best)

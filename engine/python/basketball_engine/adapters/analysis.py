@@ -24,12 +24,10 @@ from basketball_highlight.runtime_errors import is_runtime_failure
 from basketball_highlight.review_reason import suggest_review_reasons
 from basketball_highlight.rim_check import (
     AUTO_REVIEW_REASON,
-    apply_video_occlusion,
-    assess_rim_crossing,
-    keep_unless_seen,
     skipped_result,
 )
 from basketball_highlight.ranking import dedupe_candidates
+from basketball_highlight.rim_experiments import judge_candidates, load_config
 
 
 class PipelineCancelled(Exception):
@@ -265,33 +263,23 @@ def apply_rim_checks(
     matches: list[Dict[str, Any]],
     inputs: list[Dict[str, Any]],
     output: Dict[str, Any] | None,
+    config=None,
 ) -> None:
     """Judge every candidate from the per-frame detections of the rim check.
 
     The verdict is recomputed here instead of trusting the script's own
     result, so threshold changes apply to cached detections.
     """
+    config = config or load_config()
     results = output.get("results") if isinstance(output, dict) else None
     if not isinstance(results, list) or len(results) != len(matches):
-        for match in matches:
-            match["rim_check"] = skipped_result("check_failed")
-        return
-    checks = []
-    for item, result in zip(inputs, results):
-        if not isinstance(result, dict):
-            checks.append(skipped_result("check_failed"))
-            continue
-        frames = result.get("frames")
-        if result.get("status") == "skipped" or not isinstance(frames, list) or item["rim"] is None:
-            checks.append({
-                key: result.get(key) for key in ("version", "status", "reason", "rim_width_px")
-            })
-            continue
-        checks.append(assess_rim_crossing(frames, item["rim"], result.get("net_motion_series")))
-    for match, check in zip(matches, apply_video_occlusion(checks)):
-        # Coarse fallbacks are candidates the refine stage did not confirm.
-        match["rim_check"] = keep_unless_seen(check, refined=not match.get("coarse_crossing"))
-        if match["rim_check"].get("status") == "unsure":
+        results = [skipped_result("check_failed") for _ in matches]
+    checks = judge_candidates(inputs, results,
+        refined=[not match.get("coarse_crossing") for match in matches],
+        config=config, fps=output.get("fps") if isinstance(output, dict) else None)
+    for match, check in zip(matches, checks):
+        match["rim_check"] = check
+        if check.get("status") == "unsure":
             match["confidence"] = "low"
             match["score"] = 0.0
             match["confidence_reason"] = "rim_check_insufficient_evidence"
@@ -305,13 +293,17 @@ def build_rim_check_command(
     output_path: Path,
     batch: int = 16,
     device: str = "auto",
+    experiment_config=None,
 ) -> list[str]:
-    return [
+    command = [
         sys.executable, _script(repo_root, "verify_rim_crossing.py"),
         "--video", str(source_video), "--model", str(model_path),
         "--candidates", str(candidates_path), "--output", str(output_path),
         "--batch", str(batch), "--device", device,
     ]
+    if experiment_config is not None:
+        command.extend(["--experiment-config", json.dumps(experiment_config.to_dict(), sort_keys=True)])
+    return command
 
 
 def _script(repo_root: Path, name: str) -> str:

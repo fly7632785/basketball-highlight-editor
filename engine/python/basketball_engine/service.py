@@ -52,6 +52,7 @@ from .storage import ProjectStore, new_id
 from .media_tools import resolve_media_tool
 from .diagnostics import folder_summary, log_diagnostic, video_summary
 from basketball_highlight.rim_check import RIM_CHECK_VERSION
+from basketball_highlight.rim_experiments import load_config as load_rim_experiments
 from basketball_highlight.tracking import link_ball_detections
 
 
@@ -2086,11 +2087,20 @@ class EngineService:
         """
         if not matches:
             return
+        config = load_rim_experiments()
+        pipeline["rim_experiments"] = {"config": config.to_dict(), "config_hash": config.config_hash}
         started = time.perf_counter()
         inputs = rim_check_inputs(matches)
         key = hashlib.sha256(
             json.dumps(
-                {"version": RIM_CHECK_VERSION, "candidates": inputs},
+                {"version": RIM_CHECK_VERSION, "candidates": inputs,
+                 # Only this parameter changes which frames need detection.
+                 **({"min_rim_width_px": config.min_rim_width_px}
+                    if config.min_rim_width_px != 30 else {}),
+                 # Historical caches did not record source fps. Acquire it
+                 # once before enabling time-based fragment stitching.
+                 **({"source_fps_required": True}
+                    if config.track_mode == "fable_stitch" else {})},
                 sort_keys=True,
             ).encode("utf-8")
         ).hexdigest()[:16]
@@ -2111,7 +2121,7 @@ class EngineService:
                 checked = run_pipeline(
                     [build_rim_check_command(
                         repo_root, source_video, model_path, input_path, output_path,
-                        device=device,
+                        device=device, experiment_config=config,
                     )],
                     output_path,
                     on_stage,
@@ -2131,7 +2141,7 @@ class EngineService:
                 # 复核失败不能丢掉整次分析:候选保持人工审核。
                 pipeline["logs"].append(f"verify_rim_crossing: {exc}")
                 output = None
-        apply_rim_checks(matches, inputs, output)
+        apply_rim_checks(matches, inputs, output, config=config)
         pipeline.setdefault("stage_timings_ms", {})["verify_rim_crossing"] = round(
             (time.perf_counter() - started) * 1000
         )

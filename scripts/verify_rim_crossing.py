@@ -22,7 +22,6 @@ from basketball_highlight.inference import (  # noqa: E402
     select_device as resolve_device,
 )
 from basketball_highlight.rim_check import (  # noqa: E402
-    MIN_RIM_WIDTH_PX,
     RIM_CHECK_VERSION,
     WINDOW_AFTER_S,
     WINDOW_BEFORE_S,
@@ -31,6 +30,8 @@ from basketball_highlight.rim_check import (  # noqa: E402
     skipped_result,
     tight_crop_box,
 )
+
+from basketball_highlight.rim_experiments import judge_candidates, load_config  # noqa: E402
 
 
 def parse_args():
@@ -42,6 +43,7 @@ def parse_args():
     parser.add_argument("--conf", type=float, default=0.05)
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--device", default="auto", choices=("auto", "cpu", "mps", "cuda", "dml", "coreml"))
+    parser.add_argument("--experiment-config", help="JSON object; defaults to BHE_RIM_EXPERIMENTS or {}")
     return parser.parse_args()
 
 
@@ -72,7 +74,7 @@ def valid_rim(rim):
         return False
 
 
-def build_jobs(candidates, fps, total_frames, frame_width, frame_height):
+def build_jobs(candidates, fps, total_frames, frame_width, frame_height, min_rim_width=30.0):
     jobs = []
     results = [None] * len(candidates)
     for index, candidate in enumerate(candidates):
@@ -80,7 +82,7 @@ def build_jobs(candidates, fps, total_frames, frame_width, frame_height):
         if not valid_rim(rim):
             results[index] = skipped_result("no_rim")
             continue
-        if float(rim["width"]) < MIN_RIM_WIDTH_PX:
+        if float(rim["width"]) < min_rim_width:
             results[index] = skipped_result("small_rim", rim["width"])
             continue
         event = float(candidate["time"])
@@ -141,6 +143,7 @@ def run_batch(model, pending, device, conf, batch):
 
 
 def main(args):
+    config = load_config(getattr(args, "experiment_config", None))
     started = time.perf_counter()
     candidates = json.loads(Path(args.candidates).read_text(encoding="utf-8"))["candidates"]
     cap = cv2.VideoCapture(str(args.video))
@@ -150,7 +153,7 @@ def main(args):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    jobs, results = build_jobs(candidates, fps, total_frames, frame_width, frame_height)
+    jobs, results = build_jobs(candidates, fps, total_frames, frame_width, frame_height, config.min_rim_width_px)
     groups = group_jobs(jobs)
     print("progress=0.0", flush=True)
     device = None
@@ -193,17 +196,28 @@ def main(args):
     for job in jobs:
         # Keep the raw detections so the engine can re-judge cached runs.
         results[job["index"]] = {
-            **assess_rim_crossing(job["frames"], job["rim"], job["net_motion_series"]),
+            **assess_rim_crossing(job["frames"], job["rim"], job["net_motion_series"], min_rim_width=config.min_rim_width_px),
             "frames": job["frames"],
             "net_motion_series": job["net_motion_series"],
         }
+    judged = judge_candidates(candidates, results, config=config, fps=fps)
     results = apply_video_occlusion(results)
+    for index, decision in enumerate(judged):
+        # Keep the default script's pre-keep status contract, but publish the
+        # final decision in metadata. Engine always rejudges the raw frames.
+        if config.is_default:
+            results[index]["experiment"] = decision["experiment"]
+        else:
+            results[index].update(decision)
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f".{output.name}.tmp")
     temporary.write_text(json.dumps({
         "version": RIM_CHECK_VERSION,
+        "fps": fps,
+        "experiment_config": config.to_dict(),
+        "experiment_config_hash": config.config_hash,
         "video": str(args.video),
         "device": device,
         "results": results,
