@@ -659,7 +659,10 @@ object AnalysisTaskManager {
                             request.getString("modelPath"),
                             NativeRuntime::createSession,
                             NativeRuntime::sessionCreateError,
-                            { message -> Log.w(TAG, message) },
+                            { message ->
+                                Log.w(TAG, message)
+                                AppDiagnostics.append("analysis.rim_check.session $message")
+                            },
                         )
                     }
                     val first = max(0L, eventMs - RIM_CHECK_WINDOW_MS)
