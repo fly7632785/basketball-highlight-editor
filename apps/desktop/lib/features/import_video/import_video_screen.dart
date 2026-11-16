@@ -798,22 +798,7 @@ class _ImportVideoScreenState extends ConsumerState<ImportVideoScreen> {
   }
 
   Future<void> _next() async {
-    if (!_canLeaveStep(_step)) return;
-    final next = math.min(_step + 1, _stepCount - 1);
-    if (_step == 2 && next != 2) _stopPreviewPlayback();
-    final from = _step;
-    setState(() => _step = next);
-    _logStep(from, '下一步');
-    await _saveDraftNow(step: next);
-    // 进入检测区域步骤时,标记画面落在分析范围内,而不是停在片头或范围之外。
-    if (next == 2) {
-      final state = ref.read(projectProvider);
-      final preview = state.previewTimeMs;
-      if (preview < _analysisStartMs ||
-          (_analysisEndMs > _analysisStartMs && preview > _analysisEndMs)) {
-        ref.read(projectProvider.notifier).setPreviewTimeOnly(_analysisStartMs);
-      }
-    }
+    await _goToStep(math.min(_step + 1, _stepCount - 1), trigger: '下一步');
   }
 
   Future<void> _back() async {
@@ -1078,7 +1063,8 @@ KeyedSubtree(
                     steps: steps,
                     summaries: stepSummaries,
                     current: _step,
-                    onStepTap: busy ? null : _goToEarlierStep,
+                    canGoToStep: _canGoToStep,
+                    onStepTap: busy ? null : _goToStep,
                   ),
           ),
                   if (_showExistingDraft) ...[
@@ -1388,13 +1374,33 @@ KeyedSubtree(
     _ => null,
   };
 
-  void _goToEarlierStep(int index) {
-    if (index >= _step) return;
+  bool _canGoToStep(int index) {
+    if (index < 0 || index >= _stepCount || index == _step) return false;
+    if (index < _step) return true;
+    // 已保存的配置也能直接跳转；每个前置步骤仍走「下一步」的校验。
+    for (var step = 0; step < index; step++) {
+      if (!_canLeaveStep(step)) return false;
+    }
+    return true;
+  }
+
+  Future<void> _goToStep(int index, {String trigger = '点步骤条'}) async {
+    if (!_canGoToStep(index)) return;
     if (_step == 2 && index != 2) _stopPreviewPlayback();
     final from = _step;
     setState(() => _step = index);
-    _logStep(from, '点步骤条');
-    unawaited(_saveDraftNow(step: index));
+    _logStep(from, trigger);
+    await _saveDraftNow(step: index);
+    if (!mounted) return;
+    // 跳转和逐步前进都把标记画面放回所选分析范围。
+    if (index == 2) {
+      final state = ref.read(projectProvider);
+      final preview = state.previewTimeMs;
+      if (preview < _analysisStartMs ||
+          (_analysisEndMs > _analysisStartMs && preview > _analysisEndMs)) {
+        ref.read(projectProvider.notifier).setPreviewTimeOnly(_analysisStartMs);
+      }
+    }
   }
 
   Widget _buildStep(BuildContext context, ProjectState state, bool busy) {
@@ -1557,7 +1563,7 @@ KeyedSubtree(
             setState(() => _afterSeconds = seconds);
             _scheduleDraftSave();
           },
-          onEditStep: busy ? null : _goToEarlierStep,
+          onEditStep: busy ? null : _goToStep,
         );
       default:
         return const SizedBox.shrink();
@@ -1572,12 +1578,14 @@ class _ImportStepper extends StatelessWidget {
     required this.steps,
     required this.summaries,
     required this.current,
+    required this.canGoToStep,
     required this.onStepTap,
   });
 
   final List<_ImportStep> steps;
   final List<String?> summaries;
   final int current;
+  final bool Function(int) canGoToStep;
   final ValueChanged<int>? onStepTap;
 
   @override
@@ -1594,7 +1602,7 @@ class _ImportStepper extends StatelessWidget {
                 final step = steps[index];
                 final active = index == current;
                 final done = index < current && step.completed;
-                final tappable = onStepTap != null && index < current;
+                final tappable = onStepTap != null && canGoToStep(index);
                 return Semantics(
                   button: tappable,
                   selected: active,
