@@ -74,6 +74,47 @@ void main() {
       expect(h.transport.reviewCalls, hasLength(1));
     },
   );
+  for (final status in ['excluded', 'goal']) {
+    test(
+      'same human judgement preserves its existing saved reason $status',
+      () async {
+        final h = await _Harness.create();
+        final reason = status == 'excluded' ? 'rim_out' : 'made';
+        h.persisted('A').addAll({
+          'tier': status == 'excluded' ? 'excluded' : 'must',
+          'tier_source': 'user',
+          'review_status': status,
+          'review_reason': reason,
+          'selection_status': status == 'excluded' ? 'excluded' : 'included',
+        });
+        await h.notifier.refreshCandidates();
+        expect(
+          await h.notifier.reviewCandidate('A', status, showNotice: false),
+          isTrue,
+        );
+        expect(
+          h.persisted('A')['review_reason'],
+          reason,
+          reason:
+              'Repeating the same human decision with no new reason must retain the existing human reason.',
+        );
+        expect(h.transport.reviewCalls, isEmpty);
+        // An explicit new reason is an edit, rather than a repeated key press.
+        expect(
+          await h.notifier.reviewCandidate(
+            'A',
+            status,
+            reason: 'other',
+            showNotice: false,
+          ),
+          isTrue,
+        );
+        expect(h.transport.reviewCalls, hasLength(1));
+        expect(h.persisted('A')['review_reason'], 'other');
+      },
+    );
+  }
+
   testWidgets(
     'actual X key on an automatic excluded suspect saves manual exclusion',
     (tester) async {

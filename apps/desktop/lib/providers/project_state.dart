@@ -2468,7 +2468,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         previous['tier_source'] != 'algorithm' &&
         previous['review_reason'] != 'auto_rim_check' &&
         previous['review_status']?.toString() == engineStatus &&
-        previous['review_reason']?.toString() == reason) {
+        (reason == null || previous['review_reason']?.toString() == reason)) {
       return Future<bool>.value(true);
     }
     final result = Completer<bool>();
