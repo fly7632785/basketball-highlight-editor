@@ -446,27 +446,30 @@ class EngineService:
         projects = []
         for project_root in project_roots:
             try:
-                store, context = self._existing_store({"project_root": str(project_root)})
+                store = ProjectStore(project_root)
+                context, preview_candidates = store.recent_context()
                 modified_at = datetime.fromtimestamp(
                     store.db_path.stat().st_mtime,
                     tz=timezone.utc,
                 ).isoformat(timespec="milliseconds")
-            except (OSError, ProtocolError):
+            except (OSError, sqlite3.Error, ValueError):
                 continue
             projects.append({
                 **context,
                 "last_modified_at": modified_at,
-                "cover_path": self._project_cover(store, context.get("video")),
+                "cover_path": self._project_cover(store, context.get("video"), preview_candidates),
             })
         projects.sort(key=lambda item: item["last_modified_at"], reverse=True)
         return {"projects": projects[:limit], "scanned_roots": scanned_roots}
 
     @classmethod
-    def _project_cover(cls, store: ProjectStore, video: Dict[str, Any] | None) -> str | None:
+    def _project_cover(cls, store: ProjectStore, video: Dict[str, Any] | None,
+                       candidates: list[Dict[str, Any]]) -> str | None:
         """Pick an already extracted frame; listing projects never runs ffmpeg."""
         if not video:
             return None
-        rows = sorted(store.list_candidates(video["id"]), key=lambda row: int(row["event_time_ms"]))
+        rows = sorted((row for row in candidates if row["video_id"] == video["id"]),
+                      key=lambda row: int(row["event_time_ms"]))
         for row in rows:
             if row.get("selection_status") == "excluded":
                 continue
