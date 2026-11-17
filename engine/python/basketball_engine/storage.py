@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterable
 from uuid import uuid4
 
 from .request_control import fingerprint
-from .tiers import RULE_VERSION, calibrate, classify, evidence_dict
+from .tiers import RULE_VERSION, calibrate, calibration_from_rows, classify, evidence_dict
 
 # Same value as basketball_highlight.rim_check.AUTO_REVIEW_REASON.
 AUTO_REVIEW_REASON = "auto_rim_check"
@@ -810,12 +810,19 @@ class ProjectStore:
                     JOIN players p ON p.id=t.player_id ORDER BY t.candidate_id,t.position,p.id"""):
                 all_tags.setdefault(tag["candidate_id"], []).append({"id":tag["id"], "name":tag["name"]})
             project = connection.execute("SELECT tier_rule_version FROM projects LIMIT 1").fetchone()
+            # Legacy projects lack analysis-time calibration. Use the entire
+            # current project (also when listing only one video), in memory only.
+            baseline = calibration_from_rows([dict(item) for item in connection.execute(
+                "SELECT evidence_json FROM candidates")])
         for row in rows:
             tags = all_tags.get(row["id"], [])
             row.update(tags=tags, players=tags, player_id=tags[0]["id"] if tags else None,
                        player_name=tags[0]["name"] if tags else None)
             evidence = evidence_dict(row.get("evidence_json"))
             evidence.update(review_status=row["review_status"], review_reason=row["review_reason"])
+            saved = evidence_dict(evidence_dict(evidence_dict(evidence.get("rim_check")).get("experiment")).get("net_calibration"))
+            if not evidence_dict(evidence.get("tier_calibration")) and saved.get("scope") != "analysis_run_baseline_made":
+                evidence["tier_calibration"] = baseline
             tier = classify(evidence, evidence.get("analysis_mode", "standard"), project["tier_rule_version"] if project else RULE_VERSION)
             row.update(tier=tier["tier"], tier_reason=tier["reason"], tier_source=tier["source"],
                        selection_status={"must":"included", "suspect":"pending", "excluded":"excluded"}[tier["tier"]])
