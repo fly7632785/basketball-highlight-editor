@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:media_kit/media_kit.dart';
@@ -3428,6 +3429,149 @@ class _VideoControlsState extends State<_VideoControls> {
   }
 }
 
+const reviewEvidenceDetailsPrefsKey =
+    'courtside.review_evidence_details_expanded';
+
+class _CandidateEvidenceDetails extends StatefulWidget {
+  const _CandidateEvidenceDetails({
+    required this.tier,
+    required this.reason,
+    required this.details,
+  });
+  final String tier, reason;
+  final Widget details;
+  @override
+  State<_CandidateEvidenceDetails> createState() =>
+      _CandidateEvidenceDetailsState();
+}
+
+class _CandidateEvidenceDetailsState extends State<_CandidateEvidenceDetails> {
+  bool _expanded = false;
+  bool _userChanged = false;
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (mounted && !_userChanged) {
+        setState(
+          () =>
+              _expanded = prefs.getBool(reviewEvidenceDetailsPrefsKey) ?? false,
+        );
+      }
+    } catch (error) {
+      appLog('warn', 'review', '读取证据详情展开状态失败: $error');
+    }
+  }
+
+  Future<void> _toggle() async {
+    _userChanged = true;
+    setState(() => _expanded = !_expanded);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(reviewEvidenceDetailsPrefsKey, _expanded);
+    } catch (error) {
+      appLog('warn', 'review', '保存证据详情展开状态失败: $error');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final color = switch (widget.tier) {
+      'must' => c.goal,
+      'excluded' => c.error,
+      _ => c.warning,
+    };
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          key: const Key('candidate-evidence-summary'),
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .14),
+                borderRadius: BorderRadius.circular(CsRadius.xs),
+              ),
+              child: Text(
+                context.bheText(tierLabels[widget.tier]!),
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: color),
+              ),
+            ),
+            const SizedBox(width: Spacing.sm),
+            Expanded(
+              child: Text(
+                context.bheText(widget.reason),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
+              ),
+            ),
+            TextButton.icon(
+              key: const Key('candidate-evidence-details-toggle'),
+              onPressed: _toggle,
+              icon: Icon(
+                _expanded ? Icons.expand_less : Icons.expand_more,
+                size: 16,
+              ),
+              label: Text(context.bheText('详情')),
+              style: TextButton.styleFrom(
+                foregroundColor: c.textSecondary,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ],
+        ),
+        if (_expanded) ...[const SizedBox(height: Spacing.sm), widget.details],
+      ],
+    );
+  }
+}
+
+String _primaryTierReason(
+  Map<String, dynamic> candidate,
+  Map<String, dynamic> evidence,
+) {
+  const reasons = {
+    'user_goal': '人工确认：进',
+    'user_excluded': '人工确认：排除',
+    'r2_net_motion': '篮筐复核：进 · 篮网明显',
+    'weak_net_motion': '疑似：网动偏弱',
+    'missing_calibration': '疑似：校准样本不足',
+    'missing_net_motion': '疑似：缺少篮网证据',
+    'fast_analysis': '疑似：快速分析待确认',
+    'missing_refined_evidence': '疑似：缺少精筛证据',
+    'conflicting_evidence': '疑似：证据冲突',
+    'contrary_evidence': '疑似：存在反证',
+    'missing_made_evidence': '疑似：未确认穿筐',
+    'seen_miss': '篮筐复核：没进',
+    'unsupported_rule_version': '疑似：规则版本待确认',
+  };
+  final reason = reasons[candidate['tier_reason']];
+  if (reason != null) return reason;
+  // Legacy/UI fixtures without an engine tier reason must not invent certainty.
+  if (candidate['tier_source'] == 'user') {
+    return candidateTier(candidate) == 'must' ? '人工确认：进' : '人工确认：排除';
+  }
+  final check = evidence['rim_check'];
+  return switch (check is Map ? check['status'] : null) {
+    'made' => '篮筐复核：进 · 待确认分档',
+    'rejected' => '篮筐复核：未通过',
+    _ => '疑似：证据不足，待确认',
+  };
+}
+
 class _CandidateInspector extends StatelessWidget {
   const _CandidateInspector({
     required this.candidate,
@@ -3523,7 +3667,6 @@ class _CandidateInspector extends StatelessWidget {
       '时长 ${_formatClipDuration(_clipEnd(candidate) - _clipStart(candidate))}',
     );
     final note = candidate['note']?.toString().trim() ?? '';
-    final statusColor = excluded ? c.error : c.goal;
     final mono = theme.textTheme.labelSmall?.copyWith(
       color: c.textSecondary,
       fontFeatures: const [FontFeature.tabularFigures()],
@@ -3547,23 +3690,6 @@ class _CandidateInspector extends StatelessWidget {
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.w600,
                   fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ),
-            const SizedBox(width: Spacing.sm),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: statusColor.withValues(alpha: 0.14),
-                borderRadius: BorderRadius.circular(CsRadius.xs),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                child: Text(
-                  context.bheText(tierLabels[candidateTier(candidate)]!),
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: statusColor,
-                    fontWeight: FontWeight.w600,
-                  ),
                 ),
               ),
             ),
@@ -3640,7 +3766,7 @@ class _CandidateInspector extends StatelessWidget {
     final crossingUnknown =
         isCoarse && crossingState == _CrossingDisplay.unknown;
     final rimCheck = _rimCheckDisplay(c, evidence['rim_check']);
-    final metrics = Column(
+    final metricDetails = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -3788,6 +3914,12 @@ class _CandidateInspector extends StatelessWidget {
           ),
         ),
       ],
+    );
+
+    final metrics = _CandidateEvidenceDetails(
+      tier: candidateTier(candidate),
+      reason: _primaryTierReason(candidate, evidence),
+      details: metricDetails,
     );
 
     final keep = _InspectorDecision(
@@ -5537,11 +5669,6 @@ class _StatusSegments extends StatelessWidget {
                         '${context.bheText(tierLabels[tier] ?? '全部')} ${tier == 'all' ? total : candidates.where((c) => candidateTier(c) == tier).length}',
                         style: const TextStyle(fontSize: 12),
                       ),
-                      if (tier == 'must')
-                        Text(
-                          '含 ${candidates.where((c) => candidateTier(c) == 'must' && c['tier_source'] == 'user').length} 确认',
-                          style: TextStyle(fontSize: 10, color: c.goal),
-                        ),
                     ],
                   ),
                 ),

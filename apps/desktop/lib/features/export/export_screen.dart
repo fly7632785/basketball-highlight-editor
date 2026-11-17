@@ -203,8 +203,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                       onSelected: (_) =>
                           _setSelection(selection.toggleTier(tier)),
                       label: Text(
-                        '${context.bheText(tierLabels[tier]!)} ${state.candidates.where((c) => candidateTier(c) == tier).length}'
-                        '${tier == 'must' ? ' · 含 ${state.candidates.where((c) => candidateTier(c) == 'must' && c['tier_source'] == 'user').length} 确认' : ''}',
+                        '${context.bheText(tierLabels[tier]!)} ${state.candidates.where((c) => candidateTier(c) == tier).length}',
                         style: theme.textTheme.labelMedium,
                       ),
                     ),

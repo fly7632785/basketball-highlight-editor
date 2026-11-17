@@ -266,7 +266,7 @@ void main() {
       await pump(tester, notifier);
       expect(find.byKey(const ValueKey('candidate-row-c3')), findsOneWidget);
       expect(find.byKey(const ValueKey('candidate-row-c0')), findsNothing);
-      expect(find.textContaining('含 1 确认'), findsOneWidget);
+      expect(find.textContaining('含 1 确认'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('review-status-must')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('candidate-row-c0')), findsOneWidget);

@@ -29,6 +29,38 @@ void main() {
       onboardingStepsPrefsKey: allOnboardingStepIds,
     }),
   );
+  testWidgets('evidence defaults to one line and remembers expanded and collapsed choices', (tester) async {
+    final state = ProjectState(job: const {'state': 'completed'}, candidates: [
+      {'id': 'c1', 'event_time_ms': 1000, 'default_start_ms': 0, 'default_end_ms': 2000,
+       'tier': 'suspect', 'tier_reason': 'weak_net_motion', 'evidence_json': '{}'},
+    ]);
+    await _pumpReview(tester, state);
+    expect(find.byKey(const Key('candidate-evidence-summary')), findsOneWidget);
+    expect(find.text('疑似：网动偏弱'), findsOneWidget);
+    expect(find.text('评分'), findsNothing);
+    expect(find.text('信号'), findsNothing);
+    expect(find.text('系统说明'), findsNothing);
+    final toggle = find.byKey(const Key('candidate-evidence-details-toggle'));
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.text('评分'), findsOneWidget);
+    expect(find.text('信号'), findsOneWidget);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool(reviewEvidenceDetailsPrefsKey), isTrue);
+    await tester.pumpWidget(const SizedBox());
+    await _pumpReview(tester, state);
+    await tester.pumpAndSettle();
+    expect(find.text('评分'), findsOneWidget);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(prefs.getBool(reviewEvidenceDetailsPrefsKey), isFalse);
+    await tester.pumpWidget(const SizedBox());
+    await _pumpReview(tester, state);
+    await tester.pumpAndSettle();
+    expect(find.text('评分'), findsNothing);
+    expect(find.text('疑似：网动偏弱'), findsOneWidget);
+  });
+
   for (final language in ['zh', 'en']) {
     testWidgets('preflight stage and percentages stay consistent $language', (
       tester,
@@ -1389,6 +1421,8 @@ void main() {
         ),
       );
 
+      await tester.tap(find.byKey(const Key('candidate-evidence-details-toggle')));
+      await tester.pumpAndSettle();
       expect(find.text('中'), findsOneWidget);
       expect(find.text('62%'), findsWidgets);
       expect(find.text('快速分析未计算'), findsOneWidget);
@@ -1558,6 +1592,9 @@ void main() {
         ),
       );
 
+    await tester.tap(find.byKey(const Key('candidate-evidence-details-toggle')));
+    await tester.pumpAndSettle();
+
       expect(find.text('轨迹穿框'), findsOneWidget);
       expect(find.text('预测评分'), findsOneWidget);
       expect(find.text('轨迹不足'), findsOneWidget);
@@ -1607,6 +1644,9 @@ void main() {
       ),
     );
 
+    await tester.tap(find.byKey(const Key('candidate-evidence-details-toggle')));
+    await tester.pumpAndSettle();
+
     expect(find.text('推定穿框'), findsOneWidget);
     expect(find.text('通过'), findsNothing);
   });
@@ -1646,6 +1686,9 @@ void main() {
 
     expect(find.text('排除'), findsWidgets);
     expect(find.text('排除'), findsWidgets);
+    await tester.tap(find.byKey(const Key('candidate-evidence-details-toggle')));
+    await tester.pumpAndSettle();
+
     expect(find.byKey(const Key('inspector-rim-check')), findsOneWidget);
     expect(find.text('未通过：球从篮筐前方掠过，没有进网'), findsOneWidget);
   });
@@ -1671,6 +1714,9 @@ void main() {
       ),
       locale: const Locale('en'),
     );
+
+    await tester.tap(find.byKey(const Key('candidate-evidence-details-toggle')));
+    await tester.pumpAndSettle();
 
     expect(
       find.text(
@@ -1702,6 +1748,9 @@ void main() {
     );
 
     expect(find.text('自动排除'), findsNothing);
+    await tester.tap(find.byKey(const Key('candidate-evidence-details-toggle')));
+    await tester.pumpAndSettle();
+
     expect(find.text('未确认：没看清球是否从网底落下，请人工确认'), findsOneWidget);
   });
 
