@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import shutil
 import sqlite3
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable
@@ -97,6 +99,7 @@ class ProjectStore:
         ) as connection:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA busy_timeout = 30000")
+            self._backup_before_tiers_migration(connection)
             connection.executescript(schema_path.read_text(encoding="utf-8"))
             self._ensure_schema_compatibility(connection)
 
@@ -188,6 +191,43 @@ class ProjectStore:
             connection.execute("UPDATE projects SET tier_rule_version=?", (version,))
         return version
 
+    def _backup_before_tiers_migration(self, connection: sqlite3.Connection) -> None:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "candidates" not in tables:
+            return  # New, empty databases have no user data to migrate.
+        if "schema_migrations" in tables and connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE name='candidate_tags_v1'"
+        ).fetchone():
+            return
+        backup = self.root / "project.db.pre-tiers-v1.bak"
+        if backup.is_symlink():
+            raise OSError("迁移备份不能是符号链接")
+        if not backup.exists():
+            handle, name = tempfile.mkstemp(prefix=".pre-tiers-", suffix=".tmp", dir=self.root)
+            os.close(handle)
+            temporary = Path(name)
+            try:
+                with sqlite3.connect(temporary, factory=_ClosingConnection) as target:
+                    # SQLite backup includes committed WAL data, unlike copying project.db alone.
+                    connection.backup(target)
+                    if target.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                        raise OSError("迁移备份完整性检查失败")
+                try:
+                    # Atomic publish without replacing another opener's original backup.
+                    os.link(temporary, backup)
+                except FileExistsError:
+                    pass
+            finally:
+                temporary.unlink(missing_ok=True)
+        with sqlite3.connect(backup.as_uri() + "?mode=ro&immutable=1", uri=True,
+                             factory=_ClosingConnection) as saved:
+            if saved.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise OSError("迁移备份完整性检查失败")
+            expected = sorted(row[0] for row in connection.execute("SELECT id FROM projects"))
+            actual = sorted(row[0] for row in saved.execute("SELECT id FROM projects"))
+            if expected != actual:
+                raise OSError("迁移备份不属于当前项目")
+
     def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
             self.db_path.as_uri() + '?mode=rw', uri=True, timeout=30.0, factory=_ClosingConnection
@@ -195,7 +235,12 @@ class ProjectStore:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 30000")
-        self._ensure_schema_compatibility(connection)
+        try:
+            self._backup_before_tiers_migration(connection)
+            self._ensure_schema_compatibility(connection)
+        except Exception:
+            connection.close()
+            raise
         return connection
 
     def create_project(self, project_id: str, name: str, language: str = "zh-CN") -> Dict[str, Any]:

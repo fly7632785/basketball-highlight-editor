@@ -248,3 +248,51 @@ def test_batch_protocol_and_frozen_job_scope(project,monkeypatch):
     store.set_candidate_players('c1',[]);store.review_candidate('c1','goal')
     saved=service._decode_checkpoint(store.get_job(job['id']))['candidate_snapshot'][0]
     assert saved['tier']=='excluded' and len(saved['tags'])==2
+
+
+def _make_pre_tiers_database(store):
+    with sqlite3.connect(store.db_path) as db:
+        db.execute('DROP TABLE candidate_tags')
+        db.execute('DROP TABLE schema_migrations')
+        db.execute('ALTER TABLE projects DROP COLUMN tier_rule_version')
+
+
+def test_old_database_backed_up_before_initialize_and_never_overwritten(project):
+    _,store,_,a,_=project
+    store.set_candidate_player('c1',a);store.review_candidate('c1','goal')
+    _make_pre_tiers_database(store)
+    store.initialize()
+    backup=store.root/'project.db.pre-tiers-v1.bak'
+    saved=backup.read_bytes()
+    with sqlite3.connect(backup) as db:
+        assert 'tier_rule_version' not in {r[1] for r in db.execute('PRAGMA table_info(projects)')}
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name='candidate_tags'").fetchone()
+        assert db.execute('SELECT status,player_id FROM candidate_reviews WHERE candidate_id="c1"').fetchone()==('goal',a)
+    store.review_candidate('c1','excluded');store.initialize()
+    assert backup.read_bytes()==saved
+
+
+def test_backup_failure_stops_all_migrations(project,monkeypatch):
+    import os
+    _,store,_,_,_=project
+    _make_pre_tiers_database(store)
+    with sqlite3.connect(store.db_path) as db: before=list(db.iterdump())
+    def denied(*args): raise PermissionError('backup publication denied')
+    monkeypatch.setattr(os,'link',denied)
+    with pytest.raises(PermissionError):store.initialize()
+    with sqlite3.connect(store.db_path) as db: assert list(db.iterdump())==before
+    assert not list(store.root.glob('.pre-tiers-*.tmp'))
+
+
+def test_backup_includes_committed_wal_data(project):
+    _,store,_,_,_=project
+    _make_pre_tiers_database(store)
+    with sqlite3.connect(store.db_path) as writer:
+        writer.execute('PRAGMA journal_mode=WAL')
+        writer.execute('UPDATE candidate_reviews SET note="committed in WAL" WHERE candidate_id="c1"')
+        writer.commit()
+        assert store.db_path.with_name('project.db-wal').stat().st_size>0
+        store.list_candidates()
+        backup=store.root/'project.db.pre-tiers-v1.bak'
+        with sqlite3.connect(backup.as_uri()+'?mode=ro&immutable=1',uri=True) as saved:
+            assert saved.execute('SELECT note FROM candidate_reviews WHERE candidate_id="c1"').fetchone()[0]=='committed in WAL'
