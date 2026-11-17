@@ -82,6 +82,7 @@ class ProjectPackageCodec {
         .map((candidate) => candidate.toJson())
         .toList(),
     'players': project.players,
+    'tier_rule_version': project.tierRuleVersion,
     'review': {
       if (project.lastAnalysisStatus != null)
         'analysis_status': project.lastAnalysisStatus,
@@ -127,6 +128,7 @@ class ProjectPackageCodec {
     return ProjectSnapshot(
       id: id,
       name: name,
+      tierRuleVersion: manifest['tier_rule_version'] as String? ?? 'r2-v1',
       video: video,
       hoopRoi: _roiValue(roi['analysis']),
       rimRoi: _roiValue(roi['rim']),

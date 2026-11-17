@@ -48,6 +48,7 @@ from .adapters.runtime_preflight import DetectorPreflight, runtime_error
 from basketball_highlight.runtime_errors import is_runtime_failure
 from .protocol import ProtocolError
 from .request_control import fingerprint, check_cancelled, begin_commit, set_cancel_event
+from .tiers import filter_candidates
 from .storage import ProjectStore, new_id
 from .media_tools import resolve_media_tool
 from .diagnostics import folder_summary, log_diagnostic, video_summary
@@ -144,6 +145,13 @@ class EngineService:
             "list_players": self.list_players,
             "create_player": self.create_player,
             "delete_player": self.delete_player,
+            "set_tier_rule_version": self.set_tier_rule_version,
+            "set_candidate_players": self.set_candidate_players,
+            "set_candidates_players": self.set_candidates_players,
+            "add_candidate_player": self.add_candidate_player,
+            "remove_candidate_player": self.remove_candidate_player,
+            "add_candidates_player": self.add_candidates_player,
+            "remove_candidates_player": self.remove_candidates_player,
             "set_candidate_player": self.set_candidate_player,
             "set_candidates_player": self.set_candidates_player,
             "start_review": self.start_review,
@@ -1475,7 +1483,7 @@ class EngineService:
             retry_payload["output_dir"] = checkpoint["output_dir"]
         if checkpoint.get("output_path") is not None:
             retry_payload["output_path"] = checkpoint["output_path"]
-        for key in ("player_ids", "include_unassigned", "effect"):
+        for key in ("player_ids", "include_unassigned", "effect", "tiers", "tags", "tier_rule_version"):
             if key in checkpoint:
                 retry_payload[key] = checkpoint[key]
         # Check what start_export would reject before ending the old job, so a
@@ -2361,7 +2369,10 @@ class EngineService:
     def list_candidates(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         store, context = self._existing_store(payload)
         video_id = payload.get("video_id")
-        candidates = store.list_candidates(video_id)
+        try:
+            candidates = filter_candidates(store.list_candidates(video_id), payload.get("tiers"), payload.get("tags"))
+        except ValueError as exc:
+            raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
         videos = {item["id"]: item for item in store.list_videos()}
         # 不传 video_id 时按整个项目查询候选。单段项目仍只有一个可播放视频，
         # 审核端需要它作为候选预览的源；多段项目由调用方按当前段选择源视频。
@@ -2390,6 +2401,7 @@ class EngineService:
         )
         return {
             "candidates": candidates,
+            "tier_rule_version": (store.project() or {}).get("tier_rule_version"),
             "review_video_path": review_video_path,
             "players": store.list_players(),
         }
@@ -2437,6 +2449,40 @@ class EngineService:
         except (ValueError, LookupError) as exc:
             raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
         return {"deleted": True}
+
+    def set_tier_rule_version(self, payload):
+        try:
+            version = self._require_store(payload).set_tier_rule_version(payload.get("tier_rule_version"))
+        except ValueError as exc:
+            raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
+        return {"tier_rule_version":version}
+
+    def _change_tags(self, payload, operation, single):
+        ids = [payload.get("candidate_id")] if single else payload.get("candidate_ids")
+        players = payload.get("player_ids") if operation == "set" else [payload.get("player_id")]
+        try:
+            count = self._require_store(payload).set_candidates_players(ids, players, operation)
+        except (ValueError, LookupError) as exc:
+            raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
+        return {"updated":count}
+
+    def set_candidate_players(self, payload):
+        return self._change_tags(payload, "set", True)
+
+    def set_candidates_players(self, payload):
+        return self._change_tags(payload, "set", False)
+
+    def add_candidate_player(self, payload):
+        return self._change_tags(payload, "add", True)
+
+    def remove_candidate_player(self, payload):
+        return self._change_tags(payload, "remove", True)
+
+    def add_candidates_player(self, payload):
+        return self._change_tags(payload, "add", False)
+
+    def remove_candidates_player(self, payload):
+        return self._change_tags(payload, "remove", False)
 
     def set_candidate_player(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         candidate_id = payload.get("candidate_id")
@@ -2754,7 +2800,10 @@ class EngineService:
         """每个标签各合成一个视频，文件名用标签名；中间片段放在项目缓存里。"""
         groups: Dict[str, list[Dict[str, Any]]] = {}
         for candidate in candidates:
-            groups.setdefault(str(candidate.get("player_name") or ""), []).append(candidate)
+            tags = candidate.get("export_tags", candidate.get("tags"))
+            names = list(dict.fromkeys(tag["name"] for tag in tags)) if tags is not None else [str(candidate.get("player_name") or "")]
+            for name in names or [""]:
+                groups.setdefault(name, []).append(candidate)
         work_root = store.root / "artifacts" / "exports" / f"by_player_{int(time.time() * 1000)}"
         output_dir.mkdir(parents=True, exist_ok=True)
         files: list[str] = []
@@ -2866,6 +2915,17 @@ class EngineService:
         selected_players = {item for item in requested_player_ids or []}
         video_ids = [video["id"] for video in store.list_videos()]
         segments = {item: index for index, item in enumerate(video_ids, 1)} if len(video_ids) > 1 else {}
+        try:
+            candidates = filter_candidates(store.list_candidates(video_id), payload.get("tiers"), payload.get("tags"))
+        except ValueError as exc:
+            raise ProtocolError("INVALID_REQUEST", str(exc)) from exc
+        if "tiers" not in payload:
+            candidates = [c for c in candidates if c["review_status"] != "excluded"]
+        if "tags" not in payload and requested_player_ids is not None:
+            candidates = [c for c in candidates if selected_players.intersection(t["id"] for t in c["tags"])
+                          or (include_unassigned and not c["tags"])]
+        requested_tags = payload.get("tags") if "tags" in payload else requested_player_ids
+        rule_version = (store.project() or {})["tier_rule_version"]
         candidate_snapshot = [
             {
                 "id": candidate["id"],
@@ -2875,17 +2935,17 @@ class EngineService:
                 "review_start_ms": int(candidate["review_start_ms"]),
                 "review_end_ms": int(candidate["review_end_ms"]),
                 "player_name": candidate.get("player_name"),
+                "tags": candidate["tags"],
+                "export_tags": [t for t in candidate["tags"] if requested_tags is None or t["id"] in requested_tags],
+                "tier": candidate["tier"],
+                "tier_reason": candidate["tier_reason"],
+                "tier_source": candidate["tier_source"],
+                "tier_rule_version": rule_version,
                 "rim": EngineService._candidate_rim(store, candidate),
                 "manual": str(candidate.get("detector_version") or "").startswith("manual"),
                 "trail": EngineService._candidate_trail(candidate),
             }
-            for candidate in store.list_candidates(video_id)
-            if candidate.get("selection_status") != "excluded"
-            and (
-                requested_player_ids is None
-                or candidate.get("player_id") in selected_players
-                or (include_unassigned and not candidate.get("player_id"))
-            )
+            for candidate in candidates
         ]
         if not candidate_snapshot:
             raise ProtocolError("NO_EXPORT_CANDIDATES", "没有可导出的候选片段")
@@ -2901,6 +2961,8 @@ class EngineService:
         video_id = payload.get("video_id")
         if not project or (video_id is not None and not (isinstance(video_id, str) and store.video(video_id))):
             raise ProtocolError("VIDEO_NOT_FOUND", "导出任务缺少有效视频")
+        if payload.get("tier_rule_version", project["tier_rule_version"]) != project["tier_rule_version"]:
+            raise ProtocolError("TIER_RULE_VERSION_CHANGED", "分档规则已变化，请刷新导出范围")
         with self._job_lock:
             self._job_threads = {
                 job_id: thread
@@ -2927,6 +2989,9 @@ class EngineService:
                 "player_ids": sorted(selected_players) if requested_player_ids is not None else None,
                 "include_unassigned": include_unassigned,
                 "effect": payload.get("effect", "none"),
+                **({"tiers":payload["tiers"]} if "tiers" in payload else {}),
+                **({"tags":payload["tags"]} if "tags" in payload else {}),
+                "tier_rule_version": project["tier_rule_version"],
                 "candidate_snapshot": candidate_snapshot,
                 "candidate_count": len(candidate_snapshot),
             }

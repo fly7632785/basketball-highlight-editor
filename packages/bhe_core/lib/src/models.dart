@@ -153,7 +153,8 @@ class Candidate {
     this.confidence = 0,
     this.selection = CandidateSelection.included,
     this.reviewed = false,
-    this.player,
+    String? player,
+    this.players = const [],
     this.note,
     this.trajectoryScore,
     this.crossingScore,
@@ -194,7 +195,7 @@ class Candidate {
     this.gates,
     this.verification,
     this.rimCheck,
-  });
+  }) : _player = player;
 
   final String id;
   final int? trackId;
@@ -210,7 +211,10 @@ class Candidate {
   /// Whether the user kept or excluded this candidate. Analysis defaults and
   /// automatic exclusions leave it false.
   final bool reviewed;
-  final String? player;
+  final String? _player;
+  String? get player => players.isNotEmpty ? players.first : _player;
+  final List<String> players;
+  List<String> get effectivePlayers => players.isNotEmpty ? players : [if (player != null) player!];
   final String? note;
   final double? trajectoryScore;
   final double? crossingScore;
@@ -265,6 +269,7 @@ class Candidate {
     CandidateSelection? selection,
     bool? reviewed,
     String? player,
+    List<String>? players,
     bool clearPlayer = false,
     String? note,
     bool clearNote = false,
@@ -281,7 +286,8 @@ class Candidate {
     confidence: confidence,
     selection: selection ?? this.selection,
     reviewed: reviewed ?? this.reviewed,
-    player: clearPlayer ? null : (player ?? this.player),
+    player: clearPlayer ? null : (players != null ? (players.isEmpty ? null : players.first) : (player ?? this.player)),
+    players: clearPlayer ? const [] : (players ?? (player != null ? [player] : effectivePlayers)),
     note: clearNote ? null : (note ?? this.note),
     trajectoryScore: trajectoryScore,
     crossingScore: crossingScore,
@@ -343,7 +349,8 @@ class Candidate {
     'confidence': confidence,
     'selection': selection.name,
     if (reviewed) 'reviewed': true,
-    if (player != null) 'player': player,
+    if (effectivePlayers.isNotEmpty) 'player': effectivePlayers.first,
+    'players': effectivePlayers,
     if (note != null) 'note': note,
     if (trajectoryScore != null) 'trajectory_score': trajectoryScore,
     if (crossingScore != null) 'crossing_score': crossingScore,
@@ -434,6 +441,9 @@ class Candidate {
     final defaultEndMs = json['default_end_ms'] is num
         ? _intValue(json['default_end_ms'])
         : endMs;
+    final players = json['players'] is List
+        ? (json['players'] as List).whereType<String>().toSet().toList()
+        : [if (json['player'] is String) json['player'] as String];
     return Candidate(
       id: json['id'] as String? ?? 'candidate',
       trackId: json['track_id'] is num ? _intValue(json['track_id']) : null,
@@ -452,7 +462,8 @@ class Candidate {
         orElse: () => CandidateSelection.included,
       ),
       reviewed: json['reviewed'] == true,
-      player: json['player'] as String?,
+      player: players.isEmpty ? null : players.first,
+      players: players,
       note: json['note'] as String?,
       trajectoryScore: _scoreValueOrNull(
         json['trajectory_score'] ??
@@ -732,6 +743,7 @@ class ProjectSnapshot {
     this.settings = const AnalysisSettings(),
     this.candidates = const [],
     this.players = const [],
+    this.tierRuleVersion = 'r2-v1',
     this.lastAnalysisDurationMs,
     this.lastAnalysisAt,
     this.lastAnalysisStatus,
@@ -752,6 +764,7 @@ class ProjectSnapshot {
   final AnalysisSettings settings;
   final List<Candidate> candidates;
   final List<String> players;
+  final String tierRuleVersion;
   final int? lastAnalysisDurationMs;
   final DateTime? lastAnalysisAt;
   final String? lastAnalysisStatus;
@@ -782,6 +795,7 @@ class ProjectSnapshot {
     AnalysisSettings? settings,
     List<Candidate>? candidates,
     List<String>? players,
+    String? tierRuleVersion,
     int? lastAnalysisDurationMs,
     DateTime? lastAnalysisAt,
     String? lastAnalysisStatus,
@@ -800,6 +814,7 @@ class ProjectSnapshot {
     settings: settings ?? this.settings,
     candidates: candidates ?? this.candidates,
     players: players ?? this.players,
+    tierRuleVersion: tierRuleVersion ?? this.tierRuleVersion,
     lastAnalysisDurationMs: clearLastAnalysis
         ? null
         : (lastAnalysisDurationMs ?? this.lastAnalysisDurationMs),
@@ -829,6 +844,7 @@ class ProjectSnapshot {
     'settings': settings.toJson(),
     'candidates': candidates.map((candidate) => candidate.toJson()).toList(),
     'players': players,
+    'tier_rule_version': tierRuleVersion,
     if (lastAnalysisDurationMs != null)
       'last_analysis_duration_ms': lastAnalysisDurationMs,
     if (lastAnalysisAt != null)
@@ -859,6 +875,7 @@ class ProjectSnapshot {
             .whereType<Map>()
             .map((item) => Candidate.fromJson(item.cast<String, dynamic>()))
             .toList(),
+        tierRuleVersion: json['tier_rule_version'] as String? ?? 'r2-v1',
         players: ((json['players'] as List?) ?? const [])
             .whereType<String>()
             .toList(),

@@ -40,7 +40,7 @@ def test_short_rim_track_with_observed_rebound_or_side_exit_stays_excluded(
     store.replace_candidates(video["id"], [row])
     persisted = store.list_candidates(video["id"])[0]
     assert persisted["review_status"] == "excluded"
-    assert persisted["selection_status"] == "excluded"
+    assert persisted["selection_status"] == "pending"  # no refined source: tier stays suspect
     assert matches[0]["rim_check"]["reason"] == ("exit_off_center" if x else "rebound")
 
 
@@ -1642,7 +1642,7 @@ def test_persist_candidates_creates_pending_reviews(tmp_path: Path):
     assert candidates[0]["review_status"] == "pending"
 
 
-def test_create_manual_candidate_is_included_and_survives_reanalysis(tmp_path: Path):
+def test_create_manual_candidate_is_suspect_and_survives_reanalysis(tmp_path: Path):
     project_root = tmp_path / "project"
     service = EngineService()
     service.handle("create_project", {"name": "手动片段", "root_path": str(project_root)})
@@ -1666,7 +1666,7 @@ def test_create_manual_candidate_is_included_and_survives_reanalysis(tmp_path: P
 
     assert created["detector_version"] == "manual-v1"
     assert created["confidence"] == "manual"
-    assert created["selection_status"] == "included"
+    assert created["selection_status"] == "pending"
 
     store.replace_candidates(video["id"], [{
         "id": "detected-1",
@@ -1688,7 +1688,7 @@ def test_create_manual_candidate_is_included_and_survives_reanalysis(tmp_path: P
     }
 
 
-def test_list_candidates_exposes_default_included_selection(tmp_path: Path):
+def test_list_candidates_exposes_default_pending_selection(tmp_path: Path):
     project_root = tmp_path / "project"
     service = EngineService()
     service.handle("create_project", {"name": "默认保留", "root_path": str(project_root)})
@@ -1720,7 +1720,7 @@ def test_list_candidates_exposes_default_included_selection(tmp_path: Path):
 
     candidate = store.list_candidates(video["id"])[0]
 
-    assert candidate["selection_status"] == "included"
+    assert candidate["selection_status"] == "pending"
 
 
 def test_review_candidate_persists_reason_for_excluded_candidate(tmp_path: Path):
@@ -2370,6 +2370,7 @@ def test_replace_candidates_inherits_review_from_nearby_event_and_shifts_manual_
     store.review_candidate(old["id"], "goal", "手动确认", "made")
     store.set_candidate_player(old["id"], "player-1") if False else None
 
+    previous_review = store.list_candidates(video["id"])[0]
     new = {
         **old,
         "id": "new-candidate",
@@ -2387,8 +2388,8 @@ def test_replace_candidates_inherits_review_from_nearby_event_and_shifts_manual_
     assert candidate["note"] == "手动确认"
     assert candidate["review_start_ms"] == 4_000
     assert candidate["review_end_ms"] == 15_000
-    assert candidate["reviewed_at"] is None
-    assert candidate["review_duration_ms"] is None
+    assert candidate["reviewed_at"] == previous_review["reviewed_at"]
+    assert candidate["review_duration_ms"] == previous_review["review_duration_ms"]
 
 
 def test_replace_candidates_clamps_inherited_manual_range_to_video_duration(tmp_path: Path):
@@ -2783,7 +2784,7 @@ def test_below_only_rim_evidence_keeps_coarse_candidate_low_and_pending(tmp_path
     unknown = candidates[19050]
     evidence = json.loads(unknown["evidence_json"])
     assert unknown["confidence"] == "low" and unknown["score"] == 0
-    assert unknown["review_status"] == "pending" and unknown["selection_status"] == "included"
+    assert unknown["review_status"] == "pending" and unknown["selection_status"] == "pending"
     assert evidence["confidence_reason"] == "rim_check_insufficient_evidence"
     assert evidence["rim_check"]["reason"] == "no_crossing"
     assert evidence["rim_check"]["ball_approached"] is False
@@ -2863,7 +2864,7 @@ def test_rim_band_seed_fallback_requires_confirmation_for_high_confidence(
         assert evidence["fallback_reason"] == "unconfirmed_rim_band_sighting"
         assert evidence["coarse_detection_confidence"] == .99
     assert seed["review_status"] == "pending"
-    assert seed["selection_status"] == "included"
+    assert seed["selection_status"] == "pending"
     crossing = next(item for time_ms, item in candidates.items() if time_ms != 7000)
     assert crossing["confidence"] == "high"
     assert crossing["score"] == .8

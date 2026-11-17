@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable
 from uuid import uuid4
 
 from .request_control import fingerprint
+from .tiers import RULE_VERSION, calibrate, classify, evidence_dict
 
 # Same value as basketball_highlight.rim_check.AUTO_REVIEW_REASON.
 AUTO_REVIEW_REASON = "auto_rim_check"
@@ -145,6 +146,47 @@ class ProjectStore:
         ):
             if name not in columns:
                 connection.execute(f"ALTER TABLE candidate_reviews ADD COLUMN {name} {definition}")
+
+        if "tier_rule_version" not in project_columns:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                # Another opener may have migrated while we waited for the lock.
+                if "tier_rule_version" not in {r[1] for r in connection.execute("PRAGMA table_info(projects)")}:
+                    connection.execute("ALTER TABLE projects ADD COLUMN tier_rule_version TEXT NOT NULL DEFAULT 'r2-v1'")
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        connection.executescript("""
+            CREATE TABLE IF NOT EXISTS candidate_tags (
+                candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                PRIMARY KEY(candidate_id, player_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_candidate_tags_player ON candidate_tags(player_id);
+            CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY);
+        """)
+        if not connection.execute("SELECT 1 FROM schema_migrations WHERE name='candidate_tags_v1'").fetchone():
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not connection.execute("SELECT 1 FROM schema_migrations WHERE name='candidate_tags_v1'").fetchone():
+                    connection.execute("""INSERT OR IGNORE INTO candidate_tags(candidate_id,player_id,position)
+                        SELECT r.candidate_id,r.player_id,0 FROM candidate_reviews r
+                        JOIN players p ON p.id=r.player_id JOIN candidates c ON c.id=r.candidate_id
+                        JOIN videos v ON v.id=c.video_id AND v.project_id=p.project_id""")
+                    connection.execute("INSERT INTO schema_migrations(name) VALUES ('candidate_tags_v1')")
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def set_tier_rule_version(self, version):
+        if version != RULE_VERSION:
+            raise ValueError("INVALID_TIER_RULE_VERSION")
+        with self.connect() as connection:
+            connection.execute("UPDATE projects SET tier_rule_version=?", (version,))
+        return version
 
     def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
@@ -611,8 +653,7 @@ class ProjectStore:
     def list_candidates(self, video_id: str | None = None) -> list[Dict[str, Any]]:
         query = """
             SELECT c.*, COALESCE(r.status, 'pending') AS review_status,
-                   CASE WHEN COALESCE(r.status, 'pending') = 'excluded'
-                        THEN 'excluded' ELSE 'included' END AS selection_status,
+                   COALESCE(r.status, 'pending') AS selection_status,
                    r.reason AS review_reason, r.note, r.reviewed_at,
                    r.review_started_at, r.review_duration_ms,
                    r.player_id, p.name AS player_name
@@ -627,7 +668,22 @@ class ProjectStore:
             params = (video_id,)
         query += " ORDER BY v.sort_index, v.created_at, c.event_time_ms"
         with self.connect() as connection:
-            return [dict(row) for row in connection.execute(query, tuple(params)).fetchall()]
+            rows = [dict(row) for row in connection.execute(query, tuple(params)).fetchall()]
+            all_tags = {}
+            for tag in connection.execute("""SELECT t.candidate_id,p.id,p.name FROM candidate_tags t
+                    JOIN players p ON p.id=t.player_id ORDER BY t.candidate_id,t.position,p.id"""):
+                all_tags.setdefault(tag["candidate_id"], []).append({"id":tag["id"], "name":tag["name"]})
+            project = connection.execute("SELECT tier_rule_version FROM projects LIMIT 1").fetchone()
+        for row in rows:
+            tags = all_tags.get(row["id"], [])
+            row.update(tags=tags, players=tags, player_id=tags[0]["id"] if tags else None,
+                       player_name=tags[0]["name"] if tags else None)
+            evidence = evidence_dict(row.get("evidence_json"))
+            evidence.update(review_status=row["review_status"], review_reason=row["review_reason"])
+            tier = classify(evidence, evidence.get("analysis_mode", "standard"), project["tier_rule_version"] if project else RULE_VERSION)
+            row.update(tier=tier["tier"], tier_reason=tier["reason"], tier_source=tier["source"],
+                       selection_status={"must":"included", "suspect":"pending", "excluded":"excluded"}[tier["tier"]])
+        return rows
 
     def create_manual_candidate(
         self,
@@ -708,7 +764,9 @@ class ProjectStore:
     ) -> None:
         """替换候选。`before_commit` 在同一个事务里、提交之前调用：它抛异常整个替换回滚。"""
         timestamp = now_iso()
+        rows = calibrate(rows, self.analysis_mode(), new_id("analysis"))
         with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             video_row = connection.execute(
                 "SELECT duration_ms FROM videos WHERE id = ?",
                 (video_id,),
@@ -751,8 +809,12 @@ class ProjectStore:
                     (video_id,),
                 ).fetchall()
             }
+            old_tags = {}
+            for tag in connection.execute("SELECT * FROM candidate_tags ORDER BY position"):
+                old_tags.setdefault(tag["candidate_id"], []).append(tag["player_id"])
             matches: dict[str, dict[str, Any]] = {}
             used_old: set[str] = set()
+            reserved_exact_ids = {str(row["id"]) for row in rows} & existing_candidates.keys()
             for row in rows:
                 candidate_id = str(row["id"])
                 review = existing_reviews.get(candidate_id)
@@ -765,7 +827,7 @@ class ProjectStore:
                     candidates = [
                         (abs(int(old["event_time_ms"]) - int(row["event_time_ms"])), old_id, old)
                         for old_id, old in existing_candidates.items()
-                        if old_id not in used_old
+                        if old_id not in used_old and old_id not in reserved_exact_ids
                         and old.get("roi_id") == row.get("roi_id")
                         and abs(int(old["event_time_ms"]) - int(row["event_time_ms"])) <= 2_000
                         and old_id in existing_reviews
@@ -775,9 +837,16 @@ class ProjectStore:
                         len(candidates) == 1
                         or candidates[0][0] < candidates[1][0]
                     ):
-                        _, old_id, old_candidate = candidates[0]
-                        review = existing_reviews[old_id]
-                        used_old.add(old_id)
+                        distance, old_id, old = candidates[0]
+                        # Match only mutual unique nearest events. Do not let an
+                        # earlier row steal a later exact/closer or tied event.
+                        nearest_new = [str(item["id"]) for item in rows
+                                       if item.get("roi_id") == old.get("roi_id")
+                                       and abs(int(item["event_time_ms"]) - int(old["event_time_ms"])) <= distance]
+                        if nearest_new == [candidate_id]:
+                            old_candidate = old
+                            review = existing_reviews[old_id]
+                            used_old.add(old_id)
                 if old_candidate is not None:
                     event_delta = int(row["event_time_ms"]) - int(old_candidate["event_time_ms"])
                     old_default_start = int(old_candidate["default_start_ms"])
@@ -797,7 +866,7 @@ class ProjectStore:
                         row["review_start_ms"] = shifted_start
                         row["review_end_ms"] = shifted_end
                 if review is not None:
-                    matches[candidate_id] = review
+                    matches[candidate_id] = {**review, "tags":old_tags.get(review["candidate_id"], [])}
             connection.execute("DELETE FROM candidates WHERE video_id = ?", (video_id,))
             for row in rows:
                 connection.execute(
@@ -845,16 +914,18 @@ class ProjectStore:
                     """,
                     (
                         row["id"],
-                        review["player_id"] if review else None,
+                        review["tags"][0] if review and review.get("tags") else None,
                         status,
                         reason,
                         review["note"] if review else None,
-                        None,
-                        None,
-                        None,
+                        review["reviewed_at"] if review else None,
+                        review["review_started_at"] if review else None,
+                        review["review_duration_ms"] if review else None,
                         timestamp,
                     ),
                 )
+                for position, player_id in enumerate(review.get("tags", []) if review else []):
+                    connection.execute("INSERT INTO candidate_tags VALUES (?,?,?)", (row["id"],player_id,position))
             if before_commit is not None:
                 before_commit()
 
@@ -894,74 +965,72 @@ class ProjectStore:
         if not project:
             raise ValueError("PROJECT_NOT_INITIALIZED")
         with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             player = connection.execute(
                 "SELECT id FROM players WHERE id = ? AND project_id = ?",
                 (player_id, project["id"]),
             ).fetchone()
             if not player:
                 raise LookupError("PLAYER_NOT_FOUND")
+            affected = [row[0] for row in connection.execute("SELECT candidate_id FROM candidate_tags WHERE player_id=?", (player_id,))]
             connection.execute("DELETE FROM players WHERE id = ?", (player_id,))
+            for candidate_id in affected:
+                connection.execute("""UPDATE candidate_reviews SET player_id=(SELECT player_id FROM candidate_tags
+                    WHERE candidate_id=? ORDER BY position LIMIT 1) WHERE candidate_id=?""", (candidate_id,candidate_id))
 
-    def set_candidate_player(self, candidate_id: str, player_id: str | None) -> None:
-        with self.connect() as connection:
-            candidate = connection.execute(
-                "SELECT c.id, v.project_id FROM candidates c JOIN videos v ON v.id = c.video_id WHERE c.id = ?",
-                (candidate_id,),
-            ).fetchone()
-            if not candidate:
-                raise LookupError("CANDIDATE_NOT_FOUND")
-            if player_id is not None:
-                player = connection.execute(
-                    "SELECT id FROM players WHERE id = ? AND project_id = ?",
-                    (player_id, candidate["project_id"]),
-                ).fetchone()
-                if not player:
-                    raise LookupError("PLAYER_NOT_FOUND")
-            connection.execute(
-                """
-                INSERT INTO candidate_reviews (candidate_id, player_id, status, updated_at)
-                VALUES (?, ?, 'pending', ?)
-                ON CONFLICT(candidate_id) DO UPDATE SET
-                    player_id = excluded.player_id,
-                    updated_at = excluded.updated_at
-                """,
-                (candidate_id, player_id, now_iso()),
-            )
+    def set_candidate_player(self, candidate_id, player_id):
+        self.set_candidates_players([candidate_id], [] if player_id is None else [player_id])
 
-    def set_candidates_player(self, candidate_ids: list[str], player_id: str | None) -> int:
-        if not candidate_ids:
-            return 0
+    def set_candidates_player(self, candidate_ids, player_id):
+        return self.set_candidates_players(candidate_ids, [] if player_id is None else [player_id])
+
+    def set_candidate_players(self, candidate_id, player_ids):
+        return self.set_candidates_players([candidate_id], player_ids)
+
+    def set_candidates_players(self, candidate_ids, player_ids, operation="set"):
+        if not isinstance(candidate_ids, list) or not all(isinstance(x,str) and x for x in candidate_ids):
+            raise ValueError("INVALID_CANDIDATE_IDS")
+        if not isinstance(player_ids, list) or not all(isinstance(x,str) and x for x in player_ids):
+            raise ValueError("INVALID_PLAYER_IDS")
+        if operation not in {"set", "add", "remove"}:
+            raise ValueError("INVALID_TAG_OPERATION")
+        ids, players = list(dict.fromkeys(candidate_ids)), list(dict.fromkeys(player_ids))
         with self.connect() as connection:
-            placeholders = ", ".join("?" for _ in candidate_ids)
-            rows = connection.execute(
-                f"SELECT c.id, v.project_id FROM candidates c JOIN videos v ON v.id = c.video_id WHERE c.id IN ({placeholders})",
-                tuple(candidate_ids),
-            ).fetchall()
-            if len(rows) != len(set(candidate_ids)):
-                raise LookupError("CANDIDATE_NOT_FOUND")
-            projects = {row["project_id"] for row in rows}
-            if len(projects) != 1:
-                raise ValueError("CANDIDATE_PROJECT_MISMATCH")
-            if player_id is not None:
-                player = connection.execute(
-                    "SELECT id FROM players WHERE id = ? AND project_id = ?",
-                    (player_id, next(iter(projects))),
-                ).fetchone()
-                if not player:
-                    raise LookupError("PLAYER_NOT_FOUND")
-            timestamp = now_iso()
-            for candidate_id in set(candidate_ids):
-                connection.execute(
-                    """
-                    INSERT INTO candidate_reviews (candidate_id, player_id, status, updated_at)
-                    VALUES (?, ?, 'pending', ?)
-                    ON CONFLICT(candidate_id) DO UPDATE SET
-                        player_id = excluded.player_id,
-                        updated_at = excluded.updated_at
-                    """,
-                    (candidate_id, player_id, timestamp),
-                )
-        return len(set(candidate_ids))
+            # Lock before read so two append/remove requests cannot overwrite each other.
+            connection.execute("BEGIN IMMEDIATE")
+            for candidate_id in ids:
+                candidate = connection.execute("""SELECT v.project_id FROM candidates c
+                    JOIN videos v ON v.id=c.video_id WHERE c.id=?""", (candidate_id,)).fetchone()
+                if not candidate:
+                    raise LookupError("CANDIDATE_NOT_FOUND")
+                for player_id in players:
+                    if not connection.execute("SELECT 1 FROM players WHERE id=? AND project_id=?",
+                                              (player_id,candidate["project_id"])).fetchone():
+                        raise LookupError("PLAYER_NOT_FOUND")
+                old = [row[0] for row in connection.execute(
+                    "SELECT player_id FROM candidate_tags WHERE candidate_id=? ORDER BY position", (candidate_id,))]
+                selected = players if operation == "set" else (
+                    list(dict.fromkeys(old+players)) if operation == "add" else [x for x in old if x not in players])
+                connection.execute("DELETE FROM candidate_tags WHERE candidate_id=?", (candidate_id,))
+                connection.executemany("INSERT INTO candidate_tags VALUES (?,?,?)",
+                    [(candidate_id,player_id,position) for position,player_id in enumerate(selected)])
+                connection.execute("""INSERT INTO candidate_reviews(candidate_id,player_id,status,updated_at)
+                    VALUES (?,?,'pending',?) ON CONFLICT(candidate_id) DO UPDATE SET
+                    player_id=excluded.player_id,updated_at=excluded.updated_at""",
+                    (candidate_id,selected[0] if selected else None,now_iso()))
+        return len(ids)
+
+    def add_candidate_player(self, candidate_id, player_id):
+        return self.set_candidates_players([candidate_id], [player_id], "add")
+
+    def remove_candidate_player(self, candidate_id, player_id):
+        return self.set_candidates_players([candidate_id], [player_id], "remove")
+
+    def add_candidates_player(self, candidate_ids, player_id):
+        return self.set_candidates_players(candidate_ids, [player_id], "add")
+
+    def remove_candidates_player(self, candidate_ids, player_id):
+        return self.set_candidates_players(candidate_ids, [player_id], "remove")
 
     def start_review(self, candidate_id: str, review_started_at: str | None = None) -> str:
         timestamp = normalize_review_started_at(review_started_at) if review_started_at is not None else now_iso()
