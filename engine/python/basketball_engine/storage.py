@@ -858,24 +858,17 @@ class ProjectStore:
             for tag in connection.execute("SELECT * FROM candidate_tags ORDER BY position"):
                 old_tags.setdefault(tag["candidate_id"], []).append(tag["player_id"])
             matches: dict[str, dict[str, Any]] = {}
-            used_old: set[str] = set()
             reserved_exact_ids = {str(row["id"]) for row in rows} & existing_candidates.keys()
             for row in rows:
                 candidate_id = str(row["id"])
                 review = existing_reviews.get(candidate_id)
                 old_candidate = existing_candidates.get(candidate_id)
-                if review is not None and old_candidate is not None:
-                    # An exact ID match consumes the old review so a second
-                    # nearby new candidate cannot inherit it as well.
-                    used_old.add(candidate_id)
                 if review is None:
                     candidates = [
                         (abs(int(old["event_time_ms"]) - int(row["event_time_ms"])), old_id, old)
                         for old_id, old in existing_candidates.items()
-                        if old_id not in used_old and old_id not in reserved_exact_ids
-                        and old.get("roi_id") == row.get("roi_id")
+                        if old.get("roi_id") == row.get("roi_id")
                         and abs(int(old["event_time_ms"]) - int(row["event_time_ms"])) <= 2_000
-                        and old_id in existing_reviews
                     ]
                     candidates.sort(key=lambda item: (item[0], item[1]))
                     if candidates and (
@@ -883,15 +876,14 @@ class ProjectStore:
                         or candidates[0][0] < candidates[1][0]
                     ):
                         distance, old_id, old = candidates[0]
-                        # Match only mutual unique nearest events. Do not let an
-                        # earlier row steal a later exact/closer or tied event.
+                        # Both nearest checks use the complete, unchanged sets.
+                        # An unavailable nearest event cannot fall back to second best.
                         nearest_new = [str(item["id"]) for item in rows
                                        if item.get("roi_id") == old.get("roi_id")
                                        and abs(int(item["event_time_ms"]) - int(old["event_time_ms"])) <= distance]
-                        if nearest_new == [candidate_id]:
+                        if old_id not in reserved_exact_ids and nearest_new == [candidate_id]:
                             old_candidate = old
-                            review = existing_reviews[old_id]
-                            used_old.add(old_id)
+                            review = existing_reviews.get(old_id)
                 if old_candidate is not None:
                     event_delta = int(row["event_time_ms"]) - int(old_candidate["event_time_ms"])
                     old_default_start = int(old_candidate["default_start_ms"])
