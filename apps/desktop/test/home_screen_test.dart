@@ -65,6 +65,23 @@ void main() {
     expect(find.textContaining('4 保留'), findsOneWidget);
   });
 
+  testWidgets('unknown recent counts never appear as an empty project', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [projectProvider.overrideWith(_UnknownCountsNotifier.new)],
+        child: const MaterialApp(home: HomeScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('待同步'), findsOneWidget);
+    expect(find.text('暂无候选'), findsNothing);
+    expect(find.textContaining('0 保留'), findsNothing);
+    expect(find.textContaining('0 候选'), findsNothing);
+    expect(find.textContaining('— ·'), findsOneWidget);
+  });
+
   testWidgets('tapping a recent project card opens it', (tester) async {
     late _FakeProjectNotifier fake;
     await tester.pumpWidget(
@@ -215,4 +232,18 @@ class _CurrentProjectNotifier extends ProjectNotifier {
 class _EmptyProjectNotifier extends ProjectNotifier {
   @override
   ProjectState build() => const ProjectState();
+}
+
+class _UnknownCountsNotifier extends ProjectNotifier {
+  @override
+  ProjectState build() => const ProjectState(
+    recentProjects: [
+      {
+        'project_root': '/tmp/synthetic-unknown',
+        'project': {'name': '计数未知'},
+        'video': {'duration_ms': 60000},
+        'statistics': {'candidate_count': null, 'included_count': null},
+      },
+    ],
+  );
 }

@@ -860,6 +860,7 @@ class _ProjectCard extends StatelessWidget {
     final goals = statistics['included_count'] == null
         ? _int(statistics['goal_count'])
         : _int(statistics['included_count']);
+    final countsUnknown = statistics['candidate_count'] == null;
     final candidates = _int(statistics['candidate_count']);
     final parts = (item['videos'] as List?)?.length ?? 1;
     final duration = parts > 1
@@ -878,6 +879,8 @@ class _ProjectCard extends StatelessWidget {
     final missing = video['source_status']?.toString() == 'missing';
     final status = missing
         ? (l10n?.homeStatusMissingVideo ?? '视频缺失', c.warning)
+        : countsUnknown
+        ? (context.bheText('待同步'), c.textTertiary)
         : candidates == 0
         ? (l10n?.homeStatusEmpty ?? '暂无候选', c.textTertiary)
         : _int(statistics['export_count']) > 0
@@ -1003,12 +1006,14 @@ class _ProjectCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    l10n?.projectStats(
-                          goals,
-                          candidates,
-                          _formatDuration(duration),
-                        ) ??
-                        '$goals 保留 · $candidates 候选 · ${_formatDuration(duration)}',
+                    countsUnknown
+                        ? '— · ${_formatDuration(duration)}'
+                        : l10n?.projectStats(
+                                goals,
+                                candidates,
+                                _formatDuration(duration),
+                              ) ??
+                              '$goals 保留 · $candidates 候选 · ${_formatDuration(duration)}',
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: c.textTertiary,
                     ),
