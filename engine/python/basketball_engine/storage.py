@@ -431,6 +431,54 @@ class ProjectStore:
             ).fetchall()
         return [str(row["source_path"]) for row in rows]
 
+    def recent_context(self) -> tuple[Dict[str, Any], list[Dict[str, Any]]]:
+        """Read list-card metadata without entering the writable store lifecycle.
+
+        immutable also prevents SQLite from creating/updating journal sidecars.
+        This is a checkpoint snapshot; committed WAL changes are read on open.
+        """
+        with sqlite3.connect(self.db_path.as_uri() + "?mode=ro&immutable=1", uri=True,
+                             factory=_ClosingConnection) as connection:
+            connection.row_factory = sqlite3.Row
+            project_row = connection.execute("SELECT * FROM projects LIMIT 1").fetchone()
+            if project_row is None:
+                raise ValueError("PROJECT_NOT_FOUND")
+            project = dict(project_row)
+            tables = {row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            videos = [dict(row) for row in connection.execute("SELECT * FROM videos")] if "videos" in tables else []
+            videos.sort(key=lambda row: (row.get("sort_index", 0), row.get("created_at", ""), row["id"]))
+            for video in videos:
+                video.setdefault("rotation", 0)
+                video.setdefault("sort_index", 0)
+                exists = Path(video["source_path"]).is_file()
+                video.update(source_exists=exists, source_status="linked" if exists else "missing")
+            # Only the stable fields needed for counts and existing-frame lookup.
+            candidates = [dict(row) for row in connection.execute(
+                "SELECT id, video_id, event_time_ms FROM candidates")
+            ] if "candidates" in tables else []
+            statuses = {row["candidate_id"]: row["status"] for row in connection.execute(
+                "SELECT candidate_id, status FROM candidate_reviews")
+            } if "candidate_reviews" in tables else {}
+            for row in candidates:
+                row["selection_status"] = statuses.get(row["id"], "pending")
+            count = len(candidates)
+            excluded = sum(row["selection_status"] == "excluded" for row in candidates)
+            goals = sum(row["selection_status"] == "goal" for row in candidates)
+            pending = sum(row["selection_status"] == "pending" for row in candidates)
+            exports = connection.execute("SELECT COUNT(*) FROM exports").fetchone()[0] if "exports" in tables else 0
+        project.setdefault("tier_rule_version", RULE_VERSION)
+        video = videos[0] if videos else None
+        return {
+            "database_path": str(self.db_path), "project_root": str(self.root),
+            "project": project, "analysis_mode": "standard", "workflow_draft": None,
+            "video": video, "videos": videos, "roi": None,
+            "statistics": {"candidate_count": count, "included_count": count - excluded,
+                           "goal_count": goals, "excluded_count": excluded,
+                           "pending_count": pending, "reviewed_count": count - pending,
+                           "export_count": exports},
+        }, candidates
+
     def context(self) -> Dict[str, Any]:
         project = self.project()
         if not project:
