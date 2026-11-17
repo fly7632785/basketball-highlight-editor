@@ -1,3 +1,4 @@
+import 'package:desktop/features/review/tier_selection.dart';
 import 'dart:async';
 
 import 'package:desktop/core/engine_client.dart';
@@ -9,6 +10,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('tag toggle and clear undo restore the whole group alongside review undo', () async {
+    final h = await _Harness.create();
+    await h.notifier.changeCandidateTags('A', toggleId:'p1');
+    await h.notifier.changeCandidateTags('A', toggleId:'p2');
+    expect(candidateTagIds(h.local('A')), ['p1','p2']);
+    await h.notifier.reviewCandidate('A','excluded');
+    await h.notifier.changeCandidateTags('A', replaceIds:[]);
+    expect(candidateTagIds(h.local('A')), isEmpty);
+    await h.notifier.undoReview();
+    expect(candidateTagIds(h.local('A')), ['p1','p2']);
+    expect(h.local('A')['review_status'], 'excluded');
+    await h.notifier.undoReview();
+    expect(h.local('A')['review_status'], 'pending');
+    expect(candidateTagIds(h.local('A')), ['p1','p2']);
+    await h.notifier.undoReview();
+    expect(candidateTagIds(h.local('A')), ['p1']);
+  });
+
   test('相同的待保存审核共享失败结果，回滚后可以重试', () async {
     final h = await _Harness.create();
     final gate = h.transport.holdReview(h.root, 'A');
@@ -442,6 +461,17 @@ class _ReviewTransport implements EngineTransport {
           ],
           'players': <JsonMap>[],
         };
+      case 'add_candidate_player':
+      case 'remove_candidate_player':
+      case 'set_candidate_players':
+        final id = payload['candidate_id'] as String;
+        final candidate = projects[root]![id]!;
+        final ids = candidateTagIds(candidate).toSet();
+        if(command == 'set_candidate_players') { ids.clear(); ids.addAll((payload['player_ids'] as List).cast<String>()); }
+        else if(command == 'remove_candidate_player') { ids.remove(payload['player_id']); }
+        else { ids.add(payload['player_id'] as String); }
+        projects[root]![id] = {...candidate, 'tags':[for(final id in ids) {'id':id,'name':id}]};
+        return {'updated':1};
       case 'review_candidate':
         reviewCalls.add(Map<String, dynamic>.from(payload));
         final id = payload['candidate_id'] as String;

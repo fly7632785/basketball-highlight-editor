@@ -79,6 +79,11 @@ extension BheBuildContextText on BuildContext {
 }
 
 String? _translateDynamic(String source) {
+  final tierExport = RegExp(r'^将导出 (\d+) 段 · (.+)$').firstMatch(source);
+  if(tierExport != null) return 'Will export ${tierExport.group(1)} clips · ${tierExport.group(2)}';
+  final tierInspect = RegExp(r'^去审核页看这 (\d+) 段 →$').firstMatch(source);
+  if(tierInspect != null) return 'Review these ${tierInspect.group(1)} clips →';
+
   final missingOpened = RegExp(r'^第 ([\d、]+) 段的原视频找不到，请在导入页重新定位$').firstMatch(source);
   if (missingOpened != null) {
     return 'The original video for part ${missingOpened.group(1)!.replaceAll('、', ', ')} is missing - relink it on the Import page';
@@ -431,6 +436,25 @@ String _englishDuration(String value) => value
     .trim();
 
 const _englishText = <String, String>{
+  '必进': 'Goals',
+  '疑似': 'Uncertain',
+  '不限': 'Any tag',
+  '档位': 'Tier',
+  '＋标签': '+ Tags',
+  '保留 · 进': 'Keep · Scored',
+  '排除 · 没进': 'Exclude · Missed',
+  '跳过 S': 'Skip S',
+  '回到导出 →': 'Back to export →',
+  '选择标签 · 可多选': 'Choose tags · Multiple allowed',
+  '跳过（留在疑似）': 'Skip (keep uncertain)',
+  '切换第 N 个标签；Shift+数字只留一个': 'Toggle tag N; Shift+number keeps only this tag',
+  '勾选档位和标签决定导哪些；想细调，就去审核页看着视频改。': 'Choose tiers and tags to export; fine-tune clips on the Review page.',
+  '先勾档位，再按标签缩小（可不选）': 'Choose tiers, then optionally narrow by tags',
+  '下一步选择保存位置。': 'Choose a save location next.',
+  '判没进': 'Marked missed',
+  '已确认 → 必进': 'Confirmed → Goals',
+  '判没进 → 排除': 'Missed → Excluded',
+
   '请在弹出的窗口中选择保存位置': 'Please choose where to save in the window that opens',
   '找回保存窗口': 'Bring save window to front',
   '第三方开源许可': 'Third-party notices',

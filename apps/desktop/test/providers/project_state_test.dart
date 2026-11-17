@@ -1732,6 +1732,8 @@ class _FakeProjectSession extends ProjectSession {
     String? outputDir,
     String? outputPath,
     List<String>? playerIds,
+    List<String>? tiers,
+    List<String>? tags,
     bool? includeUnassigned,
     String effect = 'none',
   }) async {

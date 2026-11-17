@@ -146,13 +146,14 @@ void main() {
           {
             'id': 'goal',
             'event_time_ms': 3000,
-            'review_start_ms': 0,
+            'tier':'must', 'review_start_ms': 0,
             'review_end_ms': 4000,
             'detector_version': 'python-v2',
           },
           {
             'id': 'manual',
             'event_time_ms': 12000,
+            'tier':'must',
             'review_start_ms': 10000,
             'review_end_ms': 14000,
             'detector_version': 'manual-v1',
@@ -165,6 +166,8 @@ void main() {
     expect(find.text('00:08'), findsOneWidget);
 
     // 临门慢动作：进球那个片段多出 1.3 秒，手动片段不加。
+    await tester.tap(find.byType(ExpansionTile));
+    await tester.pumpAndSettle();
     final approach = find.byKey(const Key('export-effect-approach'));
     await tester.ensureVisible(approach);
     await tester.tap(approach);
@@ -221,7 +224,7 @@ void main() {
       const ProjectState(
         video: {'id': 'A'},
         candidates: [
-          {'id': 'a', 'default_start_ms': 0, 'default_end_ms': 4000},
+          {'id': 'a', 'tier': 'must', 'default_start_ms': 0, 'default_end_ms': 4000},
         ],
       ),
     );
@@ -238,7 +241,7 @@ void main() {
           {'id': 'p1', 'name': 'Alice'},
         ],
         candidates: [
-          {'id': 'a', 'event_time_ms': 60000, 'player_id': 'p1', 'review_status': 'included'},
+          {'id': 'a', 'tier':'must', 'event_time_ms': 60000, 'player_id': 'p1', 'review_status': 'included'},
           {'id': 'b', 'event_time_ms': 720000, 'review_status': 'pending'},
           {
             'id': 'c',
@@ -258,41 +261,7 @@ void main() {
     expect(find.text('10–20 分钟'), findsOneWidget);
   });
 
-  testWidgets('cached export resets player filters when the video changes', (
-    tester,
-  ) async {
-    final notifier = _FilterExportNotifier(_filterState());
-    await _pumpFilterExport(tester, notifier);
-    await _pickFilter(tester, 'Alice');
-    notifier.replace(
-      const ProjectState(
-        video: {'id': 'B'},
-        candidates: [
-          {'id': 'new-clip', 'default_start_ms': 0, 'default_end_ms': 4000},
-        ],
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('1 个'), findsOneWidget);
-    expect(_mergeButton(tester).onPressed, isNotNull);
-  });
-
-  testWidgets('cached export resets filters when the source path changes', (
-    tester,
-  ) async {
-    final initial = _filterState().copyWith(videoPath: '/tmp/source-A.mp4');
-    final notifier = _FilterExportNotifier(initial);
-    await _pumpFilterExport(tester, notifier);
-    await _pickFilter(tester, 'Alice');
-    notifier.replace(initial.copyWith(videoPath: '/tmp/source-B.mp4'));
-    await tester.pumpAndSettle();
-    expect(_filterChip(tester, '全部球员').selected, isTrue);
-    expect(find.text('3 个'), findsOneWidget);
-  });
-
-  testWidgets('same-scope hydration and refresh preserve a valid filter', (
-    tester,
-  ) async {
+  testWidgets('export tag selection survives refresh and active-video changes inside a project', (tester) async {
     final initial = _filterState();
     final notifier = _FilterExportNotifier(initial);
     await _pumpFilterExport(tester, notifier);
@@ -300,75 +269,36 @@ void main() {
     notifier.replace(initial.copyWith(hydrating: true, players: []));
     await tester.pump();
     expect(_mergeButton(tester).onPressed, isNull);
-    notifier.replace(initial);
+    notifier.replace(initial.copyWith(video: {'id':'B'}));
     await tester.pumpAndSettle();
     expect(_filterChip(tester, 'Alice').selected, isTrue);
-    expect(_filterChip(tester, '全部球员').selected, isFalse);
+    expect(_filterChip(tester, '不限').selected, isFalse);
     expect(find.text('1 个'), findsOneWidget);
   });
 
-  testWidgets('adding a player retains explicitly included unassigned clips', (
-    tester,
-  ) async {
+  testWidgets('tag choices use OR and unlimited is mutually exclusive', (tester) async {
     final notifier = _FilterExportNotifier(_filterState());
     final picker = _TestOutputPicker();
     await _pumpFilterExport(tester, notifier, picker: picker);
     await _pickFilter(tester, 'Alice');
-    expect(_filterChip(tester, '未标记').selected, isFalse);
-    expect(find.text('1 个'), findsOneWidget);
-    await _pickFilter(tester, '未标记');
     await _pickFilter(tester, 'Bob');
-    expect(_filterChip(tester, '未标记').selected, isTrue);
-    expect(find.text('3 个'), findsOneWidget);
+    expect(_filterChip(tester, '不限').selected, isFalse);
+    expect(find.text('2 个'), findsOneWidget);
     await _exportFiltered(tester, picker);
     expect(notifier.exportedPlayerIds, unorderedEquals(['p1', 'p2']));
-    expect(notifier.exportedIncludeUnassigned, isTrue);
+    expect(notifier.exportedTiers, ['must']);
   });
 
-  testWidgets('selecting unassigned first survives adding a player', (
-    tester,
-  ) async {
+  testWidgets('removing last tag selection restores unlimited', (tester) async {
     final notifier = _FilterExportNotifier(_filterState());
     await _pumpFilterExport(tester, notifier);
-    await _pickFilter(tester, '未标记');
     await _pickFilter(tester, 'Alice');
-    expect(_filterChip(tester, '未标记').selected, isTrue);
-    expect(find.text('2 个'), findsOneWidget);
-    await _pickFilter(tester, '全部球员');
-    await _pickFilter(tester, 'Bob');
-    expect(_filterChip(tester, '未标记').selected, isFalse);
-    expect(find.text('1 个'), findsOneWidget);
+    await _pickFilter(tester, 'Alice');
+    expect(_filterChip(tester, '不限').selected, isTrue);
+    expect(find.text('3 个'), findsOneWidget);
   });
 
-  testWidgets('deleting one selected player prunes only its export ID', (
-    tester,
-  ) async {
-    final initial = _filterState();
-    final notifier = _FilterExportNotifier(initial);
-    final picker = _TestOutputPicker();
-    await _pumpFilterExport(tester, notifier, picker: picker);
-    await _pickFilter(tester, 'Alice');
-    await _pickFilter(tester, 'Bob');
-    notifier.replace(
-      initial.copyWith(
-        players: [initial.players.last],
-        candidates: [
-          {...initial.candidates.first, 'player_id': null},
-          ...initial.candidates.skip(1),
-        ],
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(_filterChip(tester, 'Bob').selected, isTrue);
-    expect(find.text('1 个'), findsOneWidget);
-    await _exportFiltered(tester, picker);
-    expect(notifier.exportedPlayerIds, ['p2']);
-    expect(notifier.exportedIncludeUnassigned, isFalse);
-  });
-
-  testWidgets('deleting all tags leaves a visible reset for the empty filter', (
-    tester,
-  ) async {
+  testWidgets('deleted selected tag cannot broaden export until unlimited is explicitly chosen', (tester) async {
     final initial = _filterState();
     final notifier = _FilterExportNotifier(initial);
     await _pumpFilterExport(tester, notifier);
@@ -377,34 +307,13 @@ void main() {
       initial.copyWith(
         players: [],
         candidates: [
-          for (final candidate in initial.candidates)
-            {...candidate, 'player_id': null},
-        ],
-      ),
-    );
+          for (final c in initial.candidates)
+            {...c, 'tags': [], 'player_id': null}]));
     await tester.pumpAndSettle();
     expect(find.text('0 个'), findsOneWidget);
     expect(_mergeButton(tester).onPressed, isNull);
-    expect(_filterChip(tester, '全部球员').selected, isFalse);
-    await _pickFilter(tester, '全部球员');
+    await _pickFilter(tester, '不限');
     expect(find.text('3 个'), findsOneWidget);
-    expect(_mergeButton(tester).onPressed, isNotNull);
-  });
-
-  testWidgets('refresh does not broaden an intentionally empty filter', (
-    tester,
-  ) async {
-    final initial = _filterState();
-    final notifier = _FilterExportNotifier(initial);
-    await _pumpFilterExport(tester, notifier);
-    await _pickFilter(tester, 'Alice');
-    await _pickFilter(tester, 'Alice');
-    expect(find.text('0 个'), findsOneWidget);
-    notifier.replace(initial.copyWith(players: []));
-    await tester.pumpAndSettle();
-    expect(find.text('0 个'), findsOneWidget);
-    expect(_filterChip(tester, '全部球员').selected, isFalse);
-    expect(_mergeButton(tester).onPressed, isNull);
   });
 
   testWidgets(
@@ -674,7 +583,7 @@ void main() {
                   {
                     'id': 'candidate-1',
                     'event_time_ms': 12000,
-                    'default_start_ms': 6000,
+                    'tier': 'must', 'default_start_ms': 6000,
                     'default_end_ms': 15000,
                   },
                 ],
@@ -718,17 +627,17 @@ ProjectState _filterState() => const ProjectState(
   candidates: [
     {
       'id': 'c1',
-      'default_start_ms': 0,
+      'tier': 'must', 'default_start_ms': 0,
       'default_end_ms': 4000,
       'player_id': 'p1',
     },
     {
       'id': 'c2',
-      'default_start_ms': 5000,
+      'tier': 'must', 'default_start_ms': 5000,
       'default_end_ms': 9000,
       'player_id': 'p2',
     },
-    {'id': 'c3', 'default_start_ms': 10000, 'default_end_ms': 14000},
+    {'id': 'c3', 'tier': 'must', 'default_start_ms': 10000, 'default_end_ms': 14000},
   ],
 );
 
@@ -736,6 +645,7 @@ class _FilterExportNotifier extends _ExportNotifier {
   _FilterExportNotifier(super.initialState);
 
   List<String>? exportedPlayerIds;
+  List<String>? exportedTiers;
   bool? exportedIncludeUnassigned;
   String? exportedMode;
   String? exportedEffect;
@@ -750,6 +660,8 @@ class _FilterExportNotifier extends _ExportNotifier {
     String? outputDir,
     String? outputPath,
     List<String>? playerIds,
+    List<String>? tiers,
+    List<String>? tags,
     bool? includeUnassigned,
     String effect = 'none',
   }) async {
@@ -757,7 +669,8 @@ class _FilterExportNotifier extends _ExportNotifier {
     exportedEffect = effect;
     exportedOutputDir = outputDir;
     exportedOutputPath = outputPath;
-    exportedPlayerIds = playerIds;
+    exportedPlayerIds = tags;
+    exportedTiers = tiers;
     exportedIncludeUnassigned = includeUnassigned;
   }
 }
@@ -779,13 +692,13 @@ Future<void> _pumpFilterExport(
 }
 
 FilterChip _filterChip(WidgetTester tester, String label) =>
-    tester.widget<FilterChip>(find.widgetWithText(FilterChip, label));
+    tester.widget<FilterChip>(find.byWidgetPredicate((w) => w is FilterChip && (w.label is Row ? (w.label as Row).children.whereType<ConstrainedBox>().any((b) => b.child is Text && (b.child as Text).data == label) : false)));
 
 CsButton _mergeButton(WidgetTester tester) =>
     tester.widget<CsButton>(find.byKey(const Key('export-start')));
 
 Future<void> _pickFilter(WidgetTester tester, String label) async {
-  final chip = find.widgetWithText(FilterChip, label);
+  final chip = find.byWidgetPredicate((w) => w is FilterChip && (w.label is Row ? (w.label as Row).children.whereType<ConstrainedBox>().any((b) => b.child is Text && (b.child as Text).data == label) : false));
   await tester.ensureVisible(chip);
   await tester.tap(chip);
   await tester.pumpAndSettle();
@@ -859,7 +772,7 @@ class _TrackingExportNotifier extends _ExportNotifier {
     : super(
         const ProjectState(
           candidates: [
-            {'id': 'c1', 'default_start_ms': 0, 'default_end_ms': 4000},
+            {'id': 'c1', 'tier': 'must', 'default_start_ms': 0, 'default_end_ms': 4000},
           ],
         ),
       );
@@ -870,6 +783,8 @@ class _TrackingExportNotifier extends _ExportNotifier {
     String? outputDir,
     String? outputPath,
     List<String>? playerIds,
+    List<String>? tiers,
+    List<String>? tags,
     bool? includeUnassigned,
     String effect = 'none',
   }) async {
@@ -888,7 +803,7 @@ class _UnconfirmedExportNotifier extends ProjectNotifier {
   @override
   ProjectState build() => const ProjectState(
     exportStartUnconfirmed: true,
-    candidates: [{'id':'c1', 'default_start_ms':0, 'default_end_ms':1000}],
+    candidates: [{'id':'c1', 'tier': 'must', 'default_start_ms':0, 'default_end_ms':1000}],
   );
   @override
   Future<void> checkUnconfirmedExport() async {

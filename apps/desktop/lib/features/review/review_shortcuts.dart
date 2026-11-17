@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 /// 审核页的单键快捷键。键盘处理（review_screen 的 `_handleShortcut`）和新手引导、
 /// 「快捷键一览」都读这一张表，改键只改这里。
 enum ReviewShortcutAction {
+  skip,
   playPause,
   seekBack,
   seekForward,
@@ -39,21 +40,24 @@ class ReviewShortcut {
 }
 
 const List<ReviewShortcut> reviewShortcuts = [
+  ReviewShortcut(ReviewShortcutAction.skip, '跳过（留在疑似）', [
+    LogicalKeyboardKey.keyS,
+  ]),
   ReviewShortcut(ReviewShortcutAction.playPause, '播放 / 暂停', [
     LogicalKeyboardKey.space,
   ]),
   ReviewShortcut(
     ReviewShortcutAction.seekBack,
     '后退 2 秒',
-    [LogicalKeyboardKey.arrowLeft],
-    note: '加 Shift 后退 0.1 秒',
-  ),
+    [LogicalKeyboardKey.arrowLeft,
+  ],
+    note: '加 Shift 后退 0.1 秒'),
   ReviewShortcut(
     ReviewShortcutAction.seekForward,
     '前进 2 秒',
-    [LogicalKeyboardKey.arrowRight],
-    note: '加 Shift 前进 0.1 秒',
-  ),
+    [LogicalKeyboardKey.arrowRight,
+  ],
+    note: '加 Shift 前进 0.1 秒'),
   ReviewShortcut(ReviewShortcutAction.previousCandidate, '上一个候选', [
     LogicalKeyboardKey.arrowUp,
   ]),
@@ -177,8 +181,7 @@ List<(String, String)> rangeEditorShortcutRows() => [
 /// 一览里的每一行：(按键文字, 说明)，说明已按当前语言翻译。
 List<(String, String)> reviewShortcutRows(
   BuildContext context, {
-  bool? isMac,
-}) {
+  bool? isMac}) {
   final mac = isMac ?? Platform.isMacOS;
   return [
     for (final shortcut in reviewShortcuts)
@@ -188,7 +191,7 @@ List<(String, String)> reviewShortcutRows(
             ? context.bheText(shortcut.label)
             : '${context.bheText(shortcut.label)}（${context.bheText(shortcut.note!)}）',
       ),
-    (playerShortcutKeysText(), context.bheText('给片段选第 N 个球员')),
+    (playerShortcutKeysText(), context.bheText('切换第 N 个标签；Shift+数字只留一个')),
     (keyCapLabel(reviewPlayerKeys.first.$1), context.bheText('清除球员标签')),
   ];
 }

@@ -1,3 +1,4 @@
+import '../features/review/tier_selection.dart';
 // lib/providers/project_state.dart
 import '../core/app_diagnostics.dart';
 import 'dart:async';
@@ -295,9 +296,11 @@ class ProjectState {
       queueAfterSeconds: queueAfterSeconds ?? this.queueAfterSeconds,
       queuePaused: queuePaused ?? this.queuePaused,
       queueFinishedCount: queueFinishedCount ?? this.queueFinishedCount,
-      lastQueueAllCompleted: lastQueueAllCompleted ?? this.lastQueueAllCompleted,
+      lastQueueAllCompleted:
+          lastQueueAllCompleted ?? this.lastQueueAllCompleted,
       exportQueued: exportQueued ?? this.exportQueued,
-      exportStartUnconfirmed: exportStartUnconfirmed ?? this.exportStartUnconfirmed,
+      exportStartUnconfirmed:
+          exportStartUnconfirmed ?? this.exportStartUnconfirmed,
     );
   }
 }
@@ -311,12 +314,17 @@ class _ReviewSnapshot {
     required this.status,
     required this.reason,
     required this.note,
+    this.tagIds,
+    this.tier,
+    this.tierSource,
   });
 
   final String candidateId;
   final String status;
   final String? reason;
   final String? note;
+  final List<String>? tagIds;
+  final String? tier, tierSource;
 }
 
 /// 同一候选的排队请求共享保存基线，仅在引擎确认成功后推进。
@@ -388,233 +396,234 @@ class ProjectNotifier extends Notifier<ProjectState> {
     appLog('info', 'import', '导入开始');
     await flushReviewQueue();
     var projectCreatedForRecent = false;
-    await _runBusy(
-      () async {
-        final generation = ++_projectLoadGeneration;
-        await ref.read(engineBootstrapProvider.notifier).ensure();
-        if (_disposed || generation != _projectLoadGeneration) return;
-        // 新建项目同样会换会话身份，先等导入页把当前草稿写给原项目。
-        await flushDraftBeforeShutdown();
-        if (_disposed || generation != _projectLoadGeneration) return;
-        final session = ref.read(projectSessionProvider);
-        final checkpoint = session.checkpoint();
-        final source = File(path).absolute;
+    await _runBusy(() async {
+      final generation = ++_projectLoadGeneration;
+      await ref.read(engineBootstrapProvider.notifier).ensure();
+      if (_disposed || generation != _projectLoadGeneration) return;
+      // 新建项目同样会换会话身份，先等导入页把当前草稿写给原项目。
+      await flushDraftBeforeShutdown();
+      if (_disposed || generation != _projectLoadGeneration) return;
+      final session = ref.read(projectSessionProvider);
+      final checkpoint = session.checkpoint();
+      final source = File(path).absolute;
       JsonMap inspected = {};
       try {
         final payload = await session.inspectVideo(videoPath: path);
-        inspected = (payload['video'] as Map?)?.cast<String, dynamic>() ?? payload;
+        inspected =
+            (payload['video'] as Map?)?.cast<String, dynamic>() ?? payload;
       } on Object {
         // Optional capture-date metadata must not block importing a video.
       }
       final stem = defaultProjectName(
         fileName: source.uri.pathSegments.last,
-        createdAt: DateTime.tryParse(inspected['recorded_at']?.toString() ?? ''),
+        createdAt: DateTime.tryParse(
+          inspected['recorded_at']?.toString() ?? '',
+        ),
         locale: Platform.localeName,
         existingNames: state.recentProjects
-            .map((project) => project['name']?.toString() ?? '').toList(),
+            .map((project) => project['name']?.toString() ?? '')
+            .toList(),
       );
-        var knownRoot = state.knownProjectsRoot ?? _projectsRoot;
-        final folderName = '$stem-${DateTime.now().millisecondsSinceEpoch}';
-        var projectRoot = '$knownRoot/$folderName';
-        late final JsonMap linked;
-        var projectCreated = false;
+      var knownRoot = state.knownProjectsRoot ?? _projectsRoot;
+      final folderName = '$stem-${DateTime.now().millisecondsSinceEpoch}';
+      var projectRoot = '$knownRoot/$folderName';
+      late final JsonMap linked;
+      var projectCreated = false;
+      try {
         try {
-          try {
-            await session.createProject(name: stem, rootPath: projectRoot);
-          } on EngineException catch (error) {
-            final fallback = fallbackProjectsRoot(Platform.environment);
-            if (!const {
-                  'FILE_NOT_FOUND',
-                  'FILE_ACCESS_DENIED',
-                }.contains(error.code) ||
-                canonicalProjectPath(knownRoot) ==
-                    canonicalProjectPath(fallback)) {
-              rethrow;
-            }
-            // 默认目录被安全软件拦截、或「视频」文件夹失效时建不了项目，改存到应用数据目录。
-            // 之后本次运行直接用备用目录，不会再失败，所以每次启动最多提示一次。
-            final failedRoot = knownRoot;
-            knownRoot = fallback;
-            projectRoot = '$knownRoot/$folderName';
-            await session.createProject(name: stem, rootPath: projectRoot);
-            _pushNotice(
-              '无法在 $failedRoot 新建项目，已改存到 $knownRoot',
-              NoticeSeverity.warning,
-            );
+          await session.createProject(name: stem, rootPath: projectRoot);
+        } on EngineException catch (error) {
+          final fallback = fallbackProjectsRoot(Platform.environment);
+          if (!const {
+                'FILE_NOT_FOUND',
+                'FILE_ACCESS_DENIED',
+              }.contains(error.code) ||
+              canonicalProjectPath(knownRoot) ==
+                  canonicalProjectPath(fallback)) {
+            rethrow;
           }
-          projectCreated = true;
+          // 默认目录被安全软件拦截、或「视频」文件夹失效时建不了项目，改存到应用数据目录。
+          // 之后本次运行直接用备用目录，不会再失败，所以每次启动最多提示一次。
+          final failedRoot = knownRoot;
+          knownRoot = fallback;
+          projectRoot = '$knownRoot/$folderName';
+          await session.createProject(name: stem, rootPath: projectRoot);
+          _pushNotice(
+            '无法在 $failedRoot 新建项目，已改存到 $knownRoot',
+            NoticeSeverity.warning,
+          );
+        }
+        projectCreated = true;
+        projectCreatedForRecent = true;
+        if (_disposed || generation != _projectLoadGeneration) return;
+        state = state.copyWith(knownProjectsRoot: knownRoot);
+        if (!await _rememberProjectsRoot(knownRoot) && !_disposed) {
+          _pushProjectPathNotice('无法记住项目目录', projectRoot);
+        }
+        if (_disposed || generation != _projectLoadGeneration) return;
+        linked = await session.linkVideo(path);
+      } catch (error) {
+        final uncertain =
+            error is EngineException &&
+            const {
+              'ENGINE_TIMEOUT',
+              'ENGINE_EXITED',
+              'ENGINE_NOT_RUNNING',
+              'ENGINE_WRITE_FAILED',
+              'ENGINE_DISPOSED',
+            }.contains(error.code);
+        if (_disposed || generation != _projectLoadGeneration) return;
+        session.restore(checkpoint);
+        if (projectCreated || uncertain) {
           projectCreatedForRecent = true;
-          if (_disposed || generation != _projectLoadGeneration) return;
           state = state.copyWith(knownProjectsRoot: knownRoot);
           if (!await _rememberProjectsRoot(knownRoot) && !_disposed) {
             _pushProjectPathNotice('无法记住项目目录', projectRoot);
           }
-          if (_disposed || generation != _projectLoadGeneration) return;
-          linked = await session.linkVideo(path);
-        } catch (error) {
-          final uncertain =
-              error is EngineException &&
-              const {
-                'ENGINE_TIMEOUT',
-                'ENGINE_EXITED',
-                'ENGINE_NOT_RUNNING',
-                'ENGINE_WRITE_FAILED',
-                'ENGINE_DISPOSED',
-              }.contains(error.code);
-          if (_disposed || generation != _projectLoadGeneration) return;
-          session.restore(checkpoint);
-          if (projectCreated || uncertain) {
-            projectCreatedForRecent = true;
-            state = state.copyWith(knownProjectsRoot: knownRoot);
-            if (!await _rememberProjectsRoot(knownRoot) && !_disposed) {
-              _pushProjectPathNotice('无法记住项目目录', projectRoot);
-            }
-          }
-          if (_disposed || generation != _projectLoadGeneration) return;
-          if (uncertain) {
-            _pushProjectPathNotice(
-              projectCreated ? '导入未确认，项目已保留' : '项目可能已创建',
-              projectRoot,
-              uncertain: !projectCreated,
-            );
-            throw SessionStateException(
-              projectCreated
-                  ? '导入未确认，项目已保留；稍后打开检查，请勿重复导入'
-                  : '项目可能已创建；稍后打开检查，请勿重复导入',
-            );
-          }
-          if (projectCreated) {
-            _pushProjectPathNotice('导入失败，项目已保留', projectRoot);
-          }
-          rethrow;
         }
         if (_disposed || generation != _projectLoadGeneration) return;
-        final linkedVideo = (linked['video'] as Map?)?.cast<String, dynamic>();
-        state = state.copyWith(
-          knownProjectsRoot: knownRoot,
-          videoPath: _playbackVideoPath(linkedVideo) ?? path,
-          reviewVideoPath: null,
-          previewPath: null,
-          previewTimeMs: 1000,
-          previewRefreshing: false,
-          suggestedRoi: null,
-          netRoi: null,
-          hoopBbox: null,
-          roiSource: null,
-          roiConfidence: null,
-          roiSuggestionError: null,
-          roiDetecting: true,
-          video: linkedVideo,
-          job: null,
-          exportJob: null,
-          exportStartUnconfirmed: false,
-          statistics: null,
-          candidates: const <JsonMap>[],
-          players: const <JsonMap>[],
-          exportHistory: const <JsonMap>[],
-          workflowDraft: null,
-        );
-        ref.read(sidebarExtendedProvider.notifier).collapseForProjectCreation();
-        state = state.copyWith(busyMessage: '正在生成视频预览…');
-        final duration = (linkedVideo?['duration_ms'] as num?)?.toInt() ?? 1001;
-        try {
-          final preview = await session.extractPreview(
-            timeMs: duration > 1000 ? 1000 : duration,
+        if (uncertain) {
+          _pushProjectPathNotice(
+            projectCreated ? '导入未确认，项目已保留' : '项目可能已创建',
+            projectRoot,
+            uncertain: !projectCreated,
           );
-          if (!_disposed && generation == _projectLoadGeneration) {
-            state = state.copyWith(previewPath: preview['path']?.toString());
-          }
-        } catch (error) {
-          if (!_disposed && generation == _projectLoadGeneration) {
-            _pushNotice('视频预览加载失败：$error', NoticeSeverity.error);
-          }
-        }
-        if (_disposed || generation != _projectLoadGeneration) return;
-        state = state.copyWith(busyMessage: '正在识别篮筐区域…');
-        final roiWatch = Stopwatch()..start();
-        appLog('info', 'import', '自动识别篮筐 开始');
-        Rect? suggestedRoi;
-        Rect? hoopBbox;
-        String? roiSource;
-        var previewTimeMs = 1000;
-        String? roiSuggestionError;
-        double? roiConfidence;
-        try {
-          final suggestion = await session.suggestRoi(
-            startMs: (linkedVideo?['analysis_start_ms'] as num?)?.toInt() ?? 0,
-            duration: 20,
-            sampleFps: 1,
-            maxSamples: 12,
-            confidence: 0.05,
+          throw SessionStateException(
+            projectCreated
+                ? '导入未确认，项目已保留；稍后打开检查，请勿重复导入'
+                : '项目可能已创建；稍后打开检查，请勿重复导入',
           );
-          final roi = (suggestion['roi'] as Map?)?.cast<String, dynamic>();
-          if (roi != null && linkedVideo != null) {
-            suggestedRoi = _normalizeRoi(roi, linkedVideo);
-            final calibration = (suggestion['calibration'] as Map?)
-                ?.cast<String, dynamic>();
-            final rawHoopBbox = calibration?['hoop_bbox'];
-            if (rawHoopBbox is List) {
-              hoopBbox = _normalizeBbox(rawHoopBbox, linkedVideo);
-            }
-            // 自动建议只进入会话草稿，最终由 applyWorkflowDraft 写入生效配置。
-            roiSource = 'auto';
-            roiConfidence = (calibration?['confidence'] as num?)?.toDouble();
-            previewTimeMs =
-                ((suggestion['preview_time_ms'] as num?)?.toInt() ?? 1000)
-                    .clamp(0, duration)
-                    .toInt();
-          }
-        } catch (error) {
-          // 自动 ROI 是便利功能,失败不应阻塞导入,用户可手动框选。
-          roiSuggestionError = error.toString();
         }
-        if (_disposed || generation != _projectLoadGeneration) return;
-        if (previewTimeMs != 1000) {
-          try {
-            final preview = await session.extractPreview(timeMs: previewTimeMs);
-            if (!_disposed && generation == _projectLoadGeneration) {
-              state = state.copyWith(
-                previewPath: preview['path']?.toString(),
-                previewTimeMs: previewTimeMs,
-              );
-            }
-          } catch (error) {
-            if (!_disposed && generation == _projectLoadGeneration) {
-              _pushNotice('自动切换标记画面失败：$error', NoticeSeverity.error);
-            }
-          }
+        if (projectCreated) {
+          _pushProjectPathNotice('导入失败，项目已保留', projectRoot);
         }
-        if (_disposed || generation != _projectLoadGeneration) return;
-        state = state.copyWith(
-          previewTimeMs: previewTimeMs,
-          suggestedRoi: suggestedRoi,
-          hoopBbox: hoopBbox,
-          roiSource: roiSource,
-          roiConfidence: roiConfidence,
-          roiSuggestionError: roiSuggestionError,
-          roiDetecting: false,
-          videos: const <JsonMap>[],
-          analysisQueue: const <String>[],
-          queuePaused: false,
-          exportQueued: false,
+        rethrow;
+      }
+      if (_disposed || generation != _projectLoadGeneration) return;
+      final linkedVideo = (linked['video'] as Map?)?.cast<String, dynamic>();
+      state = state.copyWith(
+        knownProjectsRoot: knownRoot,
+        videoPath: _playbackVideoPath(linkedVideo) ?? path,
+        reviewVideoPath: null,
+        previewPath: null,
+        previewTimeMs: 1000,
+        previewRefreshing: false,
+        suggestedRoi: null,
+        netRoi: null,
+        hoopBbox: null,
+        roiSource: null,
+        roiConfidence: null,
+        roiSuggestionError: null,
+        roiDetecting: true,
+        video: linkedVideo,
+        job: null,
+        exportJob: null,
+        exportStartUnconfirmed: false,
+        statistics: null,
+        candidates: const <JsonMap>[],
+        players: const <JsonMap>[],
+        exportHistory: const <JsonMap>[],
+        workflowDraft: null,
+      );
+      ref.read(sidebarExtendedProvider.notifier).collapseForProjectCreation();
+      state = state.copyWith(busyMessage: '正在生成视频预览…');
+      final duration = (linkedVideo?['duration_ms'] as num?)?.toInt() ?? 1001;
+      try {
+        final preview = await session.extractPreview(
+          timeMs: duration > 1000 ? 1000 : duration,
         );
-        appLog(
-          roiSuggestionError == null ? 'info' : 'warn',
-          'import',
-          '自动识别篮筐 结果=${suggestedRoi == null ? '未识别' : '成功'} '
-              '来源=${roiSource ?? 'manual'} '
-              '置信度=${roiConfidence == null ? '-' : roiConfidence.toStringAsFixed(3)} '
-              '用时=${roiWatch.elapsedMilliseconds}ms'
-              '${roiSuggestionError == null ? '' : ' 错误=$roiSuggestionError'}',
-        );
-        _reviewHistory.clear();
-        await refreshVideos();
         if (!_disposed && generation == _projectLoadGeneration) {
-          _pushNotice('视频已加载，已优先尝试自动识别篮筐区域', NoticeSeverity.success);
+          state = state.copyWith(previewPath: preview['path']?.toString());
         }
-      },
-      busyMessage: '正在准备视频…',
-    );
+      } catch (error) {
+        if (!_disposed && generation == _projectLoadGeneration) {
+          _pushNotice('视频预览加载失败：$error', NoticeSeverity.error);
+        }
+      }
+      if (_disposed || generation != _projectLoadGeneration) return;
+      state = state.copyWith(busyMessage: '正在识别篮筐区域…');
+      final roiWatch = Stopwatch()..start();
+      appLog('info', 'import', '自动识别篮筐 开始');
+      Rect? suggestedRoi;
+      Rect? hoopBbox;
+      String? roiSource;
+      var previewTimeMs = 1000;
+      String? roiSuggestionError;
+      double? roiConfidence;
+      try {
+        final suggestion = await session.suggestRoi(
+          startMs: (linkedVideo?['analysis_start_ms'] as num?)?.toInt() ?? 0,
+          duration: 20,
+          sampleFps: 1,
+          maxSamples: 12,
+          confidence: 0.05,
+        );
+        final roi = (suggestion['roi'] as Map?)?.cast<String, dynamic>();
+        if (roi != null && linkedVideo != null) {
+          suggestedRoi = _normalizeRoi(roi, linkedVideo);
+          final calibration = (suggestion['calibration'] as Map?)
+              ?.cast<String, dynamic>();
+          final rawHoopBbox = calibration?['hoop_bbox'];
+          if (rawHoopBbox is List) {
+            hoopBbox = _normalizeBbox(rawHoopBbox, linkedVideo);
+          }
+          // 自动建议只进入会话草稿，最终由 applyWorkflowDraft 写入生效配置。
+          roiSource = 'auto';
+          roiConfidence = (calibration?['confidence'] as num?)?.toDouble();
+          previewTimeMs =
+              ((suggestion['preview_time_ms'] as num?)?.toInt() ?? 1000)
+                  .clamp(0, duration)
+                  .toInt();
+        }
+      } catch (error) {
+        // 自动 ROI 是便利功能,失败不应阻塞导入,用户可手动框选。
+        roiSuggestionError = error.toString();
+      }
+      if (_disposed || generation != _projectLoadGeneration) return;
+      if (previewTimeMs != 1000) {
+        try {
+          final preview = await session.extractPreview(timeMs: previewTimeMs);
+          if (!_disposed && generation == _projectLoadGeneration) {
+            state = state.copyWith(
+              previewPath: preview['path']?.toString(),
+              previewTimeMs: previewTimeMs,
+            );
+          }
+        } catch (error) {
+          if (!_disposed && generation == _projectLoadGeneration) {
+            _pushNotice('自动切换标记画面失败：$error', NoticeSeverity.error);
+          }
+        }
+      }
+      if (_disposed || generation != _projectLoadGeneration) return;
+      state = state.copyWith(
+        previewTimeMs: previewTimeMs,
+        suggestedRoi: suggestedRoi,
+        hoopBbox: hoopBbox,
+        roiSource: roiSource,
+        roiConfidence: roiConfidence,
+        roiSuggestionError: roiSuggestionError,
+        roiDetecting: false,
+        videos: const <JsonMap>[],
+        analysisQueue: const <String>[],
+        queuePaused: false,
+        exportQueued: false,
+      );
+      appLog(
+        roiSuggestionError == null ? 'info' : 'warn',
+        'import',
+        '自动识别篮筐 结果=${suggestedRoi == null ? '未识别' : '成功'} '
+            '来源=${roiSource ?? 'manual'} '
+            '置信度=${roiConfidence == null ? '-' : roiConfidence.toStringAsFixed(3)} '
+            '用时=${roiWatch.elapsedMilliseconds}ms'
+            '${roiSuggestionError == null ? '' : ' 错误=$roiSuggestionError'}',
+      );
+      _reviewHistory.clear();
+      await refreshVideos();
+      if (!_disposed && generation == _projectLoadGeneration) {
+        _pushNotice('视频已加载，已优先尝试自动识别篮筐区域', NoticeSeverity.success);
+      }
+    }, busyMessage: '正在准备视频…');
     if (projectCreatedForRecent && !_disposed) {
       await loadRecentProjects();
     }
@@ -852,15 +861,23 @@ class ProjectNotifier extends Notifier<ProjectState> {
     final deletedId = state.recentProjects
         .map((project) => project['project_root']?.toString() ?? '')
         .where((path) => canonicalProjectPath(path) == normalizedRoot)
-        .map((path) => state.recentProjects
-            .firstWhere(
-              (project) =>
-                  canonicalProjectPath(project['project_root']?.toString() ?? '') ==
-                  normalizedRoot,
-            )['id']
-            ?.toString())
+        .map(
+          (path) => state.recentProjects
+              .firstWhere(
+                (project) =>
+                    canonicalProjectPath(
+                      project['project_root']?.toString() ?? '',
+                    ) ==
+                    normalizedRoot,
+              )['id']
+              ?.toString(),
+        )
         .firstOrNull;
-    appLog('info', 'project', '删除项目 id=${deletedId ?? '(未知)'} 当前项目=$wasCurrentProject');
+    appLog(
+      'info',
+      'project',
+      '删除项目 id=${deletedId ?? '(未知)'} 当前项目=$wasCurrentProject',
+    );
     if (wasCurrentProject) await flushReviewQueue();
     await _runBusy(() async {
       await session.deleteProject(root);
@@ -922,9 +939,16 @@ class ProjectNotifier extends Notifier<ProjectState> {
       'notice',
       title,
     );
-    ref.read(noticeProvider.notifier).push(
-      NoticeMessage(id: id, severity: severity, title: title, duration: duration),
-    );
+    ref
+        .read(noticeProvider.notifier)
+        .push(
+          NoticeMessage(
+            id: id,
+            severity: severity,
+            title: title,
+            duration: duration,
+          ),
+        );
     return id;
   }
 
@@ -1160,7 +1184,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
           NoticeSeverity.warning,
         );
       }
-      if (((payload['orientation_corrected'] as List?) ?? const []).isNotEmpty) {
+      if (((payload['orientation_corrected'] as List?) ?? const [])
+          .isNotEmpty) {
         ref
             .read(noticeProvider.notifier)
             .push(
@@ -1187,7 +1212,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
         roiSuggestionError: null,
         job: null,
         exportJob: null,
-        exportStartUnconfirmed: _uncertainExportStarts.containsKey(_exportProjectKey()),
+        exportStartUnconfirmed: _uncertainExportStarts.containsKey(
+          _exportProjectKey(),
+        ),
         candidates: const <JsonMap>[],
         exportHistory: const <JsonMap>[],
         hydrating: video != null && session.videoId != null,
@@ -1304,10 +1331,17 @@ class ProjectNotifier extends Notifier<ProjectState> {
         final latestExportJob = jobs[3] as JsonMap?;
         state = state.copyWith(
           // 加载期间用户可能已经开始排队分析，不能用旧结果覆盖正在跑的任务。
-          job: state.analysisRunning ? state.job : analysisJob ?? latestAnalysisJob,
+          job: state.analysisRunning
+              ? state.job
+              : analysisJob ?? latestAnalysisJob,
           exportJob: activeExportJob ?? latestExportJob,
-          exportStartUnconfirmed: _resolveUncertainExport(_exportProjectKey(), activeExportJob ?? latestExportJob)
-              ? false : state.exportStartUnconfirmed,
+          exportStartUnconfirmed:
+              _resolveUncertainExport(
+                _exportProjectKey(),
+                activeExportJob ?? latestExportJob,
+              )
+              ? false
+              : state.exportStartUnconfirmed,
           analysisMode:
               _jobAnalysisMode(analysisJob ?? latestAnalysisJob) ??
               state.analysisMode,
@@ -1434,7 +1468,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
     ref.read(projectSessionProvider).setActiveVideo(videoId);
     final video = <String, dynamic>{
       for (final entry in summary.entries)
-        if (!const {'roi', 'analysis_job', 'candidate_count'}.contains(entry.key))
+        if (!const {
+          'roi',
+          'analysis_job',
+          'candidate_count',
+        }.contains(entry.key))
           entry.key: entry.value,
     };
     final roi = (summary['roi'] as Map?)?.cast<String, dynamic>();
@@ -1451,9 +1489,13 @@ class ProjectNotifier extends Notifier<ProjectState> {
       previewTimeMs: _previewTimeForVideo(video),
       previewRefreshing: false,
       suggestedRoi: roi == null ? null : _normalizeRoi(roi, video),
-      netRoi: net is Map ? _normalizeRoi(net.cast<String, dynamic>(), video) : null,
+      netRoi: net is Map
+          ? _normalizeRoi(net.cast<String, dynamic>(), video)
+          : null,
       hoopBbox: hoop is List ? _normalizeBbox(hoop, video) : null,
-      roiSource: roi == null ? null : calibration?['source']?.toString() ?? 'manual',
+      roiSource: roi == null
+          ? null
+          : calibration?['source']?.toString() ?? 'manual',
       roiConfidence: (calibration?['confidence'] as num?)?.toDouble(),
       roiSuggestionError: null,
     );
@@ -1471,14 +1513,18 @@ class ProjectNotifier extends Notifier<ProjectState> {
       await ref.read(engineBootstrapProvider.notifier).ensure();
       for (final path in paths) {
         final payload = await session.inspectVideo(videoPath: path);
-        inspected.add((payload['video'] as Map?)?.cast<String, dynamic>() ?? payload);
+        inspected.add(
+          (payload['video'] as Map?)?.cast<String, dynamic>() ?? payload,
+        );
       }
     } catch (error) {
       _pushNotice(error.toString(), NoticeSeverity.error);
       return;
     }
     inspected.sort(compareByRecordingTime);
-    final ordered = [for (final video in inspected) video['source_path'].toString()];
+    final ordered = [
+      for (final video in inspected) video['source_path'].toString(),
+    ];
     final previousVideo = state.video;
     final previousGeneration = _projectLoadGeneration;
     await selectVideo(ordered.first);
@@ -1508,7 +1554,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
       final inspected = <JsonMap>[];
       for (final path in paths) {
         final payload = await session.inspectVideo(videoPath: path);
-        final metadata = (payload['video'] as Map?)?.cast<String, dynamic>() ?? payload;
+        final metadata =
+            (payload['video'] as Map?)?.cast<String, dynamic>() ?? payload;
         final source = metadata['source_path']?.toString();
         if (existing.add(source)) inspected.add(metadata);
       }
@@ -1518,7 +1565,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
           busyMessage: '正在添加第 ${index + 1}/${inspected.length} 段视频…',
         );
         final previous = state.videos.isEmpty ? null : state.videos.last;
-        final linked = await session.addVideo(metadata['source_path'].toString());
+        final linked = await session.addVideo(
+          metadata['source_path'].toString(),
+        );
         final video = (linked['video'] as Map).cast<String, dynamic>();
         await _calibrateAddedVideo(video, previous);
         await refreshVideos();
@@ -1532,7 +1581,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
     final session = ref.read(projectSessionProvider);
     final videoId = video['id'].toString();
     final previousRoi = (previous?['roi'] as Map?)?.cast<String, dynamic>();
-    if (previous != null && previousRoi != null && continuesRecording(previous, video)) {
+    if (previous != null &&
+        previousRoi != null &&
+        continuesRecording(previous, video)) {
       await session.saveRoi(
         videoId: videoId,
         x1: previousRoi['x1'] as num,
@@ -1563,7 +1614,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
       return;
     }
     final roi = (suggestion['roi'] as Map?)?.cast<String, dynamic>();
-    final calibration = (suggestion['calibration'] as Map?)?.cast<String, dynamic>();
+    final calibration = (suggestion['calibration'] as Map?)
+        ?.cast<String, dynamic>();
     if (roi == null || calibration == null) return;
     final width = (video['width'] as num?)?.toDouble() ?? 0;
     final height = (video['height'] as num?)?.toDouble() ?? 0;
@@ -1622,7 +1674,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
         y2: roi['y2'] as num,
         calibration: calibration,
       );
-      previous = {...next, 'roi': {...roi, 'calibration': calibration}};
+      previous = {
+        ...next,
+        'roi': {...roi, 'calibration': calibration},
+      };
     }
     await refreshVideos();
   }
@@ -1641,7 +1696,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
     required double beforeSeconds,
     required double afterSeconds,
   }) async {
-    appLog('info', 'analysis', '开始排队分析多段视频 before=${beforeSeconds}s after=${afterSeconds}s');
+    appLog(
+      'info',
+      'analysis',
+      '开始排队分析多段视频 before=${beforeSeconds}s after=${afterSeconds}s',
+    );
     _queueOutcomes.clear();
     final missingSegments = <int>[];
     final videoIds = <String>[];
@@ -1690,8 +1749,14 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   /// 从队列移除还没开始的视频段；正在分析的那段需要先取消。
   Future<void> removeFromAnalysisQueue(String videoId) async {
-    if (state.analysisRunning && state.analysisQueue.firstOrNull == videoId) return;
-    appLog('info', 'analysis', '队列 移除 id=$videoId 剩余=${state.analysisQueue.length - 1}');
+    if (state.analysisRunning && state.analysisQueue.firstOrNull == videoId) {
+      return;
+    }
+    appLog(
+      'info',
+      'analysis',
+      '队列 移除 id=$videoId 剩余=${state.analysisQueue.length - 1}',
+    );
     await _saveAnalysisQueue([
       for (final id in state.analysisQueue)
         if (id != videoId) id,
@@ -1705,11 +1770,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }) async {
     final before = beforeSeconds ?? state.queueBeforeSeconds;
     final after = afterSeconds ?? state.queueAfterSeconds;
-    await ref.read(projectSessionProvider).setAnalysisQueue(
-      videoIds,
-      beforeSeconds: before,
-      afterSeconds: after,
-    );
+    await ref
+        .read(projectSessionProvider)
+        .setAnalysisQueue(videoIds, beforeSeconds: before, afterSeconds: after);
     state = state.copyWith(
       analysisQueue: videoIds,
       queueBeforeSeconds: before,
@@ -2064,7 +2127,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
             requestScope,
             preferredJobId: jobId,
           );
-        } catch (error) { appLog('warn', 'project_state', 'pollJob 忽略了错误: $error'); }
+        } catch (error) {
+          appLog('warn', 'project_state', 'pollJob 忽略了错误: $error');
+        }
       }
       if (!resumedAfterTransportError) {
         _markEngineJobRecoverable(error, export: false);
@@ -2275,8 +2340,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
         target.isEmpty ||
         target == ref.read(projectSessionProvider).projectRoot;
     if (isCurrent) {
-      final current =
-          (state.statistics?['project'] as Map?)?['name']?.toString();
+      final current = (state.statistics?['project'] as Map?)?['name']
+          ?.toString();
       if (current == trimmed) return true;
     }
     try {
@@ -2368,7 +2433,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
     bool showNotice = true,
   }) {
     if (_disposed) return Future<bool>.value(false);
-    appLog('info', 'review', '标记候选 id=$id → $status${reason == null ? '' : ' reason=$reason'}');
+    appLog(
+      'info',
+      'review',
+      '标记候选 id=$id → $status${reason == null ? '' : ' reason=$reason'}',
+    );
     final generation = _projectLoadGeneration;
     final engineStatus = status == 'included' ? 'goal' : status;
     final pending = _pendingReviews[id];
@@ -2411,6 +2480,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
                     status: previous['review_status']?.toString() ?? 'pending',
                     reason: previous['review_reason']?.toString(),
                     note: previous['note']?.toString(),
+                    tier: previous['tier']?.toString(),
+                    tierSource: previous['tier_source']?.toString(),
                   ),
           );
     _pendingReviews[id] = (
@@ -2449,6 +2520,12 @@ class ProjectNotifier extends Notifier<ProjectState> {
           status: engineStatus,
           reason: reason,
           note: snapshot?.note,
+          tier: engineStatus == 'goal'
+              ? 'must'
+              : engineStatus == 'excluded'
+              ? 'excluded'
+              : snapshot?.tier,
+          tierSource: 'user',
         );
         unawaited(refreshStatistics(generation: generation));
         final record = _pendingReviews[id];
@@ -2480,6 +2557,19 @@ class ProjectNotifier extends Notifier<ProjectState> {
               reason: snapshot.reason,
               note: snapshot.note,
             );
+            state = state.copyWith(
+              candidates: [
+                for (final c in state.candidates)
+                  if (c['id'].toString() == id)
+                    {
+                      ...c,
+                      'tier': snapshot.tier,
+                      'tier_source': snapshot.tierSource,
+                    }
+                  else
+                    c,
+              ],
+            );
           }
           _pushNotice(error.toString(), NoticeSeverity.error);
         }
@@ -2509,6 +2599,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
               'selection_status': status == 'excluded'
                   ? 'excluded'
                   : 'included',
+              if (status == 'goal' || status == 'excluded')
+                'tier': status == 'goal' ? 'must' : 'excluded',
+              if (status == 'goal' || status == 'excluded')
+                'tier_source': 'user',
               'review_reason': reason,
               'note': note ?? candidate['note'],
             }
@@ -2561,14 +2655,24 @@ class ProjectNotifier extends Notifier<ProjectState> {
             return;
           }
           final snapshot = _reviewHistory.last;
-          await ref
-              .read(projectSessionProvider)
-              .reviewCandidate(
-                snapshot.candidateId,
-                status: snapshot.status,
-                reason: snapshot.reason,
-                note: snapshot.note,
-              );
+          if (snapshot.tagIds != null) {
+            await ref
+                .read(projectSessionProvider)
+                .changeCandidateTags(
+                  candidateId: snapshot.candidateId,
+                  operation: 'set_candidate_players',
+                  playerIds: snapshot.tagIds,
+                );
+          } else {
+            await ref
+                .read(projectSessionProvider)
+                .reviewCandidate(
+                  snapshot.candidateId,
+                  status: snapshot.status,
+                  reason: snapshot.reason,
+                  note: snapshot.note,
+                );
+          }
           if (_disposed || generation != _projectLoadGeneration) return;
           // 保存已生效；刷新候选失败也不能再次消费这条撤销记录。
           _reviewHistory.remove(snapshot);
@@ -2625,7 +2729,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
     int? eventTimeMs,
   }) async {
     JsonMap? created;
-    appLog('info', 'review', '补漏候选 start=${startMs}ms end=${endMs}ms event=${eventTimeMs}ms');
+    appLog(
+      'info',
+      'review',
+      '补漏候选 start=${startMs}ms end=${endMs}ms event=${eventTimeMs}ms',
+    );
     await _runBusy(() async {
       final payload = await ref
           .read(projectSessionProvider)
@@ -2697,15 +2805,33 @@ class ProjectNotifier extends Notifier<ProjectState> {
       (generation) async {
         await ref.read(projectSessionProvider).deletePlayer(playerId);
         if (_disposed || generation != _projectLoadGeneration) return;
-        _setLocalCandidatePlayer([
-          for (final candidate in state.candidates)
-            if (candidate['player_id']?.toString() == playerId)
-              candidate['id'].toString(),
-        ], null);
         state = state.copyWith(
+          candidates: state.candidates.map((candidate) {
+            final ids = candidateTagIds(candidate);
+            if (!ids.contains(playerId)) return candidate;
+            final tags = <JsonMap>[
+              for (final id in ids)
+                if (id != playerId)
+                  {
+                    'id': id,
+                    'name':
+                        state.players
+                            .where((p) => p['id'].toString() == id)
+                            .firstOrNull?['name'] ??
+                        id,
+                  },
+            ];
+            return <String, dynamic>{
+              ...candidate,
+              'tags': tags,
+              'players': tags,
+              'player_id': tags.firstOrNull?['id'],
+              'player_name': tags.firstOrNull?['name'],
+            };
+          }).toList(),
           players: [
-            for (final player in state.players)
-              if (player['id']?.toString() != playerId) player,
+            for (final p in state.players)
+              if (p['id'].toString() != playerId) p,
           ],
         );
         deleted = true;
@@ -2716,8 +2842,50 @@ class ProjectNotifier extends Notifier<ProjectState> {
     return deleted;
   }
 
+  Future<void> changeCandidateTags(
+    String id, {
+    String? toggleId,
+    List<String>? replaceIds,
+  }) async {
+    await _runPlayerChange((generation) async {
+      await _reviewQueue;
+      final candidate = state.candidates.firstWhere(
+        (c) => c['id'].toString() == id,
+      );
+      final oldTags = candidateTagIds(candidate);
+      final removing = toggleId != null && oldTags.contains(toggleId);
+      await ref
+          .read(projectSessionProvider)
+          .changeCandidateTags(
+            candidateId: id,
+            operation: toggleId == null
+                ? 'set_candidate_players'
+                : removing
+                ? 'remove_candidate_player'
+                : 'add_candidate_player',
+            playerIds: toggleId == null ? replaceIds ?? [] : null,
+            playerId: toggleId,
+          );
+      if (_disposed || generation != _projectLoadGeneration) return;
+      _reviewHistory.add(
+        _ReviewSnapshot(
+          candidateId: id,
+          status: candidate['review_status']?.toString() ?? 'pending',
+          reason: candidate['review_reason']?.toString(),
+          note: candidate['note']?.toString(),
+          tagIds: oldTags,
+        ),
+      );
+      await refreshCandidates(generation: generation);
+    }, busyMessage: '正在保存标签…');
+  }
+
   Future<void> setCandidatePlayer(String candidateId, String? playerId) async {
-    appLog('info', 'review', '设置球员标签 id=$candidateId player=${playerId ?? '(清除)'}');
+    appLog(
+      'info',
+      'review',
+      '设置球员标签 id=$candidateId player=${playerId ?? '(清除)'}',
+    );
     await _runPlayerChange((generation) async {
       await ref
           .read(projectSessionProvider)
@@ -2774,6 +2942,12 @@ class ProjectNotifier extends Notifier<ProjectState> {
                   ...candidate,
                   'player_id': playerId,
                   'player_name': playerName,
+                  'tags': [
+                    if (playerId != null) {'id': playerId, 'name': playerName},
+                  ],
+                  'players': [
+                    if (playerId != null) {'id': playerId, 'name': playerName},
+                  ],
                 }
               : candidate,
       ],
@@ -2782,7 +2956,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   /// 等价 app.dart:_export(623)。
   Future<void> Function()? _queuedExport;
-  final Map<String, ({DateTime startedAt, String? previousId})> _uncertainExportStarts = {};
+  final Map<String, ({DateTime startedAt, String? previousId})>
+  _uncertainExportStarts = {};
   static const _uncertainExportPrefsKey = 'bhe.desktop.uncertain_export_starts';
   Future<void>? _uncertainLoad;
   Future<void> _uncertainWrites = Future.value();
@@ -2801,7 +2976,9 @@ class ProjectNotifier extends Notifier<ProjectState> {
         final raw = prefs.getString(_uncertainExportPrefsKey);
         if (raw != null) {
           final decoded = jsonDecode(raw);
-          if (decoded is! Map) throw const FormatException('Invalid export state');
+          if (decoded is! Map) {
+            throw const FormatException('Invalid export state');
+          }
           for (final entry in decoded.entries) {
             if (entry.key is! String || entry.value is! Map) {
               failed = true;
@@ -2810,19 +2987,30 @@ class ProjectNotifier extends Notifier<ProjectState> {
             final record = entry.value as Map;
             final rawStarted = record['startedAt'];
             final previousId = record['previousId'];
-            final started = rawStarted is String ? DateTime.tryParse(rawStarted) : null;
-            if (started == null || !record.containsKey('previousId') ||
+            final started = rawStarted is String
+                ? DateTime.tryParse(rawStarted)
+                : null;
+            if (started == null ||
+                !record.containsKey('previousId') ||
                 (previousId != null && previousId is! String)) {
               failed = true;
               continue;
             }
-            _uncertainExportStarts.putIfAbsent(entry.key as String, () => (
-              startedAt: started.toUtc(), previousId: previousId as String?,
-            ));
+            _uncertainExportStarts.putIfAbsent(
+              entry.key as String,
+              () => (
+                startedAt: started.toUtc(),
+                previousId: previousId as String?,
+              ),
+            );
           }
         }
       } catch (error) {
-        appLog('warn', 'project_state', '_loadUncertainExportStarts 忽略了错误: $error');
+        appLog(
+          'warn',
+          'project_state',
+          '_loadUncertainExportStarts 忽略了错误: $error',
+        );
         failed = true;
       }
       if (failed) {
@@ -2841,31 +3029,54 @@ class ProjectNotifier extends Notifier<ProjectState> {
   Future<void> _saveUncertainExportStarts() {
     final write = _uncertainWrites.then((_) async {
       final prefs = await SharedPreferences.getInstance();
-      final encoded = jsonEncode({for (final entry in _uncertainExportStarts.entries)
-        entry.key: {'startedAt': entry.value.startedAt.toIso8601String(), 'previousId': entry.value.previousId}});
-      if (!await prefs.setString(_uncertainExportPrefsKey, encoded)) throw StateError('Could not save export state');
+      final encoded = jsonEncode({
+        for (final entry in _uncertainExportStarts.entries)
+          entry.key: {
+            'startedAt': entry.value.startedAt.toIso8601String(),
+            'previousId': entry.value.previousId,
+          },
+      });
+      if (!await prefs.setString(_uncertainExportPrefsKey, encoded)) {
+        throw StateError('Could not save export state');
+      }
     });
     _uncertainWrites = write.catchError((_) {});
     return write;
   }
 
   void _persistResolvedExportStart() {
-    unawaited(_saveUncertainExportStarts().catchError((_) {
-      if (!_disposed) _pushNotice('导出任务状态无法保存，请下次打开项目时重新检查。', NoticeSeverity.warning);
-    }));
+    unawaited(
+      _saveUncertainExportStarts().catchError((_) {
+        if (!_disposed) {
+          _pushNotice('导出任务状态无法保存，请下次打开项目时重新检查。', NoticeSeverity.warning);
+        }
+      }),
+    );
   }
 
   String _exportProjectKey() {
     final session = ref.read(projectSessionProvider);
     final root = session.projectRoot;
-    return root == null ? '__unknown_project__' : '${canonicalProjectPath(root)}\u0000${session.projectId ?? ''}';
+    return root == null
+        ? '__unknown_project__'
+        : '${canonicalProjectPath(root)}\u0000${session.projectId ?? ''}';
   }
 
   bool _resolveUncertainExport(String key, JsonMap? job) {
     final pending = _uncertainExportStarts[key];
-    if (pending == null || job == null || job['id'] == null || job['id'] == pending.previousId) return false;
+    if (pending == null ||
+        job == null ||
+        job['id'] == null ||
+        job['id'] == pending.previousId) {
+      return false;
+    }
     final created = DateTime.tryParse(job['created_at']?.toString() ?? '');
-    if (created == null || created.toUtc().isBefore(pending.startedAt.subtract(const Duration(milliseconds: 1)))) return false;
+    if (created == null ||
+        created.toUtc().isBefore(
+          pending.startedAt.subtract(const Duration(milliseconds: 1)),
+        )) {
+      return false;
+    }
     _uncertainExportStarts.remove(key);
     _persistResolvedExportStart();
     return true;
@@ -2881,20 +3092,29 @@ class ProjectNotifier extends Notifier<ProjectState> {
       final scope = ref.read(projectSessionProvider).snapshot();
       final active = await scope.getActiveJobs(jobType: 'export');
       final latest = await scope.getLatestJob(jobType: 'export');
-      if (_disposed || generation != _projectLoadGeneration || key != _exportProjectKey()) return;
+      if (_disposed ||
+          generation != _projectLoadGeneration ||
+          key != _exportProjectKey()) {
+        return;
+      }
       final found = active.isNotEmpty ? active.last : latest;
       if (_resolveUncertainExport(key, found)) {
         state = state.copyWith(exportStartUnconfirmed: false, exportJob: found);
-        if (found?['recovery_state'] == 'worker_attached' && found?['id'] is String) {
+        if (found?['recovery_state'] == 'worker_attached' &&
+            found?['id'] is String) {
           unawaited(pollExportJob(found!['id'] as String, scope: scope));
         }
       } else {
         _pushNotice('未找到可确认的导出任务，请检查后再决定是否允许重新导出。', NoticeSeverity.warning);
       }
     } catch (error) {
-      if (!_disposed && generation == _projectLoadGeneration) _pushNotice('任务状态加载失败：$error', NoticeSeverity.error);
+      if (!_disposed && generation == _projectLoadGeneration) {
+        _pushNotice('任务状态加载失败：$error', NoticeSeverity.error);
+      }
     } finally {
-      if (!_disposed && generation == _projectLoadGeneration) state = state.copyWith(busy: false);
+      if (!_disposed && generation == _projectLoadGeneration) {
+        state = state.copyWith(busy: false);
+      }
     }
   }
 
@@ -2918,6 +3138,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
     String? outputDir,
     String? outputPath,
     List<String>? playerIds,
+    List<String>? tiers,
+    List<String>? tags,
     bool? includeUnassigned,
     String effect = 'none',
   }) async {
@@ -2932,6 +3154,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
         outputDir: outputDir,
         outputPath: outputPath,
         playerIds: playerIds,
+        tiers: tiers,
+        tags: tags,
         includeUnassigned: includeUnassigned,
         effect: effect,
       );
@@ -2951,7 +3175,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
         .where((item) => item['selection_status'] != 'excluded')
         .where(
           (item) =>
-              playerIds == null || playerIds.contains(item['player_id']?.toString()),
+              playerIds == null ||
+              playerIds.contains(item['player_id']?.toString()),
         )
         .length;
     appLog(
@@ -2971,7 +3196,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
       }
       await flushReviewQueue();
       if (_disposed || generation != _projectLoadGeneration) return;
-      _uncertainExportStarts[projectKey] = (startedAt: startedAt, previousId: previousId);
+      _uncertainExportStarts[projectKey] = (
+        startedAt: startedAt,
+        previousId: previousId,
+      );
       try {
         await _saveUncertainExportStarts();
         guardSaved = true;
@@ -2993,6 +3221,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
             outputDir: outputDir,
             outputPath: outputPath,
             playerIds: playerIds,
+            tiers: tiers,
+            tags: tags,
             includeUnassigned: includeUnassigned,
             effect: effect,
           );
@@ -3011,9 +3241,21 @@ class ProjectNotifier extends Notifier<ProjectState> {
     } catch (error) {
       appLog('error', 'export', '导出启动失败: $error');
       if (_disposed || generation != _projectLoadGeneration) return;
-      if ((error is EngineException && const {'ENGINE_TIMEOUT', 'ENGINE_EXITED', 'ENGINE_NOT_RUNNING', 'ENGINE_WRITE_FAILED', 'ENGINE_DISPOSED'}.contains(error.code)) ||
-          (requestSent && error is SessionStateException && error.message == '导出任务未返回 id')) {
-        _uncertainExportStarts[projectKey] = (startedAt: startedAt, previousId: previousId);
+      if ((error is EngineException &&
+              const {
+                'ENGINE_TIMEOUT',
+                'ENGINE_EXITED',
+                'ENGINE_NOT_RUNNING',
+                'ENGINE_WRITE_FAILED',
+                'ENGINE_DISPOSED',
+              }.contains(error.code)) ||
+          (requestSent &&
+              error is SessionStateException &&
+              error.message == '导出任务未返回 id')) {
+        _uncertainExportStarts[projectKey] = (
+          startedAt: startedAt,
+          previousId: previousId,
+        );
         state = state.copyWith(exportStartUnconfirmed: true);
         try {
           await _saveUncertainExportStarts();
@@ -3060,9 +3302,11 @@ class ProjectNotifier extends Notifier<ProjectState> {
         scope: requestScope,
       );
       final jobState = state.exportJob?['state']?.toString();
-      final exportedFiles = (state.exportJob?['result_files'] as List?)?.length ??
+      final exportedFiles =
+          (state.exportJob?['result_files'] as List?)?.length ??
           (state.exportJob?['files'] as List?)?.length;
-      final exportedDurationMs = (state.exportJob?['duration_ms'] as num?)?.toInt() ??
+      final exportedDurationMs =
+          (state.exportJob?['duration_ms'] as num?)?.toInt() ??
           (state.exportJob?['result_duration_ms'] as num?)?.toInt();
       appLog(
         jobState == 'failed' ? 'error' : 'info',
@@ -3223,19 +3467,27 @@ class ProjectNotifier extends Notifier<ProjectState> {
         );
   }
 
-  void _pushProjectPathNotice(String title, String path, {bool uncertain = false}) {
+  void _pushProjectPathNotice(
+    String title,
+    String path, {
+    bool uncertain = false,
+  }) {
     if (_disposed) return;
-    ref.read(noticeProvider.notifier).push(NoticeMessage(
-      id: 'project-path-${DateTime.now().microsecondsSinceEpoch}-${_noticeCounter++}',
-      severity: NoticeSeverity.warning,
-      title: title,
-      description: uncertain
-          ? '项目可能保存在：$path，可在首页「打开项目」选择该文件夹。'
-          : '项目保存在：$path，可在首页「打开项目」选择该文件夹。',
-      actionLabel: '复制项目路径',
-      action: () => Clipboard.setData(ClipboardData(text: path)),
-      duration: const Duration(seconds: 30),
-    ));
+    ref
+        .read(noticeProvider.notifier)
+        .push(
+          NoticeMessage(
+            id: 'project-path-${DateTime.now().microsecondsSinceEpoch}-${_noticeCounter++}',
+            severity: NoticeSeverity.warning,
+            title: title,
+            description: uncertain
+                ? '项目可能保存在：$path，可在首页「打开项目」选择该文件夹。'
+                : '项目保存在：$path，可在首页「打开项目」选择该文件夹。',
+            actionLabel: '复制项目路径',
+            action: () => Clipboard.setData(ClipboardData(text: path)),
+            duration: const Duration(seconds: 30),
+          ),
+        );
   }
 
   /// 等价 app.dart:_projectsRoot(76)。env BHE_PROJECTS_ROOT > knownProjectsRoot >

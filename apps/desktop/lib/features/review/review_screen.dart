@@ -1,3 +1,4 @@
+import 'tier_selection.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -62,7 +63,10 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   final _guideVideoKey = GlobalKey();
   final _guideQueueKey = GlobalKey();
   final Set<String> _reviewStartedCandidateIds = <String>{};
-  String _candidateFilter = 'all';
+  String _candidateFilter = 'suspect';
+  TierSelection? _exportReview;
+  final Set<String> _retainedIds = {};
+  final Set<String> _suspectIds = {};
   String _playerFilter = 'all';
   String _rimFilter = 'all';
   String _segmentFilter = 'all';
@@ -88,7 +92,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   ) {
     final ordered = [...candidates];
     ordered.sort((left, right) {
-      final bySegment = _candidateSegment(left).compareTo(_candidateSegment(right));
+      final bySegment = _candidateSegment(
+        left,
+      ).compareTo(_candidateSegment(right));
       return bySegment != 0
           ? bySegment
           : _candidateTime(left).compareTo(_candidateTime(right));
@@ -153,17 +159,23 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   Future<void> _setPlayerForCandidate(
     Map<String, dynamic> candidate,
     ProjectNotifier notifier,
-    String? playerId,
-  ) async {
+    String? playerId, {
+    bool exclusive = false,
+  }) async {
     if (!mounted) return;
     final before = _filterCandidates(
       _orderedCandidates(ref.read(projectProvider).candidates),
       _candidateFilter,
       playerFilter: _playerFilter,
+      retainedIds: _retainedIds,
       rimFilter: _rimFilter,
       segmentFilter: _segmentFilter,
     );
-    await notifier.setCandidatePlayer(candidate['id'].toString(), playerId);
+    await notifier.changeCandidateTags(
+      candidate['id'].toString(),
+      toggleId: exclusive ? null : playerId,
+      replaceIds: playerId == null ? [] : [playerId],
+    );
     _keepSelectionVisibleAfterEdit(candidate['id'].toString(), before);
   }
 
@@ -189,13 +201,17 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       _orderedCandidates(ref.read(projectProvider).candidates),
       _candidateFilter,
       playerFilter: _playerFilter,
+      retainedIds: _retainedIds,
       rimFilter: _rimFilter,
       segmentFilter: _segmentFilter,
     );
-    await notifier.createPlayer(
-      name,
-      candidateIds: [candidate['id'].toString()],
-    );
+    final id = await notifier.createPlayer(name);
+    if (id != null) {
+      await notifier.changeCandidateTags(
+        candidate['id'].toString(),
+        toggleId: id,
+      );
+    }
     _keepSelectionVisibleAfterEdit(candidate['id'].toString(), before);
   }
 
@@ -205,32 +221,56 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     String? rim,
     String? segment,
   }) {
-    final previous = _selectedCandidate(_filterCandidates(
-      _orderedCandidates(ref.read(projectProvider).candidates),
-      _candidateFilter,
-      playerFilter: _playerFilter,
-      rimFilter: _rimFilter,
-      segmentFilter: _segmentFilter,
-    ));
-    final anchorMs = _videoController.playingPositionMs ??
+    if (_exportReview != null) {
+      ref.read(exportReviewProvider.notifier).state = null;
+    }
+    final previous = _selectedCandidate(
+      _filterCandidates(
+        _orderedCandidates(ref.read(projectProvider).candidates),
+        _candidateFilter,
+        playerFilter: _playerFilter,
+        retainedIds: _retainedIds,
+        rimFilter: _rimFilter,
+        segmentFilter: _segmentFilter,
+      ),
+    );
+    final anchorMs =
+        _videoController.playingPositionMs ??
         (previous == null ? 0 : _clipStart(previous));
     setState(() {
+      _retainedIds.clear();
       _candidateFilter = status ?? _candidateFilter;
-      _playerFilter = player ?? _playerFilter;
+      if (player != null && player.startsWith('player:')) {
+        final ids = _playerFilter.startsWith('players:')
+            ? _playerFilter.substring(8).split(',').toSet()
+            : _playerFilter.startsWith('player:')
+            ? {_playerFilter.substring(7)}
+            : <String>{};
+        final id = player.substring(7);
+        ids.contains(id) ? ids.remove(id) : ids.add(id);
+        _playerFilter = ids.isEmpty ? 'all' : 'players:${ids.join(',')}';
+      } else {
+        _playerFilter = player ?? _playerFilter;
+      }
       _rimFilter = rim ?? _rimFilter;
       _segmentFilter = segment ?? _segmentFilter;
       final candidates = _filterCandidates(
         _orderedCandidates(ref.read(projectProvider).candidates),
         _candidateFilter,
         playerFilter: _playerFilter,
+        retainedIds: _retainedIds,
         rimFilter: _rimFilter,
         segmentFilter: _segmentFilter,
       );
-      _selectedCandidateId = nearestReviewCandidate(
-        candidates,
-        anchorMs: anchorMs,
-        startMs: _clipStart,
-      )?['id']?.toString();
+      _selectedCandidateId =
+          (previous == null && _videoController.playingPositionMs == null
+                  ? candidates.firstOrNull
+                  : nearestReviewCandidate(
+                      candidates,
+                      anchorMs: anchorMs,
+                      startMs: _clipStart,
+                    ))?['id']
+              ?.toString();
       if (_selectedCandidateId != null) _replayToken++;
     });
     final id = _selectedCandidateId;
@@ -252,103 +292,95 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final beforeController = TextEditingController(text: '3');
     final afterController = TextEditingController(text: '1');
     var overwriteManual = false;
-    final result =
-        await showDialog<({int before, int after, bool overwrite})>(
-          context: context,
-          builder: (dialogContext) => StatefulBuilder(
-            builder: (context, setDialogState) => AlertDialog(
-              title: Text(context.bheText('批量设置片段时长')),
-              content: SizedBox(
-                width: 380,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    final result = await showDialog<({int before, int after, bool overwrite})>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(context.bheText('批量设置片段时长')),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(context.bheText('进球前后时间会以每个候选的进球时刻为中心计算。')),
+                const SizedBox(height: 16),
+                Text(
+                  Localizations.of<BheLocalizations>(
+                        context,
+                        BheLocalizations,
+                      )?.reviewBatchRangeScope(candidates.length) ??
+                      '应用范围：当前列表的 ${candidates.length} 个候选（随状态和球员标签筛选变化）',
+                  key: const Key('batch-range-scope'),
+                ),
+                const SizedBox(height: 8),
+                Row(
                   children: [
-                    Text(context.bheText('进球前后时间会以每个候选的进球时刻为中心计算。')),
-                    const SizedBox(height: 16),
-                    Text(
-                      Localizations.of<BheLocalizations>(
-                            context,
-                            BheLocalizations,
-                          )?.reviewBatchRangeScope(candidates.length) ??
-                          '应用范围：当前列表的 ${candidates.length} 个候选（随状态和球员标签筛选变化）',
-                      key: const Key('batch-range-scope'),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        SizedBox(
-                          width: 72,
-                          child: Text(context.bheText('进球前')),
+                    SizedBox(width: 72, child: Text(context.bheText('进球前'))),
+                    Expanded(
+                      child: TextField(
+                        controller: beforeController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          suffixText: context.bheText('秒'),
                         ),
-                        Expanded(
-                          child: TextField(
-                            controller: beforeController,
-                            keyboardType: TextInputType.number,
-                            decoration: InputDecoration(suffixText: context.bheText('秒')),
-                          ),
-                        ),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        SizedBox(
-                          width: 72,
-                          child: Text(context.bheText('进球后')),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: afterController,
-                            keyboardType: TextInputType.number,
-                            decoration: InputDecoration(suffixText: context.bheText('秒')),
-                          ),
-                        ),
-                      ],
-                    ),
-                    CheckboxListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: overwriteManual,
-                      onChanged: (value) => setDialogState(
-                        () => overwriteManual = value ?? false,
                       ),
-                      title: Text(context.bheText('覆盖手动调整过的片段')),
-                      subtitle: Text(context.bheText('关闭时自动保留手动调整的范围')),
                     ),
                   ],
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: Text(context.bheText('取消')),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    final before = int.tryParse(beforeController.text.trim());
-                    final after = int.tryParse(afterController.text.trim());
-                    if (before == null ||
-                        after == null ||
-                        before < 0 ||
-                        after < 0 ||
-                        before + after == 0) {
-                      return;
-                    }
-                    Navigator.pop(dialogContext, (
-                      before: before,
-                      after: after,
-                      overwrite: overwriteManual,
-                    ));
-                  },
-                  child: Text(
-                    context.bheText(
-                      '应用到 ${candidates.length} 个片段',
+                Row(
+                  children: [
+                    SizedBox(width: 72, child: Text(context.bheText('进球后'))),
+                    Expanded(
+                      child: TextField(
+                        controller: afterController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          suffixText: context.bheText('秒'),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
+                ),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: overwriteManual,
+                  onChanged: (value) =>
+                      setDialogState(() => overwriteManual = value ?? false),
+                  title: Text(context.bheText('覆盖手动调整过的片段')),
+                  subtitle: Text(context.bheText('关闭时自动保留手动调整的范围')),
                 ),
               ],
             ),
           ),
-        );
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(context.bheText('取消')),
+            ),
+            FilledButton(
+              onPressed: () {
+                final before = int.tryParse(beforeController.text.trim());
+                final after = int.tryParse(afterController.text.trim());
+                if (before == null ||
+                    after == null ||
+                    before < 0 ||
+                    after < 0 ||
+                    before + after == 0) {
+                  return;
+                }
+                Navigator.pop(dialogContext, (
+                  before: before,
+                  after: after,
+                  overwrite: overwriteManual,
+                ));
+              },
+              child: Text(context.bheText('应用到 ${candidates.length} 个片段')),
+            ),
+          ],
+        ),
+      ),
+    );
     beforeController.dispose();
     afterController.dispose();
     if (result == null || !mounted) return;
@@ -436,6 +468,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final action = reviewShortcutActionFor(key, commandPressed: commandPressed);
     if (action != null) {
       switch (action) {
+        case ReviewShortcutAction.skip:
+          _moveCandidate(candidates, 1);
         case ReviewShortcutAction.previousCandidate:
           _moveCandidate(candidates, -1);
         case ReviewShortcutAction.nextCandidate:
@@ -469,7 +503,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         case ReviewShortcutAction.volumeUp:
           _nudgeVolume(10);
       }
-    } else if (_playerShortcutIndex(key) case final int index) {
+    } else if (_playerShortcutIndex(key, event.physicalKey)
+        case final int index) {
       // 0 clears the tag; the other keys follow the player order shown in the tag menu.
       final players = ref.read(projectProvider).players;
       if (index > players.length) return KeyEventResult.ignored;
@@ -477,7 +512,14 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         final playerId = index == 0
             ? null
             : players[index - 1]['id']?.toString();
-        unawaited(_setPlayerForCandidate(selected, notifier, playerId));
+        unawaited(
+          _setPlayerForCandidate(
+            selected,
+            notifier,
+            playerId,
+            exclusive: keyboard.isShiftPressed && index > 0 && index <= 9,
+          ),
+        );
       }
     } else {
       return KeyEventResult.ignored;
@@ -485,7 +527,26 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     return KeyEventResult.handled;
   }
 
-  int? _playerShortcutIndex(LogicalKeyboardKey key) {
+  int? _playerShortcutIndex(
+    LogicalKeyboardKey key,
+    PhysicalKeyboardKey physical,
+  ) {
+    if (HardwareKeyboard.instance.isShiftPressed) {
+      const digits = [
+        PhysicalKeyboardKey.digit0,
+        PhysicalKeyboardKey.digit1,
+        PhysicalKeyboardKey.digit2,
+        PhysicalKeyboardKey.digit3,
+        PhysicalKeyboardKey.digit4,
+        PhysicalKeyboardKey.digit5,
+        PhysicalKeyboardKey.digit6,
+        PhysicalKeyboardKey.digit7,
+        PhysicalKeyboardKey.digit8,
+        PhysicalKeyboardKey.digit9,
+      ];
+      final index = digits.indexOf(physical);
+      if (index >= 0) return index;
+    }
     final index = reviewPlayerKeys.indexWhere(
       (pair) => pair.$1 == key || pair.$2 == key,
     );
@@ -607,9 +668,11 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       _orderedCandidates(ref.read(projectProvider).candidates),
       _candidateFilter,
       playerFilter: _playerFilter,
+      retainedIds: _retainedIds,
       rimFilter: _rimFilter,
       segmentFilter: _segmentFilter,
     );
+    if (_candidateFilter == 'suspect') setState(() => _retainedIds.add(id));
     final future = ref
         .read(projectProvider.notifier)
         .reviewCandidate(id, status, showNotice: false);
@@ -629,6 +692,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       _orderedCandidates(ref.read(projectProvider).candidates),
       _candidateFilter,
       playerFilter: _playerFilter,
+      retainedIds: _retainedIds,
       rimFilter: _rimFilter,
       segmentFilter: _segmentFilter,
     );
@@ -664,9 +728,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                 ? context.bheText(
                     '快速分析可能漏检，建议改用标准模式重新分析。当前候选会在新结果成功后替换，原始视频不会被删除。',
                   )
-                : context.bheText(
-                    '重新分析会替换当前候选列表，但不会删除原始视频。',
-                  ),
+                : context.bheText('重新分析会替换当前候选列表，但不会删除原始视频。'),
           ),
         ),
         actions: [
@@ -693,18 +755,53 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final state = ref.watch(projectProvider);
     final notifier = ref.read(projectProvider.notifier);
     _syncPreviewScope(state);
+    final requested = ref.watch(exportReviewProvider);
+    if (!identical(requested, _exportReview)) {
+      _exportReview = requested;
+      _retainedIds.clear();
+      if (requested != null) {
+        _candidateFilter = requested.reviewTier;
+        _playerFilter = requested.reviewTags;
+        _rimFilter = 'all';
+        _segmentFilter = 'all';
+        _selectedCandidateId = null;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _focusReviewShortcuts();
+        });
+      }
+    }
     final allCandidates = _orderedCandidates(state.candidates);
+    _suspectIds.addAll(
+      allCandidates
+          .where((c) => candidateTier(c) == 'suspect')
+          .map((c) => c['id'].toString()),
+    );
     if (_playerFilter.startsWith('player:') &&
         !state.players.any(
           (player) => 'player:${player['id']}' == _playerFilter,
         )) {
       _playerFilter = 'all';
     }
-    final statusCandidates = _filterCandidates(allCandidates, _candidateFilter);
+    if (_exportReview == null &&
+        _playerFilter.startsWith('players:') &&
+        !state.hydrating) {
+      final ids = _playerFilter
+          .substring(8)
+          .split(',')
+          .where((id) => state.players.any((p) => p['id'].toString() == id))
+          .toList();
+      _playerFilter = ids.isEmpty ? 'all' : 'players:${ids.join(',')}';
+    }
+    final statusCandidates = _filterCandidates(
+      allCandidates,
+      _candidateFilter,
+      retainedIds: _retainedIds,
+    );
     final candidates = _filterCandidates(
       statusCandidates,
       'all',
       playerFilter: _playerFilter,
+      retainedIds: _retainedIds,
       rimFilter: _rimFilter,
       segmentFilter: _segmentFilter,
     );
@@ -741,7 +838,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       _ensureReviewStarted(selectedId);
     }
     final includedCount = allCandidates
-        .where((candidate) => !_isExcluded(candidate))
+        .where((candidate) => candidateTier(candidate) == 'must')
         .length;
     final fastCompleted =
         state.analysisMode == 'fast' && jobState == 'completed';
@@ -832,6 +929,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                         reviewLocked || !showingOriginalVideo
                         ? null
                         : _createManualCandidate,
+                    onSkip: () => _moveCandidate(candidates, 1),
                     onUndo: () {
                       if (!reviewLocked) unawaited(notifier.undoReview());
                     },
@@ -847,11 +945,15 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                           ),
                     onInclude: () {
                       final id = selectedId;
-                      if (id != null) unawaited(_setCandidateStatus(id, 'included'));
+                      if (id != null) {
+                        unawaited(_setCandidateStatus(id, 'included'));
+                      }
                     },
                     onExclude: () {
                       final id = selectedId;
-                      if (id != null) unawaited(_setCandidateStatus(id, 'excluded'));
+                      if (id != null) {
+                        unawaited(_setCandidateStatus(id, 'excluded'));
+                      }
                     },
                     onSetPlayer: (playerId) {
                       if (selected != null) {
@@ -862,7 +964,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     },
                     onCreatePlayer: () {
                       if (selected != null) {
-                        unawaited(_createPlayerForCandidate(selected, notifier));
+                        unawaited(
+                          _createPlayerForCandidate(selected, notifier),
+                        );
                       }
                     },
                     onDeletePlayer: _deletePlayer,
@@ -880,6 +984,11 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     selectedId: selected?['id']?.toString(),
                     includedCount: includedCount,
                     reviewedCount: allCandidates.where(_isReviewed).length,
+                    allCandidates: allCandidates,
+                    suspectCandidates: allCandidates
+                        .where((c) => _suspectIds.contains(c['id'].toString()))
+                        .toList(),
+                    exportReview: _exportReview,
                     totalCount: allCandidates.length,
                     filter: _candidateFilter,
                     playerFilter: _playerFilter,
@@ -945,6 +1054,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                         reviewLocked || !showingOriginalVideo
                         ? null
                         : _createManualCandidate,
+                    onSkip: () => _moveCandidate(candidates, 1),
                     onUndo: () {
                       if (!reviewLocked) unawaited(notifier.undoReview());
                     },
@@ -985,7 +1095,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                               (constraints.maxWidth * 0.5625)
                                   .clamp(240.0, 520.0)
                                   .toDouble() +
-                              420,
+                              520,
                           child: video,
                         ),
                         const SizedBox(height: Spacing.sm),
@@ -1025,15 +1135,15 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         ),
         OnboardingStep(
           id: 'review.filter',
-          title: '全部 / 保留 / 排除',
-          body:
-              '「全部」是系统找到的所有候选；「保留」是还没被排除的（包括你点了保留的和还没审核的）；「排除」是你打了叉的。\n推荐：看完一遍后点「保留」再过一遍，这里的就是最终会导出的；还可以在「保留」里接着按球员标签、篮筐检测结果筛选，挑出要重点检查的。',
+          title: '必进 / 疑似 / 排除 / 全部',
+          body: '打开默认审疑似；判进的片段进入必进，判没进进入排除。打标签不改变档位。导出页默认只勾必进，其他档位可以自己勾选。',
           target: _reviewGuideFilterKey,
         ),
         OnboardingStep(
           id: 'review.batch',
           title: '批量设置片段时长',
-          body: '想把所有片段统一加长或缩短，点这个按钮，设置每个进球「前」「后」各留几秒。只作用于当前列表里的候选（会随上面的筛选变化），默认不覆盖你手动调整过的片段。',
+          body:
+              '想把所有片段统一加长或缩短，点这个按钮，设置每个进球「前」「后」各留几秒。只作用于当前列表里的候选（会随上面的筛选变化），默认不覆盖你手动调整过的片段。',
           target: _reviewGuideBatchKey,
         ),
         OnboardingStep(
@@ -1063,7 +1173,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         OnboardingStep(
           id: 'review.missed',
           title: '补漏：系统漏掉的进球',
-          body: '先切到「原视频」，播放到漏掉的进球附近，再点「补漏片段」：会以当前位置作为进球时刻新建一个候选，在弹出的窗口里用 I / O 或拖动定好开始和结束，点「加入候选」即可。',
+          body:
+              '先切到「原视频」，播放到漏掉的进球附近，再点「补漏片段」：会以当前位置作为进球时刻新建一个候选，在弹出的窗口里用 I / O 或拖动定好开始和结束，点「加入候选」即可。',
           target: _reviewGuideMissedKey,
         ),
       ],
@@ -1097,6 +1208,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       _orderedCandidates(state.candidates),
       _candidateFilter,
       playerFilter: _playerFilter,
+      retainedIds: _retainedIds,
       rimFilter: _rimFilter,
       segmentFilter: _segmentFilter,
     );
@@ -1145,8 +1257,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   void _syncPreviewScope(ProjectState state) {
     // 多段项目里选中候选会切换当前段，不能因此清空审核状态。
     final key = state.multiVideo
-        ? ([for (final video in state.videos) video['id'].toString()]..sort())
-              .join('|')
+        ? ([
+            for (final video in state.videos) video['id'].toString(),
+          ]..sort()).join('|')
         : '${state.video?['id'] ?? ''}|${state.videoPath ?? ''}';
     if (_previewScopeKey == key) return;
     _previewScopeKey = key;
@@ -1154,7 +1267,9 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     _coverCache.clear();
     _reviewStartedCandidateIds.clear();
     _selectedCandidateId = null;
-    _candidateFilter = 'all';
+    _candidateFilter = 'suspect';
+    _retainedIds.clear();
+    _suspectIds.clear();
     _playerFilter = 'all';
     _rimFilter = 'all';
     _segmentFilter = 'all';
@@ -1353,8 +1468,7 @@ class _AnalysisBar extends StatelessWidget {
             _SmallAction(
               label: l10n?.text('反馈问题') ?? '反馈问题',
               icon: Icons.feedback_outlined,
-              onPressed: () =>
-                  showFeedbackDialog(context, error: errorMessage),
+              onPressed: () => showFeedbackDialog(context, error: errorMessage),
             ),
           if (onRetry != null && !attached)
             _SmallAction(
@@ -1572,6 +1686,7 @@ class _VideoPane extends ConsumerStatefulWidget {
     required this.onEditNote,
     required this.onCreateManualCandidate,
     required this.onUndo,
+    required this.onSkip,
     required this.excluded,
     required this.reviewLocked,
     required this.players,
@@ -1601,6 +1716,7 @@ class _VideoPane extends ConsumerStatefulWidget {
   final VoidCallback? onEditNote;
   final VoidCallback? onCreateManualCandidate;
   final VoidCallback onUndo;
+  final VoidCallback onSkip;
   final bool excluded;
   final bool reviewLocked;
   final List<Map<String, dynamic>> players;
@@ -1812,10 +1928,14 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
           // 此时 Video 组件已卸载、纹理不再渲染,销毁是安全的。
           try {
             await player.stop();
-          } catch (error) { appLog('warn', 'review_screen', 'dispose 忽略了错误: $error'); }
+          } catch (error) {
+            appLog('warn', 'review_screen', 'dispose 忽略了错误: $error');
+          }
           try {
             await disposeLoggedPlayer(player, '审核页');
-          } catch (error) { appLog('warn', 'review_screen', 'dispose 忽略了错误: $error'); }
+          } catch (error) {
+            appLog('warn', 'review_screen', 'dispose 忽略了错误: $error');
+          }
         }),
       );
     }
@@ -1849,7 +1969,9 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
         if (player != null) {
           try {
             await player.stop();
-          } catch (error) { appLog('warn', 'review_screen', '_queueOpen 忽略了错误: $error'); }
+          } catch (error) {
+            appLog('warn', 'review_screen', '_queueOpen 忽略了错误: $error');
+          }
         }
       }
       if (!_isCurrent(generation)) return;
@@ -2214,9 +2336,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
                             ? context.bheText('还没有视频')
                             : context.bheText(_error ?? '视频加载失败'),
                         description: _error == null && hasVideo
-                            ? context.bheText(
-                                '分析完成后会在这里预览候选片段，点击播放开始',
-                              )
+                            ? context.bheText('分析完成后会在这里预览候选片段，点击播放开始')
                             : null,
                         action: _error != null && hasVideo
                             ? CsButton(
@@ -2341,6 +2461,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
               onEditRange: widget.onEditRange,
               onEditNote: widget.onEditNote,
               onUndo: widget.onUndo,
+              onSkip: widget.onSkip,
             ),
         ],
       ),
@@ -2353,9 +2474,8 @@ class _VideoPaneController {
 
   int get currentPositionMs => _state?.currentPositionMs ?? 0;
 
-  int? get playingPositionMs => _state?._player?.state.playing == true
-      ? _state!.currentPositionMs
-      : null;
+  int? get playingPositionMs =>
+      _state?._player?.state.playing == true ? _state!.currentPositionMs : null;
 
   Future<void> pause() => _state?.pausePlayback() ?? Future.value();
 
@@ -2578,31 +2698,31 @@ class _VideoSourceToggle extends StatelessWidget {
     return KeyedSubtree(
       key: _reviewGuideSourceKey,
       child: Tooltip(
-      message: context.bheText('切换视频来源'),
-      child: Material(
-        color: c.background.withValues(alpha: 0.88),
-        borderRadius: BorderRadius.circular(CsRadius.full),
-        child: Padding(
-          padding: const EdgeInsets.all(3),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _VideoSourceOption(
-                label: context.bheText('候选预览'),
-                icon: Icons.video_library_outlined,
-                selected: !showingOriginal,
-                onPressed: showingOriginal ? onPressed : null,
-              ),
-              _VideoSourceOption(
-                label: context.bheText('原视频'),
-                icon: Icons.movie_filter_outlined,
-                selected: showingOriginal,
-                onPressed: showingOriginal ? null : onPressed,
-              ),
-            ],
+        message: context.bheText('切换视频来源'),
+        child: Material(
+          color: c.background.withValues(alpha: 0.88),
+          borderRadius: BorderRadius.circular(CsRadius.full),
+          child: Padding(
+            padding: const EdgeInsets.all(3),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _VideoSourceOption(
+                  label: context.bheText('候选预览'),
+                  icon: Icons.video_library_outlined,
+                  selected: !showingOriginal,
+                  onPressed: showingOriginal ? onPressed : null,
+                ),
+                _VideoSourceOption(
+                  label: context.bheText('原视频'),
+                  icon: Icons.movie_filter_outlined,
+                  selected: showingOriginal,
+                  onPressed: showingOriginal ? null : onPressed,
+                ),
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -3274,7 +3394,10 @@ class _VideoControlsState extends State<_VideoControls> {
                         crossAxisAlignment: WrapCrossAlignment.center,
                         spacing: Spacing.sm,
                         children: [
-                          Row(mainAxisSize: MainAxisSize.min, children: playback),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: playback,
+                          ),
                           time,
                           Row(mainAxisSize: MainAxisSize.min, children: extras),
                         ],
@@ -3320,6 +3443,7 @@ class _CandidateInspector extends StatelessWidget {
     required this.onEditRange,
     required this.onEditNote,
     required this.onUndo,
+    required this.onSkip,
   });
 
   final Map<String, dynamic> candidate;
@@ -3335,6 +3459,7 @@ class _CandidateInspector extends StatelessWidget {
   final VoidCallback? onEditRange;
   final VoidCallback? onEditNote;
   final VoidCallback onUndo;
+  final VoidCallback onSkip;
 
   @override
   Widget build(BuildContext context) {
@@ -3414,7 +3539,9 @@ class _CandidateInspector extends StatelessWidget {
               child: Text(
                 _candidateSegment(candidate) > 0
                     ? '${context.bheText('第 ${_candidateSegment(candidate)} 段')} · ${_formatMs(_candidateTime(candidate))}'
-                    : context.bheText('候选 ${_formatMs(_candidateTime(candidate))}'),
+                    : context.bheText(
+                        '候选 ${_formatMs(_candidateTime(candidate))}',
+                      ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleLarge?.copyWith(
@@ -3432,9 +3559,7 @@ class _CandidateInspector extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 child: Text(
-                  excluded
-                      ? l10n?.reviewWillNotExport ?? '不会导出'
-                      : l10n?.reviewWillExport ?? '会导出',
+                  context.bheText(tierLabels[candidateTier(candidate)]!),
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: statusColor,
                     fontWeight: FontWeight.w600,
@@ -3450,7 +3575,11 @@ class _CandidateInspector extends StatelessWidget {
           const SizedBox(height: 4),
           Row(
             children: [
-              Icon(Icons.sticky_note_2_outlined, size: 13, color: c.textTertiary),
+              Icon(
+                Icons.sticky_note_2_outlined,
+                size: 13,
+                color: c.textTertiary,
+              ),
               const SizedBox(width: 4),
               Flexible(
                 child: Text(
@@ -3476,6 +3605,7 @@ class _CandidateInspector extends StatelessWidget {
               child: _PlayerChip(
                 key: const ValueKey('inspector-player-chip'),
                 name: candidate['player_name']?.toString(),
+                candidate: candidate,
                 color: playerColor,
                 players: players,
                 onSelected: onSetPlayer,
@@ -3663,8 +3793,8 @@ class _CandidateInspector extends StatelessWidget {
     final keep = _InspectorDecision(
       key: const Key('inspector-keep'),
       icon: Icons.check_rounded,
-      label: l10n?.reviewKeepAction ?? '保留',
-      shortcut: 'C',
+      label: context.bheText('保留 · 进'),
+      shortcut: 'C / Enter',
       active: !excluded,
       color: c.goal,
       onPressed: busy ? null : onInclude,
@@ -3672,8 +3802,8 @@ class _CandidateInspector extends StatelessWidget {
     final exclude = _InspectorDecision(
       key: const Key('inspector-exclude'),
       icon: Icons.close_rounded,
-      label: l10n?.reviewExcludeAction ?? '排除',
-      shortcut: 'X',
+      label: context.bheText('排除 · 没进'),
+      shortcut: 'X / ` / Backspace',
       active: excluded,
       color: c.error,
       onPressed: busy ? null : onExclude,
@@ -3713,12 +3843,17 @@ class _CandidateInspector extends StatelessWidget {
                   const SizedBox(height: 12),
                   metrics,
                   const SizedBox(height: 12),
-                  Row(
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      Expanded(child: keep),
-                      const SizedBox(width: Spacing.sm),
-                      Expanded(child: exclude),
+                      SizedBox(width: 228, child: keep),
+                      SizedBox(width: 228, child: exclude),
                       undo,
+                      TextButton(
+                        onPressed: busy ? null : onSkip,
+                        child: Text(context.bheText('跳过 S')),
+                      ),
                     ],
                   ),
                 ],
@@ -3732,7 +3867,7 @@ class _CandidateInspector extends StatelessWidget {
                 Expanded(flex: 14, child: metrics),
                 const SizedBox(width: 20),
                 SizedBox(
-                  width: 156,
+                  width: 228,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     mainAxisSize: MainAxisSize.min,
@@ -3742,6 +3877,10 @@ class _CandidateInspector extends StatelessWidget {
                       exclude,
                       const SizedBox(height: 4),
                       undo,
+                      TextButton(
+                        onPressed: busy ? null : onSkip,
+                        child: Text(context.bheText('跳过 S')),
+                      ),
                     ],
                   ),
                 ),
@@ -3933,7 +4072,7 @@ class _InspectorDecision extends StatelessWidget {
           onTap: onPressed,
           borderRadius: BorderRadius.circular(CsRadius.md),
           child: SizedBox(
-            height: 40,
+            height: 44,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Row(
@@ -3941,23 +4080,29 @@ class _InspectorDecision extends StatelessWidget {
                   Icon(icon, size: 17, color: foreground),
                   const SizedBox(width: Spacing.sm),
                   Expanded(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: foreground,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    shortcut,
-                    style: TextStyle(
-                      color: c.textTertiary,
-                      fontSize: 11,
-                      fontFeatures: const [FontFeature.tabularFigures()],
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: foreground,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          shortcut,
+                          maxLines: 1,
+                          style: TextStyle(
+                            color: c.textSecondary,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -4127,10 +4272,14 @@ class _ClipRangeDialogState extends State<_ClipRangeDialog> {
       if (player == null) return;
       try {
         await player.stop();
-      } catch (error) { appLog('warn', 'review_screen', 'dispose 忽略了错误: $error'); }
+      } catch (error) {
+        appLog('warn', 'review_screen', 'dispose 忽略了错误: $error');
+      }
       try {
         await disposeLoggedPlayer(player, '范围编辑');
-      } catch (error) { appLog('warn', 'review_screen', 'dispose 忽略了错误: $error'); }
+      } catch (error) {
+        appLog('warn', 'review_screen', 'dispose 忽略了错误: $error');
+      }
     }());
     _startController.dispose();
     _endController.dispose();
@@ -4896,6 +5045,9 @@ class _CandidatePanel extends StatelessWidget {
     required this.selectedId,
     required this.includedCount,
     required this.reviewedCount,
+    required this.allCandidates,
+    required this.suspectCandidates,
+    required this.exportReview,
     required this.totalCount,
     required this.filter,
     required this.playerFilter,
@@ -4932,6 +5084,7 @@ class _CandidatePanel extends StatelessWidget {
     required this.onEditNote,
     required this.onCreateManualCandidate,
     required this.onUndo,
+    required this.onSkip,
     required this.onGoImport,
     required this.onExport,
   });
@@ -4941,6 +5094,8 @@ class _CandidatePanel extends StatelessWidget {
   final String? selectedId;
   final int includedCount;
   final int reviewedCount;
+  final List<Map<String, dynamic>> allCandidates, suspectCandidates;
+  final TierSelection? exportReview;
   final int totalCount;
   final String filter;
   final String playerFilter;
@@ -4979,6 +5134,7 @@ class _CandidatePanel extends StatelessWidget {
   final VoidCallback? onEditNote;
   final VoidCallback? onCreateManualCandidate;
   final VoidCallback onUndo;
+  final VoidCallback onSkip;
   final VoidCallback onGoImport;
   final VoidCallback? onExport;
 
@@ -5084,30 +5240,24 @@ class _CandidatePanel extends StatelessWidget {
           ),
           if (totalCount > 0) ...[
             const SizedBox(height: 2),
-            Row(
+            LinearProgressIndicator(
               key: const Key('review-progress'),
-              children: [
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(2),
-                    child: LinearProgressIndicator(
-                      value: reviewedCount / totalCount,
-                      minHeight: 3,
-                      backgroundColor: c.surface3,
-                      color: c.data,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: Spacing.sm),
-                Text(
-                  l10n?.reviewProgress(reviewedCount, totalCount) ??
-                      '已审核 $reviewedCount / $totalCount',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: c.textSecondary,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
+              minHeight: 3,
+              value: suspectCandidates.isEmpty
+                  ? 0
+                  : suspectCandidates
+                            .where((c) => c['tier_source'] == 'user')
+                            .length /
+                        suspectCandidates.length,
+              backgroundColor: c.surface3,
+              color: c.goal,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.bheText(
+                '疑似 ${suspectCandidates.length} 段 · 已审 ${suspectCandidates.where((c) => c['tier_source'] == 'user').length}（判进 ${suspectCandidates.where((c) => c['tier_source'] == 'user' && candidateTier(c) == 'must').length} · 判没进 ${suspectCandidates.where((c) => c['tier_source'] == 'user' && candidateTier(c) == 'excluded').length}） · 剩 ${suspectCandidates.where((c) => candidateTier(c) == 'suspect').length}',
+              ),
+              style: TextStyle(fontSize: 11, color: c.textSecondary),
             ),
           ],
           const SizedBox(height: Spacing.sm),
@@ -5117,6 +5267,7 @@ class _CandidatePanel extends StatelessWidget {
               value: filter,
               total: totalCount,
               included: includedCount,
+              candidates: allCandidates,
               onChanged: onFilterChanged,
             ),
           ),
@@ -5144,6 +5295,33 @@ class _CandidatePanel extends StatelessWidget {
               onChanged: onSegmentFilterChanged,
             ),
           ],
+          if (exportReview != null)
+            Consumer(
+              builder: (context, ref, _) => Container(
+                key: const Key('export-review-banner'),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: c.orange.withValues(alpha: .12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        context.bheText(
+                          '导出筛选中：${exportReview!.description(players)}（${exportReview!.apply(allCandidates).length} 段）',
+                        ),
+                        style: TextStyle(color: c.orange, fontSize: 12),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => context.go('/export'),
+                      child: Text(context.bheText('回到导出 →')),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           if (filter != 'all' ||
               playerFilter != 'all' ||
               rimFilter != 'all' ||
@@ -5191,24 +5369,26 @@ class _CandidatePanel extends StatelessWidget {
           const SizedBox(height: Spacing.sm),
           Expanded(
             child: candidates.isEmpty
-                ? _EmptyCandidates(
-                    hydrating: hydrating,
-                    hydrateError: hydrateError,
-                    analyzing: analyzing,
-                    hasVideo: hasVideo,
-                    analysisMode: analysisMode,
-                    analysisCompleted: analysisCompleted,
-                    filterEmpty: totalCount > 0,
-                    onClearFilter:
-                        filter == 'all' &&
-                            playerFilter == 'all' &&
-                            rimFilter == 'all' &&
-                            segmentFilter == 'all'
-                        ? null
-                        : onClearFilters,
-                    onReanalyze: onReanalyze,
-                    onRetryHydration: onRetryHydration,
-                    onGoImport: onGoImport,
+                ? SingleChildScrollView(
+                    child: _EmptyCandidates(
+                      hydrating: hydrating,
+                      hydrateError: hydrateError,
+                      analyzing: analyzing,
+                      hasVideo: hasVideo,
+                      analysisMode: analysisMode,
+                      analysisCompleted: analysisCompleted,
+                      filterEmpty: totalCount > 0,
+                      onClearFilter:
+                          filter == 'all' &&
+                              playerFilter == 'all' &&
+                              rimFilter == 'all' &&
+                              segmentFilter == 'all'
+                          ? null
+                          : onClearFilters,
+                      onReanalyze: onReanalyze,
+                      onRetryHydration: onRetryHydration,
+                      onGoImport: onGoImport,
+                    ),
                   )
                 : ListView.separated(
                     controller: candidateScrollController,
@@ -5230,28 +5410,33 @@ class _CandidatePanel extends StatelessWidget {
                         id: id,
                         contexts: candidateRowContexts,
                         child: _CandidateRow(
-                        candidate: candidate,
-                        overlapsPrevious: overlappingIds.contains(id),
-                        index: index,
-                        selected: id == selectedId,
-                        excluded: _isExcluded(candidate),
-                        busy: busy,
-                        onTap: () => onSelect(candidate),
-                        onSetPlayer: (playerId) =>
-                            unawaited(onSetPlayer(candidate, playerId)),
-                        onCreatePlayer: () =>
-                            unawaited(onCreatePlayer(candidate)),
-                        onDeletePlayer: onDeletePlayer,
-                        players: players,
-                        playerColor: _playerColor(
-                          c,
-                          candidate['player_id']?.toString(),
-                          _playerIndex(candidate, players),
+                          candidate: candidate,
+                          overlapsPrevious: overlappingIds.contains(id),
+                          index: index,
+                          selected: id == selectedId,
+                          moved:
+                              filter == 'suspect' &&
+                              candidateTier(candidate) != 'suspect',
+                          excluded: _isExcluded(candidate),
+                          busy: busy,
+                          onTap: () => onSelect(candidate),
+                          onSetPlayer: (playerId) =>
+                              unawaited(onSetPlayer(candidate, playerId)),
+                          onCreatePlayer: () =>
+                              unawaited(onCreatePlayer(candidate)),
+                          onDeletePlayer: onDeletePlayer,
+                          players: players,
+                          playerColor: _playerColor(
+                            c,
+                            candidate['player_id']?.toString(),
+                            _playerIndex(candidate, players),
+                          ),
+                          onInclude: () =>
+                              unawaited(onSetStatus(id, 'included')),
+                          onExclude: () =>
+                              unawaited(onSetStatus(id, 'excluded')),
+                          coverFuture: coverFuture,
                         ),
-                        onInclude: () => unawaited(onSetStatus(id, 'included')),
-                        onExclude: () => unawaited(onSetStatus(id, 'excluded')),
-                        coverFuture: coverFuture,
-                      ),
                       );
                     },
                   ),
@@ -5281,25 +5466,28 @@ class _CandidatePanel extends StatelessWidget {
                   Flexible(
                     flex: 2,
                     child: KeyedSubtree(
-                    key: _reviewGuideMissedKey,
-                    child: Tooltip(
-                    message: context.bheText('从原视频当前时间补漏候选'),
-                    child: OutlinedButton.icon(
-                      key: const Key('create-manual-candidate'),
-                      onPressed: onCreateManualCandidate,
-                      icon: const Icon(Icons.playlist_add_rounded, size: 18),
-                      label: Text(
-                        l10n?.reviewAddMissed ?? '补漏片段',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      key: _reviewGuideMissedKey,
+                      child: Tooltip(
+                        message: context.bheText('从原视频当前时间补漏候选'),
+                        child: OutlinedButton.icon(
+                          key: const Key('create-manual-candidate'),
+                          onPressed: onCreateManualCandidate,
+                          icon: const Icon(
+                            Icons.playlist_add_rounded,
+                            size: 18,
+                          ),
+                          label: Text(
+                            l10n?.reviewAddMissed ?? '补漏片段',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: c.textPrimary,
+                            side: BorderSide(color: c.borderStrong),
+                            minimumSize: const Size(0, 40),
+                          ),
+                        ),
                       ),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: c.textPrimary,
-                        side: BorderSide(color: c.borderStrong),
-                        minimumSize: const Size(0, 40),
-                      ),
-                    ),
-                    ),
                     ),
                   ),
                 ],
@@ -5317,86 +5505,50 @@ class _StatusSegments extends StatelessWidget {
     required this.value,
     required this.total,
     required this.included,
+    required this.candidates,
     required this.onChanged,
   });
-
   final String value;
-  final int total;
-  final int included;
+  final int total, included;
+  final List<Map<String, dynamic>> candidates;
   final ValueChanged<String> onChanged;
-
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
-    final options = [
-      ('all', l10n?.reviewStatusAll ?? '全部', total),
-      ('included', l10n?.reviewStatusKept ?? '保留', included),
-      ('excluded', l10n?.reviewStatusExcluded ?? '排除', total - included),
-    ];
-    return Semantics(
-      container: true,
-      label: l10n?.reviewStatusFilter ?? '按保留／排除筛选',
-      child: Container(
-        padding: const EdgeInsets.all(3),
-        decoration: BoxDecoration(
-          color: c.surface2,
-          borderRadius: BorderRadius.circular(CsRadius.md),
-        ),
-        child: Row(
-          children: [
-            for (final (key, label, count) in options)
-              Expanded(
-                child: Semantics(
-                  button: true,
-                  selected: value == key,
-                  child: Material(
-                    key: ValueKey('review-status-$key'),
-                    color: value == key ? c.surface3 : Colors.transparent,
-                    borderRadius: BorderRadius.circular(CsRadius.sm),
-                    child: InkWell(
-                      onTap: () => onChanged(key),
-                      borderRadius: BorderRadius.circular(CsRadius.sm),
-                      child: SizedBox(
-                        height: 30,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Flexible(
-                              child: Text(
-                                label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: value == key
-                                      ? c.textPrimary
-                                      : c.textSecondary,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              '$count',
-                              style: TextStyle(
-                                color: c.textTertiary,
-                                fontSize: 11,
-                                fontFeatures: const [
-                                  FontFeature.tabularFigures(),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
+    return Row(
+      children: [
+        for (final tier in [...tierLabels.keys, 'all'])
+          Expanded(
+            child: Material(
+              key: ValueKey('review-status-$tier'),
+              color:
+                  value == tier ||
+                      (value.startsWith('tiers:') &&
+                          value.substring(6).split(',').contains(tier))
+                  ? c.surface3
+                  : c.surface2,
+              child: InkWell(
+                onTap: () => onChanged(tier),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    children: [
+                      Text(
+                        '${context.bheText(tierLabels[tier] ?? '全部')} ${tier == 'all' ? total : candidates.where((c) => candidateTier(c) == tier).length}',
+                        style: const TextStyle(fontSize: 12),
                       ),
-                    ),
+                      if (tier == 'must')
+                        Text(
+                          '含 ${candidates.where((c) => candidateTier(c) == 'must' && c['tier_source'] == 'user').length} 确认',
+                          style: TextStyle(fontSize: 10, color: c.goal),
+                        ),
+                    ],
                   ),
                 ),
               ),
-          ],
-        ),
-      ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -5666,21 +5818,27 @@ class _PlayerTagChips extends StatelessWidget {
   final List<Map<String, dynamic>> players;
   final ValueChanged<String> onChanged;
 
+  bool _selected(String key) =>
+      value == key ||
+      (key.startsWith('player:') &&
+          value.startsWith('players:') &&
+          value.substring(8).split(',').contains(key.substring(7)));
+
   @override
   Widget build(BuildContext context) {
     final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final c = AppColors.of(context);
     final counts = <String, int>{'all': candidates.length};
     for (final candidate in candidates) {
-      final id = candidate['player_id']?.toString() ?? '';
-      final bucket = id.isEmpty ? 'untagged' : 'tagged';
+      final ids = candidateTagIds(candidate);
+      final bucket = ids.isEmpty ? 'untagged' : 'tagged';
       counts.update(bucket, (count) => count + 1, ifAbsent: () => 1);
-      if (id.isNotEmpty) {
+      for (final id in ids) {
         counts.update('player:$id', (count) => count + 1, ifAbsent: () => 1);
       }
     }
     final options = <(String, String, Color?)>[
-      ('all', l10n?.reviewAllTags ?? '全部标签', null),
+      ('all', context.bheText('不限'), null),
       ('tagged', l10n?.reviewTagged ?? '已标记', null),
       ('untagged', l10n?.reviewUntagged ?? '未标记', null),
       for (var index = 0; index < players.length; index++)
@@ -5719,16 +5877,16 @@ class _PlayerTagChips extends StatelessWidget {
             return SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
-              children: [
-                for (var index = 0; index < shown.length; index++) ...[
-                  if (index > 0) const SizedBox(width: 6),
-                  _tagChip(context, c, shown[index], counts),
+                children: [
+                  for (var index = 0; index < shown.length; index++) ...[
+                    if (index > 0) const SizedBox(width: 6),
+                    _tagChip(context, c, shown[index], counts),
+                  ],
+                  if (hidden.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    _moreChip(context, c, hidden, counts),
+                  ],
                 ],
-                if (hidden.isNotEmpty) ...[
-                  const SizedBox(width: 6),
-                  _moreChip(context, c, hidden, counts),
-                ],
-              ],
               ),
             );
           },
@@ -5738,7 +5896,10 @@ class _PlayerTagChips extends StatelessWidget {
   }
 
   static const _chipGap = 6.0;
-  static const _labelStyle = TextStyle(fontSize: 12, fontWeight: FontWeight.w600);
+  static const _labelStyle = TextStyle(
+    fontSize: 12,
+    fontWeight: FontWeight.w600,
+  );
   static const _countStyle = TextStyle(
     fontSize: 11,
     fontFeatures: [FontFeature.tabularFigures()],
@@ -5801,7 +5962,7 @@ class _PlayerTagChips extends StatelessWidget {
       if (!fits([...visible, player])) break;
       visible.add(player);
     }
-    final selected = players.where((option) => option.$1 == value).toList();
+    final selected = players.where((option) => _selected(option.$1)).toList();
     if (selected.isNotEmpty && !visible.contains(selected.first)) {
       while (visible.isNotEmpty && !fits([...visible, selected.first])) {
         visible.removeLast();
@@ -5894,74 +6055,70 @@ class _PlayerTagChips extends StatelessWidget {
     (String, String, Color?) option,
     Map<String, int> counts,
   ) {
-            final (key, label, color) = option;
-            final selected = value == key;
-            return Semantics(
-              button: true,
-              selected: selected,
-              child: Material(
-                key: ValueKey('review-tag-option-$key'),
-                color: selected ? c.surface3 : Colors.transparent,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(CsRadius.full),
-                  side: BorderSide(
-                    color: selected ? c.borderStrong : c.border,
+    final (key, label, color) = option;
+    final selected = _selected(key);
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        key: ValueKey('review-tag-option-$key'),
+        color: selected ? c.surface3 : Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(CsRadius.full),
+          side: BorderSide(color: selected ? c.borderStrong : c.border),
+        ),
+        child: InkWell(
+          onTap: () => onChanged(key),
+          customBorder: const StadiumBorder(),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (color != null) ...[
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                ),
-                child: InkWell(
-                  onTap: () => onChanged(key),
-                  customBorder: const StadiumBorder(),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (color != null) ...[
-                          Container(
-                            width: 7,
-                            height: 7,
-                            decoration: BoxDecoration(
-                              color: color,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                        ],
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 140),
-                          child: Tooltip(
-                            message: label,
-                            child: Text(
-                              label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: selected
-                                    ? c.textPrimary
-                                    : c.textSecondary,
-                                fontSize: 12,
-                                fontWeight: selected
-                                    ? FontWeight.w600
-                                    : FontWeight.w400,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          '${counts[key] ?? 0}',
-                          style: TextStyle(
-                            color: c.textTertiary,
-                            fontSize: 11,
-                            fontFeatures: const [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                      ],
+                  const SizedBox(width: 6),
+                ],
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 140),
+                  child: Tooltip(
+                    message: label,
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: selected ? c.textPrimary : c.textSecondary,
+                        fontSize: 12,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            );
+                const SizedBox(width: 6),
+                Text(
+                  '${counts[key] ?? 0}',
+                  style: TextStyle(
+                    color: c.textTertiary,
+                    fontSize: 11,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -6075,6 +6232,7 @@ class _CandidateRow extends StatelessWidget {
     required this.overlapsPrevious,
     required this.index,
     required this.selected,
+    this.moved = false,
     required this.excluded,
     required this.busy,
     required this.onTap,
@@ -6091,6 +6249,7 @@ class _CandidateRow extends StatelessWidget {
   final Map<String, dynamic> candidate;
   final int index;
   final bool selected;
+  final bool moved;
   final bool overlapsPrevious;
   final bool excluded;
   final bool busy;
@@ -6109,210 +6268,225 @@ class _CandidateRow extends StatelessWidget {
     final c = AppColors.of(context);
     final theme = Theme.of(context);
     final adjusted = _hasAdjustedRange(candidate);
-    final rimStatus = _rimCheckStatus(candidate);
-    final statusLabel = excluded
-        ? (_isAutoExcluded(candidate) ? '自动排除' : '已排除')
-        : rimStatus == 'made' ? '通过' : rimStatus == 'unsure' ? '未确认' : null;
-    final statusColor = excluded ? c.error : rimStatus == 'made' ? c.success : c.warning;
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: context.bheText(
-        '候选 ${index + 1}，${_formatMs(_candidateTime(candidate))}，${excluded ? (_isAutoExcluded(candidate) ? '自动排除' : '已排除') : '已保留'}',
-      ),
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: AnimatedContainer(
-          duration: DurationD.fast,
-          padding: const EdgeInsets.symmetric(
-            horizontal: Spacing.xs,
-            vertical: 2,
-          ),
-          decoration: BoxDecoration(
-            color: selected
-                ? c.orange.withValues(alpha: 0.09)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(CsRadius.md),
-            border: Border.all(
-              color: selected
-                  ? c.orange.withValues(alpha: 0.45)
-                  : Colors.transparent,
+    final statusLabel = candidate['tier_source'] == 'user'
+        ? (excluded
+              ? (moved ? '判没进 → 排除' : '判没进')
+              : (moved ? '已确认 → 必进' : '已确认'))
+        : tierLabels[candidateTier(candidate)];
+    final statusColor = candidateTier(candidate) == 'must'
+        ? c.goal
+        : excluded
+        ? c.excluded
+        : c.warning;
+    return Opacity(
+      opacity: moved ? .55 : 1,
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: context.bheText(
+          '候选 ${index + 1}，${_formatMs(_candidateTime(candidate))}，${excluded ? (_isAutoExcluded(candidate) ? '自动排除' : '已排除') : '已保留'}',
+        ),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: AnimatedContainer(
+            duration: DurationD.fast,
+            padding: const EdgeInsets.symmetric(
+              horizontal: Spacing.xs,
+              vertical: 2,
             ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: onTap,
-                    focusColor: Colors.transparent,
-                    hoverColor: Colors.transparent,
-                    splashColor: Colors.transparent,
-                    highlightColor: Colors.transparent,
-                    overlayColor: const WidgetStatePropertyAll(
-                      Colors.transparent,
-                    ),
-                    borderRadius: BorderRadius.circular(CsRadius.sm),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          _CandidateCover(
-                            future: coverFuture,
-                            excluded: excluded,
-                            durationLabel: context.bheText(
-                              _formatClipDuration(
-                                _clipEnd(candidate) - _clipStart(candidate),
+            decoration: BoxDecoration(
+              color: selected
+                  ? c.orange.withValues(alpha: 0.09)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(CsRadius.md),
+              border: Border.all(
+                color: selected
+                    ? c.orange.withValues(alpha: 0.45)
+                    : Colors.transparent,
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: onTap,
+                      focusColor: Colors.transparent,
+                      hoverColor: Colors.transparent,
+                      splashColor: Colors.transparent,
+                      highlightColor: Colors.transparent,
+                      overlayColor: const WidgetStatePropertyAll(
+                        Colors.transparent,
+                      ),
+                      borderRadius: BorderRadius.circular(CsRadius.sm),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            _CandidateCover(
+                              future: coverFuture,
+                              excluded: excluded,
+                              durationLabel: context.bheText(
+                                _formatClipDuration(
+                                  _clipEnd(candidate) - _clipStart(candidate),
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: Spacing.sm),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Row(
-                                  children: [
-                                    if (!_isReviewed(candidate)) ...[
-                                      Semantics(
-                                        label:
-                                            Localizations.of<BheLocalizations>(
-                                              context,
-                                              BheLocalizations,
-                                            )?.reviewUnreviewed ??
-                                            '未审核',
-                                        child: Container(
-                                          key: ValueKey(
-                                            'unreviewed-${candidate['id']}',
-                                          ),
-                                          width: 7,
-                                          height: 7,
-                                          decoration: BoxDecoration(
-                                            color: c.data,
-                                            shape: BoxShape.circle,
+                            const SizedBox(width: Spacing.sm),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Row(
+                                    children: [
+                                      if (!_isReviewed(candidate)) ...[
+                                        Semantics(
+                                          label:
+                                              Localizations.of<
+                                                    BheLocalizations
+                                                  >(context, BheLocalizations)
+                                                  ?.reviewUnreviewed ??
+                                              '未审核',
+                                          child: Container(
+                                            key: ValueKey(
+                                              'unreviewed-${candidate['id']}',
+                                            ),
+                                            width: 7,
+                                            height: 7,
+                                            decoration: BoxDecoration(
+                                              color: c.data,
+                                              shape: BoxShape.circle,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                    ],
-                                    Flexible(
-                                      child: Text.rich(
-                                        TextSpan(
-                                          children: [
-                                            TextSpan(
-                                              text: '#${index + 1} ',
-                                              style: TextStyle(
-                                                color: c.textTertiary,
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
-                                            if (_candidateSegment(candidate) > 0)
+                                        const SizedBox(width: 6),
+                                      ],
+                                      Flexible(
+                                        flex: 3,
+                                        child: Text.rich(
+                                          TextSpan(
+                                            children: [
                                               TextSpan(
-                                                text:
-                                                    '${context.bheText('第 ${_candidateSegment(candidate)} 段')} ',
+                                                text: '#${index + 1} ',
                                                 style: TextStyle(
-                                                  color: c.textSecondary,
+                                                  color: c.textTertiary,
                                                   fontSize: 11,
                                                   fontWeight: FontWeight.w500,
                                                 ),
                                               ),
-                                            TextSpan(
-                                              text: _formatMs(
-                                                _candidateTime(candidate),
+                                              if (_candidateSegment(candidate) >
+                                                  0)
+                                                TextSpan(
+                                                  text:
+                                                      '${context.bheText('第 ${_candidateSegment(candidate)} 段')} ',
+                                                  style: TextStyle(
+                                                    color: c.textSecondary,
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                ),
+                                              TextSpan(
+                                                text: _formatMs(
+                                                  _candidateTime(candidate),
+                                                ),
                                               ),
-                                            ),
-                                          ],
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: theme.textTheme.titleMedium
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.w600,
-                                              color: excluded
-                                                  ? c.textTertiary
-                                                  : c.textPrimary,
-                                              fontFeatures: const [
-                                                FontFeature.tabularFigures(),
-                                              ],
-                                            ),
-                                      ),
-                                    ),
-                                    if (adjusted || overlapsPrevious || statusLabel != null) ...[
-                                      const SizedBox(width: 4),
-                                      Flexible(
-                                        flex: 4,
-                                        child: CandidateStatusLabels(
-                                          candidateId: candidate['id'].toString(),
-                                          adjusted: adjusted,
-                                          overlapsPrevious: overlapsPrevious,
-                                          statusLabel: statusLabel,
-                                          statusColor: statusColor,
+                                            ],
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: theme.textTheme.titleMedium
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w600,
+                                                color: excluded
+                                                    ? c.textTertiary
+                                                    : c.textPrimary,
+                                                fontFeatures: const [
+                                                  FontFeature.tabularFigures(),
+                                                ],
+                                              ),
                                         ),
                                       ),
+                                      if (adjusted ||
+                                          overlapsPrevious ||
+                                          statusLabel != null) ...[
+                                        const SizedBox(width: 4),
+                                        Flexible(
+                                          flex: 1,
+                                          child: CandidateStatusLabels(
+                                            candidateId: candidate['id']
+                                                .toString(),
+                                            adjusted: adjusted,
+                                            overlapsPrevious: overlapsPrevious,
+                                            statusLabel: statusLabel,
+                                            statusColor: statusColor,
+                                          ),
+                                        ),
+                                      ],
                                     ],
-                                  ],
-                                ),
-                                const SizedBox(height: 6),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: _PlayerChip(
-                                    key: ValueKey(
-                                      'player-chip-${candidate['id']}',
-                                    ),
-                                    name: candidate['player_name']?.toString(),
-                                    color: playerColor,
-                                    players: players,
-                                    onSelected: onSetPlayer,
-                                    onCreate: onCreatePlayer,
-                                    onDelete: onDeletePlayer,
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(height: 6),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: _PlayerChip(
+                                      key: ValueKey(
+                                        'player-chip-${candidate['id']}',
+                                      ),
+                                      name: candidate['player_name']
+                                          ?.toString(),
+                                      candidate: candidate,
+                                      color: playerColor,
+                                      players: players,
+                                      onSelected: onSetPlayer,
+                                      onCreate: onCreatePlayer,
+                                      onDelete: onDeletePlayer,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: Spacing.xs),
-              Container(
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(
-                  color: c.surface2,
-                  borderRadius: BorderRadius.circular(CsRadius.md),
-                  border: Border.all(color: c.border),
+                const SizedBox(width: Spacing.xs),
+                Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: c.surface2,
+                    borderRadius: BorderRadius.circular(CsRadius.md),
+                    border: Border.all(color: c.border),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _DecisionButton(
+                        tooltip: context.bheText('保留片段 (C / Enter)'),
+                        icon: Icons.check_rounded,
+                        active: !excluded,
+                        color: c.goal,
+                        enabled: !busy,
+                        onPressed: onInclude,
+                      ),
+                      const SizedBox(width: 3),
+                      _DecisionButton(
+                        tooltip: context.bheText('排除片段 (X / ` / Backspace)'),
+                        icon: Icons.close_rounded,
+                        active: excluded,
+                        color: c.error,
+                        enabled: !busy,
+                        onPressed: onExclude,
+                      ),
+                    ],
+                  ),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _DecisionButton(
-                      tooltip: context.bheText('保留片段 (C / Enter)'),
-                      icon: Icons.check_rounded,
-                      active: !excluded,
-                      color: c.goal,
-                      enabled: !busy,
-                      onPressed: onInclude,
-                    ),
-                    const SizedBox(width: 3),
-                    _DecisionButton(
-                      tooltip: context.bheText('排除片段 (X / ` / Backspace)'),
-                      icon: Icons.close_rounded,
-                      active: excluded,
-                      color: c.error,
-                      enabled: !busy,
-                      onPressed: onExclude,
-                    ),
-                  ],
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -6372,6 +6546,7 @@ class _DecisionButton extends StatelessWidget {
 class _PlayerChip extends StatefulWidget {
   const _PlayerChip({
     required this.name,
+    required this.candidate,
     required this.color,
     required this.players,
     required this.onSelected,
@@ -6381,6 +6556,7 @@ class _PlayerChip extends StatefulWidget {
   });
 
   final String? name;
+  final Map<String, dynamic> candidate;
   final Color color;
   final List<Map<String, dynamic>> players;
   final ValueChanged<String?> onSelected;
@@ -6392,72 +6568,101 @@ class _PlayerChip extends StatefulWidget {
 }
 
 class _PlayerChipState extends State<_PlayerChip> {
-  final MenuController _menuController = MenuController();
+  Future<void> _openTags() async {
+    final box = context.findRenderObject()! as RenderBox;
+    final origin = box.localToGlobal(Offset.zero);
+    final size = MediaQuery.sizeOf(context);
+    final height = (210 + 34.0 * widget.players.length).clamp(
+      300.0,
+      (size.height - 24).clamp(300.0, 600.0),
+    );
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.transparent,
+      builder: (context) => Stack(
+        children: [
+          Positioned(
+            left: origin.dx.clamp(8.0, size.width - 292),
+            bottom: (size.height - origin.dy + 6).clamp(
+              8.0,
+              size.height - height - 8,
+            ),
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(8),
+              child: Consumer(
+                builder: (context, ref, _) {
+                  final state = ref.watch(projectProvider);
+                  final current =
+                      state.candidates
+                          .where((c) => c['id'] == widget.candidate['id'])
+                          .firstOrNull ??
+                      widget.candidate;
+                  return SizedBox(
+                    width: 276,
+                    height: height,
+                    child: _PlayerPickerMenuContent(
+                      players: state.players,
+                      selectedIds: candidateTagIds(current),
+                      onSelected: widget.onSelected,
+                      onCreate: () {
+                        Navigator.pop(context);
+                        widget.onCreate();
+                      },
+                      onManageGroups: () {
+                        Navigator.pop(context);
+                        showDialog<void>(
+                          context: this.context,
+                          builder: (_) => const _PlayerGroupsDialog(),
+                        );
+                      },
+                      onDelete: widget.onDelete,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final ids = candidateTagIds(widget.candidate);
     return Tooltip(
       message: context.bheText('设置球员标签'),
-      child: MenuAnchor(
-        controller: _menuController,
-        alignmentOffset: const Offset(0, 4),
-        menuChildren: [
-          _PlayerPickerMenuContent(
-            players: widget.players,
-            onSelected: (playerId) {
-              _menuController.close();
-              widget.onSelected(playerId);
-            },
-            onCreate: () {
-              _menuController.close();
-              widget.onCreate();
-            },
-            onManageGroups: () {
-              _menuController.close();
-              unawaited(
-                showDialog<void>(
-                  context: context,
-                  builder: (_) => const _PlayerGroupsDialog(),
-                ),
-              );
-            },
-            onDelete: (playerId, playerName) async {
-              _menuController.close();
-              await widget.onDelete(playerId, playerName);
-            },
-          ),
-        ],
-        builder: (context, controller, child) => Material(
-          color: widget.color.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(CsRadius.full),
-          child: InkWell(
-            onTap: () =>
-                controller.isOpen ? controller.close() : controller.open(),
-            borderRadius: BorderRadius.circular(CsRadius.full),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.person_outline, size: 14, color: widget.color),
-                  const SizedBox(width: 3),
-                  Flexible(
-                    child: Text(
-                      widget.name == null || widget.name!.isEmpty
-                          ? context.bheText('未标记')
-                          : widget.name!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: widget.color,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
+      child: IntrinsicWidth(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _openTags,
+          child: Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              for (final (index, player) in widget.players.indexed)
+                if (ids.contains(player['id'].toString()))
+                  Text(
+                    player['name'].toString(),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.of(context).player(index),
                     ),
                   ),
-                ],
+              TextButton(
+                onPressed: _openTags,
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                ),
+                child: Text(
+                  context.bheText('＋标签'),
+                  style: const TextStyle(fontSize: 11),
+                ),
               ),
-            ),
+            ],
           ),
         ),
       ),
@@ -6467,6 +6672,7 @@ class _PlayerChipState extends State<_PlayerChip> {
 
 class _PlayerPickerMenuContent extends StatelessWidget {
   const _PlayerPickerMenuContent({
+    this.selectedIds = const [],
     required this.players,
     required this.onSelected,
     required this.onCreate,
@@ -6474,6 +6680,7 @@ class _PlayerPickerMenuContent extends StatelessWidget {
     required this.onDelete,
   });
 
+  final List<String> selectedIds;
   final List<Map<String, dynamic>> players;
   final ValueChanged<String?> onSelected;
   final VoidCallback onCreate;
@@ -6501,7 +6708,7 @@ class _PlayerPickerMenuContent extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
                 child: Text(
-                  context.bheText('选择球员'),
+                  context.bheText('选择标签 · 可多选'),
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     color: c.textSecondary,
                     fontWeight: FontWeight.w600,
@@ -6525,7 +6732,8 @@ class _PlayerPickerMenuContent extends StatelessWidget {
                           final id = player['id']?.toString();
                           final name = player['name']?.toString() ?? '';
                           return _PlayerPickerOption(
-                            label: name,
+                            label:
+                                '${selectedIds.contains(id) ? '✓ ' : ''}$name',
                             color: _playerColor(c, id, index),
                             shortcut: playerShortcutLabel(index),
                             onTap: id == null ? null : () => onSelected(id),
@@ -6640,10 +6848,22 @@ class _PlayerGroupsDialog extends ConsumerWidget {
                         children: [
                           IconButton(
                             key: ValueKey('player-group-default-${group.name}'),
-                            tooltip: context.bheText(defaultGroup == group.name ? '取消默认' : '设为默认'),
-                            onPressed: () => ref.read(playerGroupsProvider.notifier)
-                                .setDefault(defaultGroup == group.name ? null : group.name),
-                            icon: Icon(defaultGroup == group.name ? Icons.star : Icons.star_border, size: 18),
+                            tooltip: context.bheText(
+                              defaultGroup == group.name ? '取消默认' : '设为默认',
+                            ),
+                            onPressed: () => ref
+                                .read(playerGroupsProvider.notifier)
+                                .setDefault(
+                                  defaultGroup == group.name
+                                      ? null
+                                      : group.name,
+                                ),
+                            icon: Icon(
+                              defaultGroup == group.name
+                                  ? Icons.star
+                                  : Icons.star_border,
+                              size: 18,
+                            ),
                             visualDensity: VisualDensity.compact,
                           ),
                           IconButton(
@@ -6768,11 +6988,7 @@ class _PlayerPickerOption extends StatelessWidget {
   }
 }
 
-Color _playerColor(
-  AppColors c,
-  String? playerId, [
-  int fallbackIndex = -1,
-]) {
+Color _playerColor(AppColors c, String? playerId, [int fallbackIndex = -1]) {
   if (playerId == null || playerId.isEmpty) return c.textTertiary;
   if (fallbackIndex >= 0) return c.player(fallbackIndex);
   final hash = playerId.codeUnits.fold<int>(
@@ -6850,10 +7066,26 @@ class _CandidateCoverState extends State<_CandidateCover> {
                   widget.excluded
                       ? ColorFiltered(
                           colorFilter: const ColorFilter.matrix(<double>[
-                            0.2126, 0.7152, 0.0722, 0, 0,
-                            0.2126, 0.7152, 0.0722, 0, 0,
-                            0.2126, 0.7152, 0.0722, 0, 0,
-                            0, 0, 0, 1, 0,
+                            0.2126,
+                            0.7152,
+                            0.0722,
+                            0,
+                            0,
+                            0.2126,
+                            0.7152,
+                            0.0722,
+                            0,
+                            0,
+                            0.2126,
+                            0.7152,
+                            0.0722,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            1,
+                            0,
                           ]),
                           child: cover,
                         )
@@ -6914,7 +7146,8 @@ String? _rimCheckStatus(Map<String, dynamic> candidate) {
   return switch (value['status']?.toString()) {
     'made' => (label: '通过：球穿过篮网落下', color: c.success),
     'rejected' => (
-      label: const <String, String>{
+      label:
+          const <String, String>{
             'no_crossing': '未通过：没有看到球穿过篮筐',
             'no_entry': '未通过：球不是从篮筐上方落下',
             'off_center': '未通过：球偏离篮筐口',
@@ -6928,7 +7161,8 @@ String? _rimCheckStatus(Map<String, dynamic> candidate) {
       color: c.error,
     ),
     'unsure' => (
-      label: const <String, String>{
+      label:
+          const <String, String>{
             'no_crossing': '未确认：没看清球是否穿过篮筐，请人工确认',
             'no_entry': '未确认：没看清球是否从篮筐上方落下，请人工确认',
             'no_exit': '未确认：没看清球是否从网底落下，请人工确认',
@@ -6939,9 +7173,7 @@ String? _rimCheckStatus(Map<String, dynamic> candidate) {
       color: c.warning,
     ),
     'skipped' => (
-      label: reason == 'small_rim'
-          ? '未复核：篮筐在画面中太小，请人工确认'
-          : '未复核：请人工确认',
+      label: reason == 'small_rim' ? '未复核：篮筐在画面中太小，请人工确认' : '未复核：请人工确认',
       color: c.warning,
     ),
     _ => null,
@@ -6956,6 +7188,7 @@ List<Map<String, dynamic>> _filterCandidates(
   List<Map<String, dynamic>> candidates,
   String filter, {
   String playerFilter = 'all',
+  Set<String> retainedIds = const {},
   String rimFilter = 'all',
   String segmentFilter = 'all',
 }) {
@@ -6964,17 +7197,26 @@ List<Map<String, dynamic>> _filterCandidates(
         candidate['video_id']?.toString() != segmentFilter) {
       return false;
     }
-    if (filter == 'included' && _isExcluded(candidate)) return false;
-    if (filter == 'excluded' && !_isExcluded(candidate)) return false;
+    final tiers = filter.startsWith('tiers:')
+        ? filter.substring(6).split(',')
+        : [filter == 'included' ? 'must' : filter];
+    if (filter != 'all' &&
+        !tiers.contains(candidateTier(candidate)) &&
+        !retainedIds.contains(candidate['id'].toString())) {
+      return false;
+    }
     if (rimFilter != 'all' && _rimCheckStatus(candidate) != rimFilter) {
       return false;
     }
-    final id = candidate['player_id']?.toString() ?? '';
+    final ids = candidateTagIds(candidate);
+    if (playerFilter.startsWith('players:')) {
+      return ids.any(playerFilter.substring(8).split(',').contains);
+    }
     return switch (playerFilter) {
-      'tagged' => id.isNotEmpty,
-      'untagged' => id.isEmpty,
+      'tagged' => ids.isNotEmpty,
+      'untagged' => ids.isEmpty,
       'all' => true,
-      _ => playerFilter == 'player:$id',
+      _ => ids.any((id) => playerFilter == 'player:$id'),
     };
   }).toList();
 }
@@ -7001,7 +7243,8 @@ int _clipEnd(Map<String, dynamic> candidate) {
 
 bool _hasAdjustedRange(Map<String, dynamic> candidate) {
   return (candidate['default_start_ms'] != null &&
-          _clipStart(candidate) != _number(candidate['default_start_ms']).round()) ||
+          _clipStart(candidate) !=
+              _number(candidate['default_start_ms']).round()) ||
       (candidate['default_end_ms'] != null &&
           _clipEnd(candidate) != _number(candidate['default_end_ms']).round());
 }
@@ -7513,11 +7756,8 @@ class ReviewVolumeControls extends StatelessWidget {
                       ? (value) => settings.setVolume(value.round())
                       : null,
                   onChangeEnd: enabled
-                      ? (value) => appLog(
-                          'info',
-                          'player',
-                          '音量拖动结束 ${value.round()}%',
-                        )
+                      ? (value) =>
+                            appLog('info', 'player', '音量拖动结束 ${value.round()}%')
                       : null,
                 ),
               ),

@@ -1,3 +1,4 @@
+import 'package:desktop/features/review/tier_selection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -193,7 +194,7 @@ void main() {
       expect(find.text('显示 2 / 4'), findsOneWidget);
       expect(find.text('导出 3 个片段'), findsOneWidget);
 
-      await tester.tap(find.byKey(const ValueKey('review-status-included')));
+      await tester.tap(find.byKey(const ValueKey('review-status-must')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('player-chip-c1')), findsOneWidget);
       expect(find.byKey(const ValueKey('player-chip-c3')), findsNothing);
@@ -242,7 +243,7 @@ void main() {
       expect(find.text('显示 0 / 4'), findsOneWidget);
       await tester.tap(find.text('显示全部'));
       await tester.pumpAndSettle();
-      expect(find.text('全部标签'), findsOneWidget);
+      expect(find.text('不限'), findsOneWidget);
       expect(find.byKey(const Key('review-filter-banner')), findsNothing);
       expect(find.text('导出 3 个片段'), findsOneWidget);
     },
@@ -289,8 +290,8 @@ void main() {
     await tester.tap(find.text('显示全部'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('review-filter-banner')), findsNothing);
-    expect(find.text('全部标签'), findsOneWidget);
-    expect(find.text('全部'), findsOneWidget);
+    expect(find.text('不限'), findsOneWidget);
+    expect(find.textContaining('全部 4'), findsOneWidget);
   });
 
   testWidgets('extra players collapse into +N and stay visible once picked', (
@@ -344,7 +345,8 @@ void main() {
         ],
       ),
     );
-    expect(find.text('已审核 1 / 2'), findsOneWidget);
+    expect(find.byKey(const Key('review-progress')), findsOneWidget);
+    expect(find.textContaining('疑似'), findsWidgets);
     expect(find.byKey(const ValueKey('unreviewed-new')), findsOneWidget);
     expect(find.byKey(const ValueKey('unreviewed-seen')), findsNothing);
   });
@@ -374,8 +376,8 @@ void main() {
     final tagged = notifier.lastTaggedIds;
     expect(tagged, isNotNull);
     expect(
-      notifier.current.candidates.firstWhere((c) => c['id'] == tagged!.single)['player_id'],
-      'p10',
+      candidateTagIds(notifier.current.candidates.firstWhere((c) => c['id'] == tagged!.single)),
+      contains('p10'),
     );
   });
 
@@ -395,8 +397,8 @@ void main() {
     final tagged = notifier.lastTaggedIds;
     expect(tagged, isNotNull);
     expect(
-      notifier.current.candidates.firstWhere((c) => c['id'] == tagged!.single)['player_id'],
-      'p13',
+      candidateTagIds(notifier.current.candidates.firstWhere((c) => c['id'] == tagged!.single)),
+      contains('p13'),
     );
   });
 
@@ -484,16 +486,17 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('全部标签'), findsOneWidget);
+      expect(find.text('不限'), findsOneWidget);
       expect(find.byKey(const Key('review-filter-banner')), findsNothing);
       await _chooseTagFilter(tester, 'player:p1');
-      await tester.tap(find.byKey(const ValueKey('review-status-included')));
+      await tester.tap(find.byKey(const ValueKey('review-status-must')));
       await tester.pumpAndSettle();
       notifier.replaceState(_tagReviewState(projectId: 'v2'));
       await tester.pumpAndSettle();
-      expect(find.text('全部标签'), findsOneWidget);
-      expect(find.text('全部'), findsOneWidget);
-      expect(find.byKey(const Key('review-filter-banner')), findsNothing);
+      expect(find.text('不限'), findsOneWidget);
+      expect(find.textContaining('全部 4'), findsOneWidget);
+      expect(find.byKey(const Key('review-filter-banner')), findsOneWidget);
+      expect(find.byKey(const ValueKey('candidate-row-c1')), findsNothing);
     },
   );
 
@@ -1137,7 +1140,7 @@ void main() {
     expect(find.text('按时间'), findsNothing);
     expect(find.text('默认保留'), findsNothing);
     expect(find.text('已排除'), findsNothing);
-    expect(find.text('会导出'), findsOneWidget);
+    expect(find.text('必进'), findsWidgets);
     expect(find.text('9 秒'), findsOneWidget);
     expect(find.byTooltip('保留片段 (C / Enter)'), findsOneWidget);
     expect(find.byTooltip('排除片段 (X / ` / Backspace)'), findsOneWidget);
@@ -1169,7 +1172,7 @@ void main() {
 
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.byType(TextField), findsNothing);
-    expect(find.text('选择球员'), findsOneWidget);
+    expect(find.text('选择标签 · 可多选'), findsOneWidget);
     expect(find.text('科比'), findsOneWidget);
     expect(find.text('新建球员'), findsOneWidget);
   });
@@ -1178,6 +1181,7 @@ void main() {
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({
+      onboardingStepsPrefsKey: allOnboardingStepIds,
       'bhe.player_groups': jsonEncode([
         {
           'name': '周六队',
@@ -1242,6 +1246,7 @@ void main() {
 
   testWidgets('player group editor opens from review and follows the renamed default', (tester) async {
     SharedPreferences.setMockInitialValues({
+      onboardingStepsPrefsKey: allOnboardingStepIds,
       'bhe.player_groups': jsonEncode([
         {'name': 'Saturday', 'players': ['Chris', 'Alex']},
       ]),
@@ -1639,8 +1644,8 @@ void main() {
       ),
     );
 
-    expect(find.text('自动排除'), findsOneWidget);
-    expect(find.text('已排除'), findsOneWidget);
+    expect(find.text('排除'), findsWidgets);
+    expect(find.text('排除'), findsWidgets);
     expect(find.byKey(const Key('inspector-rim-check')), findsOneWidget);
     expect(find.text('未通过：球从篮筐前方掠过，没有进网'), findsOneWidget);
   });
@@ -1841,7 +1846,7 @@ void main() {
       }],
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('review-status-included')));
+    await tester.tap(find.byKey(const ValueKey('review-status-must')));
     await tester.tap(find.byKey(const ValueKey('review-status-excluded')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
@@ -1871,11 +1876,13 @@ void main() {
       }],
     ), locale: const Locale('en'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('review-status-included')));
+    await tester.tap(find.byKey(const ValueKey('review-status-must')));
     await tester.pumpAndSettle();
     final last = find.byKey(const ValueKey('candidate-row-position-20'));
     await tester.scrollUntilVisible(last, 400, scrollable: find.byType(Scrollable).last);
-    await tester.tap(last);
+    await tester.ensureVisible(last);
+    await tester.pumpAndSettle();
+    await tester.tapAt(tester.getTopLeft(last) + const Offset(20, 20));
     await tester.pumpAndSettle();
     expect(find.text('Candidate 00:40'), findsOneWidget);
     await _saveFilterPositionEvidence(tester, 'before-included-40s');
@@ -1889,7 +1896,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Candidate 00:38'), findsOneWidget);
     expect(nearest.hitTestable(), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('review-status-included')));
+    await tester.tap(find.byKey(const ValueKey('review-status-must')));
     await tester.pumpAndSettle();
     expect(find.text('Candidate 00:36'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -1936,7 +1943,7 @@ void main() {
     expect(find.text('#1 00:09'), findsOneWidget);
     expect(find.text('#1 00:03'), findsNothing);
     expect(find.text('#1 00:15'), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('review-status-included')));
+    await tester.tap(find.byKey(const ValueKey('review-status-must')));
     await tester.pumpAndSettle();
     expect(find.text('#1 00:03'), findsOneWidget);
     expect(find.text('#2 00:15'), findsOneWidget);
@@ -2189,6 +2196,8 @@ Future<void> _pumpReview(
     ),
   );
   await tester.pump();
+  final all = find.byKey(const ValueKey('review-status-all'));
+  if (all.evaluate().isNotEmpty && !state.busy) { await tester.ensureVisible(all); await tester.pumpAndSettle(); await tester.tap(all); await tester.pumpAndSettle(); }
 }
 
 Future<Finder> _tagOption(WidgetTester tester, String value) async {
@@ -2280,7 +2289,7 @@ class _TagReviewNotifier extends _ReviewNotifier {
   Future<void> importPlayers(List<String> names) async {
     importedNames = names;
   }
-  void replaceState(ProjectState value) => state = value;
+  void replaceState(ProjectState value) => state = value.copyWith(candidates: [for(final c in value.candidates) {...c, 'tier':c['tier'] ?? ((c['review_status']=='excluded' || c['selection_status']=='excluded') ? 'excluded' : 'must')}]);
 
   @override
   Future<void> startReview(String id) async {}
@@ -2298,6 +2307,16 @@ class _TagReviewNotifier extends _ReviewNotifier {
   }) async {
     rangeIds = candidateIds;
     return null;
+  }
+
+  @override
+  Future<void> changeCandidateTags(String id, {String? toggleId, List<String>? replaceIds}) async {
+    final c = state.candidates.firstWhere((c) => c['id'] == id);
+    final ids = candidateTagIds(c).toSet();
+    if (toggleId != null) { ids.contains(toggleId) ? ids.remove(toggleId) : ids.add(toggleId); }
+    else { ids.clear(); ids.addAll(replaceIds ?? []); }
+    await setCandidatePlayer(id, ids.firstOrNull);
+    state = state.copyWith(candidates: [for (final c in state.candidates) if (c['id'] == id) {...c, 'tags': [for (final p in state.players) if(ids.contains(p['id'])) p]} else c]);
   }
 
   @override
@@ -2326,7 +2345,7 @@ class _ReviewNotifier extends ProjectNotifier {
   final ProjectState initialState;
 
   @override
-  ProjectState build() => initialState;
+  ProjectState build() => initialState.copyWith(candidates: [for (final c in initialState.candidates) {...c, 'tier': c['tier'] ?? ((c['selection_status'] == 'excluded' || c['review_status'] == 'excluded') ? 'excluded' : 'must')}]);
 
   @override
   Future<bool> reviewCandidate(
@@ -2337,7 +2356,7 @@ class _ReviewNotifier extends ProjectNotifier {
   }) async {
     final candidates = state.candidates.map((candidate) {
       if (candidate['id']?.toString() != id) return candidate;
-      return <String, dynamic>{...candidate, 'selection_status': status};
+      return <String, dynamic>{...candidate, 'selection_status': status, 'tier': status == 'excluded' ? 'excluded' : 'must', 'tier_source': 'user'};
     }).toList();
     state = state.copyWith(candidates: candidates);
     return true;
@@ -2379,6 +2398,9 @@ class _PlayerLayoutNotifier extends _ReviewNotifier {
 
   @override
   Future<String?> loadCandidatePreview(String candidateId, int timeMs) async => null;
+
+  @override
+  Future<void> changeCandidateTags(String id, {String? toggleId, List<String>? replaceIds}) => setCandidatePlayer(id, toggleId ?? replaceIds?.firstOrNull);
 
   @override
   Future<void> setCandidatePlayer(String candidateId, String? playerId) async {

@@ -30,6 +30,27 @@ class _FakeEngineTransport implements EngineTransport {
 }
 
 void main() {
+  test('tier and multi-tag RPC fields preserve null/unlimited and empty selection', () async {
+    final transport = _FakeEngineTransport();
+    final session = EngineSession(transport);
+    await session.startExport(projectRoot:'/tmp/project', tiers:['must'], tags:null);
+    expect(transport.payloads.last['tiers'], ['must']);
+    expect(transport.payloads.last.containsKey('tags'), isTrue);
+    expect(transport.payloads.last['tags'], isNull);
+    await session.startExport(projectRoot:'/tmp/project', tiers:[], tags:[]);
+    expect(transport.payloads.last['tiers'], isEmpty);
+    expect(transport.payloads.last['tags'], isEmpty);
+    await session.startExport(projectRoot:'/tmp/project');
+    expect(transport.payloads.last.containsKey('tiers'), isFalse);
+    for(final op in ['add_candidate_player','remove_candidate_player','set_candidate_players']) {
+      await session.changeCandidateTags(projectRoot:'/tmp/project', candidateId:'a', operation:op,
+        playerId: op == 'set_candidate_players' ? null : 'p1',
+        playerIds: op == 'set_candidate_players' ? ['p1','p2'] : null);
+      expect(transport.commands.last, op);
+      expect(transport.payloads.last['candidate_id'], 'a');
+    }
+  });
+
   test('EngineSession forwards the protocol commands and payloads', () async {
     final transport = _FakeEngineTransport()
       ..responses['create_project'] = {

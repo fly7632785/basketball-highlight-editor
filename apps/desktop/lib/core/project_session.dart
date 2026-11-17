@@ -633,6 +633,19 @@ class ProjectSession {
     );
   }
 
+  Future<JsonMap> changeCandidateTags({
+    required String candidateId,
+    required String operation,
+    List<String>? playerIds,
+    String? playerId,
+  }) => engine.changeCandidateTags(
+    projectRoot: _requireProjectRoot(),
+    candidateId: candidateId,
+    operation: operation,
+    playerIds: playerIds,
+    playerId: playerId,
+  );
+
   Future<JsonMap> setCandidatePlayer({
     required String candidateId,
     String? playerId,
@@ -724,6 +737,8 @@ class ProjectSession {
     String? outputDir,
     String? outputPath,
     List<String>? playerIds,
+    List<String>? tiers,
+    List<String>? tags,
     bool? includeUnassigned,
     String effect = 'none',
   }) {
@@ -733,6 +748,8 @@ class ProjectSession {
       outputDir: outputDir,
       outputPath: outputPath,
       playerIds: playerIds,
+      tiers: tiers,
+      tags: tags,
       includeUnassigned: includeUnassigned,
       effect: effect,
     );

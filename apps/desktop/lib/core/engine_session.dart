@@ -428,6 +428,19 @@ class EngineSession {
     });
   }
 
+  Future<JsonMap> changeCandidateTags({
+    required String projectRoot,
+    required String candidateId,
+    required String operation,
+    List<String>? playerIds,
+    String? playerId,
+  }) => client.request(operation, {
+    'project_root': projectRoot,
+    'candidate_id': candidateId,
+    ...?_optionalEntry('player_ids', playerIds),
+    ...?_optionalEntry('player_id', playerId),
+  });
+
   Future<JsonMap> setCandidatesPlayer({
     required String projectRoot,
     required List<String> candidateIds,
@@ -515,6 +528,8 @@ class EngineSession {
     String? outputDir,
     String? outputPath,
     List<String>? playerIds,
+    List<String>? tiers,
+    List<String>? tags,
     bool? includeUnassigned,
     String effect = 'none',
   }) {
@@ -522,6 +537,8 @@ class EngineSession {
       'project_root': projectRoot,
       ...?_optionalEntry('video_id', videoId),
       'mode': mode,
+      ...?_optionalEntry('tiers', tiers),
+      if (tiers != null) 'tags': tags,
       ...?_optionalEntry('output_dir', outputDir),
       ...?_optionalEntry('output_path', outputPath),
       ...?_optionalEntry('player_ids', playerIds),

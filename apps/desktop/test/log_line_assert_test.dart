@@ -57,6 +57,8 @@ void main() {
       await tester.pumpAndSettle();
 
       // 效果：默认 none，点「临门慢动作」。
+      await tester.tap(find.byType(ExpansionTile));
+      await tester.pumpAndSettle();
       final effect = find.byKey(const Key('export-effect-approach'));
       await tester.ensureVisible(effect);
       await tester.tap(effect);
@@ -73,7 +75,7 @@ void main() {
       expect(log, contains('[info] [export] 选择效果 approach'));
       expect(
         log,
-        contains('[info] [export] 球员过滤变化 选中=1 含未标记=false'),
+        contains('[info] [export] 导出筛选变化 档位=must 标签数=1 不限=false'),
       );
       // 反向：不记路径与球员名。
       expect(log, isNot(contains('/tmp/')));
@@ -189,13 +191,13 @@ ProjectState _exportState() => const ProjectState(
   candidates: [
     {
       'id': 'c1',
-      'default_start_ms': 0,
+      'tier':'must', 'default_start_ms': 0,
       'default_end_ms': 4000,
       'player_id': 'p1',
     },
     {
       'id': 'c2',
-      'default_start_ms': 5000,
+      'tier':'must', 'default_start_ms': 5000,
       'default_end_ms': 9000,
       'player_id': 'p2',
     },
