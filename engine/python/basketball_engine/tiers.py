@@ -76,8 +76,8 @@ def classify(evidence, mode='standard', rule_version=RULE_VERSION):
     return result('must', 'r2_net_motion')
 
 
-def calibrate(rows, mode, run_id):
-    """One replacement batch is one analysis; never pool old/reanalyzed runs."""
+def calibration_from_rows(rows):
+    """Calculate a baseline without changing evidence or persisting anything."""
     values = []
     for row in rows:
         evidence = evidence_dict(row.get('evidence_json'))
@@ -85,7 +85,12 @@ def calibrate(rows, mode, run_id):
         value = check.get('net_motion')
         if evidence.get('analysis_source') == 'refined' and check.get('status') == 'made' and finite(value):
             values.append(value)
-    calibration = dict(samples=len(values), median=median(values) if values else None)
+    return dict(samples=len(values), median=median(values) if values else None)
+
+
+def calibrate(rows, mode, run_id):
+    """One replacement batch is one analysis; never pool old/reanalyzed runs."""
+    calibration = calibration_from_rows(rows)
     result = []
     for row in rows:
         evidence = evidence_dict(row.get('evidence_json'))

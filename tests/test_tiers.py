@@ -296,3 +296,45 @@ def test_backup_includes_committed_wal_data(project):
         backup=store.root/'project.db.pre-tiers-v1.bak'
         with sqlite3.connect(backup.as_uri()+'?mode=ro&immutable=1',uri=True) as saved:
             assert saved.execute('SELECT note FROM candidate_reviews WHERE candidate_id="c1"').fetchone()[0]=='committed in WAL'
+
+
+@pytest.mark.parametrize('samples,expected', [(8, 'must'), (7, 'suspect')])
+def test_legacy_read_calibrates_in_memory_without_writing_database(project, samples, expected):
+    import hashlib
+    _, store, video, _, _ = project
+    # Start with already migrated schema, but real legacy evidence has no saved baseline.
+    with store.connect() as con:
+        con.execute('DELETE FROM candidate_reviews')
+        con.execute('DELETE FROM candidates')
+        for i in range(samples):
+            old = evidence()
+            old.pop('tier_calibration')
+            con.execute("""INSERT INTO candidates(id,video_id,event_time_ms,default_start_ms,default_end_ms,
+                review_start_ms,review_end_ms,detector_version,evidence_json,created_at,updated_at)
+                VALUES(?,?,?,0,2000,0,2000,'legacy',?,'a','a')""",(f'old{i}',video['id'],i*1000,json.dumps(old)))
+        con.execute("INSERT INTO candidate_reviews(candidate_id,status,reason,updated_at) VALUES('old0','excluded','rim_out','a')")
+    other = store.link_video({**video, 'id': 'other-video'})
+    with store.connect() as con:
+        con.execute("UPDATE candidates SET video_id=? WHERE event_time_ms>=4000", (other['id'],))
+    before = (store.db_path.stat().st_mtime_ns, hashlib.sha256(store.db_path.read_bytes()).hexdigest())
+    for _ in range(2):
+        rows = store.list_candidates(video['id'])
+        assert rows[0]['tier'] == 'excluded' and rows[0]['tier_source'] == 'user'
+        assert {r['tier'] for r in rows[1:]} == {expected}
+        assert all('tier_calibration' not in json.loads(r['evidence_json']) for r in rows)
+        assert (store.db_path.stat().st_mtime_ns, hashlib.sha256(store.db_path.read_bytes()).hexdigest()) == before
+
+
+@pytest.mark.parametrize('motion', [0, 3])
+def test_legacy_fallback_keeps_saved_calibration_and_zero_baseline_suspect(project, motion):
+    _, store, video, _, _ = project
+    store.replace_candidates(video['id'],[row(str(i),500+i*1000,evidence()) for i in range(8)])
+    with store.connect() as con:
+        for i in range(8):
+            old=evidence(rim_check=dict(status='made',rebound=False,net_motion=motion))
+            old.pop('tier_calibration')
+            if i==0: old['tier_calibration']={'samples':7,'median':10}
+            con.execute('UPDATE candidates SET evidence_json=? WHERE id=?',(json.dumps(old),str(i)))
+    rows=store.list_candidates()
+    assert rows[0]['tier_reason']=='missing_calibration'  # Saved baseline is never overwritten.
+    assert {c['tier'] for c in rows[1:]}=={'suspect' if motion==0 else 'must'}
