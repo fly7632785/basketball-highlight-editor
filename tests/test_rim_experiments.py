@@ -163,3 +163,41 @@ def test_service_passes_frozen_config_and_separates_detection_cache(tmp_path,mon
     assert len(calls)==3
     assert len({p for p,_ in calls})==3
     assert calls[-1][1]['track_mode']=='fable_stitch'
+    # Repair a cache produced by the old enabled-script serialization bug.
+    broken_path=Path(calls[0][0]);broken=json.loads(broken_path.read_text())
+    broken['results'][0]['frames']=16
+    broken_path.write_text(json.dumps(broken))
+    repaired=verify({})
+    assert len(calls)==4 and calls[-1][0]==calls[0][0]
+    assert any('cached raw frames missing' in line for line in repaired['logs'])
+    assert isinstance(json.loads(broken_path.read_text())['results'][0]['frames'],list)
+
+
+def test_enabled_detection_script_keeps_raw_frames_for_engine_rejudging(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    import cv2
+    import numpy as np
+    path=Path(__file__).resolve().parents[1]/'scripts/verify_rim_crossing.py'
+    spec=importlib.util.spec_from_file_location('rim_script_serialization',path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    video=tmp_path/'source.avi'
+    writer=cv2.VideoWriter(str(video),cv2.VideoWriter_fourcc(*'MJPG'),10,(64,64))
+    assert writer.isOpened()
+    for _ in range(20):writer.write(np.zeros((64,64,3),dtype=np.uint8))
+    writer.release()
+    class Detector:
+        def predict(self,crops,**kwargs):
+            return [SimpleNamespace(boxes=[],names={}) for _ in crops]
+    monkeypatch.setattr(module,'select_device',lambda _: 'cpu')
+    monkeypatch.setattr(module,'current_device',lambda: 'cpu')
+    monkeypatch.setattr(module,'load_yolo_model',lambda _:Detector())
+    inputs=[{'time':1,'rim':{'center_x':32,'rim_y':25,'width':26,'height':12}}]
+    candidates=tmp_path/'input.json';candidates.write_text(json.dumps({'candidates':inputs}))
+    output=tmp_path/'result.json'
+    module.main(SimpleNamespace(video=video,model=tmp_path/'unused.pt',candidates=candidates,output=output,conf=.05,batch=16,device='cpu',experiment_config='{"min_rim_width_px":24}'))
+    cached=json.loads(output.read_text())
+    assert isinstance(cached['results'][0]['frames'],list)
+    assert len(cached['results'][0]['frames'])==20
+    matches=[{'time':1}]
+    apply_rim_checks(matches,inputs,cached,config=ex.RimExperiments(min_rim_width_px=24))
+    assert matches[0]['rim_check']['frames']==20
+    assert matches[0]['rim_check']['reason']=='no_crossing'

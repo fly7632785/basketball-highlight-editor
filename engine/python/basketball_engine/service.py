@@ -2108,7 +2108,19 @@ class EngineService:
         output_path = run_root / f"rim_check_{key}.json"
         try:
             output = json.loads(output_path.read_text(encoding="utf-8"))
-            pipeline["cache_hits"] = pipeline.get("cache_hits", 0) + 1
+            cached_results = output.get("results", []) if isinstance(output, dict) else []
+            # Early experiment outputs accidentally replaced raw frames with a
+            # verdict's frame count. Such caches cannot be safely rejudged.
+            missing_raw = any(
+                isinstance(result, dict) and result.get("status") != "skipped"
+                and "frames" in result and not isinstance(result["frames"], list)
+                for result in cached_results
+            ) if isinstance(cached_results, list) else False
+            if missing_raw:
+                pipeline["logs"].append("verify_rim_crossing: cached raw frames missing; regenerating")
+                output = None
+            else:
+                pipeline["cache_hits"] = pipeline.get("cache_hits", 0) + 1
         except (OSError, ValueError):
             output = None
         if output is None:

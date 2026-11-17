@@ -208,7 +208,9 @@ def main(args):
         if config.is_default:
             results[index]["experiment"] = decision["experiment"]
         else:
-            results[index].update(decision)
+            # `frames` in a verdict is a count; the cache must retain the
+            # raw detection list so the engine can rejudge all experiments.
+            results[index].update({key: value for key, value in decision.items() if key != "frames"})
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
