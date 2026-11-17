@@ -432,13 +432,56 @@ class ProjectStore:
         return [str(row["source_path"]) for row in rows]
 
     def recent_context(self) -> tuple[Dict[str, Any], list[Dict[str, Any]]]:
-        """Read list-card metadata without entering the writable store lifecycle.
+        """Read committed list metadata without writing any source DB/sidecar.
 
-        immutable also prevents SQLite from creating/updating journal sidecars.
-        This is a checkpoint snapshot; committed WAL changes are read on open.
+        SQLite may update SHM even in mode=ro. Replay WAL only on a disposable
+        copy; if copying races a writer or fails, counts are explicitly unknown.
         """
-        with sqlite3.connect(self.db_path.as_uri() + "?mode=ro&immutable=1", uri=True,
-                             factory=_ClosingConnection) as connection:
+        try:
+            wal = Path(str(self.db_path) + "-wal")
+            if not wal.exists() or wal.stat().st_size == 0:
+                return self._recent_context(self.db_path, immutable=True)
+            files = [self.db_path, wal, Path(str(self.db_path) + "-shm")]
+
+            def signatures():
+                result = {}
+                for path in files:
+                    try:
+                        stat = path.stat()
+                    except FileNotFoundError:
+                        result[path.name] = None
+                    else:
+                        result[path.name] = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+                return result
+
+            before = signatures()
+            with tempfile.TemporaryDirectory(prefix="bhe-recent-") as directory:
+                snapshot = Path(directory) / self.db_path.name
+                for path in files:
+                    if before[path.name] is not None:
+                        shutil.copyfile(path, Path(directory) / path.name)
+                if signatures() != before:
+                    raise OSError("Recent-project snapshot changed while copying")
+                return self._recent_context(snapshot, immutable=False)
+        except (OSError, sqlite3.Error, ValueError):
+            # Main-file metadata is still useful, but none of its counts can be
+            # trusted after failing to read the committed WAL snapshot.
+            try:
+                context, _ = self._recent_context(self.db_path, immutable=True)
+            except (OSError, sqlite3.Error, ValueError):
+                context = {
+                    "database_path": str(self.db_path), "project_root": str(self.root),
+                    "project": {"name": self.root.name}, "videos": [], "video": None,
+                    "statistics": {key: None for key in (
+                        "candidate_count", "included_count", "goal_count", "excluded_count",
+                        "pending_count", "reviewed_count", "export_count")},
+                }
+            context["statistics"] = {key: None for key in context["statistics"]}
+            return context, []
+
+    def _recent_context(self, db_path: Path, *, immutable: bool) -> tuple[Dict[str, Any], list[Dict[str, Any]]]:
+        uri = db_path.as_uri() + ("?mode=ro&immutable=1" if immutable else "?mode=ro")
+        with sqlite3.connect(uri, uri=True, factory=_ClosingConnection) as connection:
             connection.row_factory = sqlite3.Row
             project_row = connection.execute("SELECT * FROM projects LIMIT 1").fetchone()
             if project_row is None:

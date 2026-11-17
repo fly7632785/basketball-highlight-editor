@@ -112,7 +112,7 @@ def test_recent_metadata_connection_is_sqlite_readonly(legacy, monkeypatch):
 
 
 def test_listing_live_wal_leaves_all_sidecars_unchanged(legacy):
-    # Listing reads the last checkpoint only; opening retains WAL-aware migration.
+    # Listing must include committed WAL without modifying any source sidecar.
     con = sqlite3.connect(legacy / 'project.db')
     try:
         con.execute('PRAGMA journal_mode=WAL')
@@ -120,8 +120,42 @@ def test_listing_live_wal_leaves_all_sidecars_unchanged(legacy):
         con.commit()
         before = inventory(legacy)
         item, = EngineService().handle('list_recent_projects', {'roots': [str(legacy)]})['projects']
-        assert item['project']['name'] == 'Legacy'
+        assert item['project']['name'] == 'Committed in WAL'
         assert inventory(legacy) == before
         assert not list(legacy.glob('*.bak'))
     finally:
         con.close()
+
+
+@pytest.mark.parametrize("failure", ["copy", "read", "race"])
+def test_unreadable_wal_counts_are_unknown_without_source_writes(legacy, monkeypatch, failure):
+    writer = sqlite3.connect(legacy / 'project.db')
+    try:
+        writer.execute('PRAGMA journal_mode=WAL')
+        writer.execute("UPDATE projects SET name='Committed in WAL'")
+        writer.commit()
+        before = inventory(legacy)
+        import shutil
+        copy = shutil.copyfile
+        read = ProjectStore._recent_context
+        def broken_copy(source, target):
+            if failure == 'copy':
+                raise OSError('Synthetic copy failure')
+            result = copy(source, target)
+            if failure == 'race' and str(source).endswith('-wal'):
+                writer.execute("UPDATE projects SET name='Concurrent commit'")
+                writer.commit()
+            return result
+        def broken_read(self, db_path, *, immutable):
+            if failure == 'read' and not immutable:
+                raise sqlite3.DatabaseError('Synthetic snapshot read failure')
+            return read(self, db_path, immutable=immutable)
+        monkeypatch.setattr(shutil, 'copyfile', broken_copy)
+        monkeypatch.setattr(ProjectStore, '_recent_context', broken_read)
+        item, = EngineService().handle('list_recent_projects', {'roots': [str(legacy)]})['projects']
+        assert all(value is None for value in item['statistics'].values())
+        if failure != 'race':
+            assert inventory(legacy) == before
+        assert not list(legacy.glob('*.bak'))
+    finally:
+        writer.close()
