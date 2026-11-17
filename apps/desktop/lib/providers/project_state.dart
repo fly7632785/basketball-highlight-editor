@@ -2463,8 +2463,12 @@ class ProjectNotifier extends Notifier<ProjectState> {
     );
     if ((pending == null || pending.generation != generation) &&
         previous != null &&
+        // An automatic conclusion is not a saved human decision, even when
+        // its legacy status already matches the requested status.
+        previous['tier_source'] != 'algorithm' &&
+        previous['review_reason'] != 'auto_rim_check' &&
         previous['review_status']?.toString() == engineStatus &&
-        (reason == null || previous['review_reason']?.toString() == reason)) {
+        previous['review_reason']?.toString() == reason) {
       return Future<bool>.value(true);
     }
     final result = Completer<bool>();
