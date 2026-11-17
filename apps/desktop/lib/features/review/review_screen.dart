@@ -459,6 +459,11 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   }) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.escape &&
+        _videoController.closeEvidenceDetails()) {
+      return KeyEventResult.handled;
+    }
+
     final keyboard = HardwareKeyboard.instance;
     final commandPressed = keyboard.isControlPressed || keyboard.isMetaPressed;
     // System combos such as Cmd+C must not trigger single-key review actions.
@@ -1076,6 +1081,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                         children: [
                           Expanded(child: video),
                           VerticalDivider(
+                            key: const Key('review-queue-divider'),
                             width: 1,
                             thickness: 1,
                             color: AppColors.of(context).border,
@@ -1733,6 +1739,37 @@ class _VideoPane extends ConsumerStatefulWidget {
 }
 
 class _VideoPaneState extends ConsumerState<_VideoPane> {
+  bool _detailsExpanded = false;
+  bool _detailsUserChanged = false;
+  Future<void> _loadEvidenceDetails() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (mounted && !_detailsUserChanged) {
+        setState(
+          () => _detailsExpanded =
+              prefs.getBool(reviewEvidenceDetailsPrefsKey) ?? false,
+        );
+      }
+    } catch (error) {
+      appLog('warn', 'review', '读取证据详情展开状态失败: $error');
+    }
+  }
+
+  void _setEvidenceDetails(bool expanded) {
+    _detailsUserChanged = true;
+    setState(() => _detailsExpanded = expanded);
+    unawaited(_saveEvidenceDetails(expanded));
+  }
+
+  Future<void> _saveEvidenceDetails(bool expanded) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(reviewEvidenceDetailsPrefsKey, expanded);
+    } catch (error) {
+      appLog('warn', 'review', '保存证据详情展开状态失败: $error');
+    }
+  }
+
   late final _playback = ref.read(playbackCoordinatorProvider);
   bool _routeActive = true;
   bool get _mayPlay => _routeActive && !_playback.dialogActive;
@@ -1781,6 +1818,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
   void initState() {
     super.initState();
     widget.controller._attach(this);
+    unawaited(_loadEvidenceDetails());
     _clipEndMs = reviewTimelineBounds(
       isOriginalVideo: widget.isOriginalVideo,
       candidate: widget.candidate,
@@ -2322,6 +2360,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
                     }
                   : null,
               child: Container(
+                key: const Key('review-video-area'),
                 width: double.infinity,
                 decoration: const BoxDecoration(color: Colors.black),
                 clipBehavior: Clip.hardEdge,
@@ -2405,6 +2444,33 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
                           onPressed: widget.onToggleVideoSource!,
                         ),
                       ),
+                    if (_detailsExpanded && widget.candidate != null)
+                      Positioned(
+                        top: 12,
+                        left: 16,
+                        right: 16,
+                        bottom: 12,
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: Material(
+                            key: const Key('candidate-evidence-overlay'),
+                            color: c.surface.withValues(alpha: .96),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(color: c.borderStrong),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: SingleChildScrollView(
+                              child: Padding(
+                                padding: const EdgeInsets.all(14),
+                                child: _CandidateEvidenceMetrics(
+                                  candidate: widget.candidate!,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     if (widget.candidate != null && _showAnnotationHint)
                       const Positioned(
                         top: Spacing.sm,
@@ -2450,6 +2516,8 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
           if (widget.candidate != null)
             _CandidateInspector(
               candidate: widget.candidate!,
+              detailsExpanded: _detailsExpanded,
+              onToggleDetails: () => _setEvidenceDetails(!_detailsExpanded),
               excluded: widget.excluded,
               busy: widget.reviewLocked,
               players: widget.players,
@@ -2472,6 +2540,13 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
 
 class _VideoPaneController {
   _VideoPaneState? _state;
+
+  bool closeEvidenceDetails() {
+    final state = _state;
+    if (state == null || !state._detailsExpanded) return false;
+    state._setEvidenceDetails(false);
+    return true;
+  }
 
   int get currentPositionMs => _state?.currentPositionMs ?? 0;
 
@@ -3432,113 +3507,6 @@ class _VideoControlsState extends State<_VideoControls> {
 const reviewEvidenceDetailsPrefsKey =
     'courtside.review_evidence_details_expanded';
 
-class _CandidateEvidenceDetails extends StatefulWidget {
-  const _CandidateEvidenceDetails({
-    required this.tier,
-    required this.reason,
-    required this.details,
-  });
-  final String tier, reason;
-  final Widget details;
-  @override
-  State<_CandidateEvidenceDetails> createState() =>
-      _CandidateEvidenceDetailsState();
-}
-
-class _CandidateEvidenceDetailsState extends State<_CandidateEvidenceDetails> {
-  bool _expanded = false;
-  bool _userChanged = false;
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_load());
-  }
-
-  Future<void> _load() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      if (mounted && !_userChanged) {
-        setState(
-          () =>
-              _expanded = prefs.getBool(reviewEvidenceDetailsPrefsKey) ?? false,
-        );
-      }
-    } catch (error) {
-      appLog('warn', 'review', '读取证据详情展开状态失败: $error');
-    }
-  }
-
-  Future<void> _toggle() async {
-    _userChanged = true;
-    setState(() => _expanded = !_expanded);
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(reviewEvidenceDetailsPrefsKey, _expanded);
-    } catch (error) {
-      appLog('warn', 'review', '保存证据详情展开状态失败: $error');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final color = switch (widget.tier) {
-      'must' => c.goal,
-      'excluded' => c.error,
-      _ => c.warning,
-    };
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          key: const Key('candidate-evidence-summary'),
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: .14),
-                borderRadius: BorderRadius.circular(CsRadius.xs),
-              ),
-              child: Text(
-                context.bheText(tierLabels[widget.tier]!),
-                style: Theme.of(
-                  context,
-                ).textTheme.labelSmall?.copyWith(color: color),
-              ),
-            ),
-            const SizedBox(width: Spacing.sm),
-            Expanded(
-              child: Text(
-                context.bheText(widget.reason),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(
-                  context,
-                ).textTheme.labelSmall?.copyWith(color: c.textSecondary),
-              ),
-            ),
-            TextButton.icon(
-              key: const Key('candidate-evidence-details-toggle'),
-              onPressed: _toggle,
-              icon: Icon(
-                _expanded ? Icons.expand_less : Icons.expand_more,
-                size: 16,
-              ),
-              label: Text(context.bheText('详情')),
-              style: TextButton.styleFrom(
-                foregroundColor: c.textSecondary,
-                visualDensity: VisualDensity.compact,
-              ),
-            ),
-          ],
-        ),
-        if (_expanded) ...[const SizedBox(height: Spacing.sm), widget.details],
-      ],
-    );
-  }
-}
-
 String _primaryTierReason(
   Map<String, dynamic> candidate,
   Map<String, dynamic> evidence,
@@ -3558,13 +3526,45 @@ String _primaryTierReason(
     'seen_miss': '篮筐复核：没进',
     'unsupported_rule_version': '疑似：规则版本待确认',
   };
+  final check = _candidateEvidence(candidate)['rim_check'];
+  if (candidateTier(candidate) == 'must') {
+    if (candidate['tier_reason'] == 'user_goal' &&
+        (check is! Map || check['status'] != 'made')) {
+      return '人工确认：进';
+    }
+    if (check is Map && check['status'] == 'made') {
+      final net = candidate['tier_reason'] == 'r2_net_motion'
+          ? '篮网明显摆动'
+          : '已确认穿筐';
+      return '篮筐复核：进 · $net，球从网底落下';
+    }
+  }
+  if (check is Map &&
+      (check['status'] == 'rejected' ||
+          check['status'] == 'unsure' ||
+          check['status'] == 'skipped') &&
+      candidate['tier_reason'] != 'user_excluded') {
+    final reason = const {
+      'no_crossing': '没有看到球穿过篮筐',
+      'no_entry': '球未从篮筐上方进入',
+      'off_center': '球偏离篮筐口',
+      'exit_off_center': '球从篮网侧面出来',
+      'rebound': '球在篮筐附近弹起',
+      'no_exit': '没看清球从网底落下',
+      'not_occluded': '球从篮筐前方经过',
+      'small_rim': '篮筐太小，请人工确认',
+      'net_still': '球落下时篮网没有动',
+    }[check['reason']];
+    if (reason != null) {
+      return '${check['status'] == 'rejected' ? '篮筐复核未通过' : '篮筐复核待确认'} · $reason';
+    }
+  }
   final reason = reasons[candidate['tier_reason']];
   if (reason != null) return reason;
   // Legacy/UI fixtures without an engine tier reason must not invent certainty.
   if (candidate['tier_source'] == 'user') {
     return candidateTier(candidate) == 'must' ? '人工确认：进' : '人工确认：排除';
   }
-  final check = evidence['rim_check'];
   return switch (check is Map ? check['status'] : null) {
     'made' => '篮筐复核：进 · 待确认分档',
     'rejected' => '篮筐复核：未通过',
@@ -3572,39 +3572,9 @@ String _primaryTierReason(
   };
 }
 
-class _CandidateInspector extends StatelessWidget {
-  const _CandidateInspector({
-    required this.candidate,
-    required this.excluded,
-    required this.busy,
-    required this.players,
-    required this.playerColor,
-    required this.onInclude,
-    required this.onExclude,
-    required this.onSetPlayer,
-    required this.onCreatePlayer,
-    required this.onDeletePlayer,
-    required this.onEditRange,
-    required this.onEditNote,
-    required this.onUndo,
-    required this.onSkip,
-  });
-
+class _CandidateEvidenceMetrics extends StatelessWidget {
+  const _CandidateEvidenceMetrics({required this.candidate});
   final Map<String, dynamic> candidate;
-  final bool excluded;
-  final bool busy;
-  final List<Map<String, dynamic>> players;
-  final Color playerColor;
-  final VoidCallback onInclude;
-  final VoidCallback onExclude;
-  final ValueChanged<String?> onSetPlayer;
-  final VoidCallback onCreatePlayer;
-  final Future<void> Function(String, String) onDeletePlayer;
-  final VoidCallback? onEditRange;
-  final VoidCallback? onEditNote;
-  final VoidCallback onUndo;
-  final VoidCallback onSkip;
-
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
@@ -3662,6 +3632,206 @@ class _CandidateInspector extends StatelessWidget {
       ['review_reason_suggestion', 'primary'],
       ['review_reason'],
     ]);
+    final crossingUnknown =
+        isCoarse && crossingState == _CrossingDisplay.unknown;
+    final rimCheck = _rimCheckDisplay(c, evidence['rim_check']);
+    final metricDetails = IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            flex: 10,
+            child: _InspectorMetricRow(
+              label: l10n?.reviewScores ?? '评分',
+              cells: [
+                _InspectorMetric(
+                  label: context.bheText('候选置信度'),
+                  value: context.bheText(
+                    _candidateConfidence(candidate, evidence) ?? '—',
+                  ),
+                  color: c.textPrimary,
+                  tooltip: context.bheText('综合轨迹穿框、篮网运动和反弹等信号得出，只用于排序和辅助审核。'),
+                ),
+                _InspectorMetric(
+                  label: context.bheText('轨迹评分'),
+                  value: _formatScore(trajectoryScore),
+                  color: c.textPrimary,
+                  ratio: trajectoryScore is num
+                      ? trajectoryScore.toDouble()
+                      : null,
+                ),
+                _InspectorMetric(
+                  label: context.bheText('预测评分'),
+                  value: context.bheText(
+                    _formatPredictionScore(
+                      prediction,
+                      isCoarse: isCoarse,
+                      isManual: isManual,
+                    ),
+                  ),
+                  color: prediction is num ? c.textPrimary : c.textTertiary,
+                  ratio: prediction is num ? prediction.toDouble() : null,
+                  tooltip: context.bheText(
+                    _predictionScoreTooltip(
+                      prediction,
+                      isCoarse: isCoarse,
+                      isManual: isManual,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          VerticalDivider(width: 1, color: c.border),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 12,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _InspectorMetricRow(
+                  label: l10n?.reviewSignals ?? '信号',
+                  cells: [
+                    _InspectorMetric(
+                      label: context.bheText('轨迹穿框'),
+                      value: crossingUnknown
+                          ? context.bheText('粗扫通过')
+                          : context.bheText(_formatCrossing(crossingState)),
+                      color: crossingUnknown
+                          ? c.warning
+                          : _crossingColor(c, crossingState),
+                      dot: true,
+                      tooltip: context.bheText(
+                        '判断篮球轨迹是否从篮筐上方进入，并在篮筐横向范围内向下穿过。',
+                      ),
+                    ),
+                    _InspectorMetric(
+                      label: context.bheText('篮网运动'),
+                      value: net == null && isCoarse
+                          ? context.bheText('未计算')
+                          : context.bheText(_formatSignal(net)),
+                      color: net == null && isCoarse
+                          ? c.textTertiary
+                          : _signalColor(c, net),
+                      dot: true,
+                      tooltip: context.bheText(
+                        '检测白色篮网区域在球经过后的运动强度；光线、球员遮挡会影响该信号。',
+                      ),
+                    ),
+                    _InspectorMetric(
+                      label: context.bheText('反弹判断'),
+                      value: rebound == null && isCoarse
+                          ? context.bheText('未计算')
+                          : context.bheText(_formatRebound(rebound)),
+                      color: rebound == null && isCoarse
+                          ? c.textTertiary
+                          : _reboundColor(c, rebound),
+                      dot: true,
+                      tooltip: context.bheText('检测篮球撞框后向上或向外回弹；出现反弹通常降低进球可能性。'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                KeyedSubtree(
+                  key: const Key('inspector-rim-check'),
+                  child: _InspectorMetric(
+                    label: context.bheText('篮筐复核'),
+                    value: context.bheText(rimCheck?.label ?? '未复核'),
+                    color: rimCheck?.color ?? c.textTertiary,
+                    tooltip: context.bheText(
+                      '按原视频逐帧放大篮筐区域，确认球从篮筐上方进入、被篮网遮挡并从网底落下。只有看清球没进的候选会自动排除；没看清的保留并标为未确认，都可以随时修改。',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          VerticalDivider(width: 1, color: c.border),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 9,
+            child: Tooltip(
+              message: context.bheText('当前候选被纳入审核列表的主要原因。'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    context.bheText('系统说明'),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: c.textTertiary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    context.bheText(_reviewReasonLabel(reason)),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    context.bheText('各项信号只用于排序和辅助审核。'),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: c.textTertiary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return metricDetails;
+  }
+}
+
+class _CandidateInspector extends StatelessWidget {
+  const _CandidateInspector({
+    required this.candidate,
+    required this.detailsExpanded,
+    required this.onToggleDetails,
+    required this.excluded,
+    required this.busy,
+    required this.players,
+    required this.playerColor,
+    required this.onInclude,
+    required this.onExclude,
+    required this.onSetPlayer,
+    required this.onCreatePlayer,
+    required this.onDeletePlayer,
+    required this.onEditRange,
+    required this.onEditNote,
+    required this.onUndo,
+    required this.onSkip,
+  });
+
+  final Map<String, dynamic> candidate;
+  final bool detailsExpanded;
+  final VoidCallback onToggleDetails;
+  final bool excluded;
+  final bool busy;
+  final List<Map<String, dynamic>> players;
+  final Color playerColor;
+  final VoidCallback onInclude;
+  final VoidCallback onExclude;
+  final ValueChanged<String?> onSetPlayer;
+  final VoidCallback onCreatePlayer;
+  final Future<void> Function(String, String) onDeletePlayer;
+  final VoidCallback? onEditRange;
+  final VoidCallback? onEditNote;
+  final VoidCallback onUndo;
+  final VoidCallback onSkip;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final theme = Theme.of(context);
+    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+    final evidence = _candidateEvidence(candidate);
     final clip = context.bheText(
       '片段 ${_formatMs(_clipStart(candidate))} - ${_formatMs(_clipEnd(candidate))} · '
       '时长 ${_formatClipDuration(_clipEnd(candidate) - _clipStart(candidate))}',
@@ -3672,254 +3842,139 @@ class _CandidateInspector extends StatelessWidget {
       fontFeatures: const [FontFeature.tabularFigures()],
     );
 
+    final tier = candidateTier(candidate);
+    final tierColor = tier == 'must'
+        ? c.goal
+        : tier == 'excluded'
+        ? c.excluded
+        : c.warning;
     final summary = Column(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
       children: [
         Row(
           children: [
             Flexible(
               child: Text(
-                _candidateSegment(candidate) > 0
-                    ? '${context.bheText('第 ${_candidateSegment(candidate)} 段')} · ${_formatMs(_candidateTime(candidate))}'
-                    : context.bheText(
-                        '候选 ${_formatMs(_candidateTime(candidate))}',
-                      ),
+                context.bheText(
+                  _candidateSegment(candidate) > 0
+                      ? '第 ${_candidateSegment(candidate)} 段 · ${_formatMs(_candidateTime(candidate))}'
+                      : '候选 ${_formatMs(_candidateTime(candidate))}',
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.w600,
-                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(clip, maxLines: 1, overflow: TextOverflow.ellipsis, style: mono),
-        if (note.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Icon(
-                Icons.sticky_note_2_outlined,
-                size: 13,
-                color: c.textTertiary,
+            const SizedBox(width: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: c.surface3,
+                borderRadius: BorderRadius.circular(12),
               ),
-              const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  note,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: c.textSecondary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            KeyedSubtree(
-              key: _reviewGuideTagKey,
-              child: _PlayerChip(
-                key: const ValueKey('inspector-player-chip'),
-                name: candidate['player_name']?.toString(),
-                candidate: candidate,
-                color: playerColor,
-                players: players,
-                onSelected: onSetPlayer,
-                onCreate: onCreatePlayer,
-                onDelete: onDeletePlayer,
-              ),
-            ),
-            KeyedSubtree(
-              key: _reviewGuideRangeKey,
-              child: Tooltip(
-                message: context.bheText('调整片段范围'),
-                child: _InspectorAction(
-                  icon: Icons.tune_rounded,
-                  label: l10n?.reviewAdjustRange ?? '调整范围',
-                  onPressed: onEditRange,
-                ),
-              ),
-            ),
-            Tooltip(
-              message: context.bheText('编辑备注'),
-              child: _InspectorAction(
-                icon: Icons.edit_outlined,
-                label: l10n?.reviewNote ?? '备注',
-                onPressed: onEditNote,
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-
-    final crossingUnknown =
-        isCoarse && crossingState == _CrossingDisplay.unknown;
-    final rimCheck = _rimCheckDisplay(c, evidence['rim_check']);
-    final metricDetails = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _InspectorMetricRow(
-          label: l10n?.reviewScores ?? '评分',
-          cells: [
-            _InspectorMetric(
-              label: context.bheText('候选置信度'),
-              value: context.bheText(
-                _candidateConfidence(candidate, evidence) ?? '—',
-              ),
-              color: c.textPrimary,
-              tooltip: context.bheText('综合轨迹穿框、篮网运动和反弹等信号得出，只用于排序和辅助审核。'),
-            ),
-            _InspectorMetric(
-              label: context.bheText('轨迹评分'),
-              value: _formatScore(trajectoryScore),
-              color: c.textPrimary,
-              ratio: trajectoryScore is num ? trajectoryScore.toDouble() : null,
-            ),
-            _InspectorMetric(
-              label: context.bheText('预测评分'),
-              value: context.bheText(
-                _formatPredictionScore(
-                  prediction,
-                  isCoarse: isCoarse,
-                  isManual: isManual,
-                ),
-              ),
-              color: prediction is num ? c.textPrimary : c.textTertiary,
-              ratio: prediction is num ? prediction.toDouble() : null,
-              tooltip: context.bheText(
-                _predictionScoreTooltip(
-                  prediction,
-                  isCoarse: isCoarse,
-                  isManual: isManual,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        _InspectorMetricRow(
-          label: l10n?.reviewSignals ?? '信号',
-          cells: [
-            _InspectorMetric(
-              label: context.bheText('轨迹穿框'),
-              value: crossingUnknown
-                  ? context.bheText('粗扫通过')
-                  : context.bheText(_formatCrossing(crossingState)),
-              color: crossingUnknown
-                  ? c.warning
-                  : _crossingColor(c, crossingState),
-              dot: true,
-              tooltip: context.bheText('判断篮球轨迹是否从篮筐上方进入，并在篮筐横向范围内向下穿过。'),
-            ),
-            _InspectorMetric(
-              label: context.bheText('篮网运动'),
-              value: net == null && isCoarse
-                  ? context.bheText('未计算')
-                  : context.bheText(_formatSignal(net)),
-              color: net == null && isCoarse
-                  ? c.textTertiary
-                  : _signalColor(c, net),
-              dot: true,
-              tooltip: context.bheText('检测白色篮网区域在球经过后的运动强度；光线、球员遮挡会影响该信号。'),
-            ),
-            _InspectorMetric(
-              label: context.bheText('反弹判断'),
-              value: rebound == null && isCoarse
-                  ? context.bheText('未计算')
-                  : context.bheText(_formatRebound(rebound)),
-              color: rebound == null && isCoarse
-                  ? c.textTertiary
-                  : _reboundColor(c, rebound),
-              dot: true,
-              tooltip: context.bheText('检测篮球撞框后向上或向外回弹；出现反弹通常降低进球可能性。'),
-            ),
-          ],
-        ),
-        if (rimCheck != null) ...[
-          const SizedBox(height: 10),
-          Tooltip(
-            message: context.bheText(
-              '按原视频逐帧放大篮筐区域，确认球从篮筐上方进入、被篮网遮挡并从网底落下。只有看清球没进的候选会自动排除；没看清的保留并标为未确认，都可以随时修改。',
-            ),
-            child: Row(
-              key: const Key('inspector-rim-check'),
-              children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: rimCheck.color,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  context.bheText('篮筐复核'),
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: c.textTertiary,
-                  ),
-                ),
-                const SizedBox(width: Spacing.xs),
-                Expanded(
-                  child: Text(
-                    context.bheText(rimCheck.label),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: rimCheck.color,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: tierColor,
+                      shape: BoxShape.circle,
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 6),
+                  Text(
+                    context.bheText(tierLabels[tier]!),
+                    style: theme.textTheme.labelSmall,
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
-        const SizedBox(height: 10),
-        Tooltip(
-          message: context.bheText('当前候选被纳入审核列表的主要原因。'),
-          child: Row(
-            children: [
-              Icon(Icons.info_outline, size: 13, color: c.textTertiary),
-              const SizedBox(width: 4),
-              Text(
-                context.bheText('系统说明'),
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: c.textTertiary,
+          ],
+        ),
+        Text(clip, maxLines: 1, overflow: TextOverflow.ellipsis, style: mono),
+        Row(
+          key: const Key('candidate-evidence-summary'),
+          children: [
+            Icon(
+              tier == 'must' ? Icons.check_circle_outline : Icons.info_outline,
+              size: 16,
+              color: tier == 'must' ? c.goal : c.textSecondary,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                context.bheText(_primaryTierReason(candidate, evidence)),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: c.textSecondary,
                 ),
               ),
-              const SizedBox(width: Spacing.xs),
-              Expanded(
-                child: Text(
-                  context.bheText(_reviewReasonLabel(reason)),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: c.textSecondary,
+            ),
+          ],
+        ),
+        if (note.isNotEmpty)
+          Text(
+            note,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall,
+          ),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              KeyedSubtree(
+                key: _reviewGuideTagKey,
+                child: _PlayerChip(
+                  key: const ValueKey('inspector-player-chip'),
+                  name: candidate['player_name']?.toString(),
+                  candidate: candidate,
+                  color: playerColor,
+                  players: players,
+                  onSelected: onSetPlayer,
+                  onCreate: onCreatePlayer,
+                  onDelete: onDeletePlayer,
+                ),
+              ),
+              KeyedSubtree(
+                key: _reviewGuideRangeKey,
+                child: Tooltip(
+                  message: context.bheText('调整片段范围'),
+                  child: _InspectorAction(
+                    icon: Icons.tune_rounded,
+                    label: l10n?.reviewAdjustRange ?? '调整范围',
+                    onPressed: onEditRange,
                   ),
                 ),
+              ),
+              Tooltip(
+                message: context.bheText('编辑备注'),
+                child: _InspectorAction(
+                  icon: Icons.edit_outlined,
+                  label: l10n?.reviewNote ?? '备注',
+                  onPressed: onEditNote,
+                ),
+              ),
+              TextButton.icon(
+                key: const Key('candidate-evidence-details-toggle'),
+                onPressed: onToggleDetails,
+                icon: Icon(
+                  detailsExpanded ? Icons.expand_less : Icons.info_outline,
+                  size: 15,
+                ),
+                label: Text(context.bheText('依据详情')),
               ),
             ],
           ),
         ),
       ],
-    );
-
-    final metrics = _CandidateEvidenceDetails(
-      tier: candidateTier(candidate),
-      reason: _primaryTierReason(candidate, evidence),
-      details: metricDetails,
     );
 
     final keep = _InspectorDecision(
@@ -3942,14 +3997,23 @@ class _CandidateInspector extends StatelessWidget {
     );
     final undo = Tooltip(
       message: context.bheText('撤销上一次审核 (Cmd/Ctrl+Z)'),
-      child: TextButton.icon(
+      child: OutlinedButton.icon(
+        key: const Key('inspector-undo'),
         onPressed: busy ? null : onUndo,
         icon: const Icon(Icons.undo_rounded, size: 15),
-        label: Text(l10n?.reviewUndoLast ?? '撤销上一步'),
-        style: TextButton.styleFrom(
-          foregroundColor: c.textSecondary,
-          visualDensity: VisualDensity.compact,
+        label: Text(
+          l10n?.reviewUndoLast ?? '撤销上一步',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
+      ),
+    );
+    final skip = Tooltip(
+      message: context.bheText('跳过 (S)'),
+      child: OutlinedButton(
+        key: const Key('inspector-skip'),
+        onPressed: busy ? null : onSkip,
+        child: Text(context.bheText('跳过')),
       ),
     );
 
@@ -3966,58 +4030,59 @@ class _CandidateInspector extends StatelessWidget {
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            if (constraints.maxWidth < 680) {
-              return Column(
+            final bodyWidth = constraints.maxWidth < 520
+                ? 600.0
+                : constraints.maxWidth;
+            final actionsWidth = (bodyWidth * .42).clamp(180.0, 300.0);
+            final body = SizedBox(
+              height: note.isEmpty ? 132 : 150,
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  summary,
-                  const SizedBox(height: 12),
-                  metrics,
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      SizedBox(width: 228, child: keep),
-                      SizedBox(width: 228, child: exclude),
-                      undo,
-                      TextButton(
-                        onPressed: busy ? null : onSkip,
-                        child: Text(context.bheText('跳过 S')),
-                      ),
-                    ],
+                  Expanded(child: summary),
+                  const SizedBox(width: 16),
+                  VerticalDivider(width: 1, thickness: 1, color: c.border),
+                  const SizedBox(width: 16),
+                  SizedBox(
+                    width: actionsWidth,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(child: keep),
+                            const SizedBox(width: 8),
+                            Expanded(child: exclude),
+                          ],
+                        ),
+                        Row(
+                          children: [
+                            Expanded(child: skip),
+                            const SizedBox(width: 8),
+                            Expanded(child: undo),
+                          ],
+                        ),
+                        Text(
+                          context.bheText('C 保留 · X 排除 · S 跳过 · ⌘Z 撤销'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: c.textTertiary,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
-              );
-            }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(flex: 10, child: summary),
-                const SizedBox(width: 20),
-                Expanded(flex: 14, child: metrics),
-                const SizedBox(width: 20),
-                SizedBox(
-                  width: 228,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      keep,
-                      const SizedBox(height: Spacing.sm),
-                      exclude,
-                      const SizedBox(height: 4),
-                      undo,
-                      TextButton(
-                        onPressed: busy ? null : onSkip,
-                        child: Text(context.bheText('跳过 S')),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             );
+            return constraints.maxWidth < 520
+                ? SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(width: bodyWidth, child: body),
+                  )
+                : body;
           },
         ),
       ),
@@ -4063,25 +4128,17 @@ class _InspectorMetricRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return Row(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          width: 40,
-          child: Padding(
-            padding: const EdgeInsets.only(top: 1),
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: c.textTertiary, fontSize: 11),
-            ),
+        Text(label, style: TextStyle(color: c.textTertiary, fontSize: 11)),
+        const SizedBox(height: 6),
+        for (final cell in cells)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: cell,
           ),
-        ),
-        for (var index = 0; index < cells.length; index++) ...[
-          if (index > 0) const SizedBox(width: 12),
-          Expanded(child: cells[index]),
-        ],
       ],
     );
   }
@@ -4118,48 +4175,56 @@ class _InspectorMetric extends StatelessWidget {
     final empty = value == '—' || value == '未计算';
     final bar = ratio;
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        tooltip == null
-            ? labelText
-            : Tooltip(message: tooltip, child: labelText),
-        const SizedBox(height: 3),
         Row(
           children: [
-            if (dot && !empty) ...[
-              Container(
-                width: 7,
-                height: 7,
-                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 5),
-            ],
+            Expanded(
+              child: tooltip == null
+                  ? labelText
+                  : Tooltip(message: tooltip, child: labelText),
+            ),
+            const SizedBox(width: 6),
             Flexible(
-              child: Text(
-                empty ? '○ $value' : value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 12,
-                  fontWeight: empty ? FontWeight.w400 : FontWeight.w600,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (dot && !empty) ...[
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                  ],
+                  Flexible(
+                    child: Text(
+                      empty ? '○ $value' : value,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 12,
+                        fontWeight: empty ? FontWeight.w400 : FontWeight.w600,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
         if (bar != null) ...[
-          const SizedBox(height: 4),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: LinearProgressIndicator(
-              value: bar.clamp(0.0, 1.0),
-              minHeight: 3,
-              backgroundColor: c.surface3,
-              color: c.data,
-            ),
+          const SizedBox(height: 3),
+          LinearProgressIndicator(
+            value: bar.clamp(0.0, 1.0),
+            minHeight: 2,
+            backgroundColor: c.surface3,
+            color: c.data,
           ),
         ],
       ],
@@ -4189,55 +4254,44 @@ class _InspectorDecision extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final foreground = active ? color : c.textSecondary;
-    return Semantics(
-      button: true,
-      selected: active,
-      child: Material(
-        color: active ? color.withValues(alpha: 0.14) : c.surface3,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(CsRadius.md),
-          side: BorderSide(
-            color: active ? color.withValues(alpha: 0.5) : c.border,
+    return Tooltip(
+      message: '$label ($shortcut)',
+      child: Semantics(
+        button: true,
+        selected: active,
+        child: Material(
+          color: active ? color.withValues(alpha: 0.14) : c.surface3,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(CsRadius.md),
+            side: BorderSide(
+              color: active ? color.withValues(alpha: 0.5) : c.border,
+            ),
           ),
-        ),
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(CsRadius.md),
-          child: SizedBox(
-            height: 44,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                children: [
-                  Icon(icon, size: 17, color: foreground),
-                  const SizedBox(width: Spacing.sm),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: foreground,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: BorderRadius.circular(CsRadius.md),
+            child: SizedBox(
+              height: 44,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  children: [
+                    Icon(icon, size: 17, color: foreground),
+                    const SizedBox(width: Spacing.sm),
+                    Expanded(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: foreground,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
                         ),
-                        Text(
-                          shortcut,
-                          maxLines: 1,
-                          style: TextStyle(
-                            color: c.textSecondary,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -5370,6 +5424,17 @@ class _CandidatePanel extends StatelessWidget {
               ],
             ),
           ),
+          KeyedSubtree(
+            key: _reviewGuideFilterKey,
+            child: _StatusSegments(
+              value: filter,
+              total: totalCount,
+              included: includedCount,
+              candidates: allCandidates,
+              onChanged: onFilterChanged,
+            ),
+          ),
+          const SizedBox(height: Spacing.sm),
           if (totalCount > 0) ...[
             const SizedBox(height: 2),
             LinearProgressIndicator(
@@ -5393,40 +5458,106 @@ class _CandidatePanel extends StatelessWidget {
             ),
           ],
           const SizedBox(height: Spacing.sm),
-          KeyedSubtree(
-            key: _reviewGuideFilterKey,
-            child: _StatusSegments(
-              value: filter,
-              total: totalCount,
-              included: includedCount,
-              candidates: allCandidates,
-              onChanged: onFilterChanged,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: _PlayerTagChips(
+                  value: playerFilter,
+                  candidates: statusCandidates,
+                  players: players,
+                  compact: true,
+                  onChanged: onPlayerFilterChanged,
+                ),
+              ),
+              const SizedBox(width: 4),
+              MenuAnchor(
+                menuChildren: [
+                  SizedBox(
+                    width: 320,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Builder(
+                        builder: (menuContext) => SingleChildScrollView(
+                          primary: false,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                context.bheText('标签 +${players.length}'),
+                                style: theme.textTheme.labelMedium,
+                              ),
+                              const SizedBox(height: 8),
+                              _PlayerTagChips(
+                                value: playerFilter,
+                                candidates: statusCandidates,
+                                players: players,
+                                advanced: true,
+                                onChanged: (value) {
+                                  MenuController.maybeOf(menuContext)?.close();
+                                  onPlayerFilterChanged(value);
+                                },
+                              ),
+                              if (statusCandidates.any(
+                                (c) => _rimCheckStatus(c) != null,
+                              )) ...[
+                                const Divider(),
+                                _RimCheckChips(
+                                  value: rimFilter,
+                                  candidates: statusCandidates,
+                                  onChanged: (value) {
+                                    MenuController.maybeOf(
+                                      menuContext,
+                                    )?.close();
+                                    onRimFilterChanged(value);
+                                  },
+                                ),
+                              ],
+                              if (segments.isNotEmpty) ...[
+                                const Divider(),
+                                _SegmentChips(
+                                  value: segmentFilter,
+                                  segments: segments,
+                                  candidates: statusCandidates,
+                                  onChanged: (value) {
+                                    MenuController.maybeOf(
+                                      menuContext,
+                                    )?.close();
+                                    onSegmentFilterChanged(value);
+                                  },
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                builder: (context, controller, child) => TextButton(
+                  key: const Key('review-tag-more'),
+                  onPressed: () => controller.isOpen
+                      ? controller.close()
+                      : controller.open(),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    minimumSize: const Size(0, 30),
+                    foregroundColor: c.textSecondary,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        context.bheText('更多筛选'),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      const Icon(Icons.expand_more, size: 15),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: Spacing.sm),
-          _PlayerTagChips(
-            value: playerFilter,
-            candidates: statusCandidates,
-            players: players,
-            onChanged: onPlayerFilterChanged,
-          ),
-          if (statusCandidates.any((c) => _rimCheckStatus(c) != null)) ...[
-            const SizedBox(height: Spacing.sm),
-            _RimCheckChips(
-              value: rimFilter,
-              candidates: statusCandidates,
-              onChanged: onRimFilterChanged,
-            ),
-          ],
-          if (segments.isNotEmpty) ...[
-            const SizedBox(height: Spacing.sm),
-            _SegmentChips(
-              value: segmentFilter,
-              segments: segments,
-              candidates: statusCandidates,
-              onChanged: onSegmentFilterChanged,
-            ),
-          ],
           if (exportReview != null)
             Consumer(
               builder: (context, ref, _) => Container(
@@ -5454,7 +5585,7 @@ class _CandidatePanel extends StatelessWidget {
                 ),
               ),
             ),
-          if (filter != 'all' ||
+          if (filter.startsWith('tiers:') ||
               playerFilter != 'all' ||
               rimFilter != 'all' ||
               segmentFilter != 'all') ...[
@@ -5663,11 +5794,30 @@ class _StatusSegments extends StatelessWidget {
                 onTap: () => onChanged(tier),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Column(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text(
-                        '${context.bheText(tierLabels[tier] ?? '全部')} ${tier == 'all' ? total : candidates.where((c) => candidateTier(c) == tier).length}',
-                        style: const TextStyle(fontSize: 12),
+                      if (tier != 'all')
+                        Container(
+                          width: 6,
+                          height: 6,
+                          margin: const EdgeInsets.only(right: 5),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: tier == 'must'
+                                ? c.goal
+                                : tier == 'excluded'
+                                ? c.excluded
+                                : c.warning,
+                          ),
+                        ),
+                      Flexible(
+                        child: Text(
+                          '${context.bheText(tierLabels[tier] ?? '全部')} ${tier == 'all' ? total : candidates.where((c) => candidateTier(c) == tier).length}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12),
+                        ),
                       ),
                     ],
                   ),
@@ -5938,8 +6088,11 @@ class _PlayerTagChips extends StatelessWidget {
     required this.candidates,
     required this.players,
     required this.onChanged,
+    this.compact = false,
+    this.advanced = false,
   });
 
+  final bool compact, advanced;
   final String value;
   final List<Map<String, dynamic>> candidates;
   final List<Map<String, dynamic>> players;
@@ -5978,6 +6131,33 @@ class _PlayerTagChips extends StatelessWidget {
           _playerColor(c, players[index]['id']?.toString(), index),
         ),
     ];
+    if (advanced) {
+      return Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final option in options.skip(3))
+            SizedBox(height: 30, child: _tagChip(context, c, option, counts)),
+        ],
+      );
+    }
+    if (compact) {
+      return SizedBox(
+        key: const Key('review-player-filter'),
+        height: 30,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (var i = 0; i < 3; i++) ...[
+                if (i > 0) const SizedBox(width: 4),
+                _tagChip(context, c, options[i], counts),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
     return Semantics(
       container: true,
       label: l10n?.reviewFilterPlayerTags ?? '筛选球员标签',
@@ -6198,7 +6378,7 @@ class _PlayerTagChips extends StatelessWidget {
           onTap: () => onChanged(key),
           customBorder: const StadiumBorder(),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
+            padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 10),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -6402,7 +6582,7 @@ class _CandidateRow extends StatelessWidget {
         : tierLabels[candidateTier(candidate)];
     final statusColor = candidateTier(candidate) == 'must'
         ? c.goal
-        : excluded
+        : candidateTier(candidate) == 'excluded'
         ? c.excluded
         : c.warning;
     return Opacity(
@@ -6470,28 +6650,6 @@ class _CandidateRow extends StatelessWidget {
                                 children: [
                                   Row(
                                     children: [
-                                      if (!_isReviewed(candidate)) ...[
-                                        Semantics(
-                                          label:
-                                              Localizations.of<
-                                                    BheLocalizations
-                                                  >(context, BheLocalizations)
-                                                  ?.reviewUnreviewed ??
-                                              '未审核',
-                                          child: Container(
-                                            key: ValueKey(
-                                              'unreviewed-${candidate['id']}',
-                                            ),
-                                            width: 7,
-                                            height: 7,
-                                            decoration: BoxDecoration(
-                                              color: c.data,
-                                              shape: BoxShape.circle,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                      ],
                                       Flexible(
                                         flex: 3,
                                         child: Text.rich(
@@ -6537,9 +6695,32 @@ class _CandidateRow extends StatelessWidget {
                                               ),
                                         ),
                                       ),
-                                      if (adjusted ||
-                                          overlapsPrevious ||
-                                          statusLabel != null) ...[
+                                      const SizedBox(width: 6),
+                                      Tooltip(
+                                        message: context.bheText(
+                                          statusLabel ??
+                                              tierLabels[candidateTier(
+                                                candidate,
+                                              )]!,
+                                        ),
+                                        child: Semantics(
+                                          label: context.bheText(
+                                            '${tierLabels[candidateTier(candidate)]}${!_isReviewed(candidate) ? ' · 未审核' : ''}',
+                                          ),
+                                          child: Container(
+                                            key: ValueKey(
+                                              'tier-dot-${candidate['id']}',
+                                            ),
+                                            width: 7,
+                                            height: 7,
+                                            decoration: BoxDecoration(
+                                              color: statusColor,
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      if (adjusted || overlapsPrevious) ...[
                                         const SizedBox(width: 4),
                                         Flexible(
                                           flex: 1,
@@ -6548,7 +6729,7 @@ class _CandidateRow extends StatelessWidget {
                                                 .toString(),
                                             adjusted: adjusted,
                                             overlapsPrevious: overlapsPrevious,
-                                            statusLabel: statusLabel,
+                                            statusLabel: null,
                                             statusColor: statusColor,
                                           ),
                                         ),

@@ -346,7 +346,7 @@ void main() {
     expect(find.byType(PopupMenuItem<String>), findsNothing);
     expect(
       find.byKey(const ValueKey('review-tag-option-player:p12')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.byKey(const Key('review-tag-more')), findsOneWidget);
     expect(find.text('没有匹配的候选'), findsOneWidget);
@@ -379,8 +379,8 @@ void main() {
     );
     expect(find.byKey(const Key('review-progress')), findsOneWidget);
     expect(find.textContaining('疑似'), findsWidgets);
-    expect(find.byKey(const ValueKey('unreviewed-new')), findsOneWidget);
-    expect(find.byKey(const ValueKey('unreviewed-seen')), findsNothing);
+    expect(find.byKey(const ValueKey('tier-dot-new')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tier-dot-seen')), findsOneWidget);
   });
 
   test('players after the ninth get the Q to P letter row', () {
@@ -527,7 +527,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('不限'), findsOneWidget);
       expect(find.textContaining('全部 4'), findsOneWidget);
-      expect(find.byKey(const Key('review-filter-banner')), findsOneWidget);
+      expect(find.byKey(const Key('review-filter-banner')), findsNothing);
       expect(find.byKey(const ValueKey('candidate-row-c1')), findsNothing);
     },
   );
@@ -1108,7 +1108,7 @@ void main() {
       ),
     );
 
-    expect(find.byType(VerticalDivider), findsOneWidget);
+    expect(find.byKey(const Key('review-queue-divider')), findsOneWidget);
   });
 
   testWidgets('narrow workbench adapts at phone and tablet widths', (
@@ -1349,6 +1349,8 @@ void main() {
       lessThan(tester.getTopLeft(find.byKey(const ValueKey('player-chip-late'))).dy),
     );
 
+    await tester.tap(find.byKey(const Key('review-tag-more')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('review-segment-option-v2')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('player-chip-early')), findsNothing);
@@ -1777,6 +1779,8 @@ void main() {
     );
 
     expect(find.byKey(const ValueKey('candidate-row-made-1')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('review-tag-more')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('review-rim-option-unsure')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('candidate-row-made-1')), findsNothing);

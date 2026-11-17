@@ -151,8 +151,9 @@ Future<({GoRouter router, ProviderContainer container})> pump(
   WidgetTester tester,
   FakeProject notifier, {
   String path = '/review',
+  Size size = const Size(1600, 1000),
 }) async {
-  tester.view.physicalSize = const Size(1600, 1000);
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final router = GoRouter(
@@ -259,6 +260,49 @@ void main() {
       'courtside.sidebar_extended': false,
     }),
   );
+  for (final width in [1428.0, 1280.0]) {
+    testWidgets('L437 approved layout ${width.toInt()} collapsed expanded must', (tester) async {
+      final notifier = FakeProject();
+      notifier.initial = fixture().copyWith(candidates: [for (final c in fixture().candidates) {
+        ...c, 'tier_source': 'algorithm', 'tier_reason': c['tier']=='must' ? 'r2_net_motion' : 'contrary_evidence',
+        'evidence_json': jsonEncode({'analysis_source':'refined',
+          'rim_check':{'status':c['tier']=='must' ? 'made':'rejected', 'reason':'no_crossing', 'rebound':false,'net_motion':3.0},
+          'verification':{'trajectory_cross':true,'rebound':false},'signals':{'net_score':.8}}),
+      }]);
+      await pump(tester, notifier, size: Size(width, 880));
+      final video = find.byKey(const Key('review-video-area'));
+      final before = tester.getRect(video);
+      expect(find.byKey(const Key('candidate-evidence-overlay')), findsNothing);
+      expect(find.byKey(const Key('review-filter-banner')), findsNothing);
+      expect(find.byKey(const ValueKey('review-tag-option-player:p1')), findsNothing);
+      final keep = tester.getRect(find.byKey(const Key('inspector-keep')));
+      final exclude = tester.getRect(find.byKey(const Key('inspector-exclude')));
+      final skip = tester.getRect(find.byKey(const Key('inspector-skip')));
+      final undo = tester.getRect(find.byKey(const Key('inspector-undo')));
+      expect(keep.top, exclude.top); expect(skip.top, undo.top);
+      expect(keep.left, skip.left); expect(exclude.left, undo.left);
+      expect(tester.takeException(), isNull);
+      await screenshot(tester, 'l437-${width.toInt()}-collapsed');
+      await tester.tap(find.byKey(const Key('candidate-evidence-details-toggle')));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(video), before, reason:'Details overlay must never resize the video');
+      final overlay = tester.getRect(find.byKey(const Key('candidate-evidence-overlay')));
+      expect(before.contains(overlay.topLeft), isTrue); expect(before.contains(overlay.bottomRight), isTrue);
+      expect(find.text('评分'), findsOneWidget); expect(find.text('信号'), findsOneWidget); expect(find.text('系统说明'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await screenshot(tester, 'l437-${width.toInt()}-expanded');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('candidate-evidence-overlay')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('review-status-must')));
+      await tester.pumpAndSettle();
+      expect(find.text('篮筐复核：进 · 篮网明显摆动，球从网底落下'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 5));
+      await screenshot(tester, 'l437-${width.toInt()}-must');
+    });
+  }
+
   testWidgets(
     'review defaults suspect, tier counts and multi-tag OR are independent',
     (tester) async {
@@ -296,7 +340,7 @@ void main() {
       expect(find.text('显示 3 / 9'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('review-tag-option-all')));
       await tester.pumpAndSettle();
-      expect(find.text('显示 3 / 9'), findsOneWidget);
+      expect(find.byKey(const Key('review-filter-banner')), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
