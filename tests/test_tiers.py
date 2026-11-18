@@ -428,7 +428,7 @@ def test_likely_miss_read_projection_preserves_tiers_review_and_database(project
     _,store,v,_,_=project
     store.replace_candidates(v['id'],[row('far',500,far_unseen()),row('near',5000,far_unseen())])
     with store.connect() as db:
-        e=far_unseen();e['overlay']['trajectory']=[dict(x=100,y=200)]
+        e=far_unseen();e['rim_check']['reason']='no_exit';e['overlay']['trajectory']=[dict(x=100,y=200)]
         db.execute('UPDATE candidates SET evidence_json=? WHERE id=?',(json.dumps(e),'near'))
     before=(store.db_path.stat().st_mtime_ns,hashlib.sha256(store.db_path.read_bytes()).hexdigest())
     listed=store.list_candidates()
@@ -444,3 +444,39 @@ def test_likely_miss_read_projection_preserves_tiers_review_and_database(project
     assert (excluded['tier'],excluded['tier_source'],excluded['likely_miss'])==('excluded','user',False)
     store.review_candidate('far','pending')
     assert store.list_candidates()[0]['likely_miss'] is True
+
+
+@pytest.mark.parametrize('overlay', [None, {}, {'rim': {'width': 0}},
+    {'rim': {'center_x': 100, 'rim_y': 200, 'width': 20},
+     'trajectory': [{'x': 100, 'y': 200}]}])
+def test_unsure_no_crossing_is_folded_even_near_rim_or_without_geometry(overlay):
+    from engine.python.basketball_engine.tiers import likely_miss
+    e=far_unseen();e['overlay']=overlay
+    before=json.dumps(e,sort_keys=True);tier=classify(e)
+    assert likely_miss(e) is True
+    assert classify(e)==tier
+    assert json.dumps(e,sort_keys=True)==before
+
+
+@pytest.mark.parametrize('status,reason', [('unsure','no_exit'),('unsure','no_entry'),
+    ('unsure','not_occluded'),('rejected','no_crossing'),('made','no_crossing')])
+def test_new_fold_condition_does_not_expand_other_checks(status, reason):
+    from engine.python.basketball_engine.tiers import likely_miss
+    e=far_unseen();e['rim_check']=dict(status=status,reason=reason)
+    e['overlay']['trajectory']=[dict(x=100,y=200)]
+    assert likely_miss(e) is False
+
+
+def test_no_crossing_read_hint_preserves_manual_priority_and_db(project):
+    import hashlib
+    _,store,v,_,_=project
+    e=far_unseen();e['overlay']={}
+    store.replace_candidates(v['id'],[row('unseen-crossing',500,e)])
+    signature=lambda:(store.db_path.stat().st_mtime_ns,hashlib.sha256(store.db_path.read_bytes()).hexdigest())
+    before=signature();c=store.list_candidates()[0]
+    assert (c['tier'],c['likely_miss'])==('suspect',True)
+    assert signature()==before
+    for status,tier in [('goal','must'),('excluded','excluded')]:
+        store.review_candidate('unseen-crossing',status)
+        c=store.list_candidates()[0]
+        assert (c['tier'],c['tier_source'],c['likely_miss'])==(tier,'user',False)

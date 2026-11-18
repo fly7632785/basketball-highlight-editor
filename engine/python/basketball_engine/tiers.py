@@ -54,6 +54,13 @@ def never_near_rim(evidence):
                    for point in points)
 
 
+def likely_miss(evidence):
+    """Fold uncertain non-crossings without changing tiers or manual decisions."""
+    check = evidence_dict(evidence_dict(evidence).get('rim_check'))
+    return (check.get('status') == 'unsure' and check.get('reason') == 'no_crossing'
+            or never_near_rim(evidence))
+
+
 def classify(evidence, mode='standard', rule_version=RULE_VERSION):
     evidence = evidence_dict(evidence)
     def result(tier, reason, source='algorithm'):
