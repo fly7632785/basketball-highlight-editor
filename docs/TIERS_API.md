@@ -6,6 +6,8 @@
 
 纯函数 `classify(evidence, mode, rule_version)` 返回 `{tier, reason, source}`；列表映射为 `tier/tier_reason/tier_source`。人工判断通过 evidence 的 `review_status/review_reason` 输入：人工 goal→must、非 auto_rim_check 的人工 excluded→excluded；pending/deferred/second_review 撤销覆盖并按算法重算。auto_rim_check 不是人工。
 
+列表另返回只读布尔值 `likely_miss`（可能没进，仅供审核队列折叠）。只对疑似档位计算：复核 unsure/rejected 且原因 no_crossing/no_entry/no_exit，已存非空有效 overlay.trajectory 在同一 overlay.rim 的筐宽归一化区域（左右0.6，上0.6下1.2）内点数为0时为true；缺失/异常几何为false。此标记不写库、不修改档位/来源/规则版本、不影响导出范围；轨迹漏点可能包括真进球，不能当作排除证据。人工✓/✕后不再标记。桌面疑似及全部队列将其沉底、默认折叠，展开后才加入快捷键审核顺序。
+
 算法：fast/coarse/manual/来源缺失→suspect；refined 有已证实反弹/侧出且自动排除→excluded；正负冲突→suspect；否则仅复核 made、明确无反弹且无侧出反证、网动有限，校准样本≥8且中位数>0，并且网动≥中位数×0.30→must；其余suspect。未知规则保守suspect。理由是稳定英文代码；source为algorithm/user。
 
 校准必须属于同次分析：`replace_candidates` 对本批 refined 且 rim_check.status=made 的有限网动计算中位数，记录 `evidence.tier_calibration={samples,median}` 与 `analysis_run_id/analysis_mode`。若现有逐帧复核已携带 scope=analysis_run_baseline_made 的 experiment.net_calibration，优先复用该次默认made标定，避免对已经筛过的结果再次标定。原证据保留。历史无校准数据不拼凑跨次分析中位数，只进suspect。直接调用纯函数时传同样校准对象。
