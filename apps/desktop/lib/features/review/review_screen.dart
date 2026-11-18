@@ -6673,6 +6673,7 @@ class _CandidateRow extends StatelessWidget {
         child: MouseRegion(
           cursor: SystemMouseCursors.click,
           child: AnimatedContainer(
+            height: 80,
             duration: DurationD.fast,
             padding: const EdgeInsets.symmetric(
               horizontal: Spacing.xs,
@@ -6820,6 +6821,7 @@ class _CandidateRow extends StatelessWidget {
                                       key: ValueKey(
                                         'player-chip-${candidate['id']}',
                                       ),
+                                      compact: true,
                                       name: candidate['player_name']
                                           ?.toString(),
                                       candidate: candidate,
@@ -6930,6 +6932,7 @@ class _DecisionButton extends StatelessWidget {
 
 class _PlayerChip extends StatefulWidget {
   const _PlayerChip({
+    this.compact = false,
     required this.name,
     required this.candidate,
     required this.color,
@@ -6940,6 +6943,7 @@ class _PlayerChip extends StatefulWidget {
     super.key,
   });
 
+  final bool compact;
   final String? name;
   final Map<String, dynamic> candidate;
   final Color color;
@@ -7013,9 +7017,88 @@ class _PlayerChipState extends State<_PlayerChip> {
     );
   }
 
+  Widget _compactTags(BuildContext context, List<String> ids) {
+    final c = AppColors.of(context);
+    final style = DefaultTextStyle.of(context).style.copyWith(fontSize: 11);
+    final selected = [
+      for (final (index, player) in widget.players.indexed)
+        if (ids.contains(player['id'].toString())) (index, player['name'].toString()),
+    ];
+    final names = selected.map((p) => p.$2).toList();
+    final addLabel = names.isEmpty
+        ? context.bheText('＋标签').replaceFirst('＋', '+ ')
+        : '+';
+    return Tooltip(
+      message: names.isEmpty ? context.bheText('设置球员标签') : names.join('、'),
+      child: LayoutBuilder(builder: (context, constraints) {
+        double textWidth(String text) {
+          final painter = TextPainter(
+            text: TextSpan(text: text, style: style),
+            textDirection: Directionality.of(context),
+            textScaler: MediaQuery.textScalerOf(context),
+            maxLines: 1,
+          )..layout();
+          final width = painter.width.ceilToDouble();
+          painter.dispose();
+          return width;
+        }
+        final addWidth = textWidth(addLabel);
+        var visible = names.length;
+        while (visible > 0) {
+          final hidden = names.length - visible;
+          final width = names.take(visible).fold<double>(0, (w, n) => w + textWidth(n) + 4)
+              + (hidden > 0 ? textWidth('+$hidden') + 4 : 0) + addWidth;
+          if (width <= constraints.maxWidth) break;
+          visible--;
+        }
+        final hidden = names.length - visible;
+        return SizedBox(
+          height: 24,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _openTags,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              for (final tag in selected.take(visible)) ...[
+                Text(tag.$2, maxLines: 1, style: style.copyWith(color: c.player(tag.$1))),
+                const SizedBox(width: 4),
+              ],
+              if (hidden > 0) ...[
+                Text('+$hidden', key: ValueKey('player-tag-overflow-${widget.candidate['id']}'),
+                    maxLines: 1, style: style.copyWith(color: c.textSecondary)),
+                const SizedBox(width: 4),
+              ],
+              SizedBox(
+                width: addWidth,
+                child: TextButton(
+                  key: ValueKey('player-tag-add-${widget.candidate['id']}'),
+                  onPressed: _openTags,
+                  style: ButtonStyle(
+                    padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+                    minimumSize: const WidgetStatePropertyAll(Size.zero),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    alignment: Alignment.centerLeft,
+                    textStyle: WidgetStatePropertyAll(style),
+                    backgroundColor: const WidgetStatePropertyAll(Colors.transparent),
+                    overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+                    side: const WidgetStatePropertyAll(BorderSide.none),
+                    foregroundColor: WidgetStateProperty.resolveWith((states) =>
+                      states.contains(WidgetState.hovered) || states.contains(WidgetState.focused)
+                          ? c.textPrimary : c.textTertiary),
+                  ),
+                  child: Semantics(label: context.bheText('设置球员标签'), child: Text(addLabel)),
+                ),
+              ),
+            ]),
+          ),
+        );
+      }),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ids = candidateTagIds(widget.candidate);
+    if (widget.compact) return _compactTags(context, ids);
     return Tooltip(
       message: context.bheText('设置球员标签'),
       child: IntrinsicWidth(
