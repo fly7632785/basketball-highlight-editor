@@ -113,7 +113,7 @@ class BheLocalizationsEn extends BheLocalizations {
   String get backToProject => 'Back to project';
 
   @override
-  String get localProcessing => 'Processed locally';
+  String get localProcessing => 'Local only';
 
   @override
   String get switchTheme => 'Switch theme';

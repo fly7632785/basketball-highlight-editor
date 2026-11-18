@@ -83,6 +83,24 @@ String? _translateDynamic(String source) {
   if(tierExport != null) return 'Will export ${tierExport.group(1)} clips · ${tierExport.group(2)}';
   final tierInspect = RegExp(r'^去审核页看这 (\d+) 段 →$').firstMatch(source);
   if(tierInspect != null) return 'Review these ${tierInspect.group(1)} clips →';
+  final likelyMissCount = RegExp(r'^可能没进 (\d+) · 没看到球靠近篮筐$').firstMatch(source);
+  if (likelyMissCount != null) {
+    return 'Maybe missed ${likelyMissCount.group(1)} · the ball never came near the rim';
+  }
+  final suspectProgress = RegExp(
+    r'^疑似 (\d+) 段 · 已审 (\d+)（判进 (\d+) · 判没进 (\d+)） · 剩 (\d+)$',
+  ).firstMatch(source);
+  if (suspectProgress != null) {
+    return 'Uncertain ${suspectProgress.group(1)} · reviewed ${suspectProgress.group(2)} (goals ${suspectProgress.group(3)} · missed ${suspectProgress.group(4)}) · left ${suspectProgress.group(5)}';
+  }
+  final exportFilterBanner = RegExp(
+    r'^导出筛选中：(.+)（(\d+) 段）$',
+  ).firstMatch(source);
+  if (exportFilterBanner != null) {
+    return 'Export filter: ${exportFilterBanner.group(1)} (${exportFilterBanner.group(2)} clips)';
+  }
+  final tagPlus = RegExp(r'^标签 \+(\d+)$').firstMatch(source);
+  if (tagPlus != null) return 'Tags +${tagPlus.group(1)}';
 
   final missingOpened = RegExp(r'^第 ([\d、]+) 段的原视频找不到，请在导入页重新定位$').firstMatch(source);
   if (missingOpened != null) {
@@ -440,6 +458,59 @@ const _englishText = <String, String>{
   '进球': 'Goals',
   '已确认 → 进球': 'Confirmed → Goals',
   '疑似': 'Uncertain',
+
+  // ---- 分档（tiers）界面 ----
+  '本页已审完': 'All clips on this page have been reviewed',
+  '更多筛选': 'More filters',
+  '依据详情': 'Details',
+  '可能没进 · 没看到球靠近篮筐': 'Maybe missed · the ball never came near the rim',
+  '人工确认：进': 'Confirmed by you: goal',
+  '人工确认：排除': 'Confirmed by you: excluded',
+  '篮筐复核：进 · 篮网明显': 'Rim check: made · clear net motion',
+  '篮筐复核：进 · 待确认分档': 'Rim check: made · tier unconfirmed',
+  '篮筐复核：没进': 'Rim check: missed',
+  '篮筐复核：未通过': 'Rim check: failed',
+  '疑似：网动偏弱': 'Uncertain: weak net motion',
+  '疑似：校准样本不足': 'Uncertain: not enough calibration samples',
+  '疑似：缺少篮网证据': 'Uncertain: missing net evidence',
+  '疑似：快速分析待确认': 'Uncertain: fast analysis needs a check',
+  '疑似：缺少精筛证据': 'Uncertain: missing refined evidence',
+  '疑似：证据冲突': 'Uncertain: conflicting evidence',
+  '疑似：存在反证': 'Uncertain: contrary evidence',
+  '疑似：未确认穿筐': 'Uncertain: crossing unconfirmed',
+  '疑似：规则版本待确认': 'Uncertain: rule version needs a check',
+  '疑似：证据不足，待确认': 'Uncertain: insufficient evidence, needs a check',
+  '篮网明显摆动': 'clear net motion',
+  '已确认穿筐': 'crossing confirmed',
+  '篮筐复核未通过': 'Rim check failed',
+  '篮筐复核待确认': 'Rim check needs confirmation',
+  '没有看到球穿过篮筐': 'no ball was seen crossing the rim',
+  '球未从篮筐上方进入': 'the ball did not enter from above the rim',
+  '球偏离篮筐口': 'the ball missed the rim opening',
+  '球从篮网侧面出来': 'the ball left from the side of the net',
+  '球在篮筐附近弹起': 'the ball bounced up near the rim',
+  '没看清球从网底落下': 'the ball was not clearly seen leaving the bottom of the net',
+  '球从篮筐前方经过': 'the ball passed in front of the rim',
+  '球落下时篮网没有动': 'the net did not move when the ball came down',
+  '篮筐太小，请人工确认': 'the rim is too small, please review manually',
+  '可能没进 N · 没看到球靠近篮筐': 'Maybe missed N · the ball never came near the rim',
+  '显示当前档位里的全部片段。': 'Show every clip in the current tier.',
+  '只看已经加了球员标签的片段。': 'Only clips that already have a player tag.',
+  '只看还没加标签的片段，方便补标签。': 'Only clips without a tag, to make tagging easier.',
+  '显示所有篮筐复核结果。': 'Show every rim check result.',
+  '放大篮筐逐帧看过，球从网里穿过落下。': 'Zoomed in frame by frame; the ball dropped through the net.',
+  '篮筐附近没看清（被挡住、球太小），没法判断。': 'The rim area was unclear (blocked or the ball too small), so no verdict.',
+  '看到球没进，或者球根本没从篮筐上方落下。': 'The ball was seen missing, or never came down over the rim.',
+  '本次分析找到的所有片段，不分档。': 'Every clip found in this analysis, regardless of tier.',
+  '系统有把握的进球：篮筐复核看到球进了，篮网也有明显摆动；你点过 ✓ 的也在这里。导出默认就用这一档。':
+      'Goals the app is confident about: the rim check saw the ball go in with clear net motion, plus the ones you confirmed with ✓. Exports use this tier by default.',
+  '系统拿不准的，需要你看一眼：可能被人挡住、离得远看不清，或者证据互相矛盾。点 ✓ 进「进球」，点 ✕ 进「排除」。':
+      'The app is unsure and wants your eyes: the view may be blocked, too far away, or the evidence conflicts. ✓ moves a clip to Goals; ✕ moves it to Excluded.',
+  '系统亲眼看到没进的（弹出来、偏到筐外、从侧边飞出），加上你点过 ✕ 的。默认不导出，可以随时恢复。':
+      'Clips the app clearly saw missing (bounced out, off target, or flew past sideways), plus the ones you rejected with ✕. Not exported by default; restore anytime.',
+  '按球员标签、篮筐复核结果再细分。': 'Narrow further by player tag or rim check result.',
+  '整个片段里球都没靠近过篮筐，大多数没进。为了不漏掉真进球，没有直接排除，收在最底下，想看再点开。':
+      'The ball never came near the rim in this clip; most of these are misses. To avoid dropping real goals they are not auto-excluded — they sit at the bottom; open them if you want to check.',
   '不限': 'Any tag',
   '档位': 'Tier',
   '＋标签': '+ Tags',
@@ -1319,6 +1390,9 @@ const _englishText = <String, String>{
   '未确认：球全程可见，这个视频的篮网不一定挡得住球，请人工确认': 'Unsure: the ball stayed visible, but the net in this video may not hide it, please review',
   '未确认：请人工确认': 'Unsure: please review',
   '未复核：篮筐在画面中太小，请人工确认': 'Not checked: the rim is too small in the frame, please review manually',
+  '未复核': 'Not checked',
+  '各项信号只用于排序和辅助审核。': 'Signals only rank and support your review.',
+  'C 保留 · X 排除 · S 跳过 · ⌘Z 撤销': 'C keep · X exclude · S skip · ⌘Z undo',
   '未复核：请人工确认': 'Not checked: please review manually',
   'Engine 返回未知错误': 'Engine returned an unknown error',
   'Engine 已关闭': 'Engine is closed',
