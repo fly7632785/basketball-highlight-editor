@@ -148,7 +148,7 @@ void main() {
           players: [],
         );
         await harness.pump(tester, notifier, size: Size(width, 880));
-        expect(find.text('必进 8'), findsOneWidget);
+        expect(find.text('进球 8'), findsOneWidget);
         expect(find.text('疑似 34'), findsOneWidget);
         expect(find.text('排除 21'), findsOneWidget);
         final group = find.byKey(const Key('review-likely-miss-group'));

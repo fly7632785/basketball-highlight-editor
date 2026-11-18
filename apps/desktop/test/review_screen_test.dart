@@ -1172,7 +1172,7 @@ void main() {
     expect(find.text('按时间'), findsNothing);
     expect(find.text('默认保留'), findsNothing);
     expect(find.text('已排除'), findsNothing);
-    expect(find.text('必进'), findsWidgets);
+    expect(find.text('进球'), findsWidgets);
     expect(find.text('9 秒'), findsOneWidget);
     expect(find.byTooltip('保留片段 (C / Enter)'), findsOneWidget);
     expect(find.byTooltip('排除片段 (X / ` / Backspace)'), findsOneWidget);

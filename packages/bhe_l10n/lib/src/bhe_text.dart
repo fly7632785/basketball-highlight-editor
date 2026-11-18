@@ -437,6 +437,8 @@ String _englishDuration(String value) => value
 
 const _englishText = <String, String>{
   '必进': 'Goals',
+  '进球': 'Goals',
+  '已确认 → 进球': 'Confirmed → Goals',
   '疑似': 'Uncertain',
   '不限': 'Any tag',
   '档位': 'Tier',

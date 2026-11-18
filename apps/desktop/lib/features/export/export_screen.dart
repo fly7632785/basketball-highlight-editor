@@ -1,3 +1,4 @@
+import '../review/review_filter_help.dart';
 import '../review/tier_selection.dart';
 import 'dart:io';
 import 'dart:async';
@@ -188,7 +189,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                 children: [
                   Text(context.bheText('档位')),
                   for (final tier in tierLabels.keys)
-                    FilterChip(
+                    Tooltip(message: context.bheText(tierHelp[tier]!), child: FilterChip(
                       key: Key('export-tier-$tier'),
                       selected: selection.tiers.contains(tier),
                       selectedColor: c.orange.withValues(alpha: .1),
@@ -206,7 +207,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                         '${context.bheText(tierLabels[tier]!)} ${state.candidates.where((c) => candidateTier(c) == tier).length}',
                         style: theme.textTheme.labelMedium,
                       ),
-                    ),
+                    )),
                 ],
               ),
               const SizedBox(height: 8),

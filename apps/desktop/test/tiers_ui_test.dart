@@ -152,6 +152,7 @@ Future<({GoRouter router, ProviderContainer container})> pump(
   FakeProject notifier, {
   String path = '/review',
   Size size = const Size(1600, 1000),
+  Locale locale = const Locale('zh'),
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -227,7 +228,7 @@ Future<({GoRouter router, ProviderContainer container})> pump(
       child: MaterialApp.router(
         routerConfig: router,
         theme: appTheme(Brightness.dark),
-        locale: const Locale('zh'),
+        locale: locale,
         localizationsDelegates: BheLocalizations.localizationsDelegates,
         supportedLocales: BheLocalizations.supportedLocales,
       ),

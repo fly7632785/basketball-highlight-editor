@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/project_state.dart';
 
-const tierLabels = {'must': '必进', 'suspect': '疑似', 'excluded': '排除'};
+const tierLabels = {'must': '进球', 'suspect': '疑似', 'excluded': '排除'};
 
 // Only read the engine's classification; never duplicate its evidence rules here.
 String candidateTier(Map<String, dynamic> candidate) {

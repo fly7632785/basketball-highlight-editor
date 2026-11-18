@@ -81,6 +81,7 @@ class ProjectState {
     this.reviewVideoPath,
     this.previewPath,
     this.previewTimeMs = 1000,
+    this.analysisResultRevision = 0,
     this.previewRefreshing = false,
     this.suggestedRoi,
     this.netRoi,
@@ -129,6 +130,7 @@ class ProjectState {
   final double? roiConfidence;
   final String? roiSuggestionError;
   final bool roiDetecting;
+  final int analysisResultRevision;
   final JsonMap? job;
   final JsonMap? exportJob;
   final JsonMap? statistics;
@@ -196,6 +198,7 @@ class ProjectState {
     Object? reviewVideoPath = _unset,
     Object? previewPath = _unset,
     int? previewTimeMs,
+    int? analysisResultRevision,
     bool? previewRefreshing,
     Object? suggestedRoi = _unset,
     Object? netRoi = _unset,
@@ -242,6 +245,7 @@ class ProjectState {
           ? this.previewPath
           : previewPath as String?,
       previewTimeMs: previewTimeMs ?? this.previewTimeMs,
+      analysisResultRevision: analysisResultRevision ?? this.analysisResultRevision,
       previewRefreshing: previewRefreshing ?? this.previewRefreshing,
       suggestedRoi: identical(suggestedRoi, _unset)
           ? this.suggestedRoi
@@ -2052,6 +2056,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
           await refreshCandidates(
             generation: projectGeneration,
             scope: requestScope,
+            pauseReviewAfterAnalysis: nextState == 'completed',
           );
           if (_disposed || projectGeneration != _projectLoadGeneration) return;
           await refreshStatistics(
@@ -2246,6 +2251,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
 
   /// 等价 app.dart:_refreshCandidates(552)。
   Future<void> refreshCandidates({
+    bool pauseReviewAfterAnalysis = false,
     int? generation,
     ProjectSessionScope? scope,
   }) async {
@@ -2260,6 +2266,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         ? null
         : reviewVideoPath;
     state = state.copyWith(
+      analysisResultRevision: state.analysisResultRevision + (pauseReviewAfterAnalysis ? 1 : 0),
       candidates: ((payload['candidates'] as List?) ?? const <dynamic>[])
           .whereType<Map>()
           .map((item) => item.cast<String, dynamic>())

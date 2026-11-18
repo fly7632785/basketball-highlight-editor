@@ -1,4 +1,6 @@
 import 'tier_selection.dart';
+import 'review_filter_help.dart';
+import 'review_playback.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -948,6 +950,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     isOriginalVideo: showingOriginalVideo,
                     sourceSwitchToken: _videoSourceSwitchToken,
                     replayToken: _replayToken,
+                    analysisResultRevision: state.analysisResultRevision,
                     frameSize: _videoFrameSize(state.video),
                     rotation: _videoRotation(state.video),
                     hasPrevious: _candidateIndex(candidates, selected) > 0,
@@ -1189,8 +1192,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         ),
         OnboardingStep(
           id: 'review.filter',
-          title: '必进 / 疑似 / 排除 / 全部',
-          body: '打开默认审疑似；判进的片段进入必进，判没进进入排除。打标签不改变档位。导出页默认只勾必进，其他档位可以自己勾选。',
+          title: '进球 / 疑似 / 排除 / 全部',
+          body: '打开默认审疑似；判进的片段进入进球，判没进进入排除。打标签不改变档位。导出页默认只勾进球，其他档位可以自己勾选。',
           target: _reviewGuideFilterKey,
         ),
         OnboardingStep(
@@ -1728,6 +1731,7 @@ class _VideoPane extends ConsumerStatefulWidget {
     required this.isOriginalVideo,
     required this.sourceSwitchToken,
     required this.replayToken,
+    required this.analysisResultRevision,
     required this.frameSize,
     this.rotation = 0,
     required this.hasPrevious,
@@ -1758,6 +1762,7 @@ class _VideoPane extends ConsumerStatefulWidget {
   final bool isOriginalVideo;
   final int sourceSwitchToken;
   final int replayToken;
+  final int analysisResultRevision;
   final Size frameSize;
   final int rotation;
   final bool hasPrevious;
@@ -1953,11 +1958,16 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
         _queueOpen(
           widget.videoPath,
           playAfterOpen:
+              oldWidget.analysisResultRevision == widget.analysisResultRevision &&
               reviewVideoAutoPlayAfterSourceSwitch &&
               oldWidget.sourceSwitchToken != widget.sourceSwitchToken,
           recreatePlayer: true,
         ),
       );
+    } else if (widget.analysisResultRevision > oldWidget.analysisResultRevision) {
+      // This revision arrives atomically with the final candidate list, not
+      // the earlier job-completed notification. Invalidate pending autoplay.
+      unawaited(_queueCandidatePosition());
     } else if (oldWidget.replayToken != widget.replayToken) {
       if (widget.candidate != null && widget.candidate!.isNotEmpty) {
         _showAnnotationHintOnce();
@@ -2262,9 +2272,11 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
     final player = _player;
     if (player == null ||
         !_isCurrent(generation, playbackToken: playbackToken) ||
-        !_ready ||
-        candidate == null ||
-        candidate.isEmpty) {
+        !_ready) {
+      return;
+    }
+    if (candidate == null || candidate.isEmpty) {
+      await positionPausedReview(player, null);
       return;
     }
     final start = _clipStart(candidate);
@@ -2276,8 +2288,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
       _clipEndHandled = false;
     });
     try {
-      await player.pause();
-      await player.seek(Duration(milliseconds: start));
+      await positionPausedReview(player, Duration(milliseconds: start));
     } catch (error) {
       appLog('error', 'player', '审核页 seek 失败 start=${start}ms: $error');
       if (_isCurrent(generation)) {
@@ -5587,7 +5598,7 @@ class _CandidatePanel extends StatelessWidget {
                     ),
                   ),
                 ],
-                builder: (context, controller, child) => TextButton(
+                builder: (context, controller, child) => Tooltip(message: context.bheText(moreFilterHelp), child: TextButton(
                   key: const Key('review-tag-more'),
                   onPressed: () => controller.isOpen
                       ? controller.close()
@@ -5607,7 +5618,7 @@ class _CandidatePanel extends StatelessWidget {
                       const Icon(Icons.expand_more, size: 15),
                     ],
                   ),
-                ),
+                )),
               ),
             ],
           ),
@@ -5720,7 +5731,7 @@ class _CandidatePanel extends StatelessWidget {
                       if (likelyMissCandidates.isNotEmpty && index == groupStart) {
                         return Semantics(
                           expanded: likelyMissExpanded,
-                          child: TextButton(
+                          child: Tooltip(message: context.bheText(likelyMissHelp), child: TextButton(
                             key: const Key('review-likely-miss-group'),
                             onPressed: onToggleLikelyMiss,
                             style: TextButton.styleFrom(
@@ -5736,7 +5747,7 @@ class _CandidatePanel extends StatelessWidget {
                                 style: const TextStyle(fontSize: 12),
                               )),
                             ]),
-                          ),
+                          )),
                         );
                       }
                       final rowIndex = index - (likelyMissCandidates.isNotEmpty && index > groupStart ? 1 : 0);
@@ -5859,7 +5870,7 @@ class _StatusSegments extends StatelessWidget {
       children: [
         for (final tier in [...tierLabels.keys, 'all'])
           Expanded(
-            child: Material(
+            child: Tooltip(message: context.bheText(tierHelp[tier]!), child: Material(
               key: ValueKey('review-status-$tier'),
               color:
                   value == tier ||
@@ -5900,7 +5911,7 @@ class _StatusSegments extends StatelessWidget {
                   ),
                 ),
               ),
-            ),
+            )),
           ),
       ],
     );
@@ -6090,7 +6101,7 @@ class _RimCheckChips extends StatelessWidget {
                 Semantics(
                   button: true,
                   selected: value == key,
-                  child: Material(
+                  child: Tooltip(message: context.bheText(rimFilterHelp[key]!), child: Material(
                     key: ValueKey('review-rim-option-$key'),
                     color: value == key ? c.surface3 : Colors.transparent,
                     shape: RoundedRectangleBorder(
@@ -6148,7 +6159,7 @@ class _RimCheckChips extends StatelessWidget {
                         ),
                       ),
                     ),
-                  ),
+                  )),
                 ),
               ],
             ],
@@ -6473,7 +6484,7 @@ class _PlayerTagChips extends StatelessWidget {
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 140),
                   child: Tooltip(
-                    message: label,
+                    message: tagFilterHelp[key] == null ? label : context.bheText(tagFilterHelp[key]!),
                     child: Text(
                       label,
                       maxLines: 1,
@@ -6655,7 +6666,7 @@ class _CandidateRow extends StatelessWidget {
     final statusLabel = candidate['tier_source'] == 'user'
         ? (excluded
               ? (moved ? '判没进 → 排除' : '判没进')
-              : (moved ? '已确认 → 必进' : '已确认'))
+              : (moved ? '已确认 → 进球' : '已确认'))
         : tierLabels[candidateTier(candidate)];
     final statusColor = candidateTier(candidate) == 'must'
         ? c.goal

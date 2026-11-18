@@ -13,6 +13,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('analysis completion marks the final result refresh, manual refresh does not', () async {
+    final h = await _Harness.create();
+    expect(h.container.read(projectProvider).analysisResultRevision, 0);
+    await h.notifier.refreshCandidates(pauseReviewAfterAnalysis: true);
+    expect(h.container.read(projectProvider).analysisResultRevision, 1);
+    await h.notifier.refreshCandidates();
+    expect(h.container.read(projectProvider).analysisResultRevision, 1);
+    expect(h.container.read(projectProvider).copyWith(busy: true).analysisResultRevision, 1);
+    h.transport.projects[h.root]!.clear();
+    await h.notifier.refreshCandidates(pauseReviewAfterAnalysis: true);
+    expect(h.container.read(projectProvider).analysisResultRevision, 2);
+    expect(h.container.read(projectProvider).candidates, isEmpty);
+  });
+
   test('manual X on weak auto exclusion must send a user decision', () async {
     final h = await _Harness.create();
     h.persisted('A').addAll({
