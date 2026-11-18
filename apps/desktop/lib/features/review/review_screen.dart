@@ -65,6 +65,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   final _guideQueueKey = GlobalKey();
   final Set<String> _reviewStartedCandidateIds = <String>{};
   String _candidateFilter = 'suspect';
+  bool _likelyMissExpanded = false;
+  String? _likelyMissProjectId;
   TierSelection? _exportReview;
   final Set<String> _retainedIds = {};
   final Set<String> _suspectIds = {};
@@ -103,6 +105,26 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     return ordered;
   }
 
+  // The visible queue also owns keyboard order; hidden rows are never reviewed.
+  List<Map<String, dynamic>> _reviewCandidates(
+    List<Map<String, dynamic>> candidates,
+    String filter, {
+    String playerFilter = 'all',
+    Set<String> retainedIds = const {},
+    String rimFilter = 'all',
+    String segmentFilter = 'all',
+  }) => _arrangeReviewCandidates(_filterCandidates(
+    candidates, filter, playerFilter: playerFilter, retainedIds: retainedIds,
+    rimFilter: rimFilter, segmentFilter: segmentFilter,
+  ));
+
+  List<Map<String, dynamic>> _arrangeReviewCandidates(
+    List<Map<String, dynamic>> candidates,
+  ) => [
+    ...candidates.where((c) => !candidateLikelyMiss(c)),
+    if (_likelyMissExpanded) ...candidates.where(candidateLikelyMiss),
+  ];
+
   Map<String, dynamic>? _selectedCandidate(
     List<Map<String, dynamic>> candidates,
   ) {
@@ -120,7 +142,14 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final id = candidate['id']?.toString();
     if (id != null && id.isNotEmpty) {
       final current = _selectedCandidate(
-        _orderedCandidates(ref.read(projectProvider).candidates),
+        _reviewCandidates(
+          _orderedCandidates(ref.read(projectProvider).candidates),
+          _candidateFilter,
+          playerFilter: _playerFilter,
+          retainedIds: _retainedIds,
+          rimFilter: _rimFilter,
+          segmentFilter: _segmentFilter,
+        ),
       );
       if (current?['id']?.toString() == id) {
         _requestReplay();
@@ -164,7 +193,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     bool exclusive = false,
   }) async {
     if (!mounted) return;
-    final before = _filterCandidates(
+    final before = _reviewCandidates(
       _orderedCandidates(ref.read(projectProvider).candidates),
       _candidateFilter,
       playerFilter: _playerFilter,
@@ -198,7 +227,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   ) async {
     final name = await _promptPlayerName();
     if (!mounted || name == null) return;
-    final before = _filterCandidates(
+    final before = _reviewCandidates(
       _orderedCandidates(ref.read(projectProvider).candidates),
       _candidateFilter,
       playerFilter: _playerFilter,
@@ -226,7 +255,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       ref.read(exportReviewProvider.notifier).state = null;
     }
     final previous = _selectedCandidate(
-      _filterCandidates(
+      _reviewCandidates(
         _orderedCandidates(ref.read(projectProvider).candidates),
         _candidateFilter,
         playerFilter: _playerFilter,
@@ -255,7 +284,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       }
       _rimFilter = rim ?? _rimFilter;
       _segmentFilter = segment ?? _segmentFilter;
-      final candidates = _filterCandidates(
+      final candidates = _reviewCandidates(
         _orderedCandidates(ref.read(projectProvider).candidates),
         _candidateFilter,
         playerFilter: _playerFilter,
@@ -670,7 +699,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
 
   Future<void> _setCandidateStatus(String id, String status) async {
     _focusReviewShortcuts();
-    final before = _filterCandidates(
+    final before = _reviewCandidates(
       _orderedCandidates(ref.read(projectProvider).candidates),
       _candidateFilter,
       playerFilter: _playerFilter,
@@ -694,7 +723,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final previousIndex = before.indexWhere(
       (candidate) => candidate['id']?.toString() == id,
     );
-    final after = _filterCandidates(
+    final after = _reviewCandidates(
       _orderedCandidates(ref.read(projectProvider).candidates),
       _candidateFilter,
       playerFilter: _playerFilter,
@@ -759,6 +788,11 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(projectProvider);
+    final projectId = state.statistics?['project']?['id']?.toString();
+    if (projectId != _likelyMissProjectId) {
+      _likelyMissProjectId = projectId;
+      _likelyMissExpanded = false;
+    }
     final notifier = ref.read(projectProvider.notifier);
     _syncPreviewScope(state);
     final requested = ref.watch(exportReviewProvider);
@@ -803,7 +837,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       _candidateFilter,
       retainedIds: _retainedIds,
     );
-    final candidates = _filterCandidates(
+    final matchingCandidates = _filterCandidates(
       statusCandidates,
       'all',
       playerFilter: _playerFilter,
@@ -811,6 +845,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       rimFilter: _rimFilter,
       segmentFilter: _segmentFilter,
     );
+    final likelyMissCandidates = matchingCandidates.where(candidateLikelyMiss).toList();
+    final candidates = _arrangeReviewCandidates(matchingCandidates);
     final selected = _selectedCandidate(candidates);
     final selectedId = selected?['id']?.toString();
     final selectedVideoId = selected?['video_id']?.toString();
@@ -986,6 +1022,17 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       .toDouble();
                   final queuePanel = _CandidatePanel(
                     candidates: candidates,
+                    likelyMissCandidates: likelyMissCandidates,
+                    likelyMissExpanded: _likelyMissExpanded,
+                    onToggleLikelyMiss: () {
+                      _focusReviewShortcuts();
+                      setState(() {
+                        _likelyMissExpanded = !_likelyMissExpanded;
+                        if (!_likelyMissExpanded && selected != null && candidateLikelyMiss(selected)) {
+                          _selectedCandidateId = null;
+                        }
+                      });
+                    },
                     overlappingIds: _overlappingCandidateIds(allCandidates),
                     selectedId: selected?['id']?.toString(),
                     includedCount: includedCount,
@@ -1211,7 +1258,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
   void _ensureCandidateVisible(String id) {
     if (!mounted) return;
     final state = ref.read(projectProvider);
-    final candidates = _filterCandidates(
+    final candidates = _reviewCandidates(
       _orderedCandidates(state.candidates),
       _candidateFilter,
       playerFilter: _playerFilter,
@@ -3511,6 +3558,7 @@ String _primaryTierReason(
   Map<String, dynamic> candidate,
   Map<String, dynamic> evidence,
 ) {
+  if (candidateLikelyMiss(candidate)) return '可能没进 · 没看到球靠近篮筐';
   const reasons = {
     'user_goal': '人工确认：进',
     'user_excluded': '人工确认：排除',
@@ -5227,6 +5275,9 @@ class _ClipTimeField extends StatelessWidget {
 class _CandidatePanel extends StatelessWidget {
   const _CandidatePanel({
     required this.candidates,
+    required this.likelyMissCandidates,
+    required this.likelyMissExpanded,
+    required this.onToggleLikelyMiss,
     required this.overlappingIds,
     required this.selectedId,
     required this.includedCount,
@@ -5275,7 +5326,9 @@ class _CandidatePanel extends StatelessWidget {
     required this.onExport,
   });
 
-  final List<Map<String, dynamic>> candidates;
+  final List<Map<String, dynamic>> candidates, likelyMissCandidates;
+  final bool likelyMissExpanded;
+  final VoidCallback onToggleLikelyMiss;
   final Set<String> overlappingIds;
   final String? selectedId;
   final int includedCount;
@@ -5631,7 +5684,7 @@ class _CandidatePanel extends StatelessWidget {
           ],
           const SizedBox(height: Spacing.sm),
           Expanded(
-            child: candidates.isEmpty
+            child: candidates.isEmpty && likelyMissCandidates.isEmpty
                 ? SingleChildScrollView(
                     child: _EmptyCandidates(
                       hydrating: hydrating,
@@ -5659,11 +5712,35 @@ class _CandidatePanel extends StatelessWidget {
                     // away it is then never laid out, and a tooltip it just
                     // opened breaks mouse hit testing for the whole window.
                     addAutomaticKeepAlives: false,
-                    itemCount: candidates.length,
+                    itemCount: candidates.length + (likelyMissCandidates.isEmpty ? 0 : 1),
                     separatorBuilder: (_, _) =>
                         const SizedBox(height: Spacing.xs),
                     itemBuilder: (context, index) {
-                      final candidate = candidates[index];
+                      final groupStart = candidates.length - (likelyMissExpanded ? likelyMissCandidates.length : 0);
+                      if (likelyMissCandidates.isNotEmpty && index == groupStart) {
+                        return Semantics(
+                          expanded: likelyMissExpanded,
+                          child: TextButton(
+                            key: const Key('review-likely-miss-group'),
+                            onPressed: onToggleLikelyMiss,
+                            style: TextButton.styleFrom(
+                              alignment: Alignment.centerLeft,
+                              foregroundColor: c.textSecondary,
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                            ),
+                            child: Row(children: [
+                              Icon(likelyMissExpanded ? Icons.expand_less : Icons.expand_more, size: 18),
+                              const SizedBox(width: 6),
+                              Expanded(child: Text(
+                                context.bheText('可能没进 ${likelyMissCandidates.length} · 没看到球靠近篮筐'),
+                                style: const TextStyle(fontSize: 12),
+                              )),
+                            ]),
+                          ),
+                        );
+                      }
+                      final rowIndex = index - (likelyMissCandidates.isNotEmpty && index > groupStart ? 1 : 0);
+                      final candidate = candidates[rowIndex];
                       final id = candidate['id']?.toString() ?? '';
                       final coverFuture = onLoadCover == null
                           ? null
@@ -5675,7 +5752,7 @@ class _CandidatePanel extends StatelessWidget {
                         child: _CandidateRow(
                           candidate: candidate,
                           overlapsPrevious: overlappingIds.contains(id),
-                          index: index,
+                          index: rowIndex,
                           selected: id == selectedId,
                           moved:
                               filter == 'suspect' &&
@@ -5813,7 +5890,7 @@ class _StatusSegments extends StatelessWidget {
                         ),
                       Flexible(
                         child: Text(
-                          '${context.bheText(tierLabels[tier] ?? '全部')} ${tier == 'all' ? total : candidates.where((c) => candidateTier(c) == tier).length}',
+                          '${context.bheText(tierLabels[tier] ?? '全部')} ${tier == 'all' ? total : candidates.where((c) => candidateTier(c) == tier && (tier != 'suspect' || !candidateLikelyMiss(c))).length}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 12),

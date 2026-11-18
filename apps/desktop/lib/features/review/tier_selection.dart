@@ -15,6 +15,10 @@ String candidateTier(Map<String, dynamic> candidate) {
   return 'suspect';
 }
 
+// Manual review can optimistically change the tier before the next engine read.
+bool candidateLikelyMiss(Map<String, dynamic> candidate) =>
+    candidateTier(candidate) == 'suspect' && candidate['likely_miss'] == true;
+
 List<String> candidateTagIds(Map<String, dynamic> candidate) {
   final tags = candidate['tags'] ?? candidate['players'];
   if (tags is List) {
