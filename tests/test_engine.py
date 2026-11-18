@@ -40,7 +40,9 @@ def test_short_rim_track_with_observed_rebound_or_side_exit_stays_excluded(
     store.replace_candidates(video["id"], [row])
     persisted = store.list_candidates(video["id"])[0]
     assert persisted["review_status"] == "excluded"
-    assert persisted["selection_status"] == "pending"  # no refined source: tier stays suspect
+    assert persisted["selection_status"] == "excluded"
+    assert persisted["tier"] == "excluded"
+    assert persisted["tier_reason"] == "seen_miss"  # Observed rebound survives without a refined source.
     assert matches[0]["rim_check"]["reason"] == ("exit_off_center" if x else "rebound")
 
 

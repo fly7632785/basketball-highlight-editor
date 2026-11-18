@@ -68,15 +68,16 @@ def classify(evidence, mode='standard', rule_version=RULE_VERSION):
         return result('suspect', 'unsupported_rule_version')
     if mode == 'fast' or evidence.get('analysis_mode') == 'fast':
         return result('suspect', 'fast_analysis')
+    # Original-video rim evidence can establish an existing miss even for coarse candidates.
+    miss = seen_miss(evidence)
+    if miss and status == 'excluded' and evidence.get('review_reason') == 'auto_rim_check':
+        return result('excluded', 'seen_miss')
     if evidence.get('analysis_source') != 'refined':
         return result('suspect', 'missing_refined_evidence')
     gates = evidence_dict(evidence.get('gates'))
     if any(value is True or str(value).lower() == "true" for value in (evidence.get('conflict'), evidence.get('evidence_conflict'),
                                        gates.get('evidence_conflict'), gates.get('signal_conflict'))):
         return result('suspect', 'conflicting_evidence')
-    miss = seen_miss(evidence)
-    if miss and status == 'excluded' and evidence.get('review_reason') == 'auto_rim_check':
-        return result('excluded', 'seen_miss')
     check = evidence_dict(evidence.get('rim_check'))
     if miss or check.get('reason') in {'rebound', 'off_center', 'exit_off_center'}:
         return result('suspect', 'contrary_evidence')
