@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Sequence
 from uuid import uuid5, NAMESPACE_URL
 
-from ..diagnostics import log_failed_command
+from ..diagnostics import log_diagnostic, log_failed_command
 
 # The desktop runtime puts the engine and the shared analysis package in
 # sibling directories under the bundled runtime root.
@@ -508,89 +508,121 @@ def run_pipeline(
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:
             popen_kwargs["start_new_session"] = True
+        process = None
+        fallback = None
         try:
-            process = subprocess.Popen(command, **popen_kwargs)
-        except (OSError, ValueError):
-            log_failed_command(f"pipeline command failed stage={stage}", command)
-            raise
-        if process_callback:
-            process_callback(process)
-        try:
-            stdout_lines: list[str] = []
-            stderr_lines: list[str] = []
-
-            def read_stream(stream, lines: list[str]) -> None:
-                for line in iter(stream.readline, ""):
-                    lines.append(line)
-                    stripped = line.strip()
-                    if stripped.startswith("progress=") and stage_callback:
-                        try:
-                            local_progress = float(stripped.split("=", 1)[1])
-                        except ValueError:
-                            local_progress = None
-                        if local_progress is not None:
-                            start_progress, end_progress = stage_ranges[index]
-                            global_progress = start_progress + (
-                                end_progress - start_progress
-                            ) * max(0.0, min(1.0, local_progress))
-                            stage_callback(stage, max(0.01, global_progress))
-                    if output_callback:
-                        output_callback(stage, stripped)
-                stream.close()
-
-            stdout_reader = threading.Thread(
-                target=read_stream,
-                args=(process.stdout, stdout_lines),
-                name=f"pipeline-stdout-{index}",
-                daemon=True,
-            )
-            stderr_reader = threading.Thread(
-                target=read_stream,
-                args=(process.stderr, stderr_lines),
-                name=f"pipeline-stderr-{index}",
-                daemon=True,
-            )
-            stdout_reader.start()
-            stderr_reader.start()
-            while process.poll() is None:
+            for attempt in range(2):
                 if cancel_check and cancel_check():
-                    terminate_process(process)
-                    stdout_reader.join(timeout=3)
-                    stderr_reader.join(timeout=3)
                     raise PipelineCancelled("JOB_CANCELLED")
-                time.sleep(0.05)
-            process.wait()
-            stdout_reader.join(timeout=3)
-            stderr_reader.join(timeout=3)
-            stdout = "".join(stdout_lines)
-            stderr = "".join(stderr_lines)
-            if cancel_check and cancel_check():
-                raise PipelineCancelled("JOB_CANCELLED")
-            if process.returncode != 0:
-                log_failed_command(f"pipeline command failed stage={stage}", command, process.returncode)
-                details = (stderr or stdout or "").strip()
-                if is_runtime_failure(details):
-                    from .runtime_preflight import runtime_error
+                try:
+                    process = subprocess.Popen(command, **popen_kwargs)
+                except (OSError, ValueError):
+                    log_failed_command(f"pipeline command failed stage={stage}", command)
+                    raise
+                if process_callback:
+                    process_callback(process)
+                stdout_lines: list[str] = []
+                stderr_lines: list[str] = []
 
-                    raise runtime_error(details)
-                if len(details) > 1200:
-                    details = details[-1200:]
-                    # 从整行开始：硬切会让第一行只剩半个词，界面只显示第一行。
-                    if "\n" in details:
-                        details = details.split("\n", 1)[1]
-                script_name = (
-                    Path(command[1]).name
-                    if len(command) > 1 and command[1].endswith(".py")
-                    else "pipeline step"
+                def read_stream(stream, lines: list[str]) -> None:
+                    for line in iter(stream.readline, ""):
+                        lines.append(line)
+                        stripped = line.strip()
+                        if stripped.startswith("progress=") and stage_callback:
+                            try:
+                                local_progress = float(stripped.split("=", 1)[1])
+                            except ValueError:
+                                local_progress = None
+                            if local_progress is not None:
+                                start_progress, end_progress = stage_ranges[index]
+                                global_progress = start_progress + (
+                                    end_progress - start_progress
+                                ) * max(0.0, min(1.0, local_progress))
+                                stage_callback(stage, max(0.01, global_progress))
+                        if output_callback:
+                            output_callback(stage, stripped)
+                    stream.close()
+
+                stdout_reader = threading.Thread(
+                    target=read_stream,
+                    args=(process.stdout, stdout_lines),
+                    name=f"pipeline-stdout-{index}",
+                    daemon=True,
                 )
-                message = f"{script_name} 执行失败"
-                lines = [line.strip() for line in details.splitlines() if line.strip()]
-                if lines:
-                    # 第一行放最后一行输出（异常通常在回溯的末尾），完整输出跟在后面。
-                    message = f"{message}: {lines[-1][:300]}"
-                    if len(lines) > 1:
-                        message = f"{message}\n{details}"
-                raise RuntimeError(message)
+                stderr_reader = threading.Thread(
+                    target=read_stream,
+                    args=(process.stderr, stderr_lines),
+                    name=f"pipeline-stderr-{index}",
+                    daemon=True,
+                )
+                stdout_reader.start()
+                stderr_reader.start()
+                while process.poll() is None:
+                    if cancel_check and cancel_check():
+                        terminate_process(process)
+                        stdout_reader.join(timeout=3)
+                        stderr_reader.join(timeout=3)
+                        raise PipelineCancelled("JOB_CANCELLED")
+                    time.sleep(0.05)
+                process.wait()
+                stdout_reader.join(timeout=3)
+                stderr_reader.join(timeout=3)
+                stdout = "".join(stdout_lines)
+                stderr = "".join(stderr_lines)
+                if cancel_check and cancel_check():
+                    raise PipelineCancelled("JOB_CANCELLED")
+                if process.returncode != 0:
+                    log_failed_command(f"pipeline command failed stage={stage}", command, process.returncode)
+                    # Native aborts bypass Python exceptions. Retry inference only,
+                    # once, without reusing detections cached by the failed backend.
+                    if (
+                        attempt == 0 and process.returncode < 0
+                        and len(command) > 1
+                        and Path(command[1]).name in {"scan_video.py", "refine_dynamic_candidates.py"}
+                        and "--device" in command
+                    ):
+                        device_index = command.index("--device") + 1
+                        if device_index < len(command) and command[device_index] != "cpu":
+                            diagnostic = f"{stage}: native exit={process.returncode}; retrying CPU once: {(stderr or stdout).strip()[-1200:]}"
+                            logs.append(diagnostic)
+                            log_diagnostic(diagnostic)
+                            if output_callback:
+                                output_callback(stage, diagnostic)
+                            fallback = {"exit": process.returncode, "device": command[device_index], "diagnostic": diagnostic}
+                            manifest["stages"][stage]["cpu_fallback"] = fallback
+                            save_manifest()
+                            command = list(command)
+                            command[device_index] = "cpu"
+                            if "--cache-dir" in command:
+                                cache_index = command.index("--cache-dir")
+                                del command[cache_index:cache_index + 2]
+                            if output is not None:
+                                output.unlink(missing_ok=True)
+                            continue
+                    details = (stderr or stdout or "").strip()
+                    if is_runtime_failure(details):
+                        from .runtime_preflight import runtime_error
+
+                        raise runtime_error(details)
+                    if len(details) > 1200:
+                        details = details[-1200:]
+                        # 从整行开始：硬切会让第一行只剩半个词，界面只显示第一行。
+                        if "\n" in details:
+                            details = details.split("\n", 1)[1]
+                    script_name = (
+                        Path(command[1]).name
+                        if len(command) > 1 and command[1].endswith(".py")
+                        else "pipeline step"
+                    )
+                    message = f"{script_name} 执行失败"
+                    lines = [line.strip() for line in details.splitlines() if line.strip()]
+                    if lines:
+                        # 第一行放最后一行输出（异常通常在回溯的末尾），完整输出跟在后面。
+                        message = f"{message}: {lines[-1][:300]}"
+                        if len(lines) > 1:
+                            message = f"{message}\n{details}"
+                    raise RuntimeError(message)
+                break
             completed_stdout = stdout or ""
             completed_stderr = stderr or ""
             if not artifact_valid(output):
@@ -600,6 +632,10 @@ def run_pipeline(
                 "finished_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                 "output": str(output) if output else None,
             }
+            if fallback:
+                manifest["stages"][stage]["cpu_fallback"] = fallback
+                log_diagnostic(f"{stage}: CPU fallback succeeded")
+                logs.append(f"{stage}: CPU fallback succeeded")
             save_manifest()
         except PipelineCancelled:
             manifest.setdefault("stages", {})[stage] = {
@@ -607,6 +643,8 @@ def run_pipeline(
                 "finished_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                 "output": str(output) if output else None,
             }
+            if fallback:
+                manifest["stages"][stage]["cpu_fallback"] = fallback
             save_manifest()
             raise
         except Exception as exc:
@@ -616,6 +654,8 @@ def run_pipeline(
                 "output": str(output) if output else None,
                 "error": str(exc),
             }
+            if fallback:
+                manifest["stages"][stage]["cpu_fallback"] = fallback
             save_manifest()
             raise
         finally:
