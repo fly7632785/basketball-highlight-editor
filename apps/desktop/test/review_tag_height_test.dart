@@ -46,7 +46,12 @@ void main() {
         findsOneWidget,
       );
       final time = find
-          .descendant(of: row, matching: find.byWidgetPredicate((w) => w is RichText && w.text.toPlainText().startsWith('#1 ')))
+          .descendant(
+            of: row,
+            matching: find.byWidgetPredicate(
+              (w) => w is RichText && w.text.toPlainText().startsWith('#1 '),
+            ),
+          )
           .first;
       expect(tester.getTopLeft(add).dx, tester.getTopLeft(time).dx);
       final button = tester.widget<TextButton>(add);
@@ -100,6 +105,57 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('选择标签 · 可多选'), findsOneWidget);
       expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'L439b supplement three consecutive cards each grow from 0 to 4 tags without movement',
+    (tester) async {
+      final notifier = harness.FakeProject();
+      notifier.initial = harness.fixture().copyWith(
+        candidates: [
+          for (final i in [3, 4, 5])
+            {
+              ...harness.fixture().candidates[i],
+              'tags': <Map<String, dynamic>>[],
+            },
+        ],
+      );
+      await harness.pump(tester, notifier, size: const Size(1428, 880));
+      final ids = ['c3', 'c4', 'c5'];
+      final rects = {
+        for (final id in ids)
+          id: tester.getRect(find.byKey(ValueKey('candidate-row-$id'))),
+      };
+      for (final id in ids) {
+        await tester.tap(find.byKey(ValueKey('tier-dot-$id')));
+        await tester.pumpAndSettle();
+        for (final (index, key) in [
+          LogicalKeyboardKey.digit1,
+          LogicalKeyboardKey.digit2,
+          LogicalKeyboardKey.digit3,
+          LogicalKeyboardKey.digit4,
+        ].indexed) {
+          await tester.sendKeyEvent(key);
+          await tester.pumpAndSettle();
+          final current = notifier.current.candidates.firstWhere(
+            (c) => c['id'] == id,
+          );
+          expect((current['tags'] as List).length, index + 1);
+          for (final rowId in ids) {
+            final rect = tester.getRect(
+              find.byKey(ValueKey('candidate-row-$rowId')),
+            );
+            expect(rect.height, 80);
+            expect(
+              rect,
+              rects[rowId],
+              reason:
+                  'Tagging $id must not move or resize any of the three cards',
+            );
+          }
+          expect(tester.takeException(), isNull);
+        }
+      }
     },
   );
 }
