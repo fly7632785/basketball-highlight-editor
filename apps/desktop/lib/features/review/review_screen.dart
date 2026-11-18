@@ -5732,7 +5732,7 @@ class _CandidatePanel extends StatelessWidget {
                     Expanded(
                       child: Text(
                         context.bheText(
-                          '导出筛选中：${exportReview!.description(players)}（${exportReview!.apply(allCandidates).length} 段）',
+                          '导出筛选中：${exportReview!.tiers.map((tier) => tierLabels[tier]).join('、')} · ${exportReview!.tags == null ? '不限' : players.where((p) => exportReview!.tags!.contains(p['id']?.toString())).map((p) => p['name']).join('、')}（${exportReview!.apply(allCandidates).length} 段）',
                         ),
                         style: TextStyle(color: c.orange, fontSize: 12),
                       ),

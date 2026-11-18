@@ -33,7 +33,7 @@
   "feedbackMailClientMissing": "No mail client is available. Please contact the feedback email manually.",
   "about": "About BHE",
   "backToProject": "Back to project",
-  "localProcessing": "Processed locally",
+  "localProcessing": "Local only",
   "switchTheme": "Switch theme",
   "switchLanguage": "Switch language",
   "languageChinese": "简体中文",

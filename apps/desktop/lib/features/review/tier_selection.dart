@@ -56,8 +56,6 @@ class TierSelection {
   String get reviewTier =>
       tiers.length == 3 ? 'all' : 'tiers:${tiers.join(',')}';
   String get reviewTags => tags == null ? 'all' : 'players:${tags!.join(',')}';
-  String description(List<Map<String, dynamic>> players) =>
-      '${tiers.map((tier) => tierLabels[tier]).join('、')} · ${tags == null ? '不限' : players.where((p) => tags!.contains(p['id']?.toString())).map((p) => p['name']).join('、')}';
 }
 
 // Scope follows the project, not the active video in a multi-video project.
