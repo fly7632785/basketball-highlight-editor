@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterable
 from uuid import uuid4
 
 from .request_control import fingerprint
-from .tiers import RULE_VERSION, calibrate, calibration_from_rows, classify, evidence_dict, never_near_rim
+from .tiers import RULE_VERSION, calibrate, calibration_from_rows, classify, evidence_dict, likely_miss
 
 # Same value as basketball_highlight.rim_check.AUTO_REVIEW_REASON.
 AUTO_REVIEW_REASON = "auto_rim_check"
@@ -824,7 +824,7 @@ class ProjectStore:
             if not evidence_dict(evidence.get("tier_calibration")) and saved.get("scope") != "analysis_run_baseline_made":
                 evidence["tier_calibration"] = baseline
             tier = classify(evidence, evidence.get("analysis_mode", "standard"), project["tier_rule_version"] if project else RULE_VERSION)
-            row.update(likely_miss=tier["tier"] == "suspect" and never_near_rim(evidence),
+            row.update(likely_miss=tier["tier"] == "suspect" and likely_miss(evidence),
                        tier=tier["tier"], tier_reason=tier["reason"], tier_source=tier["source"],
                        selection_status={"must":"included", "suspect":"pending", "excluded":"excluded"}[tier["tier"]])
         return rows
