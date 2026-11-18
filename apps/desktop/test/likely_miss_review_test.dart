@@ -35,7 +35,7 @@ void main() {
       final notifier = groupedProject();
       await harness.pump(tester, notifier);
       expect(find.text('疑似 2'), findsOneWidget);
-      expect(find.text('可能没进 1 · 没看到球靠近篮筐'), findsOneWidget);
+      expect(find.text('可能没进 1 · 没看到球穿过篮筐'), findsOneWidget);
       expect(find.byKey(const ValueKey('candidate-row-c3')), findsNothing);
       expect(find.text('候选 00:45'), findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
@@ -61,7 +61,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.keyS);
       await tester.pumpAndSettle();
       expect(find.text('候选 00:36'), findsOneWidget);
-      expect(find.text('可能没进 · 没看到球靠近篮筐'), findsOneWidget);
+      expect(find.text('可能没进 · 没看到球穿过篮筐'), findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
       await tester.pumpAndSettle();
       expect(notifier.current.candidates.first['tier'], 'must');
@@ -159,7 +159,7 @@ void main() {
           scrollable: find.byType(Scrollable).last,
         );
         await tester.pumpAndSettle();
-        expect(find.text('可能没进 65 · 没看到球靠近篮筐'), findsOneWidget);
+        expect(find.text('可能没进 65 · 没看到球穿过篮筐'), findsOneWidget);
         expect(tester.takeException(), isNull);
         await harness.screenshot(tester, 'l439b-${width.toInt()}-collapsed');
         await tester.tap(group);
@@ -169,7 +169,7 @@ void main() {
         final firstLikely = candidates.firstWhere(candidateLikelyMiss);
         await tester.tap(find.byKey(ValueKey('tier-dot-${firstLikely['id']}')));
         await tester.pumpAndSettle();
-        expect(find.text('可能没进 · 没看到球靠近篮筐'), findsOneWidget);
+        expect(find.text('可能没进 · 没看到球穿过篮筐'), findsOneWidget);
         expect(tester.takeException(), isNull);
         await harness.screenshot(tester, 'l439b-${width.toInt()}-expanded');
       });

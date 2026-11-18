@@ -83,9 +83,9 @@ String? _translateDynamic(String source) {
   if(tierExport != null) return 'Will export ${tierExport.group(1)} clips · ${tierExport.group(2)}';
   final tierInspect = RegExp(r'^去审核页看这 (\d+) 段 →$').firstMatch(source);
   if(tierInspect != null) return 'Review these ${tierInspect.group(1)} clips →';
-  final likelyMissCount = RegExp(r'^可能没进 (\d+) · 没看到球靠近篮筐$').firstMatch(source);
+  final likelyMissCount = RegExp(r'^可能没进 (\d+) · 没看到球穿过篮筐$').firstMatch(source);
   if (likelyMissCount != null) {
-    return 'Maybe missed ${likelyMissCount.group(1)} · the ball never came near the rim';
+    return 'Maybe missed ${likelyMissCount.group(1)} · ball not seen going through the rim';
   }
   final suspectProgress = RegExp(
     r'^疑似 (\d+) 段 · 已审 (\d+)（判进 (\d+) · 判没进 (\d+)） · 剩 (\d+)$',
@@ -463,7 +463,7 @@ const _englishText = <String, String>{
   '本页已审完': 'All clips on this page have been reviewed',
   '更多筛选': 'More filters',
   '依据详情': 'Details',
-  '可能没进 · 没看到球靠近篮筐': 'Maybe missed · the ball never came near the rim',
+  '可能没进 · 没看到球穿过篮筐': 'Maybe missed · ball not seen going through the rim',
   '人工确认：进': 'Confirmed by you: goal',
   '人工确认：排除': 'Confirmed by you: excluded',
   '篮筐复核：进': 'Rim check: made',
@@ -495,7 +495,7 @@ const _englishText = <String, String>{
   '球从篮筐前方经过': 'the ball passed in front of the rim',
   '球落下时篮网没有动': 'the net did not move when the ball came down',
   '篮筐太小，请人工确认': 'the rim is too small, please review manually',
-  '可能没进 N · 没看到球靠近篮筐': 'Maybe missed N · the ball never came near the rim',
+  '可能没进 N · 没看到球穿过篮筐': 'Maybe missed N · ball not seen going through the rim',
   '显示当前档位里的全部片段。': 'Show every clip in the current tier.',
   '只看已经加了球员标签的片段。': 'Only clips that already have a player tag.',
   '只看还没加标签的片段，方便补标签。': 'Only clips without a tag, to make tagging easier.',
@@ -511,8 +511,8 @@ const _englishText = <String, String>{
   '系统亲眼看到没进的（弹出来、偏到筐外、从侧边飞出），加上你点过 ✕ 的。默认不导出，可以随时恢复。':
       'Clips the app clearly saw missing (bounced out, off target, or flew past sideways), plus the ones you rejected with ✕. Not exported by default; restore anytime.',
   '按球员标签、篮筐复核结果再细分。': 'Narrow further by player tag or rim check result.',
-  '整个片段里球都没靠近过篮筐，大多数没进。为了不漏掉真进球，没有直接排除，收在最底下，想看再点开。':
-      'The ball never came near the rim in this clip; most of these are misses. To avoid dropping real goals they are not auto-excluded — they sit at the bottom; open them if you want to check.',
+  '整个片段里没看到球穿过篮筐，大多数没进；为了不漏掉真进球没有直接排除，收在最底下，想看再点开。':
+      'The ball was not seen going through the rim in this clip; most of these are misses. To avoid dropping real goals, they are not auto-excluded; they sit at the bottom. Open them if you want to check.',
   '不限': 'Any tag',
   '档位': 'Tier',
   '＋标签': '+ Tags',

@@ -3675,7 +3675,7 @@ String _primaryTierReason(
   String Function(String source) translate = _identityTranslate,
 }) {
   if (candidateLikelyMiss(candidate)) {
-    return translate('可能没进 · 没看到球靠近篮筐');
+    return translate('可能没进 · 没看到球穿过篮筐');
   }
   const reasons = {
     'user_goal': '人工确认：进',
@@ -5860,7 +5860,7 @@ class _CandidatePanel extends StatelessWidget {
                               Icon(likelyMissExpanded ? Icons.expand_less : Icons.expand_more, size: 18),
                               const SizedBox(width: 6),
                               Expanded(child: Text(
-                                context.bheText('可能没进 ${likelyMissCandidates.length} · 没看到球靠近篮筐'),
+                                context.bheText('可能没进 ${likelyMissCandidates.length} · 没看到球穿过篮筐'),
                                 style: const TextStyle(fontSize: 12),
                               )),
                             ]),

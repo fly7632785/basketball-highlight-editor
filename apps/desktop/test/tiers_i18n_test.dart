@@ -69,7 +69,7 @@ void main() {
     expect(find.textContaining('All 9'), findsOneWidget);
     // 可能没进折叠组
     expect(
-      find.text('Maybe missed 1 · the ball never came near the rim'),
+      find.text('Maybe missed 1 · ball not seen going through the rim'),
       findsOneWidget,
     );
     // 悬停说明（Tooltip.message 不经过 Text，检查内容）
@@ -81,7 +81,7 @@ void main() {
       isTrue,
     );
     expect(
-      tierTooltips.any((m) => m.startsWith('The ball never came near the rim')),
+      tierTooltips.any((m) => m.startsWith('The ball was not seen going through the rim')),
       isTrue,
     );
 
@@ -147,7 +147,7 @@ void main() {
     expect(find.text('进球 3'), findsOneWidget);
     expect(find.text('疑似 2'), findsOneWidget);
     expect(find.text('排除 3'), findsOneWidget);
-    expect(find.text('可能没进 1 · 没看到球靠近篮筐'), findsOneWidget);
+    expect(find.text('可能没进 1 · 没看到球穿过篮筐'), findsOneWidget);
     expect(find.text('更多筛选'), findsOneWidget);
     await tester.tap(
       find.byKey(const Key('candidate-evidence-details-toggle')),
