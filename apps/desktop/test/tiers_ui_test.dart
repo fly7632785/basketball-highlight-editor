@@ -165,6 +165,7 @@ Future<({GoRouter router, ProviderContainer container})> pump(
   Size size = const Size(1600, 1000),
   Locale locale = const Locale('zh'),
   ReviewScreen reviewScreen = const ReviewScreen(),
+  WidgetBuilder? homeBuilder,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -177,7 +178,7 @@ Future<({GoRouter router, ProviderContainer container})> pump(
         branches: [
           StatefulShellBranch(
             routes: [
-              GoRoute(path: '/home', builder: (_, _) => const SizedBox()),
+              GoRoute(path: '/home', builder: (context, _) => homeBuilder?.call(context) ?? const SizedBox()),
             ],
           ),
           StatefulShellBranch(

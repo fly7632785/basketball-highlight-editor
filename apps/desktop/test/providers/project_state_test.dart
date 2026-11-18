@@ -952,6 +952,29 @@ void main() {
     });
   }
 
+  test('review session identity changes on reopen/create/close even for the same project', () async {
+    final session = _FakeProjectSession();
+    session.restore(const ProjectSessionCheckpoint(projectRoot: '/project', projectId: 'p'));
+    final container = ProviderContainer(overrides: [
+      projectSessionProvider.overrideWithValue(session),
+      engineBootstrapProvider.overrideWith(_StubEngineBootstrap.new),
+    ]);
+    addTearDown(container.dispose);
+    final notifier = container.read(projectProvider.notifier);
+    expect(await notifier.openProject('/project'), isTrue);
+    final first = container.read(projectProvider).reviewSessionRevision;
+    expect(first, greaterThan(0));
+    expect(await notifier.openProject('/project'), isTrue);
+    final reopened = container.read(projectProvider).reviewSessionRevision;
+    expect(reopened, greaterThan(first));
+    expect(container.read(projectProvider).copyWith(busy: false).reviewSessionRevision, reopened);
+    expect(await notifier.startNewProject(), isTrue);
+    final created = container.read(projectProvider).reviewSessionRevision;
+    expect(created, greaterThan(reopened));
+    notifier.closeProject();
+    expect(container.read(projectProvider).reviewSessionRevision, greaterThan(created));
+  });
+
   test('temporary preferences initialization failure does not block opening and retries', () async {
     const prefKey = 'bhe.desktop.uncertain_export_starts';
     final key = '/project${String.fromCharCode(0)}p';

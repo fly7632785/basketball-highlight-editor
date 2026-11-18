@@ -1384,11 +1384,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
 
   void _syncPreviewScope(ProjectState state) {
     // 多段项目里选中候选会切换当前段，不能因此清空审核状态。
-    final key = state.multiVideo
+    final videoKey = state.multiVideo
         ? ([
             for (final video in state.videos) video['id'].toString(),
           ]..sort()).join('|')
         : '${state.video?['id'] ?? ''}|${state.videoPath ?? ''}';
+    final key = '${state.reviewSessionRevision}|$videoKey';
     if (_previewScopeKey == key) return;
     _previewScopeKey = key;
     _previewGeneration++;
@@ -1403,6 +1404,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     _segmentFilter = 'all';
     _showOriginalVideo = false;
     _videoSourceSwitchToken++;
+    _pausePositionToken++;
   }
 
   Future<String?> _enqueuePreview(Future<String?> Function() loader) {
@@ -2028,6 +2030,9 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
     } else if (oldWidget.replayToken != widget.replayToken) {
       // Keep an explicit selection's intent across async multi-video activation.
       _candidatePlayRequested = true;
+    } else if (oldWidget.candidate == null || widget.candidate == null) {
+      // Empty/loading -> first result is hydration, not a user's selection.
+      _candidatePlayRequested = false;
     }
     if (oldWidget.videoPath != widget.videoPath ||
         oldWidget.isOriginalVideo != widget.isOriginalVideo) {
@@ -2081,7 +2086,8 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
           _clipEndHandled = false;
         });
       }
-      if (reviewVideoAutoPlayAfterCandidateSwitch) {
+      if (reviewVideoAutoPlayAfterCandidateSwitch &&
+          oldWidget.candidate != null && widget.candidate != null) {
         unawaited(_queueCandidatePlayback());
       } else {
         unawaited(_queueCandidatePosition());

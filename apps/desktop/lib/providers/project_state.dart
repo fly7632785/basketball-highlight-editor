@@ -82,6 +82,7 @@ class ProjectState {
     this.previewPath,
     this.previewTimeMs = 1000,
     this.analysisResultRevision = 0,
+    this.reviewSessionRevision = 0,
     this.previewRefreshing = false,
     this.suggestedRoi,
     this.netRoi,
@@ -131,6 +132,8 @@ class ProjectState {
   final String? roiSuggestionError;
   final bool roiDetecting;
   final int analysisResultRevision;
+  /// Successful open/create/reset identity, including reopening the same project.
+  final int reviewSessionRevision;
   final JsonMap? job;
   final JsonMap? exportJob;
   final JsonMap? statistics;
@@ -199,6 +202,7 @@ class ProjectState {
     Object? previewPath = _unset,
     int? previewTimeMs,
     int? analysisResultRevision,
+    int? reviewSessionRevision,
     bool? previewRefreshing,
     Object? suggestedRoi = _unset,
     Object? netRoi = _unset,
@@ -246,6 +250,7 @@ class ProjectState {
           : previewPath as String?,
       previewTimeMs: previewTimeMs ?? this.previewTimeMs,
       analysisResultRevision: analysisResultRevision ?? this.analysisResultRevision,
+      reviewSessionRevision: reviewSessionRevision ?? this.reviewSessionRevision,
       previewRefreshing: previewRefreshing ?? this.previewRefreshing,
       suggestedRoi: identical(suggestedRoi, _unset)
           ? this.suggestedRoi
@@ -506,6 +511,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
       if (_disposed || generation != _projectLoadGeneration) return;
       final linkedVideo = (linked['video'] as Map?)?.cast<String, dynamic>();
       state = state.copyWith(
+        reviewSessionRevision: generation,
         knownProjectsRoot: knownRoot,
         videoPath: _playbackVideoPath(linkedVideo) ?? path,
         reviewVideoPath: null,
@@ -899,6 +905,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         _reviewHistory.clear();
         session.reset();
         state = ProjectState(
+          reviewSessionRevision: _projectLoadGeneration,
           recentProjects: remaining,
           knownProjectsRoot: Directory(normalizedRoot).parent.path,
         );
@@ -915,6 +922,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     _reviewHistory.clear();
     ref.read(projectSessionProvider).reset();
     state = ProjectState(
+      reviewSessionRevision: _projectLoadGeneration,
       recentProjects: state.recentProjects,
       knownProjectsRoot: state.knownProjectsRoot,
     );
@@ -1019,6 +1027,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     _reviewHistory.clear();
     ref.read(projectSessionProvider).reset();
     state = ProjectState(
+      reviewSessionRevision: _projectLoadGeneration,
       recentProjects: state.recentProjects,
       knownProjectsRoot: state.knownProjectsRoot,
     );
@@ -1201,6 +1210,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
             );
       }
       state = state.copyWith(
+        reviewSessionRevision: generation,
         knownProjectsRoot: Directory(canonicalProjectPath(root)).parent.path,
         video: video,
         videoPath: sourceMissing ? null : _playbackVideoPath(video),
