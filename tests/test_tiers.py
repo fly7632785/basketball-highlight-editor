@@ -43,6 +43,45 @@ def test_classification_contract(change, mode, tier):
     assert classify(evidence(**change),mode,'r2-v1')['tier']==tier
 
 
+@pytest.mark.parametrize('reason', ['off_center', 'exit_off_center', 'rebound'])
+def test_coarse_seen_miss_keeps_analysis_auto_exclusion_and_manual_priority(reason):
+    e = evidence(analysis_source='coarse', review_status='excluded', review_reason='auto_rim_check',
+                 rim_check=dict(status='rejected', reason=reason, track_points=10, track_span=1))
+    original = json.dumps(e, sort_keys=True)
+    assert classify(e) == dict(tier='excluded', reason='seen_miss', source='algorithm')
+    assert json.dumps(e, sort_keys=True) == original
+    # Existing fast/version guards and manual decisions retain their priority.
+    assert classify(e, mode='fast')['tier'] == 'suspect'
+    assert classify(e, rule_version='future')['tier'] == 'suspect'
+    e.update(review_status='goal', review_reason=None)
+    assert classify(e) == dict(tier='must', reason='user_goal', source='user')
+    e['review_status'] = 'excluded'
+    assert classify(e) == dict(tier='excluded', reason='user_excluded', source='user')
+
+
+def test_coarse_no_crossing_auto_exclusion_stays_suspect():
+    e = evidence(analysis_source='coarse', review_status='excluded', review_reason='auto_rim_check',
+                 rim_check=dict(status='rejected', reason='no_crossing', track_points=30, track_span=3))
+    assert classify(e) == dict(tier='suspect', reason='missing_refined_evidence', source='algorithm')
+
+
+@pytest.mark.parametrize('reason', ['off_center', 'exit_off_center'])
+@pytest.mark.parametrize('missing_support', [dict(track_points=9), dict(track_span=.9)])
+def test_coarse_side_miss_does_not_relax_existing_support_thresholds(reason, missing_support):
+    check = dict(status='rejected', reason=reason, track_points=10, track_span=1)
+    check.update(missing_support)
+    e = evidence(analysis_source='coarse', review_status='excluded', review_reason='auto_rim_check',
+                 rim_check=check)
+    assert classify(e)['tier'] == 'suspect'
+
+
+@pytest.mark.parametrize('status', ['pending', 'deferred', 'second_review'])
+def test_coarse_seen_miss_does_not_create_new_auto_exclusions(status):
+    e = evidence(analysis_source='coarse', review_status=status, review_reason='auto_rim_check',
+                 rim_check=dict(status='rejected', reason='rebound'))
+    assert classify(e)['tier'] == 'suspect'
+
+
 def test_missing_and_unknown_version_are_suspect():
     for item in [None, {}, 'not json', [], {'rim_check':[]}]:
         assert classify(item)['tier']=='suspect'
