@@ -3661,11 +3661,16 @@ class _VideoControlsState extends State<_VideoControls> {
 const reviewEvidenceDetailsPrefsKey =
     'courtside.review_evidence_details_expanded';
 
+String _identityTranslate(String source) => source;
+
 String _primaryTierReason(
   Map<String, dynamic> candidate,
-  Map<String, dynamic> evidence,
-) {
-  if (candidateLikelyMiss(candidate)) return '可能没进 · 没看到球靠近篮筐';
+  Map<String, dynamic> evidence, {
+  String Function(String source) translate = _identityTranslate,
+}) {
+  if (candidateLikelyMiss(candidate)) {
+    return translate('可能没进 · 没看到球靠近篮筐');
+  }
   const reasons = {
     'user_goal': '人工确认：进',
     'user_excluded': '人工确认：排除',
@@ -3681,17 +3686,18 @@ String _primaryTierReason(
     'seen_miss': '篮筐复核：没进',
     'unsupported_rule_version': '疑似：规则版本待确认',
   };
+  String tr(String source) => translate(source);
   final check = _candidateEvidence(candidate)['rim_check'];
   if (candidateTier(candidate) == 'must') {
     if (candidate['tier_reason'] == 'user_goal' &&
         (check is! Map || check['status'] != 'made')) {
-      return '人工确认：进';
+      return tr('人工确认：进');
     }
     if (check is Map && check['status'] == 'made') {
       final net = candidate['tier_reason'] == 'r2_net_motion'
-          ? '篮网明显摆动'
-          : '已确认穿筐';
-      return '篮筐复核：进 · $net，球从网底落下';
+          ? tr('篮网明显摆动')
+          : tr('已确认穿筐');
+      return '${tr('篮筐复核：进')} · $net${tr('，球从网底落下')}';
     }
   }
   if (check is Map &&
@@ -3699,7 +3705,7 @@ String _primaryTierReason(
           check['status'] == 'unsure' ||
           check['status'] == 'skipped') &&
       candidate['tier_reason'] != 'user_excluded') {
-    final reason = const {
+    final reason = tr(const {
       'no_crossing': '没有看到球穿过篮筐',
       'no_entry': '球未从篮筐上方进入',
       'off_center': '球偏离篮筐口',
@@ -3709,21 +3715,26 @@ String _primaryTierReason(
       'not_occluded': '球从篮筐前方经过',
       'small_rim': '篮筐太小，请人工确认',
       'net_still': '球落下时篮网没有动',
-    }[check['reason']];
-    if (reason != null) {
-      return '${check['status'] == 'rejected' ? '篮筐复核未通过' : '篮筐复核待确认'} · $reason';
+    }[check['reason']] ?? '');
+    if (reason.isNotEmpty) {
+      final prefix = check['status'] == 'rejected'
+          ? tr('篮筐复核未通过')
+          : tr('篮筐复核待确认');
+      return '$prefix · $reason';
     }
   }
-  final reason = reasons[candidate['tier_reason']];
-  if (reason != null) return reason;
+  final reason = tr(reasons[candidate['tier_reason']] ?? '');
+  if (reason.isNotEmpty) return reason;
   // Legacy/UI fixtures without an engine tier reason must not invent certainty.
   if (candidate['tier_source'] == 'user') {
-    return candidateTier(candidate) == 'must' ? '人工确认：进' : '人工确认：排除';
+    return candidateTier(candidate) == 'must'
+        ? tr('人工确认：进')
+        : tr('人工确认：排除');
   }
   return switch (check is Map ? check['status'] : null) {
-    'made' => '篮筐复核：进 · 待确认分档',
-    'rejected' => '篮筐复核：未通过',
-    _ => '疑似：证据不足，待确认',
+    'made' => tr('篮筐复核：进 · 待确认分档'),
+    'rejected' => tr('篮筐复核：未通过'),
+    _ => tr('疑似：证据不足，待确认'),
   };
 }
 
@@ -4063,7 +4074,11 @@ class _CandidateInspector extends StatelessWidget {
             const SizedBox(width: 6),
             Expanded(
               child: Text(
-                context.bheText(_primaryTierReason(candidate, evidence)),
+                _primaryTierReason(
+                  candidate,
+                  evidence,
+                  translate: context.bheText,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(
@@ -5931,6 +5946,9 @@ class _CandidatePanel extends StatelessWidget {
                           style: OutlinedButton.styleFrom(
                             foregroundColor: c.textPrimary,
                             side: BorderSide(color: c.borderStrong),
+                            padding: Localizations.localeOf(context).languageCode == 'en'
+                                ? const EdgeInsets.symmetric(horizontal: 8)
+                                : null,
                             minimumSize: const Size(0, 40),
                           ),
                         ),

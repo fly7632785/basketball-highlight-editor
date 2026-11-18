@@ -211,7 +211,7 @@
   "reviewStatusFilter": "Filter by kept / excluded",
   "reviewClearFilters": "Clear filters",
   "reviewMoreActions": "More actions",
-  "reviewAddMissed": "Add missed clip",
+  "reviewAddMissed": "Add missed",
   "reviewKeepAction": "Keep",
   "reviewExcludeAction": "Exclude",
   "reviewWillExport": "Will export",

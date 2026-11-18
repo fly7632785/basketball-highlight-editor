@@ -680,7 +680,7 @@ class BheLocalizationsEn extends BheLocalizations {
   String get reviewMoreActions => 'More actions';
 
   @override
-  String get reviewAddMissed => 'Add missed clip';
+  String get reviewAddMissed => 'Add missed';
 
   @override
   String get reviewKeepAction => 'Keep';
