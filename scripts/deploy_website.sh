@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 部署 BHE 官网到 Oracle 服务器（bhe.jafir.top，nginx 静态托管）。
-# 用法：scripts/deploy_website.sh
+# 用法：scripts/deploy_website.sh [--dry-run]
 # 可用环境变量覆盖：BHE_SERVER / BHE_SSH_KEY
 set -euo pipefail
 
@@ -12,6 +12,15 @@ KEY="${BHE_SSH_KEY:-$HOME/.ssh/ssh-key-2026-06-04.key}"
 [[ -f "$SITE_DIR/index.html" ]] || { echo "错误：未找到 $SITE_DIR/index.html" >&2; exit 2; }
 
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -i "$KEY")
+
+# 预演只读取远端文件列表；不创建目录、不复制配置、不重载 nginx。
+if [[ "${1:-}" == "--dry-run" && "$#" -eq 1 ]]; then
+  rsync -az --delete --dry-run --itemize-changes --stats -e "ssh ${SSH_OPTS[*]}" \
+    --exclude 'nginx/' \
+    "$SITE_DIR/" "$SERVER:/data/web/bhe/"
+  exit 0
+fi
+[[ "$#" -eq 0 ]] || { echo "用法：$0 [--dry-run]" >&2; exit 2; }
 
 echo "==> 同步站点文件到 $SERVER:/data/web/bhe"
 ssh "${SSH_OPTS[@]}" "$SERVER" "mkdir -p /data/web/bhe"
