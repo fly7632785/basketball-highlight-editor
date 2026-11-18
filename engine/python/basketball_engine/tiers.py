@@ -32,6 +32,28 @@ def seen_miss(evidence):
             or (check.get('status') == 'rejected' and check.get('reason') == 'rebound'))
 
 
+def never_near_rim(evidence):
+    """A queue hint, not proof of a miss: stored tracks can omit real goals."""
+    evidence = evidence_dict(evidence)
+    check = evidence_dict(evidence.get('rim_check'))
+    if (check.get('status') not in {'unsure', 'rejected'}
+            or check.get('reason') not in {'no_crossing', 'no_entry', 'no_exit'}):
+        return False
+    overlay = evidence_dict(evidence.get('overlay'))
+    rim = evidence_dict(overlay.get('rim'))
+    points = overlay.get('trajectory')
+    # The overlay rim and its points share coordinates; the coarse rim may not.
+    if (not all(finite(rim.get(key)) for key in ('center_x', 'rim_y', 'width'))
+            or rim['width'] <= 0 or not isinstance(points, list) or not points):
+        return False
+    if any(not isinstance(point, dict) or not finite(point.get('x'))
+           or not finite(point.get('y')) for point in points):
+        return False
+    return not any(abs((point['x'] - rim['center_x']) / rim['width']) <= .6
+                   and -.6 <= (point['y'] - rim['rim_y']) / rim['width'] <= 1.2
+                   for point in points)
+
+
 def classify(evidence, mode='standard', rule_version=RULE_VERSION):
     evidence = evidence_dict(evidence)
     def result(tier, reason, source='algorithm'):

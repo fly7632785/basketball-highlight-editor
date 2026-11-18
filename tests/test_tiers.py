@@ -338,3 +338,70 @@ def test_legacy_fallback_keeps_saved_calibration_and_zero_baseline_suspect(proje
     rows=store.list_candidates()
     assert rows[0]['tier_reason']=='missing_calibration'  # Saved baseline is never overwritten.
     assert {c['tier'] for c in rows[1:]}=={'suspect' if motion==0 else 'must'}
+
+
+def far_unseen(**changes):
+    return evidence(analysis_source='coarse',
+                    rim_check=dict(status='unsure', reason='no_crossing'),
+                    overlay=dict(rim=dict(center_x=100, rim_y=200, width=20),
+                                 trajectory=[dict(x=140, y=200)]), **changes)
+
+
+@pytest.mark.parametrize('reason', ['no_crossing', 'no_entry', 'no_exit'])
+def test_likely_miss_is_only_a_hint_for_unseen_stored_tracks(reason):
+    from engine.python.basketball_engine.tiers import never_near_rim
+    e=far_unseen();e['rim_check']['reason']=reason
+    original=json.dumps(e,sort_keys=True)
+    before=classify(e)
+    assert never_near_rim(e) is True
+    assert classify(e)==before==dict(tier='suspect',reason='missing_refined_evidence',source='algorithm')
+    assert json.dumps(e,sort_keys=True)==original
+    # A coarse-scale rim must never replace the overlay's source-scale rim.
+    e['rim']=dict(center_x=140,rim_y=200,width=20)
+    assert never_near_rim(e) is True
+    e['rim_check']['status']='made'
+    assert never_near_rim(e) is False
+
+
+@pytest.mark.parametrize('overlay', [None,[],{},
+    {'rim':{'center_x':100,'rim_y':200,'width':0},'trajectory':[{'x':140,'y':200}]},
+    {'rim':{'center_x':100,'rim_y':200,'width':20},'trajectory':[]},
+    {'rim':{'center_x':100,'rim_y':200,'width':20},'trajectory':[{'x':float('nan'),'y':200}]},
+    {'rim':{'center_x':100,'rim_y':200,'width':20},'trajectory':[{'x':140,'y':200},None]},
+    {'rim':{'center_x':100,'rim_y':200,'width':20},'trajectory':[{'x':True,'y':200}]},
+    {'rim':{'center_x':100,'rim_y':200,'width':20},'trajectory':[{'x':140}]},
+])
+def test_likely_miss_missing_or_invalid_geometry_is_not_marked(overlay):
+    from engine.python.basketball_engine.tiers import never_near_rim
+    e=far_unseen();e['overlay']=overlay
+    assert never_near_rim(e) is False
+
+
+@pytest.mark.parametrize('x,y', [(88,188),(112,224),(100,200),(100,188),(112,200)])
+def test_likely_miss_near_points_including_boundary_are_preserved(x,y):
+    from engine.python.basketball_engine.tiers import never_near_rim
+    e=far_unseen();e['overlay']['trajectory'].append(dict(x=x,y=y))
+    assert never_near_rim(e) is False
+
+
+def test_likely_miss_read_projection_preserves_tiers_review_and_database(project):
+    import hashlib
+    _,store,v,_,_=project
+    store.replace_candidates(v['id'],[row('far',500,far_unseen()),row('near',5000,far_unseen())])
+    with store.connect() as db:
+        e=far_unseen();e['overlay']['trajectory']=[dict(x=100,y=200)]
+        db.execute('UPDATE candidates SET evidence_json=? WHERE id=?',(json.dumps(e),'near'))
+    before=(store.db_path.stat().st_mtime_ns,hashlib.sha256(store.db_path.read_bytes()).hexdigest())
+    listed=store.list_candidates()
+    assert [(c['tier'],c['likely_miss'],c['tier_source']) for c in listed]==[
+        ('suspect',True,'algorithm'),('suspect',False,'algorithm')]
+    assert (store.db_path.stat().st_mtime_ns,hashlib.sha256(store.db_path.read_bytes()).hexdigest())==before
+    assert 'likely_miss' not in json.loads(listed[0]['evidence_json'])
+    store.review_candidate('far','goal')
+    goal=store.list_candidates()[0]
+    assert (goal['tier'],goal['tier_source'],goal['likely_miss'])==('must','user',False)
+    store.review_candidate('far','excluded')
+    excluded=store.list_candidates()[0]
+    assert (excluded['tier'],excluded['tier_source'],excluded['likely_miss'])==('excluded','user',False)
+    store.review_candidate('far','pending')
+    assert store.list_candidates()[0]['likely_miss'] is True
