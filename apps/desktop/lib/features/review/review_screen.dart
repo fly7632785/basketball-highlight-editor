@@ -42,12 +42,16 @@ bool _annotationHintSeen = false;
 
 /// Opening the review video must not start playback without user input.
 const bool reviewVideoAutoPlayAfterOpen = false;
-const bool reviewVideoAutoPlayAfterSourceSwitch = true;
+const bool reviewVideoAutoPlayAfterSourceSwitch = false;
 const bool reviewVideoAutoPlayAfterCandidateSwitch = true;
 
 /// 审核工作台：视频优先，候选默认保留，用户只需要打叉剔除误检。
 class ReviewScreen extends ConsumerStatefulWidget {
-  const ReviewScreen({super.key});
+  const ReviewScreen({super.key, this.playbackPlayer});
+
+  /// Allows widget tests to exercise the real media queue without a native texture.
+  @visibleForTesting
+  final Player? playbackPlayer;
 
   @override
   ConsumerState<ReviewScreen> createState() => _ReviewScreenState();
@@ -88,6 +92,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       <Future<void> Function()>[];
   int _activePreviewLoads = 0;
   int _replayToken = 0;
+  int _pausePositionToken = 0;
+  bool _reviewAdvancing = false;
   bool _previewQueueDisposed = false;
   int _previewGeneration = 0;
   String? _previewScopeKey;
@@ -156,7 +162,10 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       if (current?['id']?.toString() == id) {
         _requestReplay();
       } else {
-        setState(() => _selectedCandidateId = id);
+        setState(() {
+          _selectedCandidateId = id;
+          _replayToken++;
+        });
       }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _ensureCandidateVisible(id);
@@ -185,6 +194,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     setState(() {
       _showOriginalVideo = !_showOriginalVideo;
       _videoSourceSwitchToken++;
+      _pausePositionToken++;
     });
   }
 
@@ -303,7 +313,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       startMs: _clipStart,
                     ))?['id']
               ?.toString();
-      if (_selectedCandidateId != null) _replayToken++;
+      _pausePositionToken++;
     });
     final id = _selectedCandidateId;
     if (id != null) {
@@ -522,7 +532,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
         case ReviewShortcutAction.loop:
           _toggleCandidateLoop();
         case ReviewShortcutAction.undo:
-          if (!reviewLocked) unawaited(notifier.undoReview());
+          if (!reviewLocked) unawaited(_undoReview());
         case ReviewShortcutAction.exclude:
           final id = selected?['id']?.toString();
           if (!reviewLocked && id != null) {
@@ -709,12 +719,70 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       rimFilter: _rimFilter,
       segmentFilter: _segmentFilter,
     );
-    if (_candidateFilter == 'suspect') setState(() => _retainedIds.add(id));
-    final future = ref
-        .read(projectProvider.notifier)
-        .reviewCandidate(id, status, showNotice: false);
-    _keepSelectionVisibleAfterEdit(id, before);
-    await future;
+    if (_reviewAdvancing) return;
+    final notifier = ref.read(projectProvider.notifier);
+    final projectId = ref.read(projectProvider).statistics?['project']?['id'];
+    final pauseToken = _pausePositionToken;
+    final replayToken = _replayToken;
+    // Keep the just-reviewed row available, including the last row in any tier.
+    setState(() {
+      _reviewAdvancing = true;
+      _retainedIds.add(id);
+    });
+    try {
+      final saved = await notifier.reviewCandidate(id, status, showNotice: false);
+      if (!mounted || !saved ||
+          ref.read(projectProvider).statistics?['project']?['id'] != projectId ||
+          pauseToken != _pausePositionToken || replayToken != _replayToken) {
+        return;
+      }
+      final current = {for (final c in ref.read(projectProvider).candidates) c['id']: c};
+      final index = before.indexWhere((c) => c['id'] == id);
+      final next = before.skip(index + 1).where((c) {
+        final latest = current[c['id']];
+        return latest != null && (!_isReviewed(latest) || _isAutoExcluded(latest));
+      }).firstOrNull;
+      if (next != null) {
+        _selectCandidate(next);
+      } else {
+        setState(() {
+          _selectedCandidateId = id;
+          _pausePositionToken++;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.bheText('本页已审完'))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _reviewAdvancing = false);
+    }
+  }
+
+  Future<void> _undoReview() async {
+    final notifier = ref.read(projectProvider.notifier);
+    await notifier.flushReviewQueue();
+    if (!mounted) return;
+    final id = notifier.undoCandidateId;
+    final depth = notifier.reviewUndoDepth;
+    final projectId = ref.read(projectProvider).statistics?['project']?['id'];
+    await notifier.undoReview();
+    if (!mounted || id == null ||
+        notifier.reviewUndoDepth >= depth ||
+        ref.read(projectProvider).statistics?['project']?['id'] != projectId) {
+      return;
+    }
+    setState(() {
+      _retainedIds.add(id);
+      final restored = ref.read(projectProvider).candidates.where((c) => c['id'] == id).firstOrNull;
+      if (restored != null && candidateLikelyMiss(restored)) {
+        _likelyMissExpanded = true;
+      }
+      _selectedCandidateId = id;
+      _pausePositionToken++;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _ensureCandidateVisible(id);
+    });
   }
 
   void _keepSelectionVisibleAfterEdit(
@@ -945,6 +1013,8 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                 builder: (context, constraints) {
                   final videoPane = _VideoPane(
                     controller: _videoController,
+                    playbackPlayer: widget.playbackPlayer,
+                    pausePositionToken: _pausePositionToken,
                     videoPath: playbackPath,
                     candidate: selected,
                     isOriginalVideo: showingOriginalVideo,
@@ -976,7 +1046,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                         : _createManualCandidate,
                     onSkip: () => _moveCandidate(candidates, 1),
                     onUndo: () {
-                      if (!reviewLocked) unawaited(notifier.undoReview());
+                      if (!reviewLocked) unawaited(_undoReview());
                     },
                     excluded: selected != null && _isExcluded(selected),
                     reviewLocked: reviewLocked,
@@ -1031,6 +1101,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                       _focusReviewShortcuts();
                       setState(() {
                         _likelyMissExpanded = !_likelyMissExpanded;
+                        _pausePositionToken++;
                         if (!_likelyMissExpanded && selected != null && candidateLikelyMiss(selected)) {
                           _selectedCandidateId = null;
                         }
@@ -1112,7 +1183,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                         : _createManualCandidate,
                     onSkip: () => _moveCandidate(candidates, 1),
                     onUndo: () {
-                      if (!reviewLocked) unawaited(notifier.undoReview());
+                      if (!reviewLocked) unawaited(_undoReview());
                     },
                     onGoImport: () => context.go('/import'),
                     onExport: includedCount == 0 || reviewLocked || analyzing
@@ -1726,6 +1797,8 @@ class _TextEntryDialogState extends State<_TextEntryDialog> {
 class _VideoPane extends ConsumerStatefulWidget {
   const _VideoPane({
     required this.controller,
+    required this.playbackPlayer,
+    required this.pausePositionToken,
     required this.videoPath,
     required this.candidate,
     required this.isOriginalVideo,
@@ -1757,6 +1830,8 @@ class _VideoPane extends ConsumerStatefulWidget {
   });
 
   final _VideoPaneController controller;
+  final Player? playbackPlayer;
+  final int pausePositionToken;
   final String? videoPath;
   final Map<String, dynamic>? candidate;
   final bool isOriginalVideo;
@@ -1858,6 +1933,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
   bool _showAnnotationHint = false;
   int? _clipEndMs;
   bool _clipEndHandled = false;
+  bool _candidatePlayRequested = false;
   int _mediaGeneration = 0;
   bool _disposed = false;
   Future<void> _mediaQueue = Future<void>.value();
@@ -1885,14 +1961,18 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
     }
     if (_player == null || _controller == null) {
       try {
-        MediaKit.ensureInitialized();
-        _player ??= createLoggedPlayer('审核页');
-        _controller = VideoController(
-          _player!,
-          configuration: VideoControllerConfiguration(
-            enableHardwareAcceleration: !useSoftwareVideo(),
-          ),
-        );
+        if (widget.playbackPlayer != null) {
+          _player ??= widget.playbackPlayer;
+        } else {
+          MediaKit.ensureInitialized();
+          _player ??= createLoggedPlayer('审核页');
+          _controller = VideoController(
+            _player!,
+            configuration: VideoControllerConfiguration(
+              enableHardwareAcceleration: !useSoftwareVideo(),
+            ),
+          );
+        }
       } catch (error) {
         appLog('error', 'player', '播放器初始化失败: $error');
         _error = error.toString();
@@ -1942,6 +2022,13 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
   @override
   void didUpdateWidget(covariant _VideoPane oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.pausePositionToken != oldWidget.pausePositionToken ||
+        widget.analysisResultRevision > oldWidget.analysisResultRevision) {
+      _candidatePlayRequested = false;
+    } else if (oldWidget.replayToken != widget.replayToken) {
+      // Keep an explicit selection's intent across async multi-video activation.
+      _candidatePlayRequested = true;
+    }
     if (oldWidget.videoPath != widget.videoPath ||
         oldWidget.isOriginalVideo != widget.isOriginalVideo) {
       // 复用 Player 时保留 VideoController(与 Player 绑定),
@@ -1959,12 +2046,13 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
           widget.videoPath,
           playAfterOpen:
               oldWidget.analysisResultRevision == widget.analysisResultRevision &&
-              reviewVideoAutoPlayAfterSourceSwitch &&
-              oldWidget.sourceSwitchToken != widget.sourceSwitchToken,
+              oldWidget.pausePositionToken == widget.pausePositionToken &&
+              _candidatePlayRequested,
           recreatePlayer: true,
         ),
       );
-    } else if (widget.analysisResultRevision > oldWidget.analysisResultRevision) {
+    } else if (widget.pausePositionToken != oldWidget.pausePositionToken ||
+        widget.analysisResultRevision > oldWidget.analysisResultRevision) {
       // This revision arrives atomically with the final candidate list, not
       // the earlier job-completed notification. Invalidate pending autoplay.
       unawaited(_queueCandidatePosition());
@@ -2153,6 +2241,7 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
     bool playAfterOpen = false,
   }) async {
     final player = _player;
+    final openingPlaybackToken = _playbackToken;
     if (player == null) return;
     if (_isCurrent(generation)) setState(() => _loading = true);
     try {
@@ -2208,7 +2297,9 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
           playbackToken: _playbackToken,
         );
       }
-      if (_mayPlay && (reviewVideoAutoPlayAfterOpen || playAfterOpen)) {
+      if (_mayPlay &&
+          _isCurrent(generation, playbackToken: openingPlaybackToken) &&
+          (reviewVideoAutoPlayAfterOpen || playAfterOpen)) {
         if (widget.isOriginalVideo) {
           await player.play();
         } else {
@@ -2242,6 +2333,11 @@ class _VideoPaneState extends ConsumerState<_VideoPane> {
         !_ready ||
         candidate == null ||
         candidate.isEmpty) {
+      return;
+    }
+    final project = ref.read(projectProvider);
+    if (project.multiVideo && candidate['video_id'] != null &&
+        candidate['video_id'] != project.video?['id']) {
       return;
     }
     final start = _clipStart(candidate);

@@ -684,8 +684,8 @@ void main() {
     expect(reviewVideoAutoPlayAfterOpen, isFalse);
   });
 
-  test('autoplays after switching review source or candidate', () {
-    expect(reviewVideoAutoPlayAfterSourceSwitch, isTrue);
+  test('source switch pauses and candidate switch autoplays', () {
+    expect(reviewVideoAutoPlayAfterSourceSwitch, isFalse);
     expect(reviewVideoAutoPlayAfterCandidateSwitch, isTrue);
   });
 
@@ -2091,7 +2091,7 @@ void main() {
     expect(tester.getTopLeft(first).dy, lessThan(tester.getTopLeft(second).dy));
   });
 
-  testWidgets('decision buttons do not switch the selected candidate', (
+  testWidgets('decision buttons advance to the next unreviewed candidate', (
     tester,
   ) async {
     await _pumpReview(
@@ -2121,11 +2121,11 @@ void main() {
     await tester.tap(find.byTooltip('保留片段 (C / Enter)').at(1));
     await tester.pump();
 
-    expect(find.text('候选 00:03'), findsOneWidget);
-    expect(find.text('候选 00:12'), findsNothing);
+    expect(find.text('候选 00:12'), findsOneWidget);
+    expect(find.text('候选 00:03'), findsNothing);
   });
 
-  testWidgets('excluding a candidate keeps the current preview', (
+  testWidgets('excluding a candidate advances to the next unreviewed preview', (
     tester,
   ) async {
     await _pumpReview(
@@ -2155,8 +2155,8 @@ void main() {
     await tester.tap(find.byTooltip('排除片段 (X / ` / Backspace)').first);
     await tester.pump();
 
-    expect(find.text('候选 00:03'), findsOneWidget);
-    expect(find.text('候选 00:12'), findsNothing);
+    expect(find.text('候选 00:12'), findsOneWidget);
+    expect(find.text('候选 00:03'), findsNothing);
   });
 
   testWidgets('throttles candidate cover extraction', (tester) async {

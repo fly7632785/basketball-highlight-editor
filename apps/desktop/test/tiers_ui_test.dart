@@ -70,6 +70,11 @@ class _ReadyEngine extends EngineBootstrapNotifier {
 class FakeProject extends ProjectNotifier {
   ProjectState initial = fixture();
   final undo = <ProjectState>[];
+  final undoIds = <String>[];
+  @override
+  String? get undoCandidateId => undoIds.lastOrNull;
+  @override
+  int get reviewUndoDepth => undoIds.length;
   ProjectState get current => state;
   @override
   ProjectState build() => initial;
@@ -85,6 +90,7 @@ class FakeProject extends ProjectNotifier {
     bool showNotice = true,
   }) async {
     undo.add(state);
+    undoIds.add(id);
     state = state.copyWith(
       candidates: [
         for (final c in state.candidates)
@@ -94,6 +100,7 @@ class FakeProject extends ProjectNotifier {
               'tier': status == 'excluded' ? 'excluded' : 'must',
               'tier_source': 'user',
               'review_status': status == 'excluded' ? 'excluded' : 'goal',
+              'review_reason': reason,
               'selection_status': status,
             }
           else
@@ -110,6 +117,7 @@ class FakeProject extends ProjectNotifier {
     List<String>? replaceIds,
   }) async {
     undo.add(state);
+    undoIds.add(id);
     final candidate = state.candidates.firstWhere((c) => c['id'] == id);
     final ids = candidateTagIds(candidate).toSet();
     if (toggleId == null) {
@@ -137,7 +145,10 @@ class FakeProject extends ProjectNotifier {
 
   @override
   Future<void> undoReview() async {
-    if (undo.isNotEmpty) state = undo.removeLast();
+    if (undo.isNotEmpty) {
+      state = undo.removeLast();
+      undoIds.removeLast();
+    }
   }
 
   void switchProject() => state = state.copyWith(
@@ -153,6 +164,7 @@ Future<({GoRouter router, ProviderContainer container})> pump(
   String path = '/review',
   Size size = const Size(1600, 1000),
   Locale locale = const Locale('zh'),
+  ReviewScreen reviewScreen = const ReviewScreen(),
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -175,7 +187,7 @@ Future<({GoRouter router, ProviderContainer container})> pump(
           ),
           StatefulShellBranch(
             routes: [
-              GoRoute(path: '/review', builder: (_, _) => const ReviewScreen()),
+              GoRoute(path: '/review', builder: (_, _) => reviewScreen),
             ],
           ),
           StatefulShellBranch(
@@ -382,14 +394,14 @@ void main() {
     },
   );
   testWidgets(
-    'judged suspects stay at position until filter changes, no forced next',
+    'judged suspects stay visible while selection advances to next unreviewed',
     (tester) async {
       final notifier = FakeProject();
       await pump(tester, notifier);
       await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('candidate-row-c3')), findsOneWidget);
-      expect(find.text('候选 00:36'), findsOneWidget);
+      expect(find.text('候选 00:45'), findsOneWidget);
       expect(find.textContaining('判进 1'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('review-status-excluded')));
       await tester.pumpAndSettle();

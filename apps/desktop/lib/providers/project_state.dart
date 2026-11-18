@@ -2650,6 +2650,10 @@ class ProjectNotifier extends Notifier<ProjectState> {
         .toList();
   }
 
+  /// The UI restores selection from the same undo history that restores status/tags.
+  String? get undoCandidateId => _reviewHistory.lastOrNull?.candidateId;
+  int get reviewUndoDepth => _reviewHistory.length;
+
   /// 等价 app.dart:_undoReview(599)。
   Future<void> undoReview() {
     appLog('info', 'review', '撤销上一步审核');
