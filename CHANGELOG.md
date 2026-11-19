@@ -4,6 +4,64 @@
 
 ## [Unreleased]
 
+## [0.1.16] - 待发版日
+
+### Added
+
+- 新增「进球 / 疑似 / 排除」三档分级：分析完成后每个片段按篮筐复核结果自动分档，审核页用四个页签（进球、疑似、排除、全部）切换；档位悬停有说明；
+- 「可能没进」折叠组：整段没看到球靠近篮筐、或没看到球穿过篮筐的疑似片段收在疑似页最底下的折叠组里，默认收起、想看再点开，避免漏掉真进球；
+- 多标签：一个片段可以打多个球员标签，列表卡片固定高度、标签放不下一行时显示 +N；
+- 导出页可按档位 + 球员标签组合筛选要导出的片段，可跳到审核页核对该组合后回来导出；
+- 英文界面文案补齐（分档、审核依据、九步新手引导、导出页）。
+
+### Changed
+
+- 审核页改版：视频下方默认只显示「档位徽标 + 一句主要依据」，评分与信号收进「详情」浮层，展开状态会被记住；
+- 打 ✓ / ✕ 后自动跳到下一条未审片段并播放，快捷键顺序审核会跳过未展开的折叠组；审完本页轻提示「本页已审完」；⌘Z 撤销回到上一条并恢复状态；
+- 打开项目、分析完成、筛选变化、切换候选来源时不再自动播放，停在片段开头；点击其他候选、↓/↑/S 切换、回放等仍会播放；
+- 「必进」改名为「进球」。
+
+### Fixed
+
+- 粗扫或精扫子进程原生崩溃后，用 CPU（普通处理器）重试失败阶段一次；
+- 从首页最近项目打开项目、异步装入候选后不再自动开始播放；
+- 修复 0.1.15 已发现问题：重新配置分析过的项目时，只有第一个分段的设置能调整、后面点了没反应（含步骤条只能往回点）；
+- 重复的人工判定保留已有原因；粗扫已观察到的自动排除不再回到疑似；旧项目打开时在内存补算缺失的分档校准，缺校准不再整段判为疑似。
+
+### Known trade-offs
+
+- 「可能没进」折叠组默认收起，快速审核不会经过这些片段——需要核对这些片段时可以展开；
+- 原生崩溃 CPU 回退只重试一次，连续两次失败仍会报错。
+
+#### English
+
+##### Added
+
+- Three-tier review: clips are sorted into Goals / Uncertain / Excluded after analysis, with four tabs (Goals, Uncertain, Excluded, All) and hover explanations on the review screen;
+- "Maybe missed" collapsible group: uncertain clips where the ball never came near the rim, or was never seen going through it, sit collapsed at the bottom of the Uncertain tab;
+- Multiple player tags per clip, with fixed-height cards and a "+N" overflow;
+- Export page can filter clips by tier and player tags, with a round trip to review the selection first;
+- English interface copy completed (tiers, evidence, onboarding, export).
+
+##### Changed
+
+- Review screen redesign: below the video only a tier badge and one-line evidence show by default; scores and signals moved into a details overlay that remembers its state;
+- After ✓ / ✕ the next unreviewed clip opens and plays automatically, skipping collapsed groups; ⌘Z goes back and restores the previous decision;
+- Opening a project, finishing analysis, changing filters or clip source no longer auto-plays; clicking another clip, ↓/↑/S and replay still do;
+- "Sure goals" renamed to "Goals".
+
+##### Fixed
+
+- If the coarse or fine scan process crashes, the app retries that stage once on CPU;
+- Opening a project from Recent projects no longer auto-plays once candidates load asynchronously;
+- Fixed in 0.1.15 issues: reconfiguring an analyzed project only let the first segment be adjusted, and step navigation was back-only;
+- Repeated manual verdicts keep their existing reason; observed auto-exclusions stay excluded; legacy projects get missing calibration recomputed in memory instead of defaulting to Uncertain.
+
+##### Known trade-offs
+
+- The "maybe missed" group stays collapsed during quick review — expand it to check those clips;
+- The CPU fallback retries once; two consecutive crashes still fail the analysis.
+
 ## [0.1.15] - 2026-11-15
 
 ### Fixed
