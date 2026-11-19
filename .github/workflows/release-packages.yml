@@ -9,7 +9,7 @@ on:
       tag:
         description: "Release tag to build, for example v0.1.0-alpha.3"
         required: true
-        default: "v0.1.15"
+        default: "v0.1.16"
       platform:
         description: "Packages to build and publish"
         required: true
