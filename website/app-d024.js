@@ -1,20 +1,13 @@
 // BHE 官网脚本：下载链接渲染 + 滚动进场。
-// 主下载使用 dl 固定地址，OSS 原地址保留为备用。
 const DOWNLOADS = {
   version: "最新版本",
   dlBase: "https://dl.envsystem.top",
-  ossBase: "https://shengshengniannian.oss-cn-beijing.aliyuncs.com/shengshengniannian/basketball-highlight-editor/releases",
   ghBase: "https://github.com/fly7632785/basketball-highlight-editor/releases",
   files: {
     "mac-arm64": ["BHE-macos-arm64-latest.dmg"],
     "mac-x64": ["BHE-macos-x86_64-latest.dmg"],
     "win-x64": ["BHE-windows-x64-latest.zip"],
     "android-arm64": ["BHE-android-arm64-v8a-latest.apk"],
-  },
-  // Android uses the OSS custom domain so users in mainland China can download it directly.
-  // Keep this path separate from the Baby project's latest.apk object.
-  direct: {
-    "android-arm64": "https://oss.shengshengniannian.com/shengshengniannian/app/android/bhe/latest.apk",
   },
 };
 
@@ -39,12 +32,6 @@ function renderDownloads() {
       a.textContent = meta.label;
       box.appendChild(a);
     });
-    const mirror = document.createElement("a");
-    mirror.className = "dl-link-gh";
-    mirror.href = DOWNLOADS.direct[box.dataset.os] || `${DOWNLOADS.ossBase}/${files[0] || ""}`;
-    mirror.rel = "noopener";
-    mirror.textContent = "OSS 备用下载";
-    box.appendChild(mirror);
   });
 }
 

@@ -3,347 +3,234 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BHE — Basketball Highlight Editor | Find the moments, keep the game local</title>
-<meta name="description" content="BHE (Basketball Highlight Editor) is a free, open-source, local-first basketball video editor. It finds suspected scoring moments, lets you review them quickly, and exports highlights by player or scene.">
-<meta name="keywords" content="BHE,Basketball Highlight Editor,basketball highlights,basketball video editor,AI sports video editor,local video editing,basketball scoring detection,macOS,Windows,Android">
-<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
-<meta name="author" content="Basketball Highlight Editor contributors">
-<meta name="application-name" content="Basketball Highlight Editor">
+<title>BHE — Basketball Highlight Editor</title>
+<meta name="description" content="Find scoring moments, review clips, and export basketball highlights on your device with BHE.">
+<meta name="robots" content="index,follow">
 <meta name="theme-color" content="#15120f">
 <link rel="canonical" href="https://bhe.jafir.top/en/">
-<link rel="alternate" hreflang="zh-CN" href="https://bhe.jafir.top/">
-<link rel="alternate" hreflang="en" href="https://bhe.jafir.top/en/">
-<link rel="alternate" hreflang="x-default" href="https://bhe.jafir.top/">
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="Basketball Highlight Editor">
-<meta property="og:locale" content="en_US">
-<meta property="og:title" content="BHE — Basketball Highlight Editor">
-<meta property="og:description" content="A free, local-first AI tool for finding scoring moments in basketball videos, reviewing candidates, and exporting highlights.">
-<meta property="og:url" content="https://bhe.jafir.top/en/">
-<meta property="og:image" content="https://bhe.jafir.top/assets/demo-cover.jpg">
-<meta property="og:image:width" content="1280">
-<meta property="og:image:height" content="798">
-<meta property="og:image:alt" content="Basketball Highlight Editor review workbench">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="BHE — Basketball Highlight Editor">
-<meta name="twitter:description" content="Free, open-source, local-first basketball highlight editing. Find the moments, review the draft, and export your cut.">
-<meta name="twitter:image" content="https://bhe.jafir.top/assets/demo-cover.jpg">
-<link rel="sitemap" type="application/xml" href="/sitemap.xml">
-<link rel="icon" href="../favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="../styles-d013.css">
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@graph": [
-    {
-      "@type": "WebSite",
-      "@id": "https://bhe.jafir.top/en/#website",
-      "url": "https://bhe.jafir.top/en/",
-      "name": "Basketball Highlight Editor",
-      "alternateName": "BHE",
-      "inLanguage": "en",
-      "publisher": { "@id": "https://bhe.jafir.top/#organization" }
-    },
-    {
-      "@type": "SoftwareApplication",
-      "@id": "https://bhe.jafir.top/en/#application",
-      "name": "Basketball Highlight Editor",
-      "alternateName": "BHE",
-      "url": "https://bhe.jafir.top/en/",
-      "description": "A free, open-source, local-first basketball video highlight editor that finds suspected scoring moments and lets users review and export them.",
-      "applicationCategory": "MultimediaApplication",
-      "applicationSubCategory": "Sports video editing",
-      "operatingSystem": "macOS, Windows, Android",
-      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-      "license": "https://github.com/fly7632785/basketball-highlight-editor/blob/main/LICENSE",
-      "downloadUrl": "https://bhe.jafir.top/en/#download",
-      "image": "https://bhe.jafir.top/assets/demo-cover.jpg"
-    },
-    {
-      "@type": "VideoObject",
-      "@id": "https://bhe.jafir.top/en/#demo-video",
-      "name": "Basketball Highlight Editor demo",
-      "description": "A walkthrough of importing a game video, finding suspected scoring moments, reviewing candidates, and exporting highlights.",
-      "thumbnailUrl": "https://bhe.jafir.top/assets/demo-cover.jpg",
-      "contentUrl": "https://bhe.jafir.top/assets/recording-demo.mp4",
-      "embedUrl": "https://bhe.jafir.top/en/#demo",
-      "uploadDate": "2026-08-26",
-      "inLanguage": "en"
-    },
-    {
-      "@type": "FAQPage",
-      "@id": "https://bhe.jafir.top/en/#faq",
-      "url": "https://bhe.jafir.top/en/#faq",
-      "inLanguage": "en",
-      "mainEntity": [
-        {
-          "@type": "Question",
-          "name": "Does BHE upload my videos?",
-          "acceptedAnswer": { "@type": "Answer", "text": "No. Analysis, preview, review, and export run locally by default. You do not need an account. Internet access is only needed to download the app or browse online documentation." }
-        },
-        {
-          "@type": "Question",
-          "name": "Is BHE free?",
-          "acceptedAnswer": { "@type": "Answer", "text": "BHE is open source under the MIT License and does not charge by video length or export count. Models, footage, and third-party dependencies have their own license terms." }
-        },
-        {
-          "@type": "Question",
-          "name": "What if detection is not accurate?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Candidates are kept by default so you can remove false positives, adjust clip boundaries, or add a missed moment manually. The model creates a draft; you make the final call." }
-        },
-        {
-          "@type": "Question",
-          "name": "Which platforms are supported?",
-          "acceptedAnswer": { "@type": "Answer", "text": "The website currently provides macOS and Windows desktop packages and an Android arm64-v8a sideload test build. There is no downloadable iOS build yet." }
-        }
-      ]
-    }
-  ]
+<link rel="alternate" hreflang="x-default" href="https://bhe.jafir.top/en/">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<script>document.documentElement.classList.add('js');</script>
+<style>
+:root{
+  --ink:#0E1116; --panel:#171A21; --line-ink:#252B36;
+  --paper:#F5F6F8; --white:#FFFFFF; --warm:#FFF3DD;
+  --ball:#F08C00; --ball-deep:#D97706;
+  --t-ink:#E9ECEF; --t-ink-dim:#9AA3AF; --t-paper:#1B1F26; --t-dim:#5C6470; --line:#E3E6EB;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif;
+  --w:1080px;
 }
-</script>
-<style>
-.support-blocks{max-width:1080px;margin:auto;display:flex;flex-wrap:wrap;gap:1rem}
-.support-card{display:flex;align-items:center;gap:1.25rem;flex:1 1 420px;min-width:0;max-width:34rem;padding:1.25rem;border:1px solid #303846;border-radius:12px}
-.support-card img{display:block;flex:none;max-width:100%;height:auto;border-radius:8px}
-.support-card p{margin:.5rem 0 0;color:#c8ced7}
-.support-card h2{font-size:1.2rem;color:#e9ecef}
-@media(max-width:620px){.support-card{flex-direction:column;text-align:center}}
-</style>
-<style>
-html{scroll-behavior:auto}
-@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
-#download{scroll-margin-top:90px}
-.dl-card.recommended{border-color:var(--ball);box-shadow:0 0 0 1px var(--ball)}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);color:var(--t-paper);background:var(--paper);line-height:1.75;-webkit-font-smoothing:antialiased}
+img{max-width:100%;display:block}
+a{color:inherit}
+.mono{font-family:var(--mono);font-size:.8rem;letter-spacing:.06em}
+.wrap{max-width:var(--w);margin:0 auto;padding:0 1.5rem}
+
+
+.pv{background:#2b1f00;color:#ffd58a;font-size:.8rem;text-align:center;padding:.45rem 1rem;font-family:var(--mono)}
+
+
+.nav{position:sticky;top:0;z-index:20;background:rgba(14,17,22,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line-ink)}
+.nav .wrap{display:flex;align-items:center;gap:1.4rem;height:58px}
+.brand{font-weight:800;color:var(--t-ink);text-decoration:none;display:flex;align-items:center;gap:.55rem}
+.brand i{width:12px;height:12px;border-radius:50%;background:var(--ball);display:block}
+.nav-links{margin-left:auto;display:flex;gap:1.3rem}
+.nav-links a{color:var(--t-ink-dim);text-decoration:none;font-size:.9rem}
+.nav-links a:hover{color:var(--t-ink)}
+.btn{display:inline-block;text-decoration:none;border-radius:8px;padding:.8rem 1.6rem;font-weight:700;border:1px solid transparent;transition:transform .15s,background .15s}
+.btn:hover{transform:translateY(-1px)}
+.btn-ball{background:var(--ball);color:#1A1200}.btn-ball:hover{background:var(--ball-deep)}
+.btn-ghost{border-color:var(--line-ink);color:var(--t-ink)}
+.btn-sm{padding:.45rem 1.05rem;font-size:.9rem}
+
+
+.hero{background:var(--ink);color:var(--t-ink);position:relative;overflow:hidden;padding:clamp(4.5rem,9vw,7.5rem) 0 0}
+.hero:before{content:"";position:absolute;top:-55%;right:-18%;width:min(58vw,780px);height:min(58vw,780px);border-radius:50%;border:2px solid rgba(240,140,0,.15)}
+.hero .wrap{position:relative}
+.eyebrow{font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;color:var(--t-ink-dim);margin-bottom:1.6rem;display:flex;gap:.55rem;align-items:center}
+.eyebrow i{width:8px;height:8px;border-radius:50%;background:var(--ball)}
+h1{font-size:clamp(2.8rem,7vw,5rem);line-height:1.14;font-weight:800}
+h1 em{font-style:normal;color:var(--ball)}
+.hero-sub{max-width:34rem;margin:1.6rem 0 2.2rem;color:var(--t-ink-dim);font-size:1.12rem}
+.cta{display:flex;gap:.9rem;flex-wrap:wrap}
+.hero-foot{margin-top:1.4rem;color:var(--t-ink-dim);font-size:.88rem}
+
+.timeline{margin-top:4.5rem;padding-bottom:3.2rem}
+.track{position:relative;height:54px;border-radius:10px;background:var(--panel);border:1px solid var(--line-ink);overflow:hidden}
+.clip{position:absolute;top:10px;bottom:10px;left:var(--l);width:var(--w2);border-radius:5px;background:var(--ball);opacity:.9}
+.clip.out{background:transparent;border:1.5px dashed #6b7280;opacity:.8}
+.playhead{position:absolute;top:0;bottom:0;width:2px;background:#fff;left:0;animation:sweep 9s linear infinite}
+@keyframes sweep{from{left:0}to{left:100%}}
+.tcap{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-top:.8rem;color:var(--t-ink-dim)}
+.tcap i{display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--ball);margin-right:.4rem}
+.tcap i.o{background:transparent;border:1.5px dashed #6b7280}
+
+
+section{padding:clamp(4rem,8vw,6.5rem) 0}
+.kicker{color:var(--ball-deep);margin-bottom:.9rem}
+h2{font-size:clamp(1.8rem,3.6vw,2.6rem);line-height:1.25;font-weight:800;max-width:22em}
+.lead{color:var(--t-dim);margin-top:1rem;max-width:36rem;font-size:1.05rem}
+
+
+.vs{background:var(--white)}
+.vs-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-top:2.6rem}
+.vs-col{border-radius:14px;padding:1.8rem 1.8rem 2rem}
+.vs-old{background:var(--paper);border:1px solid var(--line)}
+.vs-new{background:var(--ink);color:var(--t-ink)}
+.vs-col h3{font-size:1.1rem;margin-bottom:1.2rem}
+.vs-col ol{list-style:none;counter-reset:s}
+.vs-col li{counter-increment:s;display:flex;gap:.9rem;padding:.55rem 0;border-top:1px solid var(--line)}
+.vs-new li{border-color:var(--line-ink)}
+.vs-col li:first-child{border-top:0}
+.vs-col li:before{content:counter(s,decimal-leading-zero);font-family:var(--mono);color:var(--t-dim);font-size:.8rem;padding-top:.25rem}
+.vs-new li:before{color:var(--ball)}
+.vs-note{margin-top:1rem;color:var(--t-dim);font-size:.9rem}
+
+
+.row{display:grid;grid-template-columns:1.15fr 1fr;gap:clamp(2rem,5vw,4.5rem);align-items:center}
+.row.flip{grid-template-columns:1fr 1.15fr}
+.row.flip .pic{order:2}
+.pic img{border-radius:12px;border:1px solid var(--line);box-shadow:0 18px 50px rgba(14,17,22,.14)}
+.pic figcaption{color:var(--t-dim);font-size:.82rem;margin-top:.7rem}
+.txt h2{font-size:clamp(1.6rem,3vw,2.2rem)}
+.txt p{color:var(--t-dim);margin-top:1rem}
+.txt ul{list-style:none;margin-top:1.2rem}
+.txt li{padding:.45rem 0 .45rem 1.3rem;position:relative}
+.txt li:before{content:"";position:absolute;left:0;top:1.05rem;width:8px;height:8px;border-radius:2px;background:var(--ball)}
+.s-white{background:var(--white)} .s-paper{background:var(--paper)} .s-warm{background:var(--warm)}
+.tight{padding-top:0}
+
+
+.phones{display:flex;gap:2rem;justify-content:center;flex-wrap:wrap;margin-top:3rem}
+.phone-item{width:210px;text-align:center}
+.phone{width:210px;aspect-ratio:9/19.2;border-radius:30px;background:#0b0d11;padding:9px;box-shadow:0 20px 50px rgba(120,70,0,.25);position:relative}
+.phone:before{content:"";position:absolute;top:14px;left:50%;transform:translateX(-50%);width:62px;height:7px;border-radius:5px;background:#1d222b;z-index:2}
+.screen{width:100%;height:100%;border-radius:22px;background:#13161c;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.5rem;padding:1rem;text-align:center;border:2px dashed #3a4250;color:#aeb6c2;font-size:.8rem;line-height:1.5}
+.screen b{color:var(--ball);font-family:var(--mono);font-size:.7rem;letter-spacing:.06em}
+.phone-item h3{font-size:1rem;margin-top:1.2rem}
+.phone-item p{color:var(--t-dim);font-size:.9rem;margin-top:.3rem}
+.ph-tag{display:inline-block;margin-top:.7rem;font-size:.72rem;font-family:var(--mono);padding:.15rem .5rem;border-radius:99px;background:#fff;border:1px solid #e8c98a;color:#9a5b00}
+
+
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-top:2.6rem}
+.card{border:2px dashed #c9cfd8;border-radius:14px;padding:1.6rem;background:var(--white);min-height:220px;display:flex;flex-direction:column;gap:.5rem}
+.card b{font-family:var(--mono);font-size:.74rem;color:var(--ball-deep);letter-spacing:.06em}
+.card h3{font-size:1.15rem}
+.card p{color:var(--t-dim);font-size:.95rem}
+
+
+.stat{background:var(--ink);color:var(--t-ink);padding:3.2rem 0}
+.stat .wrap{display:flex;gap:2.5rem;align-items:center;flex-wrap:wrap}
+.big{font-size:clamp(2.4rem,6vw,4rem);font-weight:800;color:var(--ball);line-height:1.1;white-space:nowrap}
+.stat p{max-width:30rem;color:var(--t-ink-dim)}
+.src{font-family:var(--mono);font-size:.74rem;margin-top:.6rem;color:#7f8896}
+
+
+.fit{display:grid;grid-template-columns:repeat(3,1fr);gap:2rem;margin-top:2.4rem}
+.fit h3{font-size:1rem;margin-bottom:.6rem}
+.fit p{color:var(--t-dim);font-size:.95rem}
+.fit div{border-top:2px solid var(--ball);padding-top:1rem}
+
+
+.dl{background:var(--ink);color:var(--t-ink)}
+.dl h2{color:var(--t-ink)}
+.dl-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-top:2.4rem}
+.dl-card{background:var(--panel);border:1px solid var(--line-ink);border-radius:12px;padding:1.3rem}
+.dl-card h3{font-size:1rem}
+.dl-meta{color:var(--t-ink-dim);margin:.3rem 0 1rem}
+.dl-actions{display:flex;flex-direction:column;gap:.5rem}
+.dl-actions .btn{padding:.6rem 1rem;font-size:.92rem}
+.dl-link-gh{color:var(--t-ink-dim);font-size:.82rem;text-decoration:none}
+.dl-fine{margin-top:1.6rem;color:var(--t-ink-dim);font-size:.85rem}
+.store{display:flex;gap:1rem;flex-wrap:wrap;align-items:center}
+.store-badge{display:block;line-height:0;border-radius:9px;transition:transform .15s}.store-badge:hover{transform:translateY(-1px)}
+.store-badge:focus-visible{outline:2px solid var(--ball);outline-offset:4px}
+.store-badge img{height:48px;width:auto}
+.cta{align-items:center}
+.dl .kicker{color:var(--ball)}.dl .lead{color:var(--t-ink-dim)}
+.dl-stores{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-top:2.4rem;max-width:44rem}
+.dl-stores .dl-card{display:flex;flex-direction:column;align-items:flex-start;padding:1.5rem}
+.dl-stores .dl-meta{margin:.2rem 0 1.3rem;font-size:.9rem}
+.dl-fine a{color:var(--t-ink)}
+.tm{flex-basis:100%;font-size:.75rem;color:#6b7380}
+@media (max-width:520px){.dl-stores{grid-template-columns:1fr}.store{gap:.75rem}.store-badge img{height:44px}}
+
+
+.faq{margin-top:2rem;max-width:44rem}
+details{border-top:1px solid var(--line);padding:1rem 0}
+details:last-child{border-bottom:1px solid var(--line)}
+summary{cursor:pointer;font-weight:700}
+details p{color:var(--t-dim);margin-top:.6rem}
+footer{background:var(--ink);color:var(--t-ink-dim);padding:2rem 0;font-size:.85rem}
+footer .wrap{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+
+.js .reveal{opacity:0;transform:translateY(14px);transition:opacity .6s,transform .6s}
+.js .reveal.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.js .reveal{opacity:1;transform:none;transition:none}.playhead{animation:none;left:62%}html{scroll-behavior:auto}}
+
+@media (max-width:820px){
+  .nav-links{display:none}.nav .btn{margin-left:auto}
+  .row,.row.flip,.vs-grid,.cards,.fit{grid-template-columns:1fr}
+  .row.flip .pic{order:0}
+  .dl-grid{grid-template-columns:1fr 1fr}
+}
+@media (max-width:520px){.dl-grid{grid-template-columns:1fr}}
+
+
+.shot{position:relative;border-radius:12px;overflow:hidden;border:1px solid var(--line);box-shadow:0 18px 50px rgba(14,17,22,.14);background:#0b0d11}
+.shot img{width:100%;height:100%;object-fit:cover;object-position:top left}
+.shot-land{aspect-ratio:16/10}
+.shot-port{aspect-ratio:9/19.5;width:min(230px,100%);border-radius:26px}
+.export-shot{aspect-ratio:900/1810}.export-shot img{object-fit:contain}
+.ph-box{width:100%;height:100%;border:2px dashed #3a4250;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.4rem;padding:1rem;text-align:center;color:#aeb6c2;font-size:.85rem;background:#13161c}
+.ph-box b{color:var(--ball);font-family:var(--mono);font-size:.72rem}
+.old-note{font-family:var(--mono);font-size:.74rem;color:var(--t-dim);margin-top:.6rem}
+.keys{display:flex;flex-wrap:wrap;gap:.7rem;margin:1.4rem 0 .4rem}
+.kc{display:inline-flex;align-items:baseline;gap:.55rem;background:var(--ink);color:var(--t-ink);border-radius:10px;padding:.55rem .9rem;font-size:.95rem}
+.kc kbd{font-family:var(--mono);background:#252B36;border-bottom:3px solid #0b0d11;border-radius:6px;padding:.1rem .55rem;color:var(--ball);font-size:.95rem}
+.mini{background:var(--white)}
+.mini-row{display:flex;gap:2.5rem;align-items:center;flex-wrap:wrap;margin-top:2rem}
+.mini-row .txt{flex:1;min-width:260px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-top:1rem}
+.note-tiny{color:var(--t-dim);font-size:.85rem;margin-top:.8rem}
+@media (max-width:820px){.two{grid-template-columns:1fr}}
+.nav-gh{display:inline-flex;align-items:center;gap:.4rem;color:var(--t-ink);text-decoration:none;font-size:.88rem;font-weight:700;border:1px solid var(--line-ink);border-radius:999px;padding:.38rem .8rem}.nav-gh:hover{border-color:var(--ball);color:#fff}@media (max-width:520px){.nav-gh span{display:none}}@media(max-width:820px){.brand span{display:none}}
 </style>
 </head>
 <body>
-
-<header class="nav">
-  <a class="nav-brand" href="#top">
-    <svg class="nav-ball" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1a11 11 0 1 0 0 22 11 11 0 0 0 0-22Zm0 2.2 4.1 3-1.6 4.9h-5L7.9 6.2 12 3.2ZM4.3 9.4l3.4.2 1.6 4.9-2.5 3.4A8.8 8.8 0 0 1 4.3 9.4Zm5.9 11.2 2.5-3h-3.9l-1.1 1.6a8.7 8.7 0 0 0 2.5 1.4Zm8.7-5.9-2.5-3.2 1.6-4.9 3.4-.2a8.8 8.8 0 0 1-2.5 8.3Zm-3.5 4.5-1.1-1.6h-3.9l2.5 3a8.7 8.7 0 0 0 2.5-1.4Z" fill="currentColor"/></svg>
-    <span class="nav-name">BHE<em>Basketball Highlight Editor</em></span>
-  </a>
-  <nav class="nav-links" aria-label="Page navigation">
-    <a href="#workflow">How it works</a>
-    <a href="#features">Features</a>
-    <a href="#demo">Demo</a>
-    <a href="#faq">FAQ</a>
-    <a class="nav-gh" href="https://github.com/fly7632785/basketball-highlight-editor" target="_blank" rel="noopener">GitHub</a>
-  </nav>
-  <a class="lang-switch" href="/" lang="zh-CN" data-language="zh" aria-label="切换到简体中文" title="Switch to Simplified Chinese">
-    <svg class="lang-switch-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.2 2.5 3.4 5.5 3.4 9S14.2 18.5 12 21M12 3C9.8 5.5 8.6 8.5 8.6 12s1.2 6.5 3.4 9"></path></svg>
-    <span>简体中文</span>
-  </a>
-  <a class="btn btn-ball btn-nav" href="#download">Download</a>
-</header>
-
+<header class="nav"><div class="wrap"><a class="brand" href="#top"><i></i>BHE<span style="font-weight:400;color:var(--t-ink-dim);font-size:.85rem">Basketball Highlight Editor</span></a>
+<nav class="nav-links" aria-label="Page navigation"><a href="#fast">Review</a><a href="#precise">Adjust</a><a href="#export">Export</a><a href="#mobile">Mobile</a><a href="#fit">Best fit</a><a href="#faq">FAQ</a></nav><a class="btn btn-ball btn-sm" href="#download">Download</a></div></header>
 <main id="top">
-
-<section class="hero">
-  <div class="hero-copy">
-    <p class="eyebrow"><span class="dot"></span>LOCAL-FIRST · OPEN SOURCE · DESKTOP BUILDS AVAILABLE</p>
-    <h1>Finish the game.<br><span class="hl">Not the night.</span></h1>
-    <p class="hero-sub">
-      Let BHE scan the full game and line up suspected scoring moments. You skim the candidates,
-      remove the misses, and export the highlights — without uploading your video or paying a subscription.
-    </p>
-    <div class="hero-cta">
-      <a class="btn btn-ball" id="hero-download" href="#download">Download desktop</a>
-      <a class="btn btn-ghost" href="#demo">Watch the demo</a>
-    </div>
-  </div>
-  <figure class="timeline" aria-hidden="true">
-    <div class="timeline-track">
-      <span class="clip" style="--left:8%;  --w:6%; --d:.9s"></span>
-      <span class="clip clip-out" style="--left:17%; --w:4%"></span>
-      <span class="clip" style="--left:27%; --w:7%; --d:3s"></span>
-      <span class="clip" style="--left:44%; --w:5%; --d:4.8s"></span>
-      <span class="clip clip-out" style="--left:53%; --w:3%"></span>
-      <span class="clip" style="--left:62%; --w:6%; --d:6.8s"></span>
-      <span class="clip" style="--left:76%; --w:5%; --d:8.4s"></span>
-      <span class="clip" style="--left:86%; --w:6%; --d:9.5s"></span>
-      <span class="playhead"></span>
-    </div>
-    <figcaption class="timeline-cap">
-      <span class="mono">47-minute game</span>
-      <span class="mono">12 candidate clips</span>
-      <span class="mono">10 kept · 2 removed</span>
-    </figcaption>
-  </figure>
-</section>
-
-<section class="strip">
-  <ul class="strip-grid">
-    <li><strong>Your video stays local</strong><span>Analyze, review, and export on your computer</span></li>
-    <li><strong>No subscription</strong><span>Free and open source, with no per-minute fee</span></li>
-    <li><strong>Keep candidates by default</strong><span>Remove false positives instead of confirming every clip</span></li>
-    <li><strong>You make the call</strong><span>Adjust timing, fill gaps, and tag players or scenes</span></li>
-  </ul>
-</section>
-
-<section class="section section-paper" id="workflow">
-  <p class="kicker mono">WORKFLOW</p>
-  <h2>Five steps from a full game to a highlight reel</h2>
-  <ol class="steps">
-    <li><span class="step-no mono">01</span><strong>Import the game video</strong><p>Choose one game file and the time range you want to analyze.</p></li>
-    <li><span class="step-no mono">02</span><strong>Set the hoop area</strong><p>Start with automatic detection, then draw or fine-tune the area if needed.</p></li>
-    <li><span class="step-no mono">03</span><strong>Let it scan</strong><p>Use Fast for a quick first pass, or Standard when completeness matters.</p></li>
-    <li><span class="step-no mono">04</span><strong>Review the candidates</strong><p>Play through the list, remove false positives, and adjust the timing.</p></li>
-    <li><span class="step-no mono">05</span><strong>Export the highlights</strong><p>Merge everything into one reel or export clips by player or tag.</p></li>
-  </ol>
-</section>
-
-<section class="section section-paper section-tight">
-  <figure class="shot reveal">
-    <img src="../assets/mac-013/review.webp" alt="Review workbench showing the Chinese-language interface" loading="lazy" width="1680" height="1050">
-    <figcaption>
-      The review workbench keeps the video large and the candidates in time order. Screenshot shows the Chinese-language interface.
-      <span class="mono">Orange = candidate clips.</span>
-    </figcaption>
-  </figure>
-</section>
-
-<section class="section section-paper" id="features">
-  <p class="kicker mono">FEATURES</p>
-  <h2>Small feature set. All on the main path.</h2>
-  <div class="feature-grid">
-    <article class="feature reveal"><h3>Find suspected scores</h3><p>Scan fixed-camera, single-hoop game videos and turn a long timeline into a short list of moments worth checking.</p></article>
-    <article class="feature reveal"><h3>Fast or Standard</h3><p>Get a quick first draft with Fast, or spend more time on a fuller Standard pass. Review and export work the same way in both modes.</p></article>
-    <article class="feature reveal"><h3>Tags for players and scenes</h3><p>Create your own tags for players, threes, dunks, fouls, defense, or anything else you want to find later.</p></article>
-    <article class="feature reveal"><h3>Two export styles</h3><p>Merge the kept candidates into one reel, or export each candidate as its own clip. Open the output folder when the job is done.</p></article>
-    <article class="feature reveal"><h3>Fill in what it missed</h3><p>Add a manual candidate from the current video position when automatic detection misses a moment.</p></article>
-    <article class="feature reveal"><h3>Private by default</h3><p>No account or online API is required. The model and analysis run on your computer, keeping game footage where it belongs.</p></article>
-  </div>
-</section>
-
-<section class="section section-paper" id="demo">
-  <p class="kicker mono">DEMO</p>
-  <h2>See the full path from import to export</h2>
-  <div class="demo-card reveal">
-    <video id="bhe-demo-video" controls preload="metadata" poster="../assets/demo-cover.jpg">
-      <source src="../assets/recording-demo.mp4" type="video/mp4">
-      Your browser does not support embedded video. <a href="../assets/recording-demo.mp4" target="_blank" rel="noopener">Open the recording directly</a>.
-    </video>
-    <p class="demo-note mono">About 34 seconds · plays right in the page</p>
-  </div>
-</section>
-
-<dialog class="star-prompt" id="star-prompt" aria-labelledby="star-prompt-title" aria-describedby="star-prompt-copy">
-  <button class="star-prompt-close" type="button" aria-label="Close">×</button>
-  <span class="star-prompt-mark" aria-hidden="true">★</span>
-  <h2 id="star-prompt-title">Has BHE been helpful?</h2>
-  <p id="star-prompt-copy">If BHE has saved you some editing time, please consider starring it on GitHub or sharing it with your basketball friends. It helps more people discover the project. Thank you for your support!</p>
-  <div class="star-prompt-actions">
-    <a class="btn btn-ball" href="https://github.com/fly7632785/basketball-highlight-editor" target="_blank" rel="noopener">Star BHE on GitHub</a>
-    <button class="btn btn-ghost" type="button" data-star-share>Share with friends</button>
-  </div>
-  <button class="star-prompt-later" type="button" data-star-later>Maybe later</button>
-</dialog>
-
-<section class="section section-ink" id="download">
-  <p class="kicker kicker-ink mono">DOWNLOAD</p>
-  <h2 class="h-ink">Download and get started</h2>
-  <p class="dl-note">
-    Downloads come from our download server (dl.envsystem.top). GitHub Releases and Aliyun OSS are available as fallback links under each button.
-    <span class="mono" id="dl-version">Latest version</span> ·
-    macOS and Windows desktop builds are the primary path; Android is an arm64-v8a sideload test build.
-  </p>
-
-  <div class="dl-grid">
-    <article class="dl-card">
-      <h3>macOS · Apple Silicon</h3>
-      <p class="dl-meta mono">M1 / M2 / M3 / M4 · .dmg</p>
-      <div class="dl-actions" data-os="mac-arm64"></div>
-      <p class="dl-tip">On first launch, right-click BHE and choose <strong>Open</strong> once. The DMG includes the Gatekeeper note and repair command.</p>
-    </article>
-    <article class="dl-card">
-      <h3>macOS · Intel</h3>
-      <p class="dl-meta mono">Intel Mac · .dmg</p>
-      <p class="dl-meta">Requires macOS 13 or later</p>
-      <div class="dl-actions" data-os="mac-x64"></div>
-      <p class="dl-tip">On first launch, right-click BHE and choose <strong>Open</strong> once. The DMG includes the Gatekeeper note and repair command.</p>
-    </article>
-    <article class="dl-card">
-      <h3>Windows · x64</h3>
-      <p class="dl-meta mono">Windows 10 / 11 · .zip</p>
-      <div class="dl-actions" data-os="win-x64"></div>
-    </article>
-    <article class="dl-card">
-      <h3>Android</h3>
-      <p class="dl-meta mono">arm64-v8a · sideload test build</p>
-      <div class="dl-actions" data-os="android-arm64"></div>
-      <p class="dl-tip">Allow installs from the relevant unknown source. This is a debug-signed test build, not a Google Play production package.</p>
-    </article>
-  </div>
-
-  <div class="support-blocks" style="margin-top:2rem">
-    <div class="support-card">
-      <img src="../assets/coffee-wechat-d017.png" alt="WeChat Pay QR code" width="180" height="245" loading="lazy">
-      <p>If this helps you, buy the author a coffee.</p>
-    </div>
-    <div class="support-card">
-      <img src="../assets/wechat-qr.png" alt="Author's WeChat QR code" width="180" height="268" loading="lazy">
-      <div><h2>BHE user group</h2><p>Scan to add me on WeChat and note &quot;BHE group&quot;.</p></div>
-    </div>
-  </div>
-
-  <noscript>
-    <p class="dl-fine">Enable JavaScript to see the latest download buttons, or visit <a href="https://github.com/fly7632785/basketball-highlight-editor/releases">GitHub Releases</a> to download manually.</p>
-  </noscript>
-  <p class="dl-fine mono">Every package includes a .sha256 file in GitHub Releases · <a href="https://github.com/fly7632785/basketball-highlight-editor/releases" target="_blank" rel="noopener">github.com/fly7632785/basketball-highlight-editor</a></p>
-</section>
-
-<section class="section section-paper">
-  <p class="kicker mono">HONEST SCOPE</p>
-  <h2>Where BHE works best today</h2>
-  <div class="scope">
-    <div class="scope-yes">
-      <h3>Good fit</h3>
-      <ul>
-        <li>Fixed camera position, such as a tripod or a stable stand</li>
-        <li>One game with one hoop in the frame</li>
-        <li>School teams, pickup games, amateur leagues, and practice footage</li>
-      </ul>
-    </div>
-    <div class="scope-not">
-      <h3>Review carefully</h3>
-      <ul>
-        <li>Frequent camera movement or handheld tracking</li>
-        <li>The hoop is blocked for long stretches</li>
-        <li>Multiple hoops appear in the same frame</li>
-      </ul>
-    </div>
-  </div>
-  <p class="scope-note">A candidate is a suspected event, not a final verdict. That is why the review workbench is at the center of BHE.</p>
-</section>
-
-<section class="section section-paper section-tight" id="faq">
-  <p class="kicker mono">FAQ</p>
-  <h2>Frequently asked questions</h2>
-  <div class="faq">
-    <details><summary>Does BHE need an internet connection?</summary><p>Analysis, preview, review, and export run locally and do not require an account. Internet is only needed to download the app or read online documentation.</p></details>
-    <details><summary>Is it really free?</summary><p>Yes. BHE is open source under the MIT License, with no charge by video length or export count. Models and media still have their own license terms.</p></details>
-    <details><summary>What if the detection is wrong?</summary><p>Candidates stay included by default. Remove false positives, adjust the boundaries, or add a missed moment manually. BHE gives you a draft, not an irreversible decision.</p></details>
-    <details><summary>Is there an iOS version?</summary><p>The iOS project and development path are in progress. There is no downloadable iOS build on the website yet.</p></details>
-  </div>
-</section>
-
+<section class="hero" style="padding-bottom:0"><div class="wrap">
+<p class="eyebrow"><i></i>YOUR GAME, PROCESSED ON YOUR DEVICE</p>
+<h1>Finish the game.<br><em>Keep the highlights.</em></h1>
+<p class="hero-sub">Let BHE scan the game and line up suspected scoring moments. Review the candidates, remove the misses, and export your highlights.</p>
+<div class="cta"><div class="store"><a class="store-badge" href="https://apps.apple.com/app/id6830979546" target="_blank" rel="noopener"><img src="/assets/en/badges/app-store-black.svg" alt="Download on the App Store" width="144" height="48"></a><a class="store-badge" href="https://apps.apple.com/app/id6830979546" target="_blank" rel="noopener"><img src="/assets/en/badges/mac-app-store-black.svg" alt="Download on the Mac App Store" width="187" height="48"></a></div><a class="btn btn-ghost" href="#fast">See how it works</a></div>
+<p class="hero-foot">Review faster with keyboard shortcuts and playback speeds. Your video stays on your device.</p>
+<figure class="timeline" aria-hidden="true"><div class="track"><span class="clip" style="--l:7%;--w2:5%"></span><span class="clip out" style="--l:16%;--w2:4%"></span><span class="clip" style="--l:27%;--w2:6%"></span><span class="clip" style="--l:43%;--w2:5%"></span><span class="clip out" style="--l:52%;--w2:3%"></span><span class="clip" style="--l:61%;--w2:6%"></span><span class="clip" style="--l:75%;--w2:5%"></span><span class="clip" style="--l:86%;--w2:6%"></span><span class="playhead"></span></div><figcaption class="tcap mono"><span><i></i>Orange = candidates found</span><span><i class="o"></i>Dashed = excluded clips</span><span>Illustration, not game data</span></figcaption></figure>
+</div></section>
+<section class="s-white" id="why"><div class="wrap">
+<p class="kicker mono">FIND</p><h2>BHE finds the moments. You make the call.</h2><p class="lead">Candidates start included. Remove the misses and add any moments the scan missed.</p>
+<div class="row" style="margin-top:2.6rem"><figure class="pic reveal"><div class="shot shot-land"><img src="/assets/en/review.webp" alt="Review workspace with candidate clips and player tags" width="1270" height="760" loading="lazy"></div></figure><div class="txt reveal"><ul><li>Put in a game recording and line up suspected scores for review.</li><li>Keep multiple recordings from one game in the same project.</li><li>Adjust the hoop area if detection needs help.</li></ul></div></div>
+<div class="row flip" style="margin-top:2.6rem"><figure class="pic reveal"><div class="shot shot-land"><img src="/assets/en/project.webp" alt="Project home for importing a game recording" width="1270" height="760" loading="lazy"></div></figure><div class="txt reveal"><h2>Choose the range to analyze.</h2><p>Set the start and end after import to skip warm-ups or footage after the game.</p></div></div>
+</div></section>
+<section class="s-paper" id="fast"><div class="wrap">
+<div class="row flip"><figure class="pic reveal"><div class="shot shot-land"><img src="/assets/en/review.webp" alt="Candidate review workspace" width="1270" height="760" loading="lazy"></div></figure><div class="txt reveal"><p class="kicker mono">REVIEW</p><h2>Keep your hands on the keyboard.</h2><p>Review at 1.5× or 2× speed, or slow down when you need a closer look.</p><div class="keys"><span class="kc"><kbd>1.5×</kbd><kbd>2×</kbd> Playback speed</span><span class="kc"><kbd>↑</kbd><kbd>↓</kbd> Previous / next clip</span><span class="kc"><kbd>←</kbd><kbd>→</kbd> Seek backward / forward</span><span class="kc"><kbd>X</kbd> Exclude</span><span class="kc"><kbd>1</kbd>–<kbd>9</kbd><kbd>Q</kbd> onward: player tags</span><span class="kc"><kbd>⌘/Ctrl</kbd>+<kbd>Z</kbd> Undo</span></div><p class="note-tiny">For player 10 onward, use Q, W, E and so on; 0 clears the tag.</p></div></div>
+</div></section>
+<section class="s-white" id="precise"><div class="wrap"><div class="row"><figure class="pic reveal"><div class="shot shot-land"><img src="/assets/en/adjust.webp" alt="Adjusting the start and end of a clip" width="1270" height="760" loading="lazy"></div></figure><div class="txt reveal"><p class="kicker mono">ADJUST</p><h2>Keep as much of the play as you want.</h2><ul><li>Start with three seconds before and one second after a score; adjust the defaults or fine-tune an individual clip.</li><li>Add a missed moment by selecting it manually.</li><li>Adjusted and overlapping clips are marked for review.</li></ul></div></div></div></section>
+<section class="s-paper" id="export"><div class="wrap"><div class="row flip"><figure class="pic reveal"><div class="shot shot-land"><img src="/assets/en/export.webp" alt="Export options for selected players" width="1270" height="760" loading="lazy"></div></figure><div class="txt reveal"><p class="kicker mono">EXPORT</p><h2>One game, highlights for everyone.</h2><p>Save tag groups for the next game. Select players or tags to create individual reels or collections of plays.</p><ul><li>Organize players, threes, dunks, and other tags.</li><li>Merge into one reel or export each clip separately.</li><li>Add slow motion if you want it.</li><li>Game statistics are estimates and may be inaccurate.</li></ul></div></div>
+<div class="row" style="margin-top:2.6rem"><figure class="pic reveal"><div class="shot shot-land"><img src="/assets/en/stats.webp" alt="Game statistics with estimated shooting rate and scoring by player" width="1440" height="900" loading="lazy"></div></figure><div class="txt reveal"><h2>Check the game stats before export.</h2><p>See scores by player and over time. Shooting percentage is only an estimate and may be inaccurate.</p></div></div></div></section>
+<section class="stat"><div class="wrap"><div class="big">≈ 4.5 min</div><div><p>A 10-minute video took about 4.5 minutes to analyze on a Snapdragon 8 Elite Gen 5 phone. Other devices may take longer; a computer with a graphics card can be faster.</p><p class="src">Source: v0.1.9 release notes, Android</p></div></div></section>
+<section class="s-warm mini" id="mobile" style="background:var(--warm)"><div class="wrap"><p class="kicker mono">MOBILE</p><h2>Take your workflow with you.</h2><div class="mini-row"><div class="txt reveal"><p>Now available on iPhone. An Android version is in development. Your video stays on your device.</p></div></div></div></section>
+<section class="s-white" id="demo"><div class="wrap"><h2>From import to export.</h2><p class="lead">Explore the workflow above. An English-language video walkthrough is coming soon.</p></div></section>
+<section class="s-paper" id="fit"><div class="wrap"><p class="kicker mono">HONEST SCOPE</p><h2>What footage works best?</h2><div class="fit reveal"><div><h3>Fixed camera</h3><p>Keep the hoop clearly in view from a stable position near the top of the arc or sideline.</p></div><div><h3>One hoop at a time</h3><p>Full-court footage moving between both ends is not supported yet. Record one end of the court.</p></div><div><h3>Review the results</h3><p>The scan suggests moments; you can remove false positives and add anything it missed.</p></div></div></div></section>
+<section class="dl" id="download"><div class="wrap"><p class="kicker mono">DOWNLOAD</p><h2>Get BHE on iPhone and Mac.</h2><p class="lead">Analysis, review, and export run on your device.</p><div class="dl-stores"><div class="dl-card"><h3>iPhone</h3><p class="dl-meta">Requires iOS 16 or later</p><a class="store-badge" href="https://apps.apple.com/app/id6830979546" target="_blank" rel="noopener"><img src="/assets/en/badges/app-store-black.svg" alt="Download on the App Store" width="144" height="48"></a></div><div class="dl-card"><h3>Mac</h3><p class="dl-meta">Requires macOS 12 or later</p><a class="store-badge" href="https://apps.apple.com/app/id6830979546" target="_blank" rel="noopener"><img src="/assets/en/badges/mac-app-store-black.svg" alt="Download on the Mac App Store" width="187" height="48"></a></div></div><p class="dl-fine">Availability varies by country or region. Questions? <a href="mailto:hanzexi0411@gmail.com">Contact us</a></p></div></section>
+<section class="s-white" id="faq"><div class="wrap"><p class="kicker mono">FAQ</p><h2>Frequently asked questions</h2><div class="faq"><details><summary>Does BHE upload my videos?</summary><p>No. Analysis, review, and export happen on your device. The iPhone and Mac App Store editions can send optional usage statistics and crash reports; see the <a href="/en/privacy.html">privacy policy</a>.</p></details><details><summary>What if detection misses a moment?</summary><p>Remove false positives, adjust clip boundaries, or add a missed moment manually. You make the final call.</p></details><details><summary>Does it support full-court footage?</summary><p>Not yet. Analysis works with a fixed camera and one hoop in view.</p></details><details><summary>Can I use it on iPhone?</summary><p>Yes. BHE is on the App Store for iPhone (iOS 16 or later). An Android version is in development.</p></details></div></div></section>
 </main>
-
-<footer class="footer">
-  <div class="footer-inner">
-    <p class="footer-brand mono">BHE / basketball-highlight-editor</p>
-    <nav aria-label="Footer">
-      <a href="https://github.com/fly7632785/basketball-highlight-editor" target="_blank" rel="noopener">GitHub</a>
-      <a href="https://github.com/fly7632785/basketball-highlight-editor/tree/main/docs" target="_blank" rel="noopener">Documentation</a>
-      <a href="https://linux.do/" target="_blank" rel="noopener">Linux DO</a>
-      <a href="/" lang="zh-CN" data-language="zh">简体中文</a>
-    </nav>
-    <p class="footer-fine">Open source · local video processing · <span class="mono">MIT License</span></p>
-  </div>
-</footer>
-
-<script src="app-d024.js"></script>
-<script src="../language.js?v=3"></script>
+<footer><div class="wrap"><span class="mono">BHE / Basketball Highlight Editor</span><span>Video processing on your device · <a href="/en/privacy.html">Privacy Policy</a> · <a href="mailto:hanzexi0411@gmail.com">Contact us</a></span><span class="tm">Apple, the Apple logo, iPhone, and Mac are trademarks of Apple Inc., registered in the U.S. and other countries and regions. App Store is a service mark of Apple Inc.</span></div></footer>
+<script src="/en/app.js"></script>
 </body>
 </html>
