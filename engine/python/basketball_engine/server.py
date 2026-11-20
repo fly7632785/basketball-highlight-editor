@@ -58,21 +58,21 @@ def main() -> int:
     heavy = _RequestWorker()
     slots = threading.BoundedSemaphore(2)  # one running, one queued
     registry_lock = threading.Lock()
-    projects = set()
+    projects: dict[str, bool] = {}
     requests = {}
     tickets = {}
     closing = False
     slow_commands = {"link_video", "relink_video", "suggest_roi", "open_project", "extract_preview"}
+    review_commands = {"start_review", "review_candidate", "set_candidate_player", "set_candidates_player"}
     protected_commands = slow_commands | {
         "create_project", "delete_project", "start_analysis", "start_export",
         "reorder_videos", "set_analysis_queue", "set_analysis_range",
-        "save_roi", "start_review", "review_candidate", "set_candidates_player",
-        "set_candidate_player", "delete_player",
+        "save_roi", "delete_player",
         "update_clip_range", "update_clip_ranges", "create_manual_candidate",
         "retry_analysis", "retry_export", "update_project_settings",
         "set_analysis_mode", "save_workflow_draft", "clear_workflow_draft",
         "set_telemetry_consent", "cleanup_artifacts",
-    }
+    } | review_commands
 
     def project_key(payload):
         from pathlib import Path
@@ -80,9 +80,11 @@ def main() -> int:
         return str(Path(root).expanduser().resolve()) if isinstance(root, str) and root.strip() else None
 
     def admit(request, slow):
-        key = project_key(request.get("payload", {}))
+        payload = request.get("payload", {})
+        command = request["command"]
+        key = project_key(payload)
         request_id = request.get("request_id")
-        if key is not None and request["command"] in {"open_project", "link_video", "relink_video", "extract_preview", "suggest_roi", "delete_project", "create_project", "start_analysis"}:
+        if key is not None and command in {"open_project", "link_video", "relink_video", "extract_preview", "suggest_roi", "delete_project", "create_project", "start_analysis"}:
             with service._job_lock:
                 if key in service._export_projects:
                     raise ProtocolError("PROJECT_BUSY", "项目正在导出，请等待完成或取消")
@@ -93,12 +95,16 @@ def main() -> int:
                 if slow:
                     slots.release()
                 raise ProtocolError("PROJECT_BUSY", "引擎正在关闭")
+            if key is not None and projects.get(key) and command in review_commands:
+                # A managed preview only writes a cache image. Review writes run
+                # on the reader thread and leave the preview's reservation intact.
+                key = None
             if (key is not None and key in projects) or (slow and request_id is not None and request_id in requests):
                 if slow:
                     slots.release()
                 raise ProtocolError("PROJECT_BUSY", "项目正在读取，请稍后重试")
             if key is not None:
-                projects.add(key)
+                projects[key] = command == "extract_preview" and not payload.get("output_path")
             ticket = {"event": threading.Event(), "committed": False} if slow else None
             if slow:
                 tickets[id(ticket)] = ticket
@@ -110,7 +116,7 @@ def main() -> int:
         key, request_id, ticket = token
         with registry_lock:
             if key is not None:
-                projects.discard(key)
+                projects.pop(key)
             if slow:
                 tickets.pop(id(ticket), None)
                 if request_id is not None and requests.get(request_id) is ticket:
