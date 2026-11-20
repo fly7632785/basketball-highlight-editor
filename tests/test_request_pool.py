@@ -164,6 +164,67 @@ def test_external_recreate_does_not_receive_late_relink(running, tmp_path):
     assert replacement._require_store({'project_root': str(root)}).list_videos() == []
 
 
+@pytest.mark.parametrize("custom_output", [False, True])
+def test_review_and_player_tags_during_preview(running, tmp_path, monkeypatch, custom_output):
+    service, input_, output, entered, release, source = running
+    root = str(tmp_path / "a")
+    store = service._require_store({"project_root": root})
+    video = store.link_video(service.inspect_video({"video_path": str(source)}))
+    first = store.create_manual_candidate(video["id"], 0, 500)["id"]
+    second = store.create_manual_candidate(video["id"], 500, 1000)["id"]
+    player = store.create_player("Player A")["id"]
+
+    class PreviewProcess:
+        returncode = None
+
+        def __init__(self, command, **kwargs):
+            self.destination = Path(command[-1])
+
+        def communicate(self, timeout=None):
+            if self.returncode is None:
+                entered.set()
+                assert release.wait(5)
+                self.destination.write_bytes(b"preview")
+                self.returncode = 0
+            return "", ""
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(service, "_preview_frame_vf", lambda _source: "scale=640:-2")
+    monkeypatch.setattr("engine.python.basketball_engine.service.resolve_media_tool", lambda name: name)
+    monkeypatch.setattr("engine.python.basketball_engine.service.subprocess.Popen", PreviewProcess)
+    preview_args = {"output_path": str(tmp_path / "custom.jpg")} if custom_output else {}
+    input_.send("preview", "extract_preview", project_root=root, video_id=video["id"], **preview_args)
+    assert entered.wait(3)
+    for command, args in [
+        ("start_review", {"candidate_id": first}),
+        ("review_candidate", {"candidate_id": first, "status": "goal"}),
+        ("set_candidate_player", {"candidate_id": first, "player_id": player}),
+        ("set_candidates_player", {"candidate_ids": [first, second], "player_id": player}),
+    ]:
+        input_.send(command, command, project_root=root, **args)
+        result = output.next()
+        assert result["request_id"] == command
+        if custom_output:
+            assert result["error"]["code"] == "PROJECT_BUSY"
+        else:
+            assert result["ok"]
+
+    if not custom_output:
+        candidates = store.list_candidates(video["id"])
+        assert [(item["review_status"], item["player_id"]) for item in candidates] == [
+            ("goal", player), ("pending", player),
+        ]
+    input_.send("delete", "delete_project", project_root=root)
+    assert output.next()["error"]["code"] == "PROJECT_BUSY"
+    release.set()
+    preview = output.next()
+    assert preview["request_id"] == "preview"
+    assert preview["ok"]
+    assert Path(preview["payload"]["path"]).is_file()
+
+
 def test_fingerprint_checks_cancellation_between_chunks(tmp_path, monkeypatch):
     source = tmp_path/'video'
     source.write_bytes(b'x' * (2 * 1024 * 1024))
