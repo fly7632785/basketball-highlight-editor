@@ -842,7 +842,8 @@ import ImageIO
     displayTransform.tx -= transformedRect.minX
     displayTransform.ty -= transformedRect.minY
     if scale < 1.0 {
-      displayTransform = CGAffineTransform(scaleX: CGFloat(scale), y: CGFloat(scale)).concatenating(displayTransform)
+      // Scale the translation to the display origin along with the rotated frame.
+      displayTransform = displayTransform.concatenating(CGAffineTransform(scaleX: CGFloat(scale), y: CGFloat(scale)))
     }
     layerInstruction.setTransform(displayTransform, at: .zero)
     instruction.layerInstructions = [layerInstruction]
