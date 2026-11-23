@@ -573,10 +573,11 @@ def run_pipeline(
                     raise PipelineCancelled("JOB_CANCELLED")
                 if process.returncode != 0:
                     log_failed_command(f"pipeline command failed stage={stage}", command, process.returncode)
-                    # Native aborts bypass Python exceptions. Retry inference only,
-                    # once, without reusing detections cached by the failed backend.
+                    # POSIX reports signals as negative codes. Windows reports
+                    # access violations and illegal instructions as NTSTATUS values.
                     if (
-                        attempt == 0 and process.returncode < 0
+                        attempt == 0
+                        and (process.returncode < 0 or process.returncode in {0xC0000005, 0xC000001D})
                         and len(command) > 1
                         and Path(command[1]).name in {"scan_video.py", "refine_dynamic_candidates.py"}
                         and "--device" in command

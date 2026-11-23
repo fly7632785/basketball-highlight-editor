@@ -1,7 +1,9 @@
 from pathlib import Path
+from io import StringIO
 import json
 import sys
 import time
+from unittest.mock import Mock
 
 import pytest
 
@@ -590,6 +592,59 @@ def test_native_inference_crash_retries_cpu_once(tmp_path, capsys, script_name, 
     assert "native exit=-6" in capsys.readouterr().err
     assert len([p for p in processes if p is not None]) == 2
     assert processes[-1] is None
+
+
+@pytest.mark.parametrize("initial_exit,cpu_exit", [
+    (0xC0000005, 0),
+    (0xC000001D, 0),
+    (0xC0000005, 0xC000001D),
+    (1, None),
+    (0xC000013A, None),  # Windows console interruption
+])
+def test_refine_retries_reported_windows_crashes_once(
+    tmp_path, monkeypatch, initial_exit, cpu_exit,
+):
+    output = tmp_path / "refined.json"
+    manifest = tmp_path / "manifest.json"
+    calls = []
+
+    def start_process(command, **kwargs):
+        exit_code = cpu_exit if calls else initial_exit
+        assert exit_code is not None
+        calls.append(command)
+        if exit_code == 0:
+            output.write_text('{"results": []}', encoding="utf-8")
+        process = Mock(returncode=exit_code, stdout=StringIO(), stderr=StringIO())
+        process.poll.return_value = exit_code
+        return process
+
+    monkeypatch.setattr(
+        "engine.python.basketball_engine.adapters.analysis.subprocess.Popen", start_process,
+    )
+    script = [sys.executable, "refine_dynamic_candidates.py"]
+    command = [*script, "--device", "auto", "--cache-dir", str(tmp_path / "cache")]
+
+    def execute():
+        return run_pipeline(
+            [command], output, manifest_path=manifest, stage_outputs=[output],
+            stage_names=["refine_candidates"],
+        )
+
+    if cpu_exit == 0:
+        assert execute()["refined"] == {"results": []}
+    else:
+        with pytest.raises(RuntimeError, match="refine_dynamic_candidates.py 执行失败"):
+            execute()
+
+    assert calls[0] == command
+    saved = json.loads(manifest.read_text())["stages"]["refine_candidates"]
+    if cpu_exit is None:
+        assert len(calls) == 1
+        assert "cpu_fallback" not in saved
+    else:
+        assert calls[1:] == [[*script, "--device", "cpu"]]
+        assert saved["cpu_fallback"]["exit"] == initial_exit
+    assert saved["state"] == ("completed" if cpu_exit == 0 else "failed")
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal return codes")
