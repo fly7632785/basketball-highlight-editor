@@ -74,6 +74,32 @@ def test_ball_bouncing_back_up_near_the_rim_is_rejected():
     assert result["reason"] == "rebound"
 
 
+def test_first_ball_leaves_net_as_second_ball_rises():
+    # L477 at 141.020s: a falling ball reaches the net bottom, then the
+    # nearest detection rises while the first ball continues below the net.
+    frames = [
+        [ball(.51, -.77)], [ball(.24, -.51)], [ball(-.05, -.23)],
+        [], [], [],
+        [ball(.07, .73)], [ball(.15, .90)], [ball(.11, 1.17)],
+        [ball(-.08, .78, conf=.87)], [ball(-.16, .53, conf=.88)],
+        [ball(-.20, .24)], [ball(-.32, .09)],
+    ]
+    falling = [(8, .29, 1.14), (9, .43, 1.63), (10, .51, 1.90), (11, .59, 2.20)]
+    for offset in (None, .65, 0):
+        detections = [frame.copy() for frame in frames]
+        if offset is not None:
+            for index, x, y in falling:
+                detections[index].append(ball(x + offset, y, conf=.70))
+        result = assess_rim_crossing(detections, RIM)
+        assert result["reached_net_bottom"] is True
+        if offset == 0:
+            assert result["status"] == "made"
+            assert result["rebound"] is False
+        else:
+            assert result["status"] == "rejected"
+            assert result["reason"] == "rebound"
+
+
 def test_ball_lost_before_leaving_the_net_is_rejected():
     frames = fall(hidden={6, 7})[:9]
     result = assess_rim_crossing(frames, RIM)
