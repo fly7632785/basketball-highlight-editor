@@ -40,6 +40,12 @@ import '../../core/app_log.dart';
 
 bool _annotationHintSeen = false;
 
+String _bulkMissText(BuildContext context, String zh, String en) =>
+    context.bheText(Localizations.localeOf(context).languageCode == 'en' ? en : zh);
+
+String _bulkMissLabel(BuildContext context) =>
+    _bulkMissText(context, '全部标为没进', 'Mark all as missed');
+
 /// Opening the review video must not start playback without user input.
 const bool reviewVideoAutoPlayAfterOpen = false;
 const bool reviewVideoAutoPlayAfterSourceSwitch = false;
@@ -763,6 +769,44 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     }
   }
 
+  Future<void> _confirmBulkMiss(Set<String> ids) async {
+    final revision = ref.read(projectProvider).reviewSessionRevision;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_bulkMissLabel(dialogContext)),
+        content: Text(_bulkMissText(
+          dialogContext,
+          '将这 ${ids.length} 段未判定片段标为没进。可在撤销里恢复。',
+          'Mark ${ids.length} unreviewed ${ids.length == 1 ? 'clip' : 'clips'} as missed? '
+          'You can undo this action.',
+        )),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(dialogContext.bheText('取消')),
+          ),
+          FilledButton(
+            key: const Key('review-bulk-miss-confirm'),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.of(dialogContext).error,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(_bulkMissLabel(dialogContext)),
+          ),
+        ],
+      ),
+    );
+    if (!mounted ||
+        confirmed != true ||
+        ref.read(projectProvider).reviewSessionRevision != revision) {
+      return;
+    }
+    _focusReviewShortcuts();
+    await ref.read(projectProvider.notifier).markLikelyMissesExcluded(ids);
+  }
+
   Future<void> _undoReview() async {
     final notifier = ref.read(projectProvider.notifier);
     await notifier.flushReviewQueue();
@@ -924,6 +968,10 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     final likelyMissCandidates = showAllCandidates
         ? <Map<String, dynamic>>[]
         : matchingCandidates.where(candidateLikelyMiss).toList();
+    final bulkMissIds = {
+      for (final candidate in likelyMissCandidates.where(canMarkLikelyMiss))
+        candidate['id'].toString(),
+    };
     final candidates = _arrangeReviewCandidates(
       matchingCandidates,
       includeLikelyMiss: showAllCandidates,
@@ -1108,6 +1156,12 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     candidates: candidates,
                     likelyMissCandidates: likelyMissCandidates,
                     likelyMissExpanded: _likelyMissExpanded,
+                    onBulkMiss: bulkMissIds.isEmpty ||
+                            reviewLocked ||
+                            analyzing ||
+                            _reviewAdvancing
+                        ? null
+                        : () => unawaited(_confirmBulkMiss(bulkMissIds)),
                     onToggleLikelyMiss: () {
                       _focusReviewShortcuts();
                       setState(() {
@@ -1196,6 +1250,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     onUndo: () {
                       if (!reviewLocked) unawaited(_undoReview());
                     },
+                    canUndo: notifier.reviewUndoDepth > 0,
                     onGoImport: () => context.go('/import'),
                     onExport: includedCount == 0 || reviewLocked || analyzing
                         ? null
@@ -5416,6 +5471,7 @@ class _CandidatePanel extends StatelessWidget {
     required this.candidates,
     required this.likelyMissCandidates,
     required this.likelyMissExpanded,
+    required this.onBulkMiss,
     required this.onToggleLikelyMiss,
     required this.overlappingIds,
     required this.selectedId,
@@ -5463,10 +5519,12 @@ class _CandidatePanel extends StatelessWidget {
     required this.onSkip,
     required this.onGoImport,
     required this.onExport,
+    required this.canUndo,
   });
 
   final List<Map<String, dynamic>> candidates, likelyMissCandidates;
   final bool likelyMissExpanded;
+  final VoidCallback? onBulkMiss;
   final VoidCallback onToggleLikelyMiss;
   final Set<String> overlappingIds;
   final String? selectedId;
@@ -5515,6 +5573,7 @@ class _CandidatePanel extends StatelessWidget {
   final VoidCallback onSkip;
   final VoidCallback onGoImport;
   final VoidCallback? onExport;
+  final bool canUndo;
 
   @override
   Widget build(BuildContext context) {
@@ -5822,6 +5881,16 @@ class _CandidatePanel extends StatelessWidget {
             ),
           ],
           const SizedBox(height: Spacing.sm),
+          if (candidates.isEmpty && canUndo)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                key: const Key('review-empty-undo'),
+                onPressed: busy ? null : onUndo,
+                icon: const Icon(Icons.undo_rounded, size: 15),
+                label: Text(l10n?.reviewUndoLast ?? context.bheText('撤销')),
+              ),
+            ),
           Expanded(
             child: candidates.isEmpty && likelyMissCandidates.isEmpty
                 ? SingleChildScrollView(
@@ -5857,25 +5926,50 @@ class _CandidatePanel extends StatelessWidget {
                     itemBuilder: (context, index) {
                       final groupStart = candidates.length - (likelyMissExpanded ? likelyMissCandidates.length : 0);
                       if (likelyMissCandidates.isNotEmpty && index == groupStart) {
-                        return Semantics(
-                          expanded: likelyMissExpanded,
-                          child: Tooltip(message: context.bheText(likelyMissHelp), child: TextButton(
-                            key: const Key('review-likely-miss-group'),
-                            onPressed: onToggleLikelyMiss,
-                            style: TextButton.styleFrom(
-                              alignment: Alignment.centerLeft,
-                              foregroundColor: c.textSecondary,
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                        return Row(
+                          children: [
+                            Expanded(
+                              child: Semantics(
+                                expanded: likelyMissExpanded,
+                                child: Tooltip(
+                                  message: context.bheText(likelyMissHelp),
+                                  child: TextButton(
+                                    key: const Key('review-likely-miss-group'),
+                                    onPressed: onToggleLikelyMiss,
+                                    style: TextButton.styleFrom(
+                                      alignment: Alignment.centerLeft,
+                                      foregroundColor: c.textSecondary,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 12,
+                                      ),
+                                    ),
+                                    child: Row(children: [
+                                      Icon(
+                                        likelyMissExpanded ? Icons.expand_less : Icons.expand_more,
+                                        size: 18,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Expanded(child: Text(
+                                        context.bheText('可能没进 ${likelyMissCandidates.length} · 没看到球穿过篮筐'),
+                                        style: const TextStyle(fontSize: 12),
+                                      )),
+                                    ]),
+                                  ),
+                                ),
+                              ),
                             ),
-                            child: Row(children: [
-                              Icon(likelyMissExpanded ? Icons.expand_less : Icons.expand_more, size: 18),
-                              const SizedBox(width: 6),
-                              Expanded(child: Text(
-                                context.bheText('可能没进 ${likelyMissCandidates.length} · 没看到球穿过篮筐'),
+                            TextButton(
+                              key: const Key('review-bulk-miss'),
+                              onPressed: onBulkMiss,
+                              style: TextButton.styleFrom(
+                                foregroundColor: c.error,
+                              ),
+                              child: Text(
+                                _bulkMissLabel(context),
                                 style: const TextStyle(fontSize: 12),
-                              )),
-                            ]),
-                          )),
+                              ),
+                            ),
+                          ],
                         );
                       }
                       final rowIndex = index - (likelyMissCandidates.isNotEmpty && index > groupStart ? 1 : 0);

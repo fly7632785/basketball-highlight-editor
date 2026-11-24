@@ -326,14 +326,25 @@ class _ReviewSnapshot {
     this.tagIds,
     this.tier,
     this.tierSource,
+    this.selectionStatus,
   });
+
+  factory _ReviewSnapshot.fromCandidate(JsonMap candidate) => _ReviewSnapshot(
+    candidateId: candidate['id'].toString(),
+    status: candidate['review_status']?.toString() ?? 'pending',
+    reason: candidate['review_reason']?.toString(),
+    note: candidate['note']?.toString(),
+    tier: candidate['tier']?.toString(),
+    tierSource: candidate['tier_source']?.toString(),
+    selectionStatus: candidate['selection_status']?.toString(),
+  );
 
   final String candidateId;
   final String status;
   final String? reason;
   final String? note;
   final List<String>? tagIds;
-  final String? tier, tierSource;
+  final String? tier, tierSource, selectionStatus;
 }
 
 /// 同一候选的排队请求共享保存基线，仅在引擎确认成功后推进。
@@ -365,7 +376,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     return super.updateShouldNotify(previous, next);
   }
 
-  final List<_ReviewSnapshot> _reviewHistory = <_ReviewSnapshot>[];
+  final _reviewHistory = <List<_ReviewSnapshot>>[];
   final Set<String> _pollingJobIds = <String>{};
   final Set<String> _pollingExportJobIds = <String>{};
   Future<void> _reviewQueue = Future<void>.value();
@@ -2496,14 +2507,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
         : _ReviewBaseline(
             previous == null
                 ? null
-                : _ReviewSnapshot(
-                    candidateId: id,
-                    status: previous['review_status']?.toString() ?? 'pending',
-                    reason: previous['review_reason']?.toString(),
-                    note: previous['note']?.toString(),
-                    tier: previous['tier']?.toString(),
-                    tierSource: previous['tier_source']?.toString(),
-                  ),
+                : _ReviewSnapshot.fromCandidate(previous),
           );
     _pendingReviews[id] = (
       generation: generation,
@@ -2514,7 +2518,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
       showNotice: showNotice,
     );
     if (previous != null) {
-      _setLocalReviewState(id, engineStatus, reason: reason);
+      _setLocalReviewState({id}, engineStatus, reason: reason);
     }
     _reviewQueue = _reviewQueue.then((_) async {
       final snapshot = baseline.snapshot;
@@ -2535,7 +2539,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
           result.complete(false);
           return;
         }
-        if (snapshot != null) _reviewHistory.add(snapshot);
+        if (snapshot != null) _reviewHistory.add([snapshot]);
         baseline.snapshot = _ReviewSnapshot(
           candidateId: id,
           status: engineStatus,
@@ -2547,6 +2551,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
               ? 'excluded'
               : snapshot?.tier,
           tierSource: 'user',
+          selectionStatus: engineStatus == 'excluded' ? 'excluded' : 'included',
         );
         unawaited(refreshStatistics(generation: generation));
         final record = _pendingReviews[id];
@@ -2573,7 +2578,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
               _reviewRevisions[id] == revision &&
               current?['review_status']?.toString() == engineStatus) {
             _setLocalReviewState(
-              id,
+              {id},
               snapshot.status,
               reason: snapshot.reason,
               note: snapshot.note,
@@ -2604,8 +2609,47 @@ class ProjectNotifier extends Notifier<ProjectState> {
     return result.future;
   }
 
+  Future<void> markLikelyMissesExcluded(Set<String> ids) async {
+    final generation = _projectLoadGeneration;
+    await _runBusy(() async {
+      await flushReviewQueue();
+      if (_disposed || generation != _projectLoadGeneration) return;
+      final session = ref.read(projectSessionProvider);
+      final saved = <_ReviewSnapshot>[];
+      try {
+        for (final candidate in state.candidates) {
+          if (!ids.contains(candidate['id'].toString()) ||
+              !canMarkLikelyMiss(candidate)) {
+            continue;
+          }
+          final snapshot = _ReviewSnapshot.fromCandidate(candidate);
+          await session.reviewCandidate(
+            snapshot.candidateId,
+            status: 'excluded',
+            note: snapshot.note,
+          );
+          if (_disposed || generation != _projectLoadGeneration) return;
+          saved.add(snapshot);
+        }
+      } finally {
+        // Each engine write commits separately. A later error still leaves
+        // the successful prefix visible and undoable as one action.
+        if (!_disposed &&
+            generation == _projectLoadGeneration &&
+            saved.isNotEmpty) {
+          _reviewHistory.add(saved);
+          _setLocalReviewState(
+            saved.map((snapshot) => snapshot.candidateId).toSet(),
+            'excluded',
+          );
+          unawaited(refreshStatistics(generation: generation));
+        }
+      }
+    });
+  }
+
   void _setLocalReviewState(
-    String id,
+    Set<String> ids,
     String status, {
     String? reason,
     String? note,
@@ -2613,7 +2657,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
     state = state.copyWith(
       candidates: [
         for (final candidate in state.candidates)
-          if (candidate['id']?.toString() == id)
+          if (ids.contains(candidate['id']?.toString()))
             <String, dynamic>{
               ...candidate,
               'review_status': status,
@@ -2661,7 +2705,8 @@ class ProjectNotifier extends Notifier<ProjectState> {
   }
 
   /// The UI restores selection from the same undo history that restores status/tags.
-  String? get undoCandidateId => _reviewHistory.lastOrNull?.candidateId;
+  String? get undoCandidateId =>
+      _reviewHistory.lastOrNull?.firstOrNull?.candidateId;
   int get reviewUndoDepth => _reviewHistory.length;
 
   /// 等价 app.dart:_undoReview(599)。
@@ -2679,28 +2724,52 @@ class ProjectNotifier extends Notifier<ProjectState> {
               _reviewHistory.isEmpty) {
             return;
           }
-          final snapshot = _reviewHistory.last;
-          if (snapshot.tagIds != null) {
-            await ref
-                .read(projectSessionProvider)
-                .changeCandidateTags(
+          final group = _reviewHistory.last;
+          final session = ref.read(projectSessionProvider);
+          final restored = <String, _ReviewSnapshot>{};
+          try {
+            while (group.isNotEmpty) {
+              final snapshot = group.last;
+              if (snapshot.tagIds != null) {
+                await session.changeCandidateTags(
                   candidateId: snapshot.candidateId,
                   operation: 'set_candidate_players',
                   playerIds: snapshot.tagIds,
                 );
-          } else {
-            await ref
-                .read(projectSessionProvider)
-                .reviewCandidate(
+              } else {
+                await session.reviewCandidate(
                   snapshot.candidateId,
                   status: snapshot.status,
                   reason: snapshot.reason,
                   note: snapshot.note,
                 );
+                restored[snapshot.candidateId] = snapshot;
+              }
+              if (_disposed || generation != _projectLoadGeneration) return;
+              group.removeLast();
+            }
+          } finally {
+            if (!_disposed && generation == _projectLoadGeneration) {
+              if (group.isEmpty) _reviewHistory.remove(group);
+              if (restored.isNotEmpty) {
+                state = state.copyWith(
+                  candidates: state.candidates.map((candidate) {
+                    final snapshot = restored[candidate['id']?.toString()];
+                    if (snapshot == null) return candidate;
+                    return <String, dynamic>{
+                      ...candidate,
+                      'review_status': snapshot.status,
+                      'selection_status': snapshot.selectionStatus,
+                      'review_reason': snapshot.reason,
+                      'note': snapshot.note,
+                      'tier': snapshot.tier,
+                      'tier_source': snapshot.tierSource,
+                    };
+                  }).toList(),
+                );
+              }
+            }
           }
-          if (_disposed || generation != _projectLoadGeneration) return;
-          // 保存已生效；刷新候选失败也不能再次消费这条撤销记录。
-          _reviewHistory.remove(snapshot);
           await refreshCandidates(generation: generation);
           if (_disposed || generation != _projectLoadGeneration) return;
           _pushNotice('已撤销上一次审核', NoticeSeverity.success);
@@ -2892,7 +2961,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
             playerId: toggleId,
           );
       if (_disposed || generation != _projectLoadGeneration) return;
-      _reviewHistory.add(
+      _reviewHistory.add([
         _ReviewSnapshot(
           candidateId: id,
           status: candidate['review_status']?.toString() ?? 'pending',
@@ -2900,7 +2969,7 @@ class ProjectNotifier extends Notifier<ProjectState> {
           note: candidate['note']?.toString(),
           tagIds: oldTags,
         ),
-      );
+      ]);
       await refreshCandidates(generation: generation);
     }, busyMessage: '正在保存标签…');
   }

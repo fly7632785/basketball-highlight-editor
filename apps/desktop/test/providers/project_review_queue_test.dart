@@ -10,6 +10,47 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('bulk miss and undo keep only successfully saved state on a write error', () async {
+    final h = await _Harness.create();
+    final saved = h.transport.projects[h.root]!;
+    for (final id in ['A', 'B', 'C']) {
+      saved[id] = {
+        'id': id,
+        'tier': 'suspect',
+        'tier_source': 'algorithm',
+        'likely_miss': true,
+        'review_status': 'pending',
+        'selection_status': 'included',
+      };
+    }
+    await h.notifier.refreshCandidates();
+
+    final saveGate = h.transport.holdReview(h.root, 'C');
+    final save = h.notifier.markLikelyMissesExcluded({'A', 'B', 'C'});
+    await saveGate.entered.future;
+    saveGate.release.completeError(const EngineException('ENGINE_ERROR', 'bulk write failed'));
+    await save;
+    expect(h.notifier.reviewUndoDepth, 1);
+    expect(h.local('A')['review_status'], 'excluded');
+    expect(h.local('B')['review_status'], 'excluded');
+    expect(h.local('C')['review_status'], 'pending');
+
+    final undoGate = h.transport.holdReview(h.root, 'A');
+    final undo = h.notifier.undoReview();
+    await undoGate.entered.future;
+    undoGate.release.completeError(const EngineException('ENGINE_ERROR', 'undo write failed'));
+    await undo;
+    expect(h.notifier.reviewUndoDepth, 1);
+    expect(h.local('A')['review_status'], 'excluded');
+    expect(h.local('B')['review_status'], 'pending');
+    await h.notifier.undoReview();
+    expect(h.notifier.reviewUndoDepth, 0);
+    expect(h.local('A')['review_status'], 'pending');
+    expect(h.statusCalls, [
+      'A:excluded', 'B:excluded', 'C:excluded', 'B:pending', 'A:pending', 'A:pending',
+    ]);
+  });
+
   test('tag toggle and clear undo restore the whole group alongside review undo', () async {
     final h = await _Harness.create();
     await h.notifier.changeCandidateTags('A', toggleId:'p1');

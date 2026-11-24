@@ -1,6 +1,7 @@
 import 'package:desktop/features/review/review_shortcuts.dart';
 import 'dart:convert';
 import 'package:desktop/components/cs_scaffold.dart';
+import 'package:desktop/core/project_session.dart';
 import 'package:desktop/providers/session_provider.dart';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -160,12 +161,13 @@ class FakeProject extends ProjectNotifier {
 
 Future<({GoRouter router, ProviderContainer container})> pump(
   WidgetTester tester,
-  FakeProject notifier, {
+  ProjectNotifier notifier, {
   String path = '/review',
   Size size = const Size(1600, 1000),
   Locale locale = const Locale('zh'),
   ReviewScreen reviewScreen = const ReviewScreen(),
   WidgetBuilder? homeBuilder,
+  ProjectSession? session,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -204,6 +206,7 @@ Future<({GoRouter router, ProviderContainer container})> pump(
   final container = ProviderContainer(
     overrides: [
       projectProvider.overrideWith(() => notifier),
+      if (session != null) projectSessionProvider.overrideWithValue(session),
       engineBootstrapProvider.overrideWith(_ReadyEngine.new),
     ],
   );

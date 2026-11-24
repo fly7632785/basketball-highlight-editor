@@ -19,6 +19,16 @@ String candidateTier(Map<String, dynamic> candidate) {
 bool candidateLikelyMiss(Map<String, dynamic> candidate) =>
     candidateTier(candidate) == 'suspect' && candidate['likely_miss'] == true;
 
+bool canMarkLikelyMiss(Map<String, dynamic> candidate) {
+  final status = candidate['review_status'];
+  return candidateLikelyMiss(candidate) &&
+      candidate['tier_source'] != 'user' &&
+      (status == null ||
+          status == '' ||
+          status == 'pending' ||
+          (status == 'excluded' && candidate['review_reason'] == 'auto_rim_check'));
+}
+
 List<String> candidateTagIds(Map<String, dynamic> candidate) {
   final tags = candidate['tags'] ?? candidate['players'];
   if (tags is List) {
