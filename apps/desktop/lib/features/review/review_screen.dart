@@ -121,16 +121,21 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
     Set<String> retainedIds = const {},
     String rimFilter = 'all',
     String segmentFilter = 'all',
-  }) => _arrangeReviewCandidates(_filterCandidates(
-    candidates, filter, playerFilter: playerFilter, retainedIds: retainedIds,
-    rimFilter: rimFilter, segmentFilter: segmentFilter,
-  ));
+  }) => _arrangeReviewCandidates(
+    _filterCandidates(
+      candidates, filter, playerFilter: playerFilter, retainedIds: retainedIds,
+      rimFilter: rimFilter, segmentFilter: segmentFilter,
+    ),
+    includeLikelyMiss: filter == 'all',
+  );
 
   List<Map<String, dynamic>> _arrangeReviewCandidates(
-    List<Map<String, dynamic>> candidates,
-  ) => [
+    List<Map<String, dynamic>> candidates, {
+    bool includeLikelyMiss = false,
+  }) => [
     ...candidates.where((c) => !candidateLikelyMiss(c)),
-    if (_likelyMissExpanded) ...candidates.where(candidateLikelyMiss),
+    if (includeLikelyMiss || _likelyMissExpanded)
+      ...candidates.where(candidateLikelyMiss),
   ];
 
   Map<String, dynamic>? _selectedCandidate(
@@ -915,8 +920,14 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
       rimFilter: _rimFilter,
       segmentFilter: _segmentFilter,
     );
-    final likelyMissCandidates = matchingCandidates.where(candidateLikelyMiss).toList();
-    final candidates = _arrangeReviewCandidates(matchingCandidates);
+    final showAllCandidates = _candidateFilter == 'all';
+    final likelyMissCandidates = showAllCandidates
+        ? <Map<String, dynamic>>[]
+        : matchingCandidates.where(candidateLikelyMiss).toList();
+    final candidates = _arrangeReviewCandidates(
+      matchingCandidates,
+      includeLikelyMiss: showAllCandidates,
+    );
     final selected = _selectedCandidate(candidates);
     final selectedId = selected?['id']?.toString();
     final selectedVideoId = selected?['video_id']?.toString();

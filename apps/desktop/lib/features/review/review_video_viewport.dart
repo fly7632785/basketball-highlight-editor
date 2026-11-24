@@ -1,6 +1,9 @@
 import 'package:flutter/widgets.dart';
 
-/// Keeps the video and its annotations in one centered, cropped coordinate space.
+/// Places the video and its annotations in one centered coordinate space that
+/// shows the full frame (contain): the box keeps the video's display aspect
+/// and never grows beyond the viewport, so portrait sources are letterboxed
+/// instead of cropped.
 class ReviewVideoViewport extends StatelessWidget {
   const ReviewVideoViewport({
     super.key,
@@ -19,20 +22,12 @@ class ReviewVideoViewport extends StatelessWidget {
           : 16 / 9;
       var width = constraints.maxWidth;
       var height = width / aspect;
-      if (height < constraints.maxHeight) {
+      if (height > constraints.maxHeight) {
         height = constraints.maxHeight;
         width = height * aspect;
       }
-      return ClipRect(
-        // Center alone clamps its child back to the viewport, undoing cover.
-        child: OverflowBox(
-          alignment: Alignment.center,
-          minWidth: width,
-          maxWidth: width,
-          minHeight: height,
-          maxHeight: height,
-          child: SizedBox(width: width, height: height, child: child),
-        ),
+      return Center(
+        child: SizedBox(width: width, height: height, child: child),
       );
     },
   );

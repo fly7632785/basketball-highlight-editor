@@ -4373,11 +4373,31 @@ class _RoiCanvasState extends State<_RoiCanvas> {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return AspectRatio(
-      aspectRatio: widget.aspectRatio,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return DecoratedBox(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 竖拍源按宽撑满会超出可视区：限高后 AspectRatio 以高度为准缩小宽度，
+        // 框的归一化坐标不变，画面仍与检测框对齐。
+        final maxHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : 620.0;
+        return Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxHeight),
+            child: AspectRatio(
+              key: const Key('roi-canvas-frame'),
+              aspectRatio: widget.aspectRatio,
+              child: _buildCanvas(context, c),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCanvas(BuildContext context, AppColors c) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return DecoratedBox(
             decoration: BoxDecoration(
               color: widget.enabled ? c.surface2 : c.surface3,
               borderRadius: BorderRadius.circular(CsRadius.lg),
@@ -4606,7 +4626,6 @@ class _RoiCanvasState extends State<_RoiCanvas> {
             ),
           );
         },
-      ),
     );
   }
 

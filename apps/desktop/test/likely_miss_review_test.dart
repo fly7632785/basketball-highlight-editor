@@ -79,32 +79,37 @@ void main() {
     },
   );
 
-  testWidgets(
-    'all tab sinks group; collapsing selected group clears hidden selection; filters still apply',
-    (tester) async {
-      final notifier = groupedProject();
-      await harness.pump(tester, notifier);
-      await tester.tap(find.byKey(const ValueKey('review-status-all')));
-      await tester.pumpAndSettle();
-      expect(find.text('全部 3'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('review-likely-miss-group')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('tier-dot-c3')));
-      await tester.pumpAndSettle();
-      expect(find.text('候选 00:36'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('review-likely-miss-group')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('candidate-row-c3')), findsNothing);
-      expect(find.text('候选 00:45'), findsOneWidget);
-      await tester.tap(
-        find.byKey(const ValueKey('review-tag-option-untagged')),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('review-likely-miss-group')), findsNothing);
-      expect(find.byKey(const ValueKey('candidate-row-c5')), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
+  testWidgets('all tab shows every candidate and keeps filters effective', (
+    tester,
+  ) async {
+    final notifier = groupedProject();
+    await harness.pump(tester, notifier);
+    await tester.tap(find.byKey(const ValueKey('review-status-all')));
+    await tester.pumpAndSettle();
+    expect(find.text('全部 3'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('candidate-row-c3')),
+      300,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('candidate-row-c3')), findsOneWidget);
+    expect(find.byKey(const Key('review-likely-miss-group')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('candidate-row-c3')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('inspector-keep')));
+    await tester.pumpAndSettle();
+    expect(notifier.current.candidates.first['tier'], 'must');
+    expect(find.byKey(const ValueKey('candidate-row-c3')), findsOneWidget);
+
+    // A secondary tag filter still limits the all-candidates list.
+    await tester.tap(find.byKey(const ValueKey('review-tag-option-untagged')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('review-likely-miss-group')), findsNothing);
+    expect(find.byKey(const ValueKey('candidate-row-c5')), findsOneWidget);
+    expect(find.byKey(const ValueKey('candidate-row-c3')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'only likely misses still show an expandable group and can be manually excluded',
