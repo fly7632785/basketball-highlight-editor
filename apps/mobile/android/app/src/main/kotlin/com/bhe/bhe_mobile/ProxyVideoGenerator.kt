@@ -31,7 +31,7 @@ object ProxyVideoGenerator {
     )
 
     private const val CACHE_DIR = "analysis/proxies"
-    private const val CACHE_VERSION = 3
+    private const val CACHE_VERSION = 4
     private const val MAX_WIDTH = 960
     private const val MAX_HEIGHT = 720
     // Keep the proxy cadence identical to the desktop standard pipeline.
@@ -203,6 +203,9 @@ object ProxyVideoGenerator {
             )
             decoderSurface = egl.decoderSurface
             decoder = MediaCodec.createDecoderByType(sourceFormat.getString(MediaFormat.KEY_MIME)!!)
+            // Keep proxy pixels in encoded orientation. Surface decoding applies
+            // KEY_ROTATION automatically; the muxer writes the display rotation.
+            sourceFormat.setInteger(MediaFormat.KEY_ROTATION, 0)
             decoder.configure(sourceFormat, decoderSurface, null, 0)
             decoder.start()
 
