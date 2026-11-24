@@ -1048,6 +1048,28 @@ class EngineService:
         log_diagnostic(f"preview tonemap enabled: {source.name}")
         return f"{TONEMAP_FILTER},scale=640:-2"
 
+    def _cached_proxy_probe(self, proxy_path) -> Dict[str, Any]:
+        """审核页批量取预览时，每个时间点都会为校验几何而 ffprobe 同一个代理
+        文件；大项目里同一代理会被探测上百次。按 (路径, 大小, mtime_ns) 缓存
+        探测结果，代理被重写时键自然失效。只在 heavy 单线程上被调用。"""
+        cache_key = None
+        try:
+            stat = Path(proxy_path).stat()
+            cache_key = (str(proxy_path), stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            pass
+        cache = getattr(self, "_proxy_probe_cache", None)
+        if cache is None:
+            cache = self._proxy_probe_cache = {}
+        if cache_key is not None and cache_key in cache:
+            return cache[cache_key]
+        info = self.inspect_video({"video_path": str(proxy_path)})
+        if cache_key is not None:
+            if len(cache) >= 16:
+                cache.pop(next(iter(cache)))
+            cache[cache_key] = info
+        return info
+
     def extract_preview(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         store = self._require_store(payload)
         identity = self._project_identity(store)
@@ -1084,7 +1106,7 @@ class EngineService:
         proxy = self._latest_proxy_video(store, video["id"])
         if proxy is not None and proxy[1] <= time_ms < proxy[2] - 1000:
             try:
-                info = self.inspect_video({"video_path": str(proxy[0])})
+                info = self._cached_proxy_probe(proxy[0])
                 pw, ph = int(info.get("width") or 0), int(info.get("height") or 0)
                 vw, vh = int(video.get("width") or 0), int(video.get("height") or 0)
                 duration = int(info.get("duration_ms") or 0)
