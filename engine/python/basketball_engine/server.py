@@ -96,7 +96,11 @@ def main() -> int:
         root = payload.get("project_root") or payload.get("root_path")
         return str(Path(root).expanduser().resolve()) if isinstance(root, str) and root.strip() else None
 
-    def admit(request, slow, *, wait_on_busy=False):
+    def input_ended():
+        # Under registry_changed, the input pump's end marker is always last.
+        return bool(incoming) and not isinstance(incoming[-1], str)
+
+    def admit(request, slow, *, wait_on_busy=False, resuming=False):
         payload = request.get("payload", {})
         command = request["command"]
         key = project_key(payload)
@@ -108,6 +112,8 @@ def main() -> int:
         if slow and not slots.acquire(blocking=False):
             raise ProtocolError("PROJECT_BUSY", "请求队列已满，请稍后重试")
         with registry_changed:
+            if resuming and input_ended():
+                raise ProtocolError("REQUEST_CANCELLED", "请求已取消")
             if closing:
                 if slow:
                     slots.release()
@@ -222,8 +228,8 @@ def main() -> int:
     def next_work():
         with registry_changed:
             while True:
-                # Do not start deferred mutations after the input closes.
-                if incoming and not isinstance(incoming[0], str):
+                # Drain input in order before considering deferred mutations.
+                if input_ended():
                     return incoming.popleft()
                 now = time.monotonic()
                 for index, item in enumerate(waiting):
@@ -256,7 +262,7 @@ def main() -> int:
                         raise ProtocolError("REQUEST_CANCELLED", "请求已取消")
                     if time.monotonic() >= work.deadline:
                         raise ProtocolError("PROJECT_BUSY", PROJECT_BUSY_MESSAGE)
-                    run_admitted(request, admit(request, False), False)
+                    run_admitted(request, admit(request, False, resuming=True), False)
                     continue
                 line = work.strip()
                 if not line:

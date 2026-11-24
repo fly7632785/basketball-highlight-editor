@@ -4,6 +4,7 @@ import queue
 import shutil
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 import pytest
@@ -182,6 +183,91 @@ def test_waiting_user_command_is_cancelled_before_dispatch(running, tmp_path, mo
         input_.send("hello", "hello")
         assert output.next()["request_id"] == "hello"
     assert calls == []
+
+
+@pytest.mark.parametrize("eof_during_admission", [False, True])
+def test_input_end_cancels_waiting_write_with_tail_line(tmp_path, monkeypatch, eof_during_admission):
+    root = tmp_path / "project"
+    preview_running, release_preview, project_released = (threading.Event() for _ in range(3))
+    query_running, readmitting, eof_queued = (threading.Event() for _ in range(3))
+    tail_at_eof = []
+    writes = []
+
+    class ObservedInputQueue(deque):
+        def append(self, item):
+            super().append(item)
+            if item is None:
+                tail_at_eof.extend(json.loads(line)["request_id"] for line in list(self)[:-1])
+                eof_queued.set()
+
+    class ObservedWorker(server._RequestWorker):
+        def submit(self, function, *args):
+            def run(*arguments):
+                function(*arguments)
+                project_released.set()
+            super().submit(run, *args)
+
+    def extract_preview(payload):
+        preview_running.set()
+        assert release_preview.wait(3)
+        return {}
+
+    def get_job(payload):
+        query_running.set()
+        if not eof_during_admission:
+            assert eof_queued.wait(3)
+            release_preview.set()
+            assert project_released.wait(3)
+        return {}
+
+    resolve = Path.resolve
+
+    def resolve_project(path, *args, **kwargs):
+        if eof_during_admission and path == root and query_running.is_set():
+            readmitting.set()
+            assert eof_queued.wait(3)
+        return resolve(path, *args, **kwargs)
+
+    def input_lines():
+        def line(request_id, command):
+            return json.dumps({
+                "protocol_version": "1.0", "type": "request",
+                "request_id": request_id, "command": command, "payload": {"project_root": str(root)},
+            }) + "\n"
+
+        yield line("preview", "extract_preview")
+        assert preview_running.wait(3)
+        yield line("waiting", "start_export")
+        yield line("query", "get_job")
+        assert query_running.wait(3)
+        if eof_during_admission:
+            release_preview.set()
+            assert readmitting.wait(3)
+        yield line("tail", "hello")
+
+    service = EngineService()
+    output = Output()
+    monkeypatch.setattr(service, "extract_preview", extract_preview)
+    monkeypatch.setattr(service, "get_job", get_job)
+    monkeypatch.setattr(service, "start_export", lambda payload: writes.append(payload) or {})
+    monkeypatch.setattr(server, "EngineService", lambda: service)
+    monkeypatch.setattr(server, "_RequestWorker", ObservedWorker)
+    monkeypatch.setattr(server, "deque", ObservedInputQueue)
+    monkeypatch.setattr(server, "environment_summary", lambda: "test")
+    monkeypatch.setattr(server.sys, "stdin", input_lines())
+    monkeypatch.setattr(server.sys, "stdout", output)
+    monkeypatch.setattr(Path, "resolve", resolve_project)
+
+    try:
+        assert server.main() == 0
+    finally:
+        release_preview.set()
+
+    assert tail_at_eof == ["tail"]
+    responses = {row["request_id"]: row for row in (output.next() for _ in range(4))}
+    assert all(responses[key]["ok"] for key in ("preview", "query", "tail"))
+    assert writes == []
+    assert responses["waiting"]["error"]["code"] == "REQUEST_CANCELLED"
 
 
 def test_external_delete_recreate_does_not_receive_late_link(running, tmp_path):
