@@ -1,6 +1,8 @@
 package com.bhe.bhe_mobile
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -16,6 +18,38 @@ class MergeSampleStatsTest {
             listOf(20_000L, 20_000L, 24_000L, 23_000L),
             sourcePts.map { mergeSamplePtsUs(it, clipStartUs, outputBaseUs) },
         )
+    }
+
+    @Test fun seamKeepsTheLastVideoFrameDurationAndIncreasingPresentationTimes() {
+        val first = MergeClipWindow(startUs = 18_000_000, endUs = 25_211_000, outputBaseUs = 0)
+        val lastPts = mergeSamplePtsUs(25_200_000, first.startUs, first.outputBaseUs)
+        assertTrue(first.includes(25_200_000, isVideo = true))
+        assertFalse(first.includes(25_216_667, isVideo = true))
+        val second = MergeClipWindow(73_000_000, 77_186_000, first.nextOutputBaseUs(25_216_667))
+        val outputPts = listOf(
+            lastPts,
+            mergeSamplePtsUs(second.startUs, second.startUs, second.outputBaseUs),
+            mergeSamplePtsUs(73_016_667, second.startUs, second.outputBaseUs),
+        )
+        assertEquals(listOf(16_667L, 16_667L), outputPts.zipWithNext { prev, next -> next - prev })
+    }
+
+    @Test fun audioUsesTheVideoAnchorWithoutClampingEarlierAudioOntoIt() {
+        val window = MergeClipWindow(startUs = 73_000_000, endUs = 77_186_000, outputBaseUs = 7_216_667)
+        assertFalse(window.includes(72_996_000, isVideo = false))
+        assertTrue(window.includes(73_000_000, isVideo = false))
+        assertTrue(window.includes(73_003_537, isVideo = false))
+        assertFalse(window.includes(77_186_000, isVideo = false))
+        val videoPts = mergeSamplePtsUs(window.startUs, window.startUs, window.outputBaseUs)
+        val audioPts = mergeSamplePtsUs(73_003_537, window.startUs, window.outputBaseUs)
+        assertEquals(window.outputBaseUs, videoPts)
+        assertEquals(3_537L, audioPts - videoPts)
+    }
+
+    @Test fun aNonFinalClipMustHaveAKnownNextVideoFrame() {
+        assertThrows(MergeRangeUnavailable::class.java) {
+            MergeClipWindow(18_000_000, 25_211_000, 0).nextOutputBaseUs(null)
+        }
     }
 
     @Test fun countsClampedNonMonotonicAndSyncSamples() {

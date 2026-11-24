@@ -954,18 +954,18 @@ class MainActivity : FlutterActivity() {
                 }
                 muxer = currentMuxer
                 val selection: ExportTrackSelection
-                val videoTracks: Set<Int>
+                val videoTrack: Int
                 try {
                     selection = addExportableTracks(firstExtractor, currentMuxer)
-                    videoTracks = selection.trackMap.keys.filter { index ->
+                    videoTrack = selection.trackMap.keys.single { index ->
                         firstExtractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
-                    }.toSet()
+                    }
                     applySourceOrientation(firstExtractor, currentMuxer)
                 } finally {
                     firstExtractor.release()
                 }
                 val trackMap = selection.trackMap
-                if (trackMap.isEmpty()) throw IllegalStateException("视频没有可合并的音视频轨道")
+                val audioTracks = trackMap.keys - videoTrack
                 currentMuxer.start()
                 muxerStarted = true
                 var buffer = ByteBuffer.allocate(16 * 1024 * 1024)
@@ -979,20 +979,35 @@ class MainActivity : FlutterActivity() {
                     val extractor = MediaExtractor()
                     try {
                         VideoInput.open(extractor, sourcePath)
-                        trackMap.keys.forEach(extractor::selectTrack)
                         val endUs = endMs * 1000L
+                        extractor.selectTrack(videoTrack)
                         extractor.seekTo(startMs * 1000L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                         val clipStartUs = extractor.sampleTime
                         MergeMediaFinalizer.requireLocation(clipStartUs, extractor.sampleTrackIndex)
+                        if (audioTracks.isNotEmpty()) {
+                            audioTracks.forEach(extractor::selectTrack)
+                            // 各轨各自定位同步样本。用实际视频关键帧为共同定位点。
+                            extractor.seekTo(clipStartUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                        }
+                        val window = MergeClipWindow(clipStartUs, endUs, outputBaseUs)
                         val intervalStats = videoStats.startInterval(clipStartUs)
+                        var nextVideoPtsUs: Long? = null
                         while (true) {
                             if (cancelled.get()) throw InterruptedException("合并导出已取消")
                             val sourceTrack = extractor.sampleTrackIndex
                             val sampleTime = extractor.sampleTime
-                            // 只把「没有样本」(-1) 当结束；负 PTS 是合法值，继续按夹到片段起点写。
-                            if (sourceTrack < 0 || sampleTime == NO_SAMPLE_TIME || sampleTime >= endUs) break
+                            if (sourceTrack < 0 || sampleTime == NO_SAMPLE_TIME) break
+                            val isVideo = sourceTrack == videoTrack
+                            if (isVideo && sampleTime >= endUs) {
+                                // 用首个不写入的视频样本时刻，保留上一帧的时长。
+                                nextVideoPtsUs = sampleTime
+                                break
+                            }
                             val muxTrack = trackMap[sourceTrack]
-                            if (muxTrack != null) {
+                            if (muxTrack != null && window.includes(sampleTime, isVideo)) {
+                                if (isVideo && intervalStats.samples == 0L && sampleTime != clipStartUs) {
+                                    throw MergeRangeUnavailable("无法从合并片段的视频起点读取")
+                                }
                                 val sampleSizeBytes = extractor.sampleSize
                                 if (sampleSizeBytes > Int.MAX_VALUE) throw IllegalStateException("视频样本过大，无法合并导出")
                                 if (sampleSizeBytes > buffer.capacity()) buffer = ByteBuffer.allocate(sampleSizeBytes.toInt())
@@ -1003,7 +1018,6 @@ class MainActivity : FlutterActivity() {
                                 info.size = size
                                 info.presentationTimeUs = mergeSamplePtsUs(sampleTime, clipStartUs, outputBaseUs)
                                 info.flags = extractor.sampleFlags
-                                val isVideo = sourceTrack in videoTracks
                                 try {
                                     currentMuxer.writeSampleData(muxTrack, buffer, info)
                                 } catch (error: Exception) {
@@ -1041,7 +1055,7 @@ class MainActivity : FlutterActivity() {
                         }
                         videoStats.finishInterval(intervalStats)
                         MergeMediaFinalizer.requireVideoSamples(intervalStats.samples)
-                        outputBaseUs += (endUs - clipStartUs).coerceAtLeast(1L)
+                        if (index < clips.lastIndex) outputBaseUs = window.nextOutputBaseUs(nextVideoPtsUs)
                     } finally {
                         extractor.release()
                     }
