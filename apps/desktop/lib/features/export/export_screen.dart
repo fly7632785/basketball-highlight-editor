@@ -141,6 +141,33 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
         state.analysisRunning ||
         state.hydrating;
 
+    final modes = [
+      _ExportChoice(
+        'merge',
+        l10n?.exportMergeTitle ?? '合并成一个视频',
+        context.bheText('拼成一个 MP4，适合直接分享'),
+        details: l10n?.exportMergeDescription ?? '按时间顺序拼接为一个 MP4，适合直接分享。',
+      ),
+      _ExportChoice(
+        'separate',
+        l10n?.exportSeparateTitle ?? '每个片段单独导出',
+        context.bheText('每段一个文件，适合二次剪辑'),
+        details: l10n?.exportSeparateDescription ?? '每段一个文件，放进同一个文件夹，适合二次剪辑。',
+      ),
+      if (state.players.isNotEmpty)
+        _ExportChoice(
+          'merge_by_player',
+          context.bheText('每个标签各合成一个视频'),
+          context.bheText('每个标签一个 MP4'),
+          details: context.bheText('只导出选中的标签，每个标签一个 MP4，文件名就是标签名，放进同一个文件夹。'),
+        ),
+    ];
+    final replayNotice = _framing == 'portrait_916' && _effect == 'replay'
+        ? context.bheText('竖屏下回放沿用跟球画面，不再单独放大篮筐。')
+        : null;
+    final codec = l10n?.outputCodec ?? '输出编码';
+    final processing = l10n?.processingValue ?? '硬件编码优先，软件回退';
+
     final settings = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -151,17 +178,27 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    l10n?.exportHighlights ?? '导出集锦',
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
+                  SizedBox(
+                    height: 32,
+                    child: Text(
+                      l10n?.exportHighlights ?? '导出集锦',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                   const SizedBox(height: Spacing.xs),
-                  Text(
-                    context.bheText('勾选档位和标签决定导哪些；想细调，就去审核页看着视频改。'),
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: c.textSecondary,
+                  SizedBox(
+                    height: 22,
+                    child: Text(
+                      context.bheText('勾选档位和标签决定导哪些；想细调，就去审核页看着视频改。'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: c.textSecondary,
+                      ),
                     ),
                   ),
                 ],
@@ -252,33 +289,41 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                 ],
               ),
               const Divider(height: 24),
-              Wrap(
-                spacing: 16,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
+              Row(
                 children: [
-                  Text(
-                    context.bheText(
-                      '将导出 $includedCount 段 · ${_formatMs(durationMs)}',
-                    ),
-                    key: const Key('export-selection-summary'),
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      color: c.orange,
-                      fontWeight: FontWeight.w600,
+                  Flexible(
+                    child: Text(
+                      context.bheText(
+                        '将导出 $includedCount 段 · ${_formatMs(durationMs)}',
+                      ),
+                      key: const Key('export-selection-summary'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: c.orange,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
-                  TextButton(
-                    key: const Key('export-review-selection'),
-                    onPressed: () {
-                      ref
-                          .read(exportReviewProvider.notifier)
-                          .state = TierSelection(
-                        tiers: selection.tiers,
-                        tags: selection.tags,
-                      );
-                      context.go('/review');
-                    },
-                    child: Text(context.bheText('去审核页看这 $includedCount 段 →')),
+                  const SizedBox(width: Spacing.sm),
+                  Flexible(
+                    child: TextButton(
+                      key: const Key('export-review-selection'),
+                      onPressed: () {
+                        ref
+                            .read(exportReviewProvider.notifier)
+                            .state = TierSelection(
+                          tiers: selection.tiers,
+                          tags: selection.tags,
+                        );
+                        context.go('/review');
+                      },
+                      child: Text(
+                        context.bheText('去审核页看这 $includedCount 段 →'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -286,150 +331,64 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
           ),
         ),
         const SizedBox(height: Spacing.md),
-        Text(
-          l10n?.exportOutputMode ?? '输出方式',
-          style: theme.textTheme.titleSmall,
-        ),
-        const SizedBox(height: Spacing.sm),
-        KeyedSubtree(
-          key: _guideModeKey,
-          child: Row(
-            children: [
-              Expanded(
-                child: _ModeCard(
-                  key: const Key('export-mode-merge'),
-                  title: l10n?.exportMergeTitle ?? '合并成一个视频',
-                  description:
-                      l10n?.exportMergeDescription ?? '按时间顺序拼接为一个 MP4，适合直接分享。',
-                  selected: mode == 'merge',
-                  onTap: () => _selectMode('merge'),
-                ),
-              ),
-              const SizedBox(width: Spacing.sm),
-              Expanded(
-                child: _ModeCard(
-                  key: const Key('export-mode-separate'),
-                  title: l10n?.exportSeparateTitle ?? '每个片段单独导出',
-                  description:
-                      l10n?.exportSeparateDescription ??
-                      '每段一个文件，放进同一个文件夹，适合二次剪辑。',
-                  selected: mode == 'separate',
-                  onTap: () => _selectMode('separate'),
-                ),
-              ),
-              if (state.players.isNotEmpty) ...[
-                const SizedBox(width: Spacing.sm),
-                Expanded(
-                  child: KeyedSubtree(
-                    key: _guideTagModeKey,
-                    child: _ModeCard(
-                      key: const Key('export-mode-by-player'),
-                      title: context.bheText('每个标签各合成一个视频'),
-                      description: context.bheText(
-                        '只导出选中的标签，每个标签一个 MP4，文件名就是标签名，放进同一个文件夹。',
-                      ),
-                      selected: mode == 'merge_by_player',
-                      onTap: () => _selectMode('merge_by_player'),
-                    ),
+        Row(
+          children: [
+            Expanded(
+              child: KeyedSubtree(
+                key: _guideModeKey,
+                child: KeyedSubtree(
+                  key: state.players.isNotEmpty ? _guideTagModeKey : null,
+                  child: _ExportSetting(
+                    id: 'mode',
+                    title: l10n?.exportOutputMode ?? '输出方式',
+                    icon: LucideIcons.columns2,
+                    choices: modes,
+                    value: mode,
+                    onSelected: _selectMode,
                   ),
                 ),
-              ],
-            ],
-          ),
-        ),
-        const SizedBox(height: Spacing.md),
-        _ExportSection(
-          title: context.bheText('画面'),
-          hint: '',
-          child: Wrap(
-            spacing: Spacing.sm,
-            children: [
-              for (final option in const {
-                'original': '原比例',
-                'portrait_916': '竖屏 9:16（跟球）',
-              }.entries)
-                ChoiceChip(
-                  key: Key('export-framing-${option.key}'),
-                  label: Text(context.bheText(option.value)),
-                  selected: _framing == option.key,
-                  onSelected: busy
-                      ? null
-                      : (_) => setState(() => _framing = option.key),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: Spacing.md),
-        CsCard(
-          child: Material(
-            color: Colors.transparent,
-            child: ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              title: Text(
-                context.bheText('进球效果'),
-                style: theme.textTheme.titleSmall,
               ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _effectOptions(
-                      context,
-                    ).firstWhere((option) => option.value == _effect).title,
-                    style: theme.textTheme.labelMedium,
-                  ),
-                  const Icon(Icons.expand_more, size: 18),
-                ],
-              ),
-              children: [
-                Column(
-                  key: const Key('export-goal-effect'),
-                  children: [
-                    for (final option in _effectOptions(context))
-                      _EffectOption(
-                        key: Key('export-effect-${option.value}'),
-                        title: option.title,
-                        description: option.description,
-                        selected: _effect == option.value,
-                        onTap: busy ? null : () => _setEffect(option.value),
-                      ),
-                  ],
-                ),
-              ],
             ),
-          ),
-        ),
-        const SizedBox(height: Spacing.sm),
-        CsCard(
-          child: Row(
-            children: [
-              Expanded(
-                child: _ExportStat(
-                  label: l10n?.exportClipCount ?? '片段',
-                  value: l10n?.text('$includedCount 个') ?? '$includedCount 个',
-                ),
+            const SizedBox(width: Spacing.sm),
+            Expanded(
+              child: _ExportSetting(
+                id: 'framing',
+                title: context.bheText('画面'),
+                icon: LucideIcons.smartphone,
+                choices: [
+                  _ExportChoice(
+                    'original',
+                    context.bheText('原比例'),
+                    context.bheText('保持原视频画面'),
+                  ),
+                  _ExportChoice(
+                    'portrait_916',
+                    context.bheText('竖屏 9:16（跟球）'),
+                    context.bheText('裁成竖屏，镜头跟着球走'),
+                  ),
+                ],
+                value: _framing,
+                onSelected: busy
+                    ? null
+                    : (value) => setState(() => _framing = value),
+                selectedNotice: replayNotice,
               ),
-              Expanded(
-                child: _ExportStat(
-                  label: l10n?.totalDuration ?? '合计时长',
-                  value: _formatMs(durationMs),
-                ),
+            ),
+            const SizedBox(width: Spacing.sm),
+            Expanded(
+              child: _ExportSetting(
+                id: 'effect',
+                title: context.bheText('进球效果'),
+                icon: LucideIcons.sparkles,
+                choices: _effectOptions(context),
+                value: _effect,
+                onSelected: busy ? null : _setEffect,
+                hint: context.bheText('画面和进球效果可以任意搭配'),
+                selectedNotice: replayNotice,
+                alignEnd: true,
               ),
-              Expanded(
-                child: _ExportStat(
-                  label: l10n?.outputCodec ?? '输出编码',
-                  value: 'H.264 / AAC',
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: _ExportStat(
-                  label: l10n?.processingMethod ?? '处理方式',
-                  value: l10n?.processingValue ?? '硬件编码优先，软件回退',
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
         if (state.analysisRunning) ...[
           const SizedBox(height: Spacing.sm),
@@ -535,6 +494,43 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
             if (_choosingOutput && Platform.isMacOS)
               RecoverSaveWindowButton(visible: _choosingOutput),
           ],
+        ),
+        const SizedBox(height: Spacing.sm),
+        MenuAnchor(
+          style: _exportMenuStyle(c),
+          alignmentOffset: const Offset(0, Spacing.xs),
+          menuChildren: [
+            Padding(
+              padding: const EdgeInsets.all(Spacing.sm),
+              child: Text(
+                '$codec · H.264 / AAC\n${l10n?.processingMethod ?? '处理方式'} · $processing',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+          ],
+          builder: (context, controller, _) => InkWell(
+            key: const Key('export-setting-codec'),
+            onTap: () =>
+                controller.isOpen ? controller.close() : controller.open(),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: Spacing.xs),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.info, size: 14, color: c.textSecondary),
+                  const SizedBox(width: Spacing.xs),
+                  Flexible(
+                    child: Text(
+                      '$codec H.264 / AAC · $processing',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: c.textSecondary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
         if (state.candidates.isNotEmpty) ...[
           const SizedBox(height: Spacing.xl),
@@ -756,23 +752,24 @@ class _ExportSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Text(title, style: theme.textTheme.titleSmall),
-              const SizedBox(width: Spacing.sm),
-              Flexible(
-                child: Text(
-                  hint,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: c.textTertiary,
+          SizedBox(
+            height: 20,
+            child: Row(
+              children: [
+                Text(title, style: theme.textTheme.titleSmall),
+                const SizedBox(width: Spacing.sm),
+                Flexible(
+                  child: Text(
+                    hint,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: c.textTertiary,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(height: Spacing.sm),
           child,
@@ -968,125 +965,311 @@ class _ScopeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return FilterChip(
-      showCheckmark: false,
-      selected: selected,
-      onSelected: count == 0 && !selected ? null : onSelected,
-      backgroundColor: Colors.transparent,
-      selectedColor: c.surface3,
-      side: BorderSide(color: selected ? c.borderStrong : c.border),
-      shape: const StadiumBorder(),
-      visualDensity: VisualDensity.compact,
-      avatar: dot == null
-          ? null
-          : Container(
-              width: 7,
-              height: 7,
-              decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
-            ),
-      label: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 160),
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontFamily: Theme.of(context).textTheme.labelMedium?.fontFamily,
-                color: selected ? c.textPrimary : c.textSecondary,
-                fontSize: 12,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 32),
+      child: FilterChip(
+        showCheckmark: false,
+        selected: selected,
+        onSelected: count == 0 && !selected ? null : onSelected,
+        backgroundColor: Colors.transparent,
+        selectedColor: c.surface3,
+        side: BorderSide(color: selected ? c.borderStrong : c.border),
+        shape: const StadiumBorder(),
+        visualDensity: VisualDensity.compact,
+        avatar: dot == null
+            ? null
+            : Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+              ),
+        label: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 160),
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: Theme.of(
+                    context,
+                  ).textTheme.labelMedium?.fontFamily,
+                  color: selected ? c.textPrimary : c.textSecondary,
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            '$count',
-            style: TextStyle(
-              fontFamily: Theme.of(context).textTheme.labelMedium?.fontFamily,
-              color: c.textTertiary,
-              fontSize: 11,
-              fontFeatures: const [FontFeature.tabularFigures()],
+            const SizedBox(width: 6),
+            Text(
+              '$count',
+              style: TextStyle(
+                fontFamily: Theme.of(context).textTheme.labelMedium?.fontFamily,
+                color: c.textTertiary,
+                fontSize: 11,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
-class _ModeCard extends StatelessWidget {
-  const _ModeCard({
+MenuStyle _exportMenuStyle(
+  AppColors colors, {
+  double? width,
+  bool alignEnd = false,
+}) => MenuStyle(
+  alignment: alignEnd ? Alignment.bottomRight : Alignment.bottomLeft,
+  fixedSize: width == null
+      ? null
+      : WidgetStatePropertyAll(Size(width, double.infinity)),
+  backgroundColor: WidgetStatePropertyAll(colors.surface2),
+  surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+  padding: const WidgetStatePropertyAll(EdgeInsets.all(Spacing.sm)),
+  shape: WidgetStatePropertyAll(
+    RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(CsRadius.md),
+      side: BorderSide(color: colors.borderStrong),
+    ),
+  ),
+  elevation: const WidgetStatePropertyAll(8),
+);
+
+class _ExportSetting extends StatelessWidget {
+  const _ExportSetting({
+    required this.id,
     required this.title,
-    required this.description,
-    required this.selected,
-    required this.onTap,
-    super.key,
+    required this.icon,
+    required this.choices,
+    required this.value,
+    required this.onSelected,
+    this.hint,
+    this.selectedNotice,
+    this.alignEnd = false,
   });
 
+  static const _menuWidth = 400.0;
+
+  final String id;
   final String title;
-  final String description;
-  final bool selected;
-  final VoidCallback onTap;
+  final IconData icon;
+  final List<_ExportChoice> choices;
+  final String value;
+  final ValueChanged<String>? onSelected;
+  final String? hint;
+  final String? selectedNotice;
+  final bool alignEnd;
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    final theme = Theme.of(context);
-    return Semantics(
-      button: true,
-      selected: selected,
-      child: Material(
-        color: selected ? c.orange.withValues(alpha: 0.08) : c.surface2,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(CsRadius.md),
-          side: BorderSide(
-            color: selected ? c.orange : c.border,
-            width: selected ? 1.5 : 1,
-          ),
-        ),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(CsRadius.md),
+    final text = Theme.of(context).textTheme;
+    final selected = choices.firstWhere((choice) => choice.value == value);
+    final caption = text.labelSmall?.copyWith(color: c.textSecondary);
+
+    return MenuAnchor(
+      crossAxisUnconstrained: false,
+      style: _exportMenuStyle(c, width: _menuWidth, alignEnd: alignEnd),
+      alignmentOffset: Offset(alignEnd ? -_menuWidth : 0, Spacing.xs),
+      menuChildren: [
+        SizedBox(
+          width: _menuWidth - 2 * Spacing.sm,
           child: Padding(
-            padding: const EdgeInsets.all(Spacing.md),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            key: Key('export-menu-$id'),
+            padding: const EdgeInsets.symmetric(
+              horizontal: Spacing.sm,
+              vertical: Spacing.xs,
+            ),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Icon(
-                      selected
-                          ? Icons.radio_button_checked
-                          : Icons.radio_button_unchecked,
-                      size: 18,
-                      color: selected ? c.orange : c.textTertiary,
+                Text(title, style: caption),
+                if (hint != null) ...[
+                  const SizedBox(width: Spacing.sm),
+                  Expanded(
+                    child: Text(
+                      hint!,
+                      textAlign: TextAlign.end,
+                      style: caption,
                     ),
-                    const SizedBox(width: Spacing.sm),
-                    Expanded(
-                      child: Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: Spacing.xs),
-                Text(
-                  description,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: c.textSecondary,
                   ),
-                ),
+                ],
               ],
             ),
           ),
         ),
-      ),
+        for (final choice in choices)
+          Semantics(
+            selected: choice.value == value,
+            child: MenuItemButton(
+              key: Key(
+                choice.value == 'merge_by_player'
+                    ? 'export-mode-by-player'
+                    : 'export-$id-${choice.value}',
+              ),
+              closeOnActivate: false,
+              style: MenuItemButton.styleFrom(
+                padding: const EdgeInsets.all(Spacing.sm),
+                backgroundColor: choice.value == value ? c.surface3 : null,
+              ),
+              onPressed: onSelected == null
+                  ? null
+                  : () => onSelected!(choice.value),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    choice.value == value
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    size: 18,
+                    color: choice.value == value ? c.orange : c.textTertiary,
+                  ),
+                  const SizedBox(width: Spacing.sm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          choice.title,
+                          style: text.labelLarge?.copyWith(
+                            color: c.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(choice.summary, style: caption),
+                        if (choice.value == value &&
+                            selectedNotice != null) ...[
+                          const SizedBox(height: Spacing.xs),
+                          _ExportNotice(
+                            color: c.warning,
+                            text: selectedNotice!,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (choice.details != null) ...[
+                    const SizedBox(width: Spacing.sm),
+                    Tooltip(
+                      message: choice.details!,
+                      constraints: const BoxConstraints(maxWidth: 282),
+                      padding: const EdgeInsets.all(Spacing.sm),
+                      textStyle: text.bodySmall?.copyWith(
+                        color: c.textPrimary,
+                        height: 1.4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: c.surface3,
+                        borderRadius: BorderRadius.circular(CsRadius.sm),
+                        border: Border.all(color: c.borderStrong),
+                      ),
+                      positionDelegate: (bounds) {
+                        const margin = 8.0;
+                        final right =
+                            bounds.target.dx + bounds.targetSize.width / 2 + 16;
+                        return Offset(
+                          right.clamp(
+                            margin,
+                            bounds.overlaySize.width -
+                                bounds.tooltipSize.width -
+                                margin,
+                          ),
+                          (bounds.target.dy - bounds.tooltipSize.height / 2)
+                              .clamp(
+                                margin,
+                                bounds.overlaySize.height -
+                                    bounds.tooltipSize.height -
+                                    margin,
+                              ),
+                        );
+                      },
+                      child: Icon(
+                        LucideIcons.info,
+                        size: 15,
+                        color: c.textSecondary,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+      ],
+      builder: (context, controller, _) {
+        final open = controller.isOpen;
+        final shape = RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(CsRadius.md),
+          side: BorderSide(
+            color: open ? c.orange.withValues(alpha: .55) : c.borderStrong,
+          ),
+        );
+        return Semantics(
+          button: true,
+          expanded: open,
+          child: Material(
+            color: open
+                ? Color.alphaBlend(c.orange.withValues(alpha: .07), c.surface)
+                : c.surface,
+            shape: shape,
+            child: InkWell(
+              key: Key('export-setting-$id'),
+              customBorder: shape,
+              onTap: () => open ? controller.close() : controller.open(),
+              child: SizedBox(
+                height: 70,
+                child: Padding(
+                  padding: const EdgeInsets.all(Spacing.sm),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(icon, size: 13, color: c.textSecondary),
+                          const SizedBox(width: Spacing.xs),
+                          Expanded(
+                            child: Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: caption,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              selected.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: text.labelLarge?.copyWith(height: 1.15),
+                            ),
+                          ),
+                          const SizedBox(width: Spacing.xs),
+                          Icon(
+                            open
+                                ? LucideIcons.chevronUp
+                                : LucideIcons.chevronDown,
+                            size: 15,
+                            color: open ? c.orange : c.textSecondary,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1552,25 +1735,35 @@ int _clipDuration(int total, Map<String, dynamic> item) {
 
 const _kEffects = ['none', 'approach', 'replay'];
 
-class _EffectChoice {
-  const _EffectChoice(this.value, this.title, this.description);
+class _ExportChoice {
+  const _ExportChoice(this.value, this.title, this.summary, {this.details});
 
   final String value;
   final String title;
-  final String description;
+  final String summary;
+  final String? details;
 }
 
-List<_EffectChoice> _effectOptions(BuildContext context) => [
-  _EffectChoice('none', context.bheText('不加效果'), context.bheText('每个片段原样导出。')),
-  _EffectChoice(
+List<_ExportChoice> _effectOptions(BuildContext context) => [
+  _ExportChoice(
+    'none',
+    context.bheText('不加效果'),
+    context.bheText('原样导出'),
+    details: context.bheText('每个片段原样导出。'),
+  ),
+  _ExportChoice(
     'approach',
     context.bheText('临门慢动作'),
-    context.bheText('进球前 1 秒放慢到一半速度，球进框后正常速度。人和球都在原画面里，像电影里的慢镜头。每个进球多约 1.3 秒。'),
+    context.bheText('进球前 1 秒半速 · 每球多约 1.3 秒'),
+    details: context.bheText(
+      '进球前 1 秒放慢到一半速度，球进框后正常速度。人和球都在原画面里，像电影里的慢镜头。每个进球多约 1.3 秒。',
+    ),
   ),
-  _EffectChoice(
+  _ExportChoice(
     'replay',
     context.bheText('慢放特写回放'),
-    context.bheText(
+    context.bheText('片段后重播进框瞬间 · 每球多约 1.6 秒'),
+    details: context.bheText(
       '片段播完后，重播入框前后约 0.8 秒的画面：放慢一倍，取景框住篮筐和球的飞行路线，方便看清球进没进。每个进球多约 1.6 秒。',
     ),
   ),
@@ -1603,66 +1796,6 @@ int _effectDuration(int total, Map<String, dynamic> item, String effect) {
       (end < event + 300 ? end : event + 300) -
       (start > event - 500 ? start : event - 500);
   return window >= 300 ? base + window * 2 : base;
-}
-
-class _EffectOption extends StatelessWidget {
-  const _EffectOption({
-    super.key,
-    required this.title,
-    required this.description,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String title;
-  final String description;
-  final bool selected;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(CsRadius.sm),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: Spacing.xs),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Icon(
-                selected
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_unchecked,
-                size: 18,
-                color: selected ? c.orange : c.textTertiary,
-              ),
-            ),
-            const SizedBox(width: Spacing.sm),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: theme.textTheme.labelLarge),
-                  const SizedBox(height: 2),
-                  Text(
-                    description,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: c.textSecondary,
-                      height: 1.4,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 String _formatMs(int milliseconds) {

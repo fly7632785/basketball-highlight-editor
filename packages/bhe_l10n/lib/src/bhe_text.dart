@@ -1684,6 +1684,19 @@ const _englishText = <String, String>{
   '只导出选中的标签，每个标签一个 MP4，文件名就是标签名，放进同一个文件夹。':
       'Exports only the selected tags: one MP4 per tag, named after the tag, in one folder.',
   '按标签导出': 'Per-tag export',
+  '拼成一个 MP4，适合直接分享': 'One MP4 in time order, ready to share',
+  '每段一个文件，适合二次剪辑': 'One file per clip, for further editing',
+  '每个标签一个 MP4': 'One MP4 per tag',
+  '保持原视频画面': 'Keep the original frame',
+  '裁成竖屏，镜头跟着球走': 'Vertical crop that follows the ball',
+  '原样导出': 'Clips as they are',
+  '进球前 1 秒半速 · 每球多约 1.3 秒':
+      'Half speed for the last second · about +1.3 s per goal',
+  '片段后重播进框瞬间 · 每球多约 1.6 秒':
+      'Replays the goal moment after each clip · about +1.6 s per goal',
+  '竖屏下回放沿用跟球画面，不再单独放大篮筐。':
+      'In portrait, the replay keeps the follow-ball frame instead of zooming on the hoop.',
+  '画面和进球效果可以任意搭配': 'Picture and goal effect can be combined freely',
   '进球效果': 'Goal effect',
   '可选，导出时作用于每个进球片段': 'Optional. Applied to each goal clip when exporting.',
   '不加效果': 'No effect',

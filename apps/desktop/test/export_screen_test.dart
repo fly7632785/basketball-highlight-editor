@@ -57,6 +57,83 @@ void main() {
     }
   }
 
+  testWidgets('export action stays put across settings and locales', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final locale = ValueNotifier(const Locale('zh'));
+    addTearDown(locale.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          projectProvider.overrideWith(() => _ExportNotifier(_filterState())),
+        ],
+        child: ValueListenableBuilder<Locale>(
+          valueListenable: locale,
+          builder: (_, value, _) => MaterialApp(
+            theme: appTheme(Brightness.dark),
+            locale: value,
+            localizationsDelegates: BheLocalizations.localizationsDelegates,
+            supportedLocales: BheLocalizations.supportedLocales,
+            home: const Scaffold(body: ExportScreen()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final start = find.byKey(const Key('export-start'));
+    final actionTop = tester.getTopLeft(start).dy;
+    const warningZh = '竖屏下回放沿用跟球画面，不再单独放大篮筐。';
+    const warningEn =
+        'In portrait, the replay keeps the follow-ball frame instead of zooming on the hoop.';
+
+    expect(find.byType(MenuItemButton), findsNothing);
+    await _openExportSetting(tester, 'mode');
+    expect(find.byKey(const Key('export-menu-mode')), findsOneWidget);
+    expect(tester.getTopLeft(start).dy, actionTop);
+
+    await _openExportSetting(tester, 'framing');
+    expect(find.byKey(const Key('export-menu-mode')), findsNothing);
+    await tester.tap(find.byKey(const Key('export-framing-portrait_916')));
+    await tester.pumpAndSettle();
+    expect(find.text(warningZh), findsNothing);
+    expect(tester.getTopLeft(start).dy, actionTop);
+
+    await _openExportSetting(tester, 'effect');
+    for (final effect in ['none', 'approach', 'replay']) {
+      expect(
+        tester
+            .widget<MenuItemButton>(find.byKey(Key('export-effect-$effect')))
+            .onPressed,
+        isNotNull,
+      );
+    }
+    await tester.tap(find.byKey(const Key('export-effect-replay')));
+    await tester.pumpAndSettle();
+    expect(find.text(warningZh), findsOneWidget);
+    expect(tester.getTopLeft(start).dy, actionTop);
+
+    locale.value = const Locale('en');
+    await tester.pumpAndSettle();
+    expect(find.text(warningEn), findsOneWidget);
+    expect(
+      tester.getTopRight(find.byKey(const Key('export-effect-replay'))).dx,
+      lessThanOrEqualTo(
+        tester.getTopRight(find.byKey(const Key('export-menu-effect'))).dx,
+      ),
+    );
+    expect(find.textContaining(RegExp(r'[\u3400-\u9fff]')), findsNothing);
+    expect(tester.getTopLeft(start).dy, actionTop);
+    await _openExportSetting(tester, 'effect');
+    expect(find.byType(MenuItemButton), findsNothing);
+    expect(tester.getTopLeft(start).dy, actionTop);
+    await _openExportSetting(tester, 'codec');
+    expect(find.textContaining('Processing'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('original picture is default and portrait reaches export', (
     tester,
   ) async {
@@ -65,12 +142,15 @@ void main() {
     await _pumpFilterExport(tester, notifier, picker: picker);
     final original = find.byKey(const Key('export-framing-original'));
     final portrait = find.byKey(const Key('export-framing-portrait_916'));
-    expect(tester.widget<ChoiceChip>(original).selected, isTrue);
-    expect(tester.widget<ChoiceChip>(portrait).selected, isFalse);
+    expect(find.text('原比例'), findsOneWidget);
+    expect(original, findsNothing);
+    await _openExportSetting(tester, 'framing');
+    expect(original, findsOneWidget);
+    expect(portrait, findsOneWidget);
     expect(find.byKey(const Key('export-framing-portrait_blur')), findsNothing);
-    await tester.ensureVisible(portrait);
     await tester.tap(portrait);
     await tester.pumpAndSettle();
+    await _openExportSetting(tester, 'framing');
     await _exportFiltered(tester, picker);
     expect(notifier.exportedFraming, 'portrait_916');
     expect(notifier.exportedEffect, 'none');
@@ -182,24 +262,24 @@ void main() {
     );
     final picker = _TestOutputPicker();
     await _pumpFilterExport(tester, notifier, picker: picker);
-    expect(find.text('00:08'), findsOneWidget);
+    expect(find.textContaining('00:08'), findsOneWidget);
 
     // 临门慢动作：进球那个片段多出 1.3 秒，手动片段不加。
-    await tester.tap(find.byType(ExpansionTile));
-    await tester.pumpAndSettle();
+    await _openExportSetting(tester, 'effect');
     final approach = find.byKey(const Key('export-effect-approach'));
     await tester.ensureVisible(approach);
     await tester.tap(approach);
     await tester.pumpAndSettle();
-    expect(find.text('00:09'), findsOneWidget);
+    expect(find.textContaining('00:09'), findsOneWidget);
 
     // 慢放特写回放：多出 1.6 秒。
     final replay = find.byKey(const Key('export-effect-replay'));
     await tester.ensureVisible(replay);
     await tester.tap(replay);
     await tester.pumpAndSettle();
-    expect(find.text('00:09'), findsOneWidget);
+    expect(find.textContaining('00:09'), findsOneWidget);
 
+    await _openExportSetting(tester, 'effect');
     final start = find.byKey(const Key('export-start'));
     await tester.ensureVisible(start);
     await tester.tap(start);
@@ -220,10 +300,11 @@ void main() {
     final picker = _TestOutputPicker();
     await _pumpFilterExport(tester, notifier, picker: picker);
 
+    await _openExportSetting(tester, 'mode');
     final byTag = find.byKey(const Key('export-mode-by-player'));
-    await tester.ensureVisible(byTag);
     await tester.tap(byTag);
     await tester.pumpAndSettle();
+    await _openExportSetting(tester, 'mode');
     final start = find.byKey(const Key('export-start'));
     await tester.ensureVisible(start);
     await tester.tap(start);
@@ -249,6 +330,7 @@ void main() {
     );
     await _pumpFilterExport(tester, notifier);
 
+    await _openExportSetting(tester, 'mode');
     expect(find.byKey(const Key('export-mode-by-player')), findsNothing);
   });
 
@@ -280,29 +362,34 @@ void main() {
     expect(find.text('10–20 分钟'), findsOneWidget);
   });
 
-  testWidgets('export tag selection survives refresh and active-video changes inside a project', (tester) async {
-    final initial = _filterState();
-    final notifier = _FilterExportNotifier(initial);
-    await _pumpFilterExport(tester, notifier);
-    await _pickFilter(tester, 'Alice');
-    notifier.replace(initial.copyWith(hydrating: true, players: []));
-    await tester.pump();
-    expect(_mergeButton(tester).onPressed, isNull);
-    notifier.replace(initial.copyWith(video: {'id':'B'}));
-    await tester.pumpAndSettle();
-    expect(_filterChip(tester, 'Alice').selected, isTrue);
-    expect(_filterChip(tester, '不限').selected, isFalse);
-    expect(find.text('1 个'), findsOneWidget);
-  });
+  testWidgets(
+    'export tag selection survives refresh and active-video changes inside a project',
+    (tester) async {
+      final initial = _filterState();
+      final notifier = _FilterExportNotifier(initial);
+      await _pumpFilterExport(tester, notifier);
+      await _pickFilter(tester, 'Alice');
+      notifier.replace(initial.copyWith(hydrating: true, players: []));
+      await tester.pump();
+      expect(_mergeButton(tester).onPressed, isNull);
+      notifier.replace(initial.copyWith(video: {'id': 'B'}));
+      await tester.pumpAndSettle();
+      expect(_filterChip(tester, 'Alice').selected, isTrue);
+      expect(_filterChip(tester, '不限').selected, isFalse);
+      expect(find.textContaining('将导出 1 段'), findsOneWidget);
+    },
+  );
 
-  testWidgets('tag choices use OR and unlimited is mutually exclusive', (tester) async {
+  testWidgets('tag choices use OR and unlimited is mutually exclusive', (
+    tester,
+  ) async {
     final notifier = _FilterExportNotifier(_filterState());
     final picker = _TestOutputPicker();
     await _pumpFilterExport(tester, notifier, picker: picker);
     await _pickFilter(tester, 'Alice');
     await _pickFilter(tester, 'Bob');
     expect(_filterChip(tester, '不限').selected, isFalse);
-    expect(find.text('2 个'), findsOneWidget);
+    expect(find.textContaining('将导出 2 段'), findsOneWidget);
     await _exportFiltered(tester, picker);
     expect(notifier.exportedPlayerIds, unorderedEquals(['p1', 'p2']));
     expect(notifier.exportedTiers, ['must']);
@@ -314,26 +401,32 @@ void main() {
     await _pickFilter(tester, 'Alice');
     await _pickFilter(tester, 'Alice');
     expect(_filterChip(tester, '不限').selected, isTrue);
-    expect(find.text('3 个'), findsOneWidget);
+    expect(find.textContaining('将导出 3 段'), findsOneWidget);
   });
 
-  testWidgets('deleted selected tag cannot broaden export until unlimited is explicitly chosen', (tester) async {
-    final initial = _filterState();
-    final notifier = _FilterExportNotifier(initial);
-    await _pumpFilterExport(tester, notifier);
-    await _pickFilter(tester, 'Alice');
-    notifier.replace(
-      initial.copyWith(
-        players: [],
-        candidates: [
-          for (final c in initial.candidates)
-            {...c, 'tags': [], 'player_id': null}]));
-    await tester.pumpAndSettle();
-    expect(find.text('0 个'), findsOneWidget);
-    expect(_mergeButton(tester).onPressed, isNull);
-    await _pickFilter(tester, '不限');
-    expect(find.text('3 个'), findsOneWidget);
-  });
+  testWidgets(
+    'deleted selected tag cannot broaden export until unlimited is explicitly chosen',
+    (tester) async {
+      final initial = _filterState();
+      final notifier = _FilterExportNotifier(initial);
+      await _pumpFilterExport(tester, notifier);
+      await _pickFilter(tester, 'Alice');
+      notifier.replace(
+        initial.copyWith(
+          players: [],
+          candidates: [
+            for (final c in initial.candidates)
+              {...c, 'tags': [], 'player_id': null},
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('将导出 0 段'), findsOneWidget);
+      expect(_mergeButton(tester).onPressed, isNull);
+      await _pickFilter(tester, '不限');
+      expect(find.textContaining('将导出 3 段'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'export hides video, opens the picker and prevents duplicate dialogs',
@@ -514,10 +607,11 @@ void main() {
     final picker = _TestOutputPicker();
     final notifier = _TrackingExportNotifier();
     await _pumpExport(tester, PlaybackCoordinator(), picker, notifier);
+    await _openExportSetting(tester, 'mode');
     final mode = find.byKey(const Key('export-mode-separate'));
-    await tester.ensureVisible(mode);
     await tester.tap(mode);
     await tester.pumpAndSettle();
+    await _openExportSetting(tester, 'mode');
     final separate = find.byKey(const Key('export-start'));
     await tester.ensureVisible(separate);
     await tester.tap(separate);
@@ -623,9 +717,16 @@ void main() {
       tester.widget<CsButton>(find.byKey(const Key('export-start'))).onPressed,
       isNotNull,
     );
+    await _openExportSetting(tester, 'mode');
     expect(find.byKey(const Key('export-mode-merge')), findsOneWidget);
     expect(find.byKey(const Key('export-mode-separate')), findsOneWidget);
   });
+}
+
+Future<void> _openExportSetting(WidgetTester tester, String setting) async {
+  final button = find.byKey(Key('export-setting-$setting'));
+  await tester.tap(button);
+  await tester.pumpAndSettle();
 }
 
 class _ExportNotifier extends ProjectNotifier {

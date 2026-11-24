@@ -51,17 +51,21 @@ void main() {
       _clearLog();
 
       // 输出方式：merge -> separate（merge 是默认值，点 merge 不记日志）。
+      await tester.tap(find.byKey(const Key('export-setting-mode')));
+      await tester.pumpAndSettle();
       final separate = find.byKey(const Key('export-mode-separate'));
-      await tester.ensureVisible(separate);
       await tester.tap(separate);
       await tester.pumpAndSettle();
 
       // 效果：默认 none，点「临门慢动作」。
-      await tester.tap(find.byType(ExpansionTile));
+      await tester.tap(find.byKey(const Key('export-setting-effect')));
       await tester.pumpAndSettle();
       final effect = find.byKey(const Key('export-effect-approach'));
       await tester.ensureVisible(effect);
       await tester.tap(effect);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('export-setting-effect')));
       await tester.pumpAndSettle();
 
       // 球员过滤：点球员 Alice 的标签。
