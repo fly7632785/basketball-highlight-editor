@@ -532,6 +532,7 @@ class EngineSession {
     List<String>? tags,
     bool? includeUnassigned,
     String effect = 'none',
+    String framing = 'original',
   }) {
     return client.request('start_export', <String, dynamic>{
       'project_root': projectRoot,
@@ -544,6 +545,7 @@ class EngineSession {
       ...?_optionalEntry('player_ids', playerIds),
       ...?_optionalEntry('include_unassigned', includeUnassigned),
       if (effect != 'none') 'effect': effect,
+      if (framing != 'original') 'framing': framing,
     });
   }
 

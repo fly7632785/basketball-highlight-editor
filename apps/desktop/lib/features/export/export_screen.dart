@@ -50,6 +50,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
   final _guideStartKey = GlobalKey();
   String _mode = 'merge';
   String _effect = 'none';
+  String _framing = 'original';
 
   static const _effectKey = 'export_goal_effect';
 
@@ -333,6 +334,28 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                   ),
                 ),
               ],
+            ],
+          ),
+        ),
+        const SizedBox(height: Spacing.md),
+        _ExportSection(
+          title: context.bheText('画面'),
+          hint: '',
+          child: Wrap(
+            spacing: Spacing.sm,
+            children: [
+              for (final option in const {
+                'original': '原比例',
+                'portrait_916': '竖屏 9:16（跟球）',
+              }.entries)
+                ChoiceChip(
+                  key: Key('export-framing-${option.key}'),
+                  label: Text(context.bheText(option.value)),
+                  selected: _framing == option.key,
+                  onSelected: busy
+                      ? null
+                      : (_) => setState(() => _framing = option.key),
+                ),
             ],
           ),
         ),
@@ -682,6 +705,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
       await notifier.export(
         mode,
         effect: _effect,
+        framing: _framing,
         outputPath: merge ? path : null,
         outputDir: merge ? null : path,
         tiers: selection.tiers.toList(),

@@ -319,14 +319,16 @@ def _effect_command(
     frame_size: tuple[int, int] | None,
     spec: Dict[str, Any],
     tonemap: bool = False,
+    portrait: str | None = None,
 ) -> list[str]:
     """一条 ffmpeg 命令完成：切段、慢放、拼接、回放。所有段统一到同一个尺寸和音频格式再拼。"""
-    width, height = frame_size or spec["size"]
+    width, height = (1080, 1920) if portrait else (frame_size or spec["size"])
     fit = (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
     )
     color_filter = f"{TONEMAP_FILTER}," if tonemap else ""
+    portrait_prefix = f"{portrait}," if portrait else ""
     audio = spec["has_audio"]
     duration_ms = end_ms - start_ms
     cuts: list[tuple[float, float, float]] = []
@@ -346,7 +348,7 @@ def _effect_command(
             continue
         pace = "setpts=PTS-STARTPTS" if speed == 1.0 else f"setpts=(PTS-STARTPTS)/{speed}"
         graph.append(
-            f"[0:v:0]setpts=PTS-STARTPTS,trim=start={t0 / 1000:.3f}:end={t1 / 1000:.3f},{pace},{color_filter}{fit}[v{index}]"
+            f"[0:v:0]setpts=PTS-STARTPTS,{portrait_prefix}trim=start={t0 / 1000:.3f}:end={t1 / 1000:.3f},{pace},{color_filter}{fit}[v{index}]"
         )
         if audio:
             tempo = "" if speed == 1.0 else f",atempo={speed}"
@@ -366,8 +368,15 @@ def _effect_command(
         command_inputs += [
             "-ss", f"{replay['start_ms'] / 1000:.3f}", "-t", f"{window_s:.3f}", "-i", str(source_video),
         ]
+        if portrait:
+            offset = (replay["start_ms"] - start_ms) / 1000
+            replay_filter = (f"setpts=PTS-STARTPTS+{offset:.3f}/TB,{portrait},"
+                             f"setpts=(PTS-STARTPTS)/{REPLAY_SPEED},{color_filter}")
+        else:
+            replay_filter = (f"setpts=(PTS-STARTPTS)/{REPLAY_SPEED},{color_filter}"
+                             f"crop={crop_width}:{crop_height}:{crop_x}:{crop_y},")
         graph.append(
-            f"[1:v:0]setpts=(PTS-STARTPTS)/{REPLAY_SPEED},{color_filter}crop={crop_width}:{crop_height}:{crop_x}:{crop_y},"
+            f"[1:v:0]{replay_filter}"
             f"fps={spec['fps']:.6f},{fit}[v{index}]"
         )
         if audio:
@@ -401,6 +410,7 @@ def build_clip_command(
     has_audio: bool = True,
     tonemap: bool = False,
     frame_rate: str | None = None,
+    portrait: str | None = None,
 ) -> list[str]:
     if start_ms < 0 or end_ms <= start_ms:
         raise ValueError("INVALID_CLIP_RANGE")
@@ -408,7 +418,7 @@ def build_clip_command(
     codec = video_codec or video_codecs()[0]
     codec_options = video_codec_options(codec)
     if effect:
-        command = _effect_command(source_video, start_ms, end_ms, output_path, codec_options, frame_size, effect, tonemap)
+        command = _effect_command(source_video, start_ms, end_ms, output_path, codec_options, frame_size, effect, tonemap, portrait)
         return _with_frame_rate(command, frame_rate)
     command = [
         resolve_media_tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error",
@@ -423,9 +433,10 @@ def build_clip_command(
         *(
             ["-vf", ",".join(filter(None, [
                 TONEMAP_FILTER if tonemap else None,
+                f"setpts=PTS-STARTPTS,{portrait}" if portrait else None,
                 (f"scale={frame_size[0]}:{frame_size[1]}:force_original_aspect_ratio=decrease,"
                  f"pad={frame_size[0]}:{frame_size[1]}:(ow-iw)/2:(oh-ih)/2,setsar=1") if frame_size else None,
-            ]))] if tonemap or frame_size else []
+            ]))] if tonemap or frame_size or portrait else []
         ),
         *codec_options,
         *(SDR_TAGS if tonemap else []),
@@ -632,7 +643,7 @@ def run_atomic_ffmpeg(
         temporary.unlink(missing_ok=True)
 
 
-def merge_overlapping_candidates(candidates):
+def merge_overlapping_candidates(candidates, *, keep_portrait_events=False):
     sources = {}
     for index, candidate in enumerate(candidates):
         if int(candidate["review_start_ms"]) < 0 or int(candidate["review_end_ms"]) <= int(candidate["review_start_ms"]):
@@ -654,12 +665,19 @@ def merge_overlapping_candidates(candidates):
     merged = []
     for group in sorted(groups, key=lambda group: min(item[0] for item in group)):
         first = min(group, key=lambda item: item[0])[1]
-        merged.append({
+        combined = {
             **first,
             "review_start_ms": min(int(item[1]["review_start_ms"]) for item in group),
             "review_end_ms": max(int(item[1]["review_end_ms"]) for item in group),
             "has_audio": all(bool(item[1].get("has_audio", True)) for item in group),
-        })
+        }
+        if keep_portrait_events:
+            combined["portrait_events_ms"] = sorted({
+                event for _, candidate in group if not candidate.get("manual")
+                for event in candidate.get("portrait_events_ms", [candidate.get("event_time_ms")])
+                if event is not None
+            })
+        merged.append(combined)
     return merged
 
 
@@ -694,12 +712,18 @@ def export_goal_clips(
     cancel_check=None,
     process_callback=None,
     effect: str = "none",
+    framing: str = "original",
 ) -> Dict[str, Any]:
+    # Old export checkpoints may still carry the retired layout identifier.
+    if framing == "portrait_blur":
+        framing = "portrait_916"
+    if framing not in {"original", "portrait_916"}:
+        raise ValueError("INVALID_EXPORT_FRAMING")
     if mode not in {"separate", "merge"}:
         raise ValueError("INVALID_EXPORT_MODE")
     merged_overlap_count = 0
     if mode == "merge" and effect == "none":
-        merged = merge_overlapping_candidates(candidates)
+        merged = merge_overlapping_candidates(candidates, keep_portrait_events=framing == "portrait_916")
         merged_overlap_count = len(candidates) - len(merged)
         candidates = merged
     started = time.perf_counter()
@@ -710,12 +734,25 @@ def export_goal_clips(
     codecs = video_codecs()
     # Clips from a source with another resolution are scaled to the first
     # clip's frame so the merge can stream-copy one consistent format.
+    tracker = None
+    if framing == "portrait_916" and candidates:
+        from .portrait import PortraitTracker
+        repo_root = Path(__file__).resolve().parents[4]
+        model = repo_root / "models" / "bball_model.pt"
+        if not model.is_file():
+            model = repo_root / "third_party" / "basketball-shot-detection" / "bball_model.pt"
+        tracker = PortraitTracker(model)
     first = candidates[0] if candidates else {}
     target_size = (first.get("width"), first.get("height"))
     try:
         for index, candidate in enumerate(candidates, 1):
             candidate_size = (candidate.get("width"), candidate.get("height"))
             path = available_output_path(output_dir / clip_file_name(index, candidate))
+            def tracking_progress(stage, fraction):
+                if progress_callback:
+                    progress_callback(stage, ((index - 1) + fraction) / max(1, len(candidates)))
+
+            portrait = tracker.track(candidate, cancel_check, tracking_progress) if tracker else None
             spec = effect_spec(candidate, effect)
             total_ms += output_duration_ms(candidate, spec)
             codec = run_encoded_ffmpeg(
@@ -725,12 +762,13 @@ def export_goal_clips(
                     int(candidate["review_end_ms"]),
                     path,
                     codec,
-                    target_size if None not in target_size and candidate_size != target_size else None,
+                    target_size if not portrait and None not in target_size and candidate_size != target_size else None,
                     spec,
                     uniform_audio=effect != "none",
                     has_audio=bool(candidate.get("has_audio", True)),
                     tonemap=bool(candidate.get("tonemap")),
                     frame_rate=_merge_frame_rate(candidates, candidate) if mode == "merge" else None,
+                    **({"portrait": portrait} if portrait else {}),
                 ),
                 path,
                 codecs,

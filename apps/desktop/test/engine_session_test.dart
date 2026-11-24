@@ -51,6 +51,18 @@ void main() {
     }
   });
 
+  test('portrait picture option reaches the engine without changing defaults', () async {
+    final transport = _FakeEngineTransport();
+    final session = EngineSession(transport);
+    await session.startExport(projectRoot: '/tmp/project');
+    expect(transport.payloads.last.containsKey('framing'), isFalse);
+    await session.startExport(
+      projectRoot: '/tmp/project',
+      framing: 'portrait_916',
+    );
+    expect(transport.payloads.last['framing'], 'portrait_916');
+  });
+
   test('EngineSession forwards the protocol commands and payloads', () async {
     final transport = _FakeEngineTransport()
       ..responses['create_project'] = {

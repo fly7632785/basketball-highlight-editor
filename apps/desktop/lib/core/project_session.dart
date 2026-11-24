@@ -741,6 +741,7 @@ class ProjectSession {
     List<String>? tags,
     bool? includeUnassigned,
     String effect = 'none',
+    String framing = 'original',
   }) {
     return engine.startExport(
       projectRoot: _requireProjectRoot(),
@@ -752,6 +753,7 @@ class ProjectSession {
       tags: tags,
       includeUnassigned: includeUnassigned,
       effect: effect,
+      framing: framing,
     );
   }
 

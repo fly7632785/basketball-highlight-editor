@@ -12,6 +12,10 @@ models/bball_model.pt
 
 也可以通过 `scripts/check_runtime.py --model /path/to/model.pt` 指定自定义路径。模型需要兼容当前检测脚本使用的类别和输入输出格式。
 
+竖屏导出可读取本机的 COCO 人体检测权重 `models/local/yolo11n.pt`，也可用
+`BHE_PORTRAIT_PERSON_MODEL=/绝对路径/yolo11n.pt` 指定。缺少该文件时，仍可跟球并用篮筐
+或上一可信位置兜底。该路径只读取已存在的本地文件。
+
 ## 移动端
 
 移动端可能需要 ONNX 模型和对应的 Rust/ONNX Runtime。模型转换入口见 [`../scripts/export_mobile_model.py`](../scripts/export_mobile_model.py)，Android/iOS 原生构建边界见 [`../docs/architecture/MOBILE_RUNTIME_V1.md`](../docs/architecture/MOBILE_RUNTIME_V1.md)。

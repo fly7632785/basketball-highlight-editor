@@ -1759,6 +1759,7 @@ class _FakeProjectSession extends ProjectSession {
     List<String>? tags,
     bool? includeUnassigned,
     String effect = 'none',
+    String framing = 'original',
   }) async {
     exportCalls++;
     if (exportError != null) throw exportError!;

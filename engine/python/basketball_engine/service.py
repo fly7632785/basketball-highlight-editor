@@ -1486,7 +1486,7 @@ class EngineService:
             retry_payload["output_dir"] = checkpoint["output_dir"]
         if checkpoint.get("output_path") is not None:
             retry_payload["output_path"] = checkpoint["output_path"]
-        for key in ("player_ids", "include_unassigned", "effect", "tiers", "tags", "tier_rule_version"):
+        for key in ("player_ids", "include_unassigned", "effect", "framing", "tiers", "tags", "tier_rule_version"):
             if key in checkpoint:
                 retry_payload[key] = checkpoint[key]
         # Check what start_export would reject before ending the old job, so a
@@ -2622,6 +2622,9 @@ class EngineService:
             candidate["fps"] = video.get("fps")
             candidate["has_audio"] = bool(video.get("audio_codec"))
             candidate["tonemap"] = video.get("tonemap", False)
+        framing = payload.get("framing", "original")
+        if framing not in {"original", "portrait_916", "portrait_blur"}:
+            raise ProtocolError("INVALID_REQUEST", "画面格式无效")
         mode = payload.get("mode", "separate")
         effect = payload.get("effect", "none")
         if effect not in EFFECTS:
@@ -2671,6 +2674,7 @@ class EngineService:
                     cancel_check=cancel_check,
                     process_callback=process_callback,
                     effect=effect,
+                    **({"framing": framing} if framing != "original" else {}),
                 )
             else:
                 result = export_goal_clips(
@@ -2682,6 +2686,7 @@ class EngineService:
                     cancel_check=cancel_check,
                     process_callback=process_callback,
                     effect=effect,
+                    **({"framing": framing} if framing != "original" else {}),
                 )
         except (OSError, ValueError, subprocess.CalledProcessError) as exc:
             raise ProtocolError("EXPORT_FAILED", f"导出失败: {exc}") from exc
@@ -2799,6 +2804,7 @@ class EngineService:
         cancel_check=None,
         process_callback=None,
         effect: str = "none",
+        framing: str = "original",
     ) -> Dict[str, Any]:
         """每个标签各合成一个视频，文件名用标签名；中间片段放在项目缓存里。"""
         groups: Dict[str, list[Dict[str, Any]]] = {}
@@ -2839,6 +2845,7 @@ class EngineService:
                     cancel_check=cancel_check,
                     process_callback=process_callback,
                     effect=effect,
+                    **({"framing": framing} if framing != "original" else {}),
                 )
                 files.extend(result["files"])
                 clip_files.extend(result["clip_files"])
@@ -2955,6 +2962,8 @@ class EngineService:
         return requested_player_ids, include_unassigned, candidate_snapshot
 
     def start_export(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if payload.get("framing", "original") not in {"original", "portrait_916", "portrait_blur"}:
+            raise ProtocolError("INVALID_REQUEST", "画面格式无效")
         if payload.get("effect", "none") not in EFFECTS:
             raise ProtocolError("INVALID_REQUEST", "effect 必须是 none、approach 或 replay")
         if payload.get("mode", "separate") not in {"separate", "merge", "merge_by_player"}:
@@ -2995,6 +3004,7 @@ class EngineService:
                 **({"tiers":payload["tiers"]} if "tiers" in payload else {}),
                 **({"tags":payload["tags"]} if "tags" in payload else {}),
                 "tier_rule_version": project["tier_rule_version"],
+                "framing": payload.get("framing", "original"),
                 "candidate_snapshot": candidate_snapshot,
                 "candidate_count": len(candidate_snapshot),
             }

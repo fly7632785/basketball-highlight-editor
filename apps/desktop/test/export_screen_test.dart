@@ -57,6 +57,25 @@ void main() {
     }
   }
 
+  testWidgets('original picture is default and portrait reaches export', (
+    tester,
+  ) async {
+    final notifier = _FilterExportNotifier(_filterState());
+    final picker = _TestOutputPicker();
+    await _pumpFilterExport(tester, notifier, picker: picker);
+    final original = find.byKey(const Key('export-framing-original'));
+    final portrait = find.byKey(const Key('export-framing-portrait_916'));
+    expect(tester.widget<ChoiceChip>(original).selected, isTrue);
+    expect(tester.widget<ChoiceChip>(portrait).selected, isFalse);
+    expect(find.byKey(const Key('export-framing-portrait_blur')), findsNothing);
+    await tester.ensureVisible(portrait);
+    await tester.tap(portrait);
+    await tester.pumpAndSettle();
+    await _exportFiltered(tester, picker);
+    expect(notifier.exportedFraming, 'portrait_916');
+    expect(notifier.exportedEffect, 'none');
+  });
+
   // 默认当作已看过引导，免得遮罩挡住别的用例；引导本身在专门的用例里测。
   setUp(() {
     resetVideoSurfaceHoldsForTest();
@@ -649,6 +668,7 @@ class _FilterExportNotifier extends _ExportNotifier {
   bool? exportedIncludeUnassigned;
   String? exportedMode;
   String? exportedEffect;
+  String? exportedFraming;
   String? exportedOutputDir;
   String? exportedOutputPath;
 
@@ -664,9 +684,11 @@ class _FilterExportNotifier extends _ExportNotifier {
     List<String>? tags,
     bool? includeUnassigned,
     String effect = 'none',
+    String framing = 'original',
   }) async {
     exportedMode = mode;
     exportedEffect = effect;
+    exportedFraming = framing;
     exportedOutputDir = outputDir;
     exportedOutputPath = outputPath;
     exportedPlayerIds = tags;
@@ -787,6 +809,7 @@ class _TrackingExportNotifier extends _ExportNotifier {
     List<String>? tags,
     bool? includeUnassigned,
     String effect = 'none',
+    String framing = 'original',
   }) async {
     exports.add('$mode:${outputPath ?? outputDir}');
   }
