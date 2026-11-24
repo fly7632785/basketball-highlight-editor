@@ -34,4 +34,23 @@ class NativeDiagnosticEventTest {
             Thread.UncaughtExceptionHandler { _, error -> assertSame(failure, error); original++ })
         handler.uncaughtException(Thread.currentThread(), failure); assertEquals(1, original)
     }
+
+    @Test fun mergeWriteFailureRetainsSampleDetailsWithoutPathsOrLabels() {
+        val fields = linkedMapOf(
+            "batch_group" to 2, "interval" to 1, "clip_requested_start_us" to 33_000L,
+            "clip_start_us" to 29_000L, "clip_end_us" to 40_000L, "output_base_us" to 0L,
+            "source_track" to 2, "mux_track" to 1, "is_video" to false,
+            "sample_pts_us" to 28_000L, "output_pts_us" to 0L, "prev_output_pts_us" to 0L,
+            "flags" to 0, "sample_bytes" to 128, "wrote_samples" to true,
+            "video_samples" to 1L, "was_transcoded" to false,
+        )
+        val text = NativeDiagnosticEvent.format("export.merge.write_failed", fields + mapOf(
+            "inputPath" to "/storage/private/video.mp4",
+            "label" to "private_label",
+        ))
+        assertEquals(
+            fields.entries.joinToString(" ", prefix = "export.merge.write_failed ") { (key, value) -> "$key=$value" },
+            text,
+        )
+    }
 }

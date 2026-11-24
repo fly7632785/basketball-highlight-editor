@@ -231,6 +231,7 @@ class NativeMediaExportEngine implements MobileExportEngine {
     required VideoInfo video,
     required List<Candidate> candidates,
     required String outputPath,
+    required int batchGroup,
   }) {
     final lease = _mergeBatch;
     if (lease == null) throw StateError('No active merge batch');
@@ -239,6 +240,7 @@ class NativeMediaExportEngine implements MobileExportEngine {
       candidates: candidates,
       outputPath: outputPath,
       lease: lease,
+      batchGroup: batchGroup,
     );
   }
 
@@ -247,6 +249,7 @@ class NativeMediaExportEngine implements MobileExportEngine {
     required List<Candidate> candidates,
     required String outputPath,
     _MergeBatchLease? lease,
+    int? batchGroup,
   }) async* {
     if (candidates.isEmpty) return;
     final run = lease?.run ?? _ExportRun();
@@ -280,6 +283,7 @@ class NativeMediaExportEngine implements MobileExportEngine {
       final raw = await _channel.invokeMethod<Object?>('mergeClips', {
         'exportId': exportId,
         'reservationRequired': reserved,
+        if (batchGroup != null) 'batchGroup': batchGroup,
         'inputPath': video.path,
         'outputPath': outputPath,
         'clips': [

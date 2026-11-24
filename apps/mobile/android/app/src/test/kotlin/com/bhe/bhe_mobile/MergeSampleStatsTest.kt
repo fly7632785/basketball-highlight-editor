@@ -8,6 +8,16 @@ class MergeSampleStatsTest {
     private fun facts(readable: Long, tracks: List<MergeTrackFacts> = emptyList()) =
         MergeMediaFacts(videoTracks = 1, durationMs = 2000, readableVideoSamples = readable, tracks = tracks)
 
+    @Test fun samplePtsRetainsClampAndClipBaseWithoutForcingMonotonicity() {
+        val clipStartUs = -1_000L
+        val outputBaseUs = 20_000L
+        val sourcePts = listOf(-1_000L, -1_200L, 3_000L, 2_000L)
+        assertEquals(
+            listOf(20_000L, 20_000L, 24_000L, 23_000L),
+            sourcePts.map { mergeSamplePtsUs(it, clipStartUs, outputBaseUs) },
+        )
+    }
+
     @Test fun countsClampedNonMonotonicAndSyncSamples() {
         val stats = MergeVideoStats()
         val interval = stats.startInterval(clipStartUs = 1000)

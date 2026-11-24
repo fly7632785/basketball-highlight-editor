@@ -11,6 +11,11 @@ object NativeDiagnosticEvent {
         "written", "readable", "clips", "tracks", "interval", "samples", "clamped",
         "nonmono", "sync", "pts_first", "pts_last", "clip_start_us", "width", "height",
         "fps", "track_duration_ms",
+        // Failed merge write: timestamps, track and interval indices, flags, and counts.
+        "batch_group", "clip_requested_start_us", "clip_end_us", "output_base_us",
+        "source_track", "mux_track", "is_video", "sample_pts_us", "output_pts_us",
+        "prev_output_pts_us", "flags", "sample_bytes", "wrote_samples", "video_samples",
+        "was_transcoded",
         "rotation_degrees", "yuv_frames", "bitmap_frames", "retriever_attempts",
         "yuv_size", "bitmap_size",
         "codec", "hardware_accelerated", "codec_diagnostic", "cause",

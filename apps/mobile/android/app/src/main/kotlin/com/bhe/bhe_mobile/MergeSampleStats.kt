@@ -1,5 +1,8 @@
 package com.bhe.bhe_mobile
 
+internal fun mergeSamplePtsUs(sampleTimeUs: Long, clipStartUs: Long, outputBaseUs: Long): Long =
+    outputBaseUs + (sampleTimeUs - clipStartUs).coerceAtLeast(0L)
+
 /**
  * 合并导出时按片段统计写入情况，只为了在「样本数对不上」时能区分
  * 「文件其实完好、两种数法口径不同」和「muxer 真的丢了样本」。

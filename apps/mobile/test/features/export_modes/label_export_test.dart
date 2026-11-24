@@ -110,19 +110,22 @@ void main() {
   test(
     'second group failure keeps first output and records diagnostic',
     () async {
-      var calls = 0;
+      final batchGroups = <int>[];
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async {
             final args = call.arguments as Map?;
             if (call.method == 'registerMergeExport') return true;
             if (call.method == 'mergeClips') {
-              if (++calls == 2) throw PlatformException(code: 'FAILED');
-              return {'outputPath': args!['outputPath'], 'committed': true};
+              batchGroups.add(args!['batchGroup'] as int);
+              if (batchGroups.length == 2) {
+                throw PlatformException(code: 'FAILED');
+              }
+              return {'outputPath': args['outputPath'], 'committed': true};
             }
             return null;
           });
       await f.state.exportByLabels();
-      expect(calls, 2);
+      expect(batchGroups, [1, 2]);
       expect(f.state.exportBatchFiles.length, 1);
       expect(f.state.errorMessage, isNotNull);
       expect(f.state.exporting, isFalse);

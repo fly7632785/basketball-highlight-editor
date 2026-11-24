@@ -65,6 +65,7 @@ extension MobileLabelExport on MobileAppState {
                   video: project.video!,
                   candidates: ordered,
                   outputPath: path,
+                  batchGroup: index + 1,
                 )
               : engine.mergeClips(
                   video: project.video!,

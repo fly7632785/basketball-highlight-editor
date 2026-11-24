@@ -884,6 +884,7 @@ class MainActivity : FlutterActivity() {
 
     private fun mergeClips(call: MethodCall, result: MethodChannel.Result) {
         AppDiagnostics.event("export.start", mapOf("operation" to "mergeClips"))
+        val batchGroup = call.argument<Int>("batchGroup")
         val exportId = call.argument<String>("exportId") ?: "merge-${System.nanoTime()}"
         val inputPath = call.argument<String>("inputPath")
         val outputPath = call.argument<String>("outputPath")
@@ -971,7 +972,9 @@ class MainActivity : FlutterActivity() {
                 val info = android.media.MediaCodec.BufferInfo()
                 var outputBaseUs = 0L
                 val videoStats = MergeVideoStats()
-                for ((startMs, endMs) in clips) {
+                val lastWrittenPtsByTrack = mutableMapOf<Int, Long>()
+                for ((index, clip) in clips.withIndex()) {
+                    val (startMs, endMs) = clip
                     if (cancelled.get()) throw InterruptedException("合并导出已取消")
                     val extractor = MediaExtractor()
                     try {
@@ -998,15 +1001,39 @@ class MainActivity : FlutterActivity() {
                                 if (size <= 0) break
                                 info.offset = 0
                                 info.size = size
-                                info.presentationTimeUs = outputBaseUs +
-                                    (sampleTime - clipStartUs).coerceAtLeast(0L)
+                                info.presentationTimeUs = mergeSamplePtsUs(sampleTime, clipStartUs, outputBaseUs)
                                 info.flags = extractor.sampleFlags
-                                currentMuxer.writeSampleData(muxTrack, buffer, info)
-                                if (sourceTrack in videoTracks) {
+                                val isVideo = sourceTrack in videoTracks
+                                try {
+                                    currentMuxer.writeSampleData(muxTrack, buffer, info)
+                                } catch (error: Exception) {
+                                    AppDiagnostics.event("export.merge.write_failed", linkedMapOf(
+                                        "batch_group" to batchGroup,
+                                        "interval" to index + 1,
+                                        "clip_requested_start_us" to startMs * 1000L,
+                                        "clip_start_us" to clipStartUs,
+                                        "clip_end_us" to endUs,
+                                        "output_base_us" to outputBaseUs,
+                                        "source_track" to sourceTrack,
+                                        "mux_track" to muxTrack,
+                                        "is_video" to isVideo,
+                                        "sample_pts_us" to sampleTime,
+                                        "output_pts_us" to info.presentationTimeUs,
+                                        "prev_output_pts_us" to lastWrittenPtsByTrack[muxTrack],
+                                        "flags" to info.flags,
+                                        "sample_bytes" to size,
+                                        "wrote_samples" to lastWrittenPtsByTrack.isNotEmpty(),
+                                        "video_samples" to intervalStats.samples,
+                                        "was_transcoded" to (transcoded != null),
+                                    ))
+                                    throw error
+                                }
+                                lastWrittenPtsByTrack[muxTrack] = info.presentationTimeUs
+                                if (isVideo) {
                                     intervalStats.record(
                                         sourcePtsUs = sampleTime,
                                         outputPtsUs = info.presentationTimeUs,
-                                        isSync = extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0,
+                                        isSync = info.flags and MediaExtractor.SAMPLE_FLAG_SYNC != 0,
                                     )
                                 }
                             }
