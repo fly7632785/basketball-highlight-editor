@@ -45,18 +45,22 @@ Future<void> _loadReviewVideo(_ReviewViewState view) async {
 }
 
 class _ReviewSourceBody extends StatelessWidget {
-  const _ReviewSourceBody({required this.rail, required this.video});
+  const _ReviewSourceBody({
+    required this.rail,
+    required this.video,
+    required this.hasReviewFooter,
+  });
   final Widget rail;
   final Widget video;
+  final bool hasReviewFooter;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      // Existing progress controls: 48dp + 2dp padding; filter strip: 34dp.
-      // Keep these visible when a source notice reduces the available height.
+      // Reserve space for the tabs and a candidate on short portrait screens.
       final railHeight = math.max(
         constraints.maxHeight * .4,
-        math.min(84.0, constraints.maxHeight),
+        math.min(hasReviewFooter ? 192.0 : 144.0, constraints.maxHeight),
       );
       return Column(
         children: [

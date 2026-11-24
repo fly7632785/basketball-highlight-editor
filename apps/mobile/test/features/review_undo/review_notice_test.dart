@@ -60,6 +60,8 @@ void main() {
               await tester.tap(review);
             }
             await tester.pump();
+            await tester.tap(find.byKey(const Key('review-filter-all')));
+            await tester.pump();
             final context = tester.element(find.byType(Scaffold).first);
             final localizations = Localizations.of<BheLocalizations>(
               context,

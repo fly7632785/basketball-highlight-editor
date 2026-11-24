@@ -99,9 +99,9 @@ void main() {
         await tester.tap(labels);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
-        expect(find.text('将导出 2 个视频 · 共 2 个片段'), findsOneWidget);
-        expect(find.textContaining('Alice（1）'), findsOneWidget);
-        expect(find.textContaining('未标记（1）'), findsOneWidget);
+        expect(find.textContaining('将导出 1 个视频 · 共 1 段'), findsOneWidget);
+        expect(find.textContaining('Alice (1)'), findsOneWidget);
+        expect(find.textContaining('没标签的 1 段不导出'), findsOneWidget);
         await tester.ensureVisible(find.text('输出方式'));
         await tester.pump();
         await capture('selector');

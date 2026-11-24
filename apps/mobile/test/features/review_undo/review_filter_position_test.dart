@@ -48,6 +48,7 @@ void main() {
                     startMs: i * 2000,
                     endMs: i * 2000 + 1000,
                     eventMs: i * 2000,
+                    reviewed: true,
                     selection: i.isOdd
                         ? CandidateSelection.excluded
                         : CandidateSelection.included,

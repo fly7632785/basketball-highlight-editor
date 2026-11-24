@@ -21,6 +21,7 @@ import 'features/player_groups/player_group_store.dart';
 import 'features/project_list/project_catalog.dart';
 import 'features/project_list/project_video_metadata.dart';
 import 'features/export/export_modes.dart';
+import 'features/review_tiers/mobile_tiers.dart';
 
 export 'features/review_undo/review_action_result.dart';
 import 'features/project_mutation/project_mutation_queue.dart';
@@ -273,6 +274,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
 
   @override
   void dispose() {
+    _reviewBatchNoticeTimer?.cancel();
     _disposed = true;
     _exportDrainTimer?.cancel();
     _uncertainExportWatch?.cancel();
@@ -388,13 +390,28 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   int get pendingProjectMutations => _mutations.pending;
   final ReviewHistory reviewHistory = ReviewHistory();
   String? undoFocusId;
+  bool? undoFoldedView;
+
+  // Mobile analysis does not produce likely-missed IDs in this release.
+  Set<String> get likelyMissCandidateIds => const {};
   int undoRevision = 0;
   int reviewRevision = 0;
   String? reviewNotice;
   DiagnosticErrorRecord? reviewDiagnosticError;
   DateTime? reviewNoticeAt;
 
-  void _setReviewNotice(String? notice) {
+  int reviewBatchNoticeCount = 0;
+  Timer? _reviewBatchNoticeTimer;
+
+  void _setReviewNotice(String? notice, {int batchCount = 0}) {
+    _reviewBatchNoticeTimer?.cancel();
+    reviewBatchNoticeCount = batchCount;
+    if (batchCount > 0) {
+      _reviewBatchNoticeTimer = Timer(const Duration(seconds: 4), () {
+        reviewBatchNoticeCount = 0;
+        notifyListeners();
+      });
+    }
     if (notice == null) reviewDiagnosticError = null;
     reviewNotice = notice;
     reviewNoticeAt = notice == null ? null : DateTime.now();
@@ -437,6 +454,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     required ReviewChange kind,
     required String focusId,
     required String notice,
+    bool? foldedView,
     required List<Candidate> Function(List<Candidate>) change,
   }) {
     if (_projectTransitions != 0) {
@@ -480,8 +498,8 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
             _projectSession != session) {
           return ReviewActionResult.rejected;
         }
-        reviewHistory.add(ReviewEntry(kind, previous, focusId));
-        _setReviewNotice(notice);
+        reviewHistory.add(ReviewEntry(kind, previous, focusId, foldedView: foldedView));
+        _setReviewNotice(notice, batchCount: foldedView == null ? 0 : previous.length);
         notifyListeners();
         return ReviewActionResult.changed;
       } catch (error, stack) {
@@ -555,6 +573,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
             _projectSession == session &&
             reviewHistory.complete(entry)) {
           undoFocusId = entry.focusId;
+          undoFoldedView = entry.foldedView;
           undoRevision++;
           _setReviewNotice('已撤销');
           notifyListeners();
@@ -2137,6 +2156,25 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     ],
   );
 
+  Future<ReviewActionResult> markLikelyMissed(
+    Set<String> confirmedIds, {
+    required bool expanded,
+    String? focusId,
+  }) => _changeReviewResult(
+    kind: ReviewChange.selection,
+    focusId: focusId ?? confirmedIds.firstOrNull ?? '',
+    notice: '已排除',
+    foldedView: expanded,
+    change: (items) => [
+      for (final item in items)
+        if (confirmedIds.contains(item.id) &&
+            isFoldedCandidate(item, likelyMissCandidateIds))
+          item.copyWith(selection: CandidateSelection.excluded, reviewed: true)
+        else
+          item,
+    ],
+  );
+
   Future<bool> addCandidate(Candidate candidate) => _submitProjectChange(
     (current) {
       final candidates = [...current.candidates, candidate]
@@ -2490,14 +2528,9 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         return;
       }
       if (!eligible()) return;
-      final candidates = project.candidates
-          .where(
-            (candidate) => candidate.selection == CandidateSelection.included,
-          )
-          .where(scope.matches)
-          .toList();
+      final candidates = scope.select(project.candidates, MobileOutputMode.clips);
       if (candidates.isEmpty) {
-        errorMessage = '没有符合条件的保留片段。';
+        errorMessage = '没有可导出的片段';
         notifyListeners();
         return;
       }
@@ -2580,19 +2613,10 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         return;
       }
       if (!eligible()) return;
-      final candidates =
-          project.candidates
-              .where(
-                (candidate) =>
-                    candidate.selection == CandidateSelection.included,
-              )
-              .where(
-                (candidate) => scope.matches(candidate),
-              )
-              .toList()
-            ..sort((a, b) => a.startMs.compareTo(b.startMs));
+      final candidates = scope.select(project.candidates, MobileOutputMode.merged)
+        ..sort((a, b) => a.startMs.compareTo(b.startMs));
       if (candidates.isEmpty) {
-        errorMessage = '没有符合条件的保留片段。';
+        errorMessage = '没有可导出的片段';
         notifyListeners();
         return;
       }

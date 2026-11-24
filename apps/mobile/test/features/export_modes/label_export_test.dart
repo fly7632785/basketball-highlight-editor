@@ -51,7 +51,7 @@ void main() {
         .setMockMethodCallHandler(channel, null);
     await f.close();
   });
-  test('one admitted batch merges labels and unlabelled in order', () async {
+  test('one admitted batch merges tags in order and skips untagged clips', () async {
     final clips = <List<dynamic>>[], paths = <String>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
@@ -69,15 +69,14 @@ void main() {
           return null;
         });
     await f.state.exportByLabels();
-    expect(clips.map((c) => c.length), [1, 1, 1]);
-    expect(paths.toSet().length, 3);
+    expect(clips.map((c) => c.length), [1, 1]);
+    expect(paths.toSet().length, 2);
     expect(f.state.exportBatchFiles.map((e) => e.label), [
       'Alice',
       'Bob',
-      null,
     ]);
     expect(f.state.exportedPaths, paths);
-    expect(f.state.exportBatchTotal, 3);
+    expect(f.state.exportBatchTotal, 2);
     expect(f.state.exporting, isFalse);
   });
   test('cancel after a committed file stops the remaining groups', () async {
@@ -104,7 +103,7 @@ void main() {
     await pending;
     expect(calls, 1);
     expect(f.state.exportBatchFiles.length, 1);
-    expect(f.state.exportBatchTotal, 3);
+    expect(f.state.exportBatchTotal, 2);
     expect(f.state.exporting, isFalse);
   });
   test(
@@ -159,7 +158,7 @@ void main() {
       expect(registrations, 1);
       release.complete();
       await pending;
-      expect(merges, 3);
+      expect(merges, 2);
     },
   );
   test(
@@ -222,9 +221,9 @@ void main() {
         release.complete();
         await batch;
         await following;
-        expect(paths.length, 4);
+        expect(paths.length, 3);
         expect(
-          paths.take(3).every((path) => path.contains('/labels_')),
+          paths.take(2).every((path) => path.contains('/labels_')),
           isTrue,
         );
         expect(paths.last, contains('B_merged.mp4'));

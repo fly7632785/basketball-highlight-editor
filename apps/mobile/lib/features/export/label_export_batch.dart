@@ -27,16 +27,10 @@ extension MobileLabelExport on MobileAppState {
       if (!eligible()) return;
       await _mutations.drained;
       if (!eligible()) return;
-      final selected = project.candidates
-          .where(
-            (c) =>
-                c.selection == CandidateSelection.included &&
-                scope.matches(c),
-          )
-          .toList();
+      final selected = scope.select(project.candidates, MobileOutputMode.labels);
       final groups = labelExportGroups(selected);
       if (groups.isEmpty) {
-        errorMessage = '没有符合条件的保留片段。';
+        errorMessage = '没有可导出的片段';
         _notifyLabelExport();
         return;
       }
@@ -91,7 +85,7 @@ extension MobileLabelExport on MobileAppState {
                 (update.mergedOverlapCount ?? 0);
             progress = (index + update.progress.clamp(0, 1)) / groups.length;
             progressMessage =
-                '正在合成标签 ${index + 1}/${groups.length}：${group.label ?? '未标记'}';
+                '正在合成标签 ${index + 1}/${groups.length}：${group.label}';
             if (update.outputPath != null &&
                 !exportedPaths.contains(update.outputPath)) {
               exportedPaths = [...exportedPaths, update.outputPath!];

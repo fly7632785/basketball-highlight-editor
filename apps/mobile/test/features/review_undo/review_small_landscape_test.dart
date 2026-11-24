@@ -60,6 +60,8 @@ void main() {
             await tester.pump();
             await tester.tap(review);
             await tester.pump();
+            await tester.tap(find.byKey(const Key('review-filter-all')));
+            await tester.pump();
             await tester.runAsync(() async {
               await Future<void>.delayed(const Duration(milliseconds: 200));
             });

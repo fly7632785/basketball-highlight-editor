@@ -45,6 +45,8 @@ void main() {
         await tester.pump();
         await tester.tap(review);
         await tester.pump();
+        await tester.tap(find.byKey(const Key('review-filter-all')));
+        await tester.pump();
         if (scenario == 'slow' || scenario == 'failure') {
           var first = true;
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

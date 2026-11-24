@@ -106,6 +106,7 @@ void main() {
           await tester.pump(const Duration(milliseconds: 100));
         }
         final card = find.byKey(const ValueKey('game-stats-card'));
+        await tester.scrollUntilVisible(card, 200, scrollable: find.byType(Scrollable).last);
         expect(card, findsOneWidget);
         expect(
           find.descendant(

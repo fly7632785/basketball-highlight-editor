@@ -26,6 +26,8 @@ void main() {
     await tester.pump();
     await tester.tap(find.text(l10n.reviewCount(1)));
     await tester.pump();
+    await tester.tap(find.byKey(const Key('review-filter-included')));
+    await tester.pump();
     Future<void> open(String player) async {
       await tester.tap(find.byTooltip(l10n.text('球员：$player')));
       await tester.pump(); await tester.pump(const Duration(milliseconds: 400));

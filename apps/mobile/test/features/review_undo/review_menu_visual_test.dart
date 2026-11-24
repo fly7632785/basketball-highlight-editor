@@ -81,6 +81,8 @@ void main() {
         await tester.pump();
         await tester.tap(find.text(l10n.reviewCount(1)));
         await tester.pump();
+        await tester.tap(find.byKey(const Key('review-filter-all')));
+        await tester.pump();
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 200)),
         );

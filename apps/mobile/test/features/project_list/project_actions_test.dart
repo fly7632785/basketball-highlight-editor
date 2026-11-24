@@ -46,6 +46,8 @@ void main() {
     await tester.ensureVisible(find.text(l10n.reviewCount(1))); await tester.pump();
     await tester.tap(find.text(l10n.reviewCount(1))); await tester.pump();
     expect(find.byKey(const ValueKey('review-undo-top')), findsNothing);
+    await tester.tap(find.byKey(const Key('review-filter-included')));
+    await tester.pump();
     expect(tester.widget<IconButton>(find.byKey(const ValueKey('review-undo-bottom'))).onPressed, isNull);
     await tester.pumpWidget(const SizedBox());
   });

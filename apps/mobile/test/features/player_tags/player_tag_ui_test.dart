@@ -48,6 +48,8 @@ void main() {
             await tester.pump();
             await tester.tap(review);
             await tester.pump();
+            await tester.tap(find.byKey(const Key('review-filter-included')));
+            await tester.pump();
             await tester.tap(find.byTooltip(l10n.text('球员：Alice')));
             await tester.pump();
             await tester.pump(const Duration(milliseconds: 300));

@@ -96,7 +96,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
       }
       // Counts only cover kept clips.
-      expect(find.text('全部球员  5'), findsOneWidget);
+      expect(find.text('不限  5'), findsOneWidget);
       expect(find.text('Alice  2'), findsOneWidget);
       expect(find.text('Bob  1'), findsOneWidget);
       expect(find.text('Carol  1'), findsOneWidget);
@@ -104,22 +104,22 @@ void main() {
 
       await tester.tap(find.text('每个标签各合成一个视频'));
       await tester.pump();
-      expect(find.text('将导出 4 个视频 · 共 5 个片段'), findsOneWidget);
+      expect(find.textContaining('将导出 3 个视频 · 共 4 段'), findsOneWidget);
+      expect(find.text('未标记  1'), findsNothing);
+      expect(find.textContaining('没标签的 1 段不导出'), findsOneWidget);
 
       await tester.tap(find.text('Alice  2'));
       await tester.pump();
       await tester.tap(find.text('Bob  1'));
       await tester.pump();
-      expect(find.text('将导出 2 个视频 · 共 3 个片段'), findsOneWidget);
+      expect(find.textContaining('将导出 2 个视频 · 共 3 段'), findsOneWidget);
 
-      await tester.tap(find.text('未标记  1'));
-      await tester.pump();
-      expect(find.text('将导出 3 个视频 · 共 4 个片段'), findsOneWidget);
-
-      // Merge mode counts one video over the same selection.
+      // Merge mode still supports explicit inclusion of untagged clips.
       await tester.tap(find.text('合并成一个视频'));
       await tester.pump();
-      expect(find.text('将导出 1 个视频 · 共 4 个片段'), findsOneWidget);
+      await tester.tap(find.text('未标记  1'));
+      await tester.pump();
+      expect(find.textContaining('将导出 1 个视频 · 共 4 段'), findsOneWidget);
 
       // Deselecting everything falls back to the whole project.
       await tester.tap(find.text('Alice  2'));
@@ -128,15 +128,15 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('未标记  1'));
       await tester.pump();
-      expect(find.text('将导出 1 个视频 · 共 5 个片段'), findsOneWidget);
+      expect(find.textContaining('将导出 1 个视频 · 共 5 段'), findsOneWidget);
 
       // The "all" chip clears a selection in one tap.
       await tester.tap(find.text('Carol  1'));
       await tester.pump();
-      expect(find.text('将导出 1 个视频 · 共 1 个片段'), findsOneWidget);
-      await tester.tap(find.text('全部球员  5'));
+      expect(find.textContaining('将导出 1 个视频 · 共 1 段'), findsOneWidget);
+      await tester.tap(find.text('不限  5'));
       await tester.pump();
-      expect(find.text('将导出 1 个视频 · 共 5 个片段'), findsOneWidget);
+      expect(find.textContaining('将导出 1 个视频 · 共 5 段'), findsOneWidget);
       expect(tester.takeException(), isNull);
     } finally {
       VideoPlayerPlatform.instance = previous;

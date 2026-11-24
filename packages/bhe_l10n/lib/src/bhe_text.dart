@@ -78,7 +78,42 @@ extension BheBuildContextText on BuildContext {
   }
 }
 
+final _mobileCountCopy = <(RegExp, String Function(String))>[
+  (RegExp(r'^很可能没进 (\d+)$'), (n) => 'Likely missed $n'),
+  (RegExp(r'^看折叠的 (\d+)$'), (n) => 'View $n folded'),
+  (RegExp(r'^把 (\d+) 段标为没进？$'), (n) => 'Mark $n clips as missed?'),
+  (
+    RegExp(r'^(\d+) 段已标为没进，点左下角可撤销$'),
+    (n) => '$n clips marked as missed. Undo at bottom left',
+  ),
+  (RegExp(r'^导出 (\d+) 段进球$'), (n) => 'Export $n goals'),
+  (RegExp(r'^去审 (\d+) 段疑似$'), (n) => 'Review $n uncertain'),
+  (RegExp(r'^看 (\d+) 段$'), (n) => 'View $n clips'),
+  (RegExp(r'^将导出 (\d+) 段$'), (n) => 'Will export $n clips'),
+  (RegExp(r'^其中很可能没进 (\d+)$'), (n) => '$n of them likely missed'),
+  (RegExp(r'^没标签的 (\d+) 段不导出$'), (n) => '$n untagged clips skipped'),
+  (RegExp(r'^进球 (\d+)$'), (n) => '$n goals'),
+  (RegExp(r'^疑似 (\d+)$'), (n) => '$n uncertain'),
+  (RegExp(r'^排除 (\d+)$'), (n) => '$n excluded'),
+];
+
 String? _translateDynamic(String source) {
+  final mobileReviewProgress = RegExp(
+    r'^疑似剩 (\d+) · 已审 (\d+)$',
+  ).firstMatch(source);
+  if (mobileReviewProgress != null) {
+    return '${mobileReviewProgress[1]} uncertain left · ${mobileReviewProgress[2]} reviewed';
+  }
+  final groupedExport = RegExp(
+    r'^将导出 (\d+) 个视频 · 共 (\d+) 段$',
+  ).firstMatch(source);
+  if (groupedExport != null) {
+    return 'Will export ${groupedExport[1]} videos · ${groupedExport[2]} clips';
+  }
+  for (final (pattern, translate) in _mobileCountCopy) {
+    final match = pattern.firstMatch(source);
+    if (match != null) return translate(match[1]!);
+  }
   final tierExport = RegExp(r'^将导出 (\d+) 段 · (.+)$').firstMatch(source);
   if(tierExport != null) return 'Will export ${tierExport.group(1)} clips · ${tierExport.group(2)}';
   final tierInspect = RegExp(r'^去审核页看这 (\d+) 段 →$').firstMatch(source);
@@ -947,6 +982,24 @@ const _englishText = <String, String>{
   '合并导出': 'Merge export',
   '分别导出': 'Export separately',
   '返回审核': 'Back to review',
+  '分别保存每个片段': 'Save every clip on its own',
+  '没标签的不导出；有两个标签的两边都放': 'Untagged are skipped; two tags go in both',
+  '不导出': 'Not exported:',
+  '没有可导出的片段': 'No clips to export',
+  '默认只导进球': 'Goals only by default',
+  '还不能自动判进球，先含疑似': "Can't auto-detect goals yet, includes uncertain",
+  '清除': 'Clear',
+  '筛选': 'Filter',
+  '没有片段': 'No clips',
+  '没有符合筛选的片段': 'No clips match the filter',
+  '这台手机的分析还不能自动确认进球。你在「疑似」里点「选中」的会出现在这里。': "This phone can't confirm goals automatically yet. Clips you Include in Uncertain appear here.",
+  '还没有进球': 'No goals yet',
+  '恢复·算进球': 'Restore as goal',
+  '疑似审完了': 'All uncertain clips reviewed',
+  '先扫一眼': 'Take a look first',
+  '折叠区约 5–15% 仍可能是真进球，建议先扫一眼。': 'About 5–15% of this group may still be real goals. Take a quick look first.',
+  '只处理你还没判过的片段，标完进「排除」，点左下角撤销可以一次全部恢复。': "Only clips you haven't judged. They move to Excluded. Undo (bottom left) restores all of them at once.",
+  '全部标为没进': 'Mark all as missed',
   '导出范围': 'Export scope',
   '当前保留': 'Included',
   '播放/暂停': 'Play / pause',

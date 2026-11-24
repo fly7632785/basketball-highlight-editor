@@ -147,6 +147,8 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('审核 1'));
       await tester.pump();
+      await tester.tap(find.byKey(const Key('review-filter-included')));
+      await tester.pump();
       await tester.runAsync(() async {
         await pumpEventQueue();
       });

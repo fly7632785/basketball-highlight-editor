@@ -71,7 +71,7 @@ void main() {
                 find.byKey(
                   Key(
                     included
-                        ? 'review-filter-included'
+                        ? 'review-filter-uncertain'
                         : 'review-filter-excluded',
                   ),
                 ),
@@ -110,7 +110,7 @@ void main() {
                       return f.root.path;
                     },
                   );
-              final action = find.text(l10n.text(included ? '不选' : '选中')).last;
+              final action = find.text(l10n.text(included ? '不选' : '恢复·算进球')).last;
               await tester.tap(action);
               await tester.pump();
               for (var i = 0; i < 100 && !entered.isCompleted; i++) {

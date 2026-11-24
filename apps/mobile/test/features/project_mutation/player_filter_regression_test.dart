@@ -34,6 +34,8 @@ void main() {
         await tester.pump();
         await tester.tap(find.text(l10n.reviewCount(1)));
         await tester.pump();
+        await tester.tap(find.byKey(const Key('review-filter-included')));
+        await tester.pump();
         await tester.pump(const Duration(milliseconds: 350));
         await tester.tap(find.byKey(const Key('review-player-filter')));
         await tester.pump();
@@ -42,8 +44,10 @@ void main() {
           find.byKey(const Key('review-player-option-player:Alice')),
         );
         await tester.pump();
+        await tester.tap(find.byKey(const Key('review-apply-filters')));
+        await tester.pump();
         await tester.pump(const Duration(milliseconds: 350));
-        expect(find.byKey(const Key('review-clear-filters')), findsOneWidget);
+        expect(find.byKey(const Key('review-filters-active')), findsOneWidget);
         await tester.tap(find.byTooltip(l10n.text('球员：Alice')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 350));
@@ -61,7 +65,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 350));
         expect(f.state.project.players, isEmpty);
-        expect(find.byKey(const Key('review-player-filter')), findsNothing);
+        expect(find.byKey(const Key('review-filters-active')), findsNothing);
         expect(find.byTooltip(l10n.text('球员标签')), findsOneWidget);
         expect(tester.takeException(), isNull);
       } finally {
@@ -92,6 +96,8 @@ void main() {
         await tester.pump();
         await tester.tap(find.text(l10n.reviewCount(1)));
         await tester.pump();
+        await tester.tap(find.byKey(const Key('review-filter-included')));
+        await tester.pump();
         await tester.pump(const Duration(milliseconds: 350));
         await tester.tap(find.byKey(const Key('review-player-filter')));
         await tester.pump();
@@ -100,16 +106,20 @@ void main() {
           find.byKey(const Key('review-player-option-player:Alice')),
         );
         await tester.pump();
+        await tester.tap(find.byKey(const Key('review-apply-filters')));
+        await tester.pump();
         await tester.pump(const Duration(milliseconds: 350));
-        expect(find.byKey(const Key('review-clear-filters')), findsOneWidget);
+        expect(find.byKey(const Key('review-filters-active')), findsOneWidget);
         await tester.runAsync(() => f.state.renamePlayer('Alice', 'Carol'));
         await tester.pump();
         expect(find.text('Carol'), findsWidgets);
         expect(find.byTooltip(l10n.text('球员：Carol')), findsOneWidget);
-        expect(find.byKey(const Key('review-clear-filters')), findsOneWidget);
-        await tester.tap(find.byKey(const Key('review-clear-filters')));
-        await tester.pump();
-        expect(find.byKey(const Key('review-clear-filters')), findsNothing);
+        expect(find.byKey(const Key('review-filters-active')), findsOneWidget);
+        await tester.tap(find.byKey(const Key('review-player-filter')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('清除'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('review-filters-active')), findsNothing);
         expect(tester.takeException(), isNull);
       } finally {
         await tester.pumpWidget(const SizedBox());
@@ -140,6 +150,8 @@ void main() {
       await tester.pump();
       await tester.tap(find.text(l10n.reviewCount(1)));
       await tester.pump();
+      await tester.tap(find.byKey(const Key('review-filter-included')));
+      await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
       await tester.tap(find.byKey(const Key('review-player-filter')));
       await tester.pump();
@@ -147,6 +159,8 @@ void main() {
       await tester.tap(
         find.byKey(const Key('review-player-option-player:Alice')),
       );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('review-apply-filters')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -160,7 +174,7 @@ void main() {
       );
       await tester.pump();
       expect(f.state.project.players, ['Alice']);
-      expect(find.byKey(const Key('review-clear-filters')), findsOneWidget);
+      expect(find.byKey(const Key('review-filters-active')), findsOneWidget);
       expect(find.byTooltip(l10n.text('球员：Alice')), findsOneWidget);
       expect(tester.takeException(), isNull);
     } finally {

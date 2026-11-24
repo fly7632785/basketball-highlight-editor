@@ -1,35 +1,70 @@
 import 'package:bhe_core/bhe_core.dart';
 
+import '../review_tiers/mobile_tiers.dart';
+
 enum MobileOutputMode { clips, merged, labels }
 
-/// 导出范围，和桌面端一致：没筛选就是全部保留片段；筛选后只导出选中的标签，
-/// 「未标记」要单独勾选。
+const defaultMobileExportTiers = {MobileTier.goal, MobileTier.uncertain};
+
 class ExportScope {
-  const ExportScope.only(this.players, {this.includeUntagged = false})
-    : active = true;
-  const ExportScope._all() : active = false, players = const {}, includeUntagged = true;
+  const ExportScope.only(
+    this.players, {
+    this.includeUntagged = false,
+    this.tiers = defaultMobileExportTiers,
+  }) : active = true;
 
-  static const all = ExportScope._all();
+  const ExportScope.anyTag({this.tiers = defaultMobileExportTiers})
+    : active = false,
+      players = const {},
+      includeUntagged = true;
 
+  static const all = ExportScope.anyTag();
+
+  final Set<MobileTier> tiers;
   final bool active;
   final Set<String> players;
   final bool includeUntagged;
 
+  ExportScope withTiers(Set<MobileTier> tiers) => active
+      ? ExportScope.only(
+          players,
+          includeUntagged: includeUntagged,
+          tiers: tiers,
+        )
+      : ExportScope.anyTag(tiers: tiers);
+
   bool matches(Candidate candidate) {
     if (!active) return true;
-    final name = candidate.player;
-    final untagged = name == null || name.trim().isEmpty;
-    return untagged ? includeUntagged : players.contains(name);
+    final labels = exportLabels(candidate);
+    return labels.isEmpty ? includeUntagged : labels.any(players.contains);
   }
 
-  /// 没有任何选中项时等于没筛选，避免出现"筛选了却什么都不导出"。
-  ExportScope get normalized =>
-      active && players.isEmpty && !includeUntagged ? all : this;
+  List<Candidate> select(
+    Iterable<Candidate> candidates,
+    MobileOutputMode mode,
+  ) => candidates
+      .where(
+        (candidate) =>
+            tiers.contains(mobileTier(candidate)) &&
+            matches(candidate) &&
+            (mode != MobileOutputMode.labels ||
+                exportLabels(candidate).isNotEmpty),
+      )
+      .toList();
+
+  ExportScope get normalized => active && players.isEmpty && !includeUntagged
+      ? ExportScope.anyTag(tiers: tiers)
+      : this;
 }
+
+Set<String> exportLabels(Candidate candidate) => {
+  for (final label in candidate.effectivePlayers)
+    if (label.trim().isNotEmpty) label,
+};
 
 class LabelExportGroup {
   const LabelExportGroup(this.label, this.candidates);
-  final String? label;
+  final String label;
   final List<Candidate> candidates;
 }
 
@@ -40,11 +75,11 @@ class LabelExportFile {
 }
 
 List<LabelExportGroup> labelExportGroups(Iterable<Candidate> candidates) {
-  final groups = <String?, List<Candidate>>{};
+  final groups = <String, List<Candidate>>{};
   for (final candidate in candidates) {
-    final value = candidate.player;
-    final label = value == null || value.trim().isEmpty ? null : value;
-    (groups[label] ??= []).add(candidate);
+    for (final label in exportLabels(candidate)) {
+      (groups[label] ??= []).add(candidate);
+    }
   }
   return [
     for (final entry in groups.entries)

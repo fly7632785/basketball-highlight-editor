@@ -55,10 +55,11 @@ class ReviewFields {
 }
 
 class ReviewEntry {
-  ReviewEntry(this.kind, this.before, this.focusId);
+  ReviewEntry(this.kind, this.before, this.focusId, {this.foldedView});
   final ReviewChange kind;
   final Map<String, ReviewFields> before;
   final String focusId;
+  final bool? foldedView;
   int sequence = -1;
 }
 

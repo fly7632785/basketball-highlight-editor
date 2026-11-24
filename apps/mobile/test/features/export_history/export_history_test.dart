@@ -438,7 +438,7 @@ void main() {
     },
   );
   test(
-    'untagged group remains distinct from a label with the same name',
+    'export history retains a real label named untagged',
     () async {
       f.state.project = f.state.project.copyWith(
         candidates: const [
@@ -455,12 +455,12 @@ void main() {
       await f.state.exportByLabels();
       expect(
         f.state.project.exportHistory.single.files.map((file) => file.untagged),
-        [false, true],
+        [false],
       );
       await f.state.openProject('A');
       expect(
         f.state.project.exportHistory.single.files.map((file) => file.untagged),
-        [false, true],
+        [false],
       );
     },
   );

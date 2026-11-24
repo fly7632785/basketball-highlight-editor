@@ -4,6 +4,7 @@ class _ReviewActionBar extends StatelessWidget {
   const _ReviewActionBar({
     required this.candidate,
     required this.canUndo,
+    required this.highlightUndo,
     required this.onUndo,
     required this.controller,
     required this.annotations,
@@ -29,6 +30,7 @@ class _ReviewActionBar extends StatelessWidget {
   });
   final Candidate candidate;
   final bool canUndo;
+  final bool highlightUndo;
   final VoidCallback onUndo;
   final VideoPlayerController? controller;
   final bool annotations;
@@ -45,7 +47,7 @@ class _ReviewActionBar extends StatelessWidget {
   final VoidCallback onToggleSource;
   final ValueChanged<double> onSpeed;
   final VoidCallback onInclude;
-  final VoidCallback onExclude;
+  final VoidCallback? onExclude;
   final VoidCallback onDetails;
   final VoidCallback onEditRange;
   final VoidCallback onPlayer;
@@ -160,8 +162,11 @@ class _ReviewActionBar extends StatelessWidget {
                               ? Theme.of(context).colorScheme.primary
                               : Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
-                        textStyle: const WidgetStatePropertyAll(
-                          TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+                        textStyle: WidgetStatePropertyAll(
+                          Theme.of(context).textTheme.labelMedium?.copyWith(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w400,
+                          ),
                         ),
                         padding: const WidgetStatePropertyAll(
                           EdgeInsets.symmetric(horizontal: 8),
@@ -362,7 +367,7 @@ class _ReviewActionBar extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
               child: Row(
                 children: [
-                  _ReviewUndoButton(onPressed: canUndo ? onUndo : null),
+                  _ReviewUndoButton(onPressed: canUndo ? onUndo : null, highlighted: highlightUndo),
                   IconButton(
                     onPressed: onPlayer,
                     tooltip: context.bheText(
@@ -383,7 +388,7 @@ class _ReviewActionBar extends StatelessWidget {
                     child: OutlinedButton.icon(
                       onPressed: onExclude,
                       icon: const Icon(LucideIcons.x, size: 18),
-                      label: Text(context.bheText('不选')),
+                      label: Text(context.bheText(onExclude == null ? '已排除' : '不选')),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -391,7 +396,7 @@ class _ReviewActionBar extends StatelessWidget {
                     child: FilledButton.icon(
                       onPressed: onInclude,
                       icon: const Icon(LucideIcons.check, size: 18),
-                      label: Text(context.bheText('选中')),
+                      label: Text(context.bheText(onExclude == null ? '恢复·算进球' : '选中')),
                     ),
                   ),
                 ],
@@ -415,103 +420,22 @@ class _ReviewActionBar extends StatelessWidget {
   }
 }
 
-class _ReviewProgressHeader extends StatelessWidget {
-  const _ReviewProgressHeader({
-    required this.candidates,
-    required this.total,
-    required this.reviewed,
-    required this.filtering,
-    required this.onBatchRange,
-    required this.onAdd,
-    required this.onClearFilters,
-  });
-  final List<Candidate> candidates;
-  final int total;
-  final int reviewed;
-  final bool filtering;
-  final VoidCallback onBatchRange;
-  final VoidCallback onAdd;
-  final VoidCallback onClearFilters;
-  @override
-  Widget build(BuildContext context) {
-    final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 2, 4, 0),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 600;
-          return Row(
-            children: [
-              Flexible(
-                flex: 2,
-                child: Text(
-                  filtering
-                      ? '${context.bheText('显示 ${candidates.length} / $total')} · ${context.bheText('已审核 $reviewed / $total')}'
-                      : context.bheText('已审核 $reviewed / $total'),
-                  key: const Key('review-progress'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelMedium,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: LinearProgressIndicator(
-                    value: total == 0 ? 0 : reviewed / total,
-                    minHeight: 3,
-                    color: BhePalette.green,
-                    backgroundColor: BhePalette.border,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 4),
-              if (filtering) IconButton(key: const Key('review-clear-filters'), onPressed: onClearFilters, tooltip: context.bheText('清除筛选'), icon: const Icon(LucideIcons.filterX, size: 16)),
-              if (compact) ...[
-                IconButton(
-                  onPressed: onBatchRange,
-                  tooltip: l10n?.clipDuration ?? '时长',
-                  icon: const Icon(LucideIcons.clock3, size: 16),
-                ),
-                IconButton(
-                  onPressed: onAdd,
-                  tooltip: l10n?.addManualCandidate ?? '补漏',
-                  icon: const Icon(LucideIcons.plus, size: 16),
-                ),
-              ] else ...[
-                TextButton.icon(
-                  onPressed: onBatchRange,
-                  icon: const Icon(LucideIcons.clock3, size: 16),
-                  label: Text(l10n?.clipDuration ?? '时长'),
-                  style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
-                ),
-                TextButton.icon(
-                  onPressed: onAdd,
-                  icon: const Icon(LucideIcons.plus, size: 16),
-                  label: Text(l10n?.addManualCandidate ?? '补漏'),
-                  style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
-                ),
-              ],
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
 class _ReviewUndoButton extends StatelessWidget {
-  const _ReviewUndoButton({required this.onPressed});
+  const _ReviewUndoButton({required this.onPressed, this.highlighted = false});
 
   final VoidCallback? onPressed;
+  final bool highlighted;
 
   @override
   Widget build(BuildContext context) => IconButton(
     key: const ValueKey('review-undo-bottom'),
     onPressed: onPressed,
     tooltip: context.bheText('撤销上一步'),
-    icon: const Icon(LucideIcons.rotateCcw, size: 19),
+    style: highlighted ? IconButton.styleFrom(
+      foregroundColor: BhePalette.orange,
+      backgroundColor: BhePalette.orange.withValues(alpha: .15),
+    ) : null,
+    icon: const Icon(LucideIcons.undo2, size: 19),
     visualDensity: VisualDensity.compact,
     padding: EdgeInsets.zero,
     constraints: const BoxConstraints.tightFor(width: 40, height: 48),
