@@ -3,12 +3,27 @@ import json
 import queue
 import sys
 import threading
+import time
 import traceback
+from collections import deque
+from typing import NamedTuple
 
 from .diagnostics import environment_summary, log_diagnostic
 from .protocol import ProtocolError, error_response, parse_request, response
 from .service import EngineService
 from .request_control import set_cancel_event, set_commit_callback, check_cancelled
+
+
+WAIT_COMMANDS = {"start_export", "start_review", "start_analysis", "retry_analysis", "retry_export"}
+BUSY_WAIT_SECONDS = 30.0
+PROJECT_BUSY_MESSAGE = "项目正在读取，请稍后重试"
+
+
+class _WaitingRequest(NamedTuple):
+    request: dict
+    project: str
+    deadline: float
+    cancelled: threading.Event
 
 
 def describe_unexpected_error(exc: Exception) -> tuple[str, str]:
@@ -57,10 +72,12 @@ def main() -> int:
     # Full-source validation and preview extraction must not block the reader.
     heavy = _RequestWorker()
     slots = threading.BoundedSemaphore(2)  # one running, one queued
-    registry_lock = threading.Lock()
+    registry_changed = threading.Condition()
     projects: dict[str, bool] = {}
     requests = {}
     tickets = {}
+    waiting: list[_WaitingRequest] = []
+    incoming: deque[str | BaseException | None] = deque()
     closing = False
     slow_commands = {"link_video", "relink_video", "suggest_roi", "open_project", "extract_preview"}
     review_commands = {"start_review", "review_candidate", "set_candidate_player", "set_candidates_player"}
@@ -79,7 +96,7 @@ def main() -> int:
         root = payload.get("project_root") or payload.get("root_path")
         return str(Path(root).expanduser().resolve()) if isinstance(root, str) and root.strip() else None
 
-    def admit(request, slow):
+    def admit(request, slow, *, wait_on_busy=False):
         payload = request.get("payload", {})
         command = request["command"]
         key = project_key(payload)
@@ -90,7 +107,7 @@ def main() -> int:
                     raise ProtocolError("PROJECT_BUSY", "项目正在导出，请等待完成或取消")
         if slow and not slots.acquire(blocking=False):
             raise ProtocolError("PROJECT_BUSY", "请求队列已满，请稍后重试")
-        with registry_lock:
+        with registry_changed:
             if closing:
                 if slow:
                     slots.release()
@@ -99,10 +116,20 @@ def main() -> int:
                 # A managed preview only writes a cache image. Review writes run
                 # on the reader thread and leave the preview's reservation intact.
                 key = None
-            if (key is not None and key in projects) or (slow and request_id is not None and request_id in requests):
+            if (slow or wait_on_busy) and request_id in requests:
                 if slow:
                     slots.release()
-                raise ProtocolError("PROJECT_BUSY", "项目正在读取，请稍后重试")
+                raise ProtocolError("PROJECT_BUSY", PROJECT_BUSY_MESSAGE)
+            if key is not None and key in projects:
+                if wait_on_busy:
+                    event = threading.Event()
+                    waiting.append(_WaitingRequest(request, key, time.monotonic() + BUSY_WAIT_SECONDS, event))
+                    if request_id is not None:
+                        requests[request_id] = {"event": event, "committed": False}
+                    return None
+                if slow:
+                    slots.release()
+                raise ProtocolError("PROJECT_BUSY", PROJECT_BUSY_MESSAGE)
             if key is not None:
                 projects[key] = command == "extract_preview" and not payload.get("output_path")
             ticket = {"event": threading.Event(), "committed": False} if slow else None
@@ -114,9 +141,10 @@ def main() -> int:
 
     def release(token, slow):
         key, request_id, ticket = token
-        with registry_lock:
+        with registry_changed:
             if key is not None:
                 projects.pop(key)
+                registry_changed.notify_all()
             if slow:
                 tickets.pop(id(ticket), None)
                 if request_id is not None and requests.get(request_id) is ticket:
@@ -128,7 +156,7 @@ def main() -> int:
         ticket = token[2]
         set_cancel_event(ticket["event"] if ticket else None)
         def begin_commit():
-            with registry_lock:
+            with registry_changed:
                 if ticket["event"].is_set():
                     raise ProtocolError("REQUEST_CANCELLED", "请求已取消")
                 ticket["committed"] = True
@@ -174,19 +202,71 @@ def main() -> int:
                 output = error_response(request_id, *describe_unexpected_error(exc))
         write_output(output)
 
+    def read_input(stream):
+        end = None
+        try:
+            for line in stream:
+                with registry_changed:
+                    registry_changed.wait_for(lambda: not incoming or closing)
+                    if closing:
+                        return
+                    incoming.append(line)
+                    registry_changed.notify_all()
+        except BaseException as exc:
+            # Propagate input failure on the dispatcher so normal shutdown runs.
+            end = exc
+        with registry_changed:
+            incoming.append(end)
+            registry_changed.notify_all()
+
+    def next_work():
+        with registry_changed:
+            while True:
+                # Do not start deferred mutations after the input closes.
+                if incoming and not isinstance(incoming[0], str):
+                    return incoming.popleft()
+                now = time.monotonic()
+                for index, item in enumerate(waiting):
+                    if item.cancelled.is_set() or item.deadline <= now or item.project not in projects:
+                        waiting.pop(index)
+                        request_id = item.request.get("request_id")
+                        if request_id is not None:
+                            del requests[request_id]
+                        return item
+                if incoming:
+                    line = incoming.popleft()
+                    registry_changed.notify_all()
+                    return line
+                timeout = waiting[0].deadline - now if waiting else None
+                registry_changed.wait(timeout)
+
     try:
-        for raw_line in sys.stdin:
-            line = raw_line.strip()
-            if not line:
-                continue
+        # Only the input pump and slow worker run concurrently with dispatch.
+        # Review writes and resumed commands stay serialized on this thread.
+        threading.Thread(target=read_input, args=(sys.stdin,), name="request-input", daemon=True).start()
+        while (work := next_work()) is not None:
+            if isinstance(work, BaseException):
+                raise work
             request_id = None
             try:
+                if isinstance(work, _WaitingRequest):
+                    request = work.request
+                    request_id = request.get("request_id")
+                    if work.cancelled.is_set():
+                        raise ProtocolError("REQUEST_CANCELLED", "请求已取消")
+                    if time.monotonic() >= work.deadline:
+                        raise ProtocolError("PROJECT_BUSY", PROJECT_BUSY_MESSAGE)
+                    run_admitted(request, admit(request, False), False)
+                    continue
+                line = work.strip()
+                if not line:
+                    continue
                 request = parse_request(line)
                 request_id = request.get("request_id")
                 command = request["command"]
                 if command == "cancel_request":
                     target = request.get("payload", {}).get("request_id")
-                    with registry_lock:
+                    with registry_changed:
                         ticket = requests.get(target) if isinstance(target, str) else None
                         accepted = ticket is not None and not ticket["committed"]
                         if accepted:
@@ -200,8 +280,9 @@ def main() -> int:
                         release(token, True)
                         raise
                 elif command in protected_commands:
-                    token = admit(request, False)
-                    run_admitted(request, token, False)
+                    token = admit(request, False, wait_on_busy=command in WAIT_COMMANDS)
+                    if token is not None:
+                        run_admitted(request, token, False)
                 else:
                     handle_request(request)
             except ProtocolError as exc:
@@ -210,15 +291,20 @@ def main() -> int:
                 log_diagnostic(f"request could not be read:\n{traceback.format_exc()}")
                 write_output(error_response(request_id, "ENGINE_ERROR", str(exc)))
     finally:
-        with registry_lock:
+        with registry_changed:
             closing = True
             for ticket in tickets.values():
                 if not ticket["committed"]:
                     ticket["event"].set()
+            registry_changed.notify_all()
         try:
-            service.shutdown()
+            for item in waiting:
+                write_output(error_response(item.request.get("request_id"), "REQUEST_CANCELLED", "请求已取消"))
         finally:
-            heavy.shutdown(timeout=0.5)
+            try:
+                service.shutdown()
+            finally:
+                heavy.shutdown(timeout=0.5)
     return 0
 
 

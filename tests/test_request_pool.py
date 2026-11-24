@@ -10,7 +10,7 @@ import pytest
 
 from engine.python.basketball_engine import server
 from engine.python.basketball_engine.protocol import ProtocolError
-from engine.python.basketball_engine.request_control import fingerprint, set_cancel_event
+from engine.python.basketball_engine.request_control import check_cancelled, fingerprint, set_cancel_event
 from engine.python.basketball_engine.service import EngineService
 from engine.python.basketball_engine.storage import ProjectStore
 
@@ -92,6 +92,96 @@ def test_slow_link_leaves_loop_responsive_and_bounded(running, tmp_path):
     assert responses['first']['error']['code'] == 'REQUEST_CANCELLED'
     assert responses['second']['ok'] is True
     assert service._require_store({'project_root': str(tmp_path/'a')}).list_videos() == []
+
+
+@pytest.mark.parametrize("command", [
+    "start_export", "start_review", "start_analysis", "retry_analysis", "retry_export",
+])
+def test_busy_user_command_resumes_on_release(running, tmp_path, monkeypatch, command):
+    service, input_, output, entered, release, video = running
+    root = str(tmp_path / "a")
+    monkeypatch.setattr(service, command, lambda payload: {"command": command})
+    input_.send("link", "link_video", project_root=root, video_path=str(video))
+    assert entered.wait(3)
+    input_.send("waiting", command, project_root=root)
+    input_.send("hello", "hello")
+    assert output.next()["request_id"] == "hello"
+    release.set()
+    assert output.next()["request_id"] == "link"
+    result = output.next()
+    assert result["request_id"] == "waiting"
+    assert result["payload"] == {"command": command}
+
+
+def test_busy_user_command_times_out_without_running(running, tmp_path, monkeypatch):
+    service, input_, output, entered, release, video = running
+    root = str(tmp_path / "a")
+    calls = []
+    monkeypatch.setattr(server, "BUSY_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr(service, "start_export", lambda payload: calls.append(payload))
+    input_.send("link", "link_video", project_root=root, video_path=str(video))
+    assert entered.wait(3)
+    input_.send("waiting", "start_export", project_root=root)
+    result = output.next()
+    assert result["request_id"] == "waiting"
+    assert result["error"]["code"] == "PROJECT_BUSY"
+    release.set()
+    assert output.next()["request_id"] == "link"
+    # Reuse the ID to verify the expired request did not leave a reservation.
+    input_.send("waiting", "start_export", project_root=root)
+    assert output.next()["ok"]
+    assert len(calls) == 1
+
+
+def test_busy_wait_allows_job_query_and_cancel_of_holder(running, tmp_path, monkeypatch):
+    service, input_, output, entered, release, video = running
+    root = str(tmp_path / "a")
+
+    def cancellable_fingerprint(path):
+        entered.set()
+        while not release.wait(0.01):
+            check_cancelled()
+        return fingerprint(path)
+
+    monkeypatch.setattr(service, "_source_fingerprint", cancellable_fingerprint)
+    monkeypatch.setattr(service, "start_export", lambda payload: {"resumed": True})
+    input_.send("link", "link_video", project_root=root, video_path=str(video))
+    assert entered.wait(3)
+    input_.send("waiting", "start_export", project_root=root)
+    input_.send("job", "get_job", project_root=root, job_id="missing")
+    assert output.next()["request_id"] == "job"
+    input_.send("cancel", "cancel_request", request_id="link")
+    results = {row["request_id"]: row for row in (output.next(), output.next(), output.next())}
+    assert results["cancel"]["payload"]["cancel_requested"] is True
+    assert results["link"]["error"]["code"] == "REQUEST_CANCELLED"
+    assert results["waiting"]["payload"]["resumed"] is True
+
+
+@pytest.mark.parametrize("eof", [False, True])
+def test_waiting_user_command_is_cancelled_before_dispatch(running, tmp_path, monkeypatch, eof):
+    service, input_, output, entered, release, video = running
+    root = str(tmp_path / "a")
+    calls = []
+    monkeypatch.setattr(service, "start_review", lambda payload: calls.append(payload))
+    input_.send("link", "link_video", project_root=root, video_path=str(video))
+    assert entered.wait(3)
+    input_.send("waiting", "start_review", project_root=root)
+    input_.send("hello", "hello")
+    assert output.next()["request_id"] == "hello"
+    if eof:
+        input_.items.put(None)
+    else:
+        input_.send("cancel", "cancel_request", request_id="waiting")
+        assert output.next()["payload"]["cancel_requested"] is True
+    cancelled = output.next()
+    assert cancelled["request_id"] == "waiting"
+    assert cancelled["error"]["code"] == "REQUEST_CANCELLED"
+    release.set()
+    assert output.next()["request_id"] == "link"
+    if not eof:
+        input_.send("hello", "hello")
+        assert output.next()["request_id"] == "hello"
+    assert calls == []
 
 
 def test_external_delete_recreate_does_not_receive_late_link(running, tmp_path):
@@ -204,6 +294,8 @@ def test_review_and_player_tags_during_preview(running, tmp_path, monkeypatch, c
         ("set_candidates_player", {"candidate_ids": [first, second], "player_id": player}),
     ]:
         input_.send(command, command, project_root=root, **args)
+        if custom_output and command == "start_review":
+            continue  # It may wait, but cannot run while this preview owns the project.
         result = output.next()
         assert result["request_id"] == command
         if custom_output:
@@ -223,6 +315,10 @@ def test_review_and_player_tags_during_preview(running, tmp_path, monkeypatch, c
     assert preview["request_id"] == "preview"
     assert preview["ok"]
     assert Path(preview["payload"]["path"]).is_file()
+    if custom_output:
+        resumed = output.next()
+        assert resumed["request_id"] == "start_review"
+        assert resumed["ok"]
 
 
 def test_fingerprint_checks_cancellation_between_chunks(tmp_path, monkeypatch):
