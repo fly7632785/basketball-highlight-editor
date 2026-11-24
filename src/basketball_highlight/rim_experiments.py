@@ -1,4 +1,4 @@
-"""Opt-in desktop rim experiments. Default decisions remain rim-dense-v2."""
+"""Desktop rim rules with explicit overrides for replay and diagnostics."""
 from dataclasses import asdict, dataclass
 import hashlib
 import json
@@ -13,32 +13,21 @@ ENV_NAME = "BHE_RIM_EXPERIMENTS"
 
 @dataclass(frozen=True)
 class RimExperiments:
-    min_rim_width_px: float = 30.0
     track_mode: str = "off"
-    net_weak: bool = False
-    net_weak_ratio: float = 0.3
-    net_min_samples: int = 8
-    supported_side_exit: bool = False
+    visible_crossing: bool = False
 
     def __post_init__(self):
-        for key, low, high in (("min_rim_width_px", 1, 1000), ("net_weak_ratio", 0, 1)):
-            value = getattr(self, key)
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not low <= value <= high:
-                raise ValueError(f"Invalid rim experiment {key}")
-        if self.track_mode not in ("off", "fable_stitch", "astra_fill"):
+        if self.track_mode not in ("off", "fable_stitch"):
             raise ValueError("Invalid rim experiment track_mode")
-        if type(self.net_weak) is not bool or type(self.supported_side_exit) is not bool:
-            raise ValueError("Rim experiment switches must be JSON booleans")
-        if type(self.net_min_samples) is not int or self.net_min_samples < 8:
-            raise ValueError("net_min_samples must be an integer >= 8")
+        if type(self.visible_crossing) is not bool:
+            raise ValueError("visible_crossing must be a JSON boolean")
 
     @property
     def is_default(self):
         return self == RimExperiments()
 
     def to_dict(self):
-        # Canonical numeric representation: 30 and 30.0 are the same experiment.
-        return {**asdict(self), "min_rim_width_px": float(self.min_rim_width_px), "net_weak_ratio": float(self.net_weak_ratio)}
+        return asdict(self)
 
     @property
     def config_hash(self):
@@ -47,27 +36,14 @@ class RimExperiments:
 
 def load_config(value=None):
     if value is None:
-        value = os.environ.get(ENV_NAME, "{}")
+        value = os.environ.get(ENV_NAME)
+        if value is None:
+            return RimExperiments(track_mode="fable_stitch", visible_crossing=True)
     if isinstance(value, str):
         value = json.loads(value)
     if not isinstance(value, dict):
         raise ValueError("Rim experiment config must be a JSON object")
     return RimExperiments(**value)
-
-
-def consecutive_static(frames, radius=0.12, min_frames=6):
-    flat = [(i, ball) for i, balls in enumerate(frames) for ball in balls]
-    removed = set()
-    for i, ball in flat:
-        hits = {j for j, other in flat if abs(other["x"]-ball["x"]) <= radius and abs(other["y"]-ball["y"]) <= radius}
-        lo = hi = i
-        while lo-1 in hits:
-            lo -= 1
-        while hi+1 in hits:
-            hi += 1
-        if hi-lo+1 >= min_frames:
-            removed.add(id(ball))
-    return [[ball for ball in balls if id(ball) not in removed] for balls in frames]
 
 
 def stitch_tracks(tracks, fps):
@@ -101,22 +77,34 @@ def _finite(value):
     return type(value) in (int, float) and math.isfinite(value)
 
 
-def _raw_check(item, raw, config, mode="off", fps=None):
+def _raw_check(item, raw, mode="off", fps=None):
     frames = raw.get("frames")
     rim = item.get("rim")
     if raw.get("status") == "skipped" or not isinstance(frames, list) or rim is None:
         return {key: raw.get(key) for key in ("version", "status", "reason", "rim_width_px")}, []
-    if mode == "off":
-        return rc.assess_rim_crossing(frames, rim, raw.get("net_motion_series"), min_rim_width=config.min_rim_width_px), []
-    if float(rim["width"]) < config.min_rim_width_px or not frames:
-        return rc.assess_rim_crossing(frames, rim, raw.get("net_motion_series"), min_rim_width=config.min_rim_width_px), []
+    net_motion = raw.get("net_motion_series")
+    if mode == "off" or float(rim["width"]) < rc.MIN_RIM_WIDTH_PX or not frames:
+        return rc.assess_rim_crossing(frames, rim, net_motion), []
     balls = [rc._frame_balls(frame, rim) for frame in frames]
-    filtered = consecutive_static(balls) if mode == "astra_fill" else rc._drop_static(balls)
-    tracks = rc._build_tracks(filtered)
-    events = []
-    if mode == "fable_stitch":
-        tracks, events = stitch_tracks(tracks, fps)
-    return rc._assess_tracks(frames, rim, raw.get("net_motion_series"), tracks), events
+    tracks, events = stitch_tracks(rc._build_tracks(rc._drop_static(balls)), fps)
+    return rc._assess_tracks(frames, rim, net_motion, tracks), events
+
+
+def _is_visible_crossing(check, net_median):
+    return (
+        check.get("status") == "unsure"
+        and check.get("reason") == "not_occluded"
+        and check.get("entry") is True
+        and check.get("reached_net_bottom") is True
+        and check.get("rebound") is False
+        and all(_finite(check.get(key)) for key in ("x_cross", "x_exit", "net_motion"))
+        and check.get("track_points", 0) >= rc.MIN_OFF_CENTER_TRACK_POINTS
+        and max(abs(check["x_cross"]), abs(check["x_exit"])) <= .25
+        and check["net_motion"] > 0
+        and net_median is not None
+        and net_median > 0
+        and check["net_motion"] >= .3 * net_median
+    )
 
 
 def judge_candidates(inputs, results, refined=None, config=None, fps=None):
@@ -132,14 +120,14 @@ def judge_candidates(inputs, results, refined=None, config=None, fps=None):
     if len(refined) != len(inputs):
         raise ValueError("Rim refined flags count mismatch")
     raw_results = [raw if isinstance(raw, dict) else rc.skipped_result("check_failed") for raw in results]
-    baseline_raw = [_raw_check(item, raw, config)[0] for item,raw in zip(inputs,raw_results)]
+    baseline_raw = [_raw_check(item, raw)[0] for item,raw in zip(inputs,raw_results)]
     baseline = [rc.keep_unless_seen(c, flag) for c,flag in zip(rc.apply_video_occlusion(baseline_raw), refined)]
     values = [c["net_motion"] for c in baseline if c.get("status")=="made" and _finite(c.get("net_motion"))]
-    net_median = median(values) if len(values) >= config.net_min_samples else None
+    net_median = median(values) if len(values) >= 8 else None
     repaired = baseline
     repair_events = [[] for _ in inputs]
     if config.track_mode != "off":
-        alternate = [_raw_check(item,raw,config,config.track_mode,fps) for item,raw in zip(inputs,raw_results)]
+        alternate = [_raw_check(item, raw, config.track_mode, fps) for item,raw in zip(inputs,raw_results)]
         repaired = [rc.keep_unless_seen(c,flag) for c,flag in zip(rc.apply_video_occlusion([c for c,_ in alternate]),refined)]
         repair_events = [events for _,events in alternate]
     judged = []
@@ -147,19 +135,10 @@ def judge_candidates(inputs, results, refined=None, config=None, fps=None):
         chosen = old
         hits = []
         notes = []
-        if config.min_rim_width_px != 30 and item.get("rim") and config.min_rim_width_px <= float(item["rim"]["width"]) < 30:
-            if isinstance(raw.get("frames"), list) and raw.get("status")!="skipped":
-                hits.append("min_rim_width_px")
-            else:
-                notes.append("small_rim_cache_requires_detection")
         if config.track_mode == "fable_stitch":
             if not _finite(fps) or fps <= 0:
                 notes.append("stitch_requires_source_fps")
             else:
-                chosen = new
-        elif config.track_mode == "astra_fill":
-            anchored = (old.get("status")=="unsure" and old.get("reason") in ("no_entry","no_exit") and new.get("status")=="made" and _finite(old.get("x_cross")) and _finite(new.get("x_cross")) and abs(old["x_cross"]-new["x_cross"]) <= .12 and abs(old.get("cross_frame",-999)-new.get("cross_frame",999)) <= 1)
-            if anchored:
                 chosen = new
         # Changing tracks cannot add a rejection, or directly overrule a seen miss.
         if chosen != old:
@@ -168,19 +147,10 @@ def judge_candidates(inputs, results, refined=None, config=None, fps=None):
                 chosen = {**chosen,"status":"unsure","reason":"new_negative_needs_review"}
             elif old["status"]=="rejected" and chosen["status"]!="rejected":
                 chosen = {**chosen,"status":"unsure","reason":"conflicting_negative_needs_review"}
-        if config.supported_side_exit and chosen.get("status")=="rejected" and chosen.get("reason")=="exit_off_center":
-            if chosen.get("track_points",0) < 10 or chosen.get("track_span",0) < 1:
-                chosen = {**chosen,"status":"rejected" if chosen.get("rebound") else "unsure","reason":"rebound" if chosen.get("rebound") else "short_side_exit_track"}
-                hits.append("supported_side_exit")
-        if config.net_weak and chosen.get("status")=="made":
-            if net_median is None or net_median <= 0:
-                notes.append("net_calibration_insufficient")
-            elif not _finite(chosen.get("net_motion")):
-                chosen = {**chosen,"status":"unsure","reason":"net_missing"}
-                hits.append("net_weak")
-            elif chosen["net_motion"] < config.net_weak_ratio * net_median:
-                chosen = {**chosen,"status":"unsure","reason":"net_weak"}
-                hits.append("net_weak")
+        # Do not bypass a conflicting track decision with the visible-crossing rule.
+        if chosen == old and config.visible_crossing and _is_visible_crossing(chosen, net_median):
+            chosen = {**chosen, "status": "made", "reason": None}
+            hits.append("visible_crossing")
         chosen = {**chosen,"experiment":{"config":config.to_dict(),"config_hash":config.config_hash,"baseline_status":old.get("status"),"baseline_reason":old.get("reason"),"final_status":chosen.get("status"),"decision_reason":chosen.get("reason") or "observed_rim_crossing","matched_switches":hits,"notes":notes,"stitches":events,"source_fps":fps,"net_calibration":{"scope":"analysis_run_baseline_made","samples":len(values),"median":net_median}}}
         judged.append(chosen)
     return judged

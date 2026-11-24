@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from basketball_highlight import rim_experiments as ex
-from basketball_highlight.rim_check import keep_unless_seen
 from engine.python.basketball_engine.adapters.analysis import apply_rim_checks, build_rim_check_command
 from .test_rim_check import RIM, ball, fall
 
@@ -16,26 +15,28 @@ def judge(frames, config=ex.RimExperiments(), rim=RIM, fps=30):
 
 
 def test_config_hash_env_validation_and_default(monkeypatch):
-    monkeypatch.setenv(ex.ENV_NAME, '{"min_rim_width_px":24}')
-    assert ex.load_config().min_rim_width_px == 24
+    monkeypatch.delenv(ex.ENV_NAME, raising=False)
+    assert ex.load_config() == ex.RimExperiments(track_mode="fable_stitch", visible_crossing=True)
+    monkeypatch.setenv(ex.ENV_NAME, '{"visible_crossing":true}')
+    assert ex.load_config() == ex.RimExperiments(visible_crossing=True)
     assert ex.load_config('{}').is_default
-    assert ex.load_config('{"min_rim_width_px":30}').config_hash == ex.RimExperiments().config_hash
-    for value in ['null', '{"unknown":1}', '{"track_mode":"magic"}', '{"net_weak":1}', '{"min_rim_width_px":NaN}', '{"net_min_samples":7}', '{"net_weak_ratio":2}']:
-        with pytest.raises((TypeError,ValueError)):
+    assert ex.load_config('{"visible_crossing":false,"track_mode":"off"}').config_hash == ex.RimExperiments().config_hash
+    for value in [
+        'null', '{"unknown":1}', '{"track_mode":"astra_fill"}', '{"visible_crossing":1}',
+        '{"min_rim_width_px":24}', '{"net_weak":true}', '{"supported_side_exit":true}',
+        '{"visible_side_miss":true}', '{"retry_rim_window":true}', '{"static_false_ball":true}',
+        '{"below_rim_movement":true}', '{"wide_low_movement":true}',
+        '{"rim_fragment_reconnect":true}', '{"strong_path_weak_net":true}',
+    ]:
+        with pytest.raises((TypeError, ValueError)):
             ex.load_config(value)
 
 
-def test_small_rim_switch_both_sides_and_no_fake_cache_detection():
-    rim={**RIM,"width":26}
-    frames=[[] if i in (6,7) else [ball(0,-1.5+i*.25,rim=rim)] for i in range(16)]
-    assert judge(frames,rim=rim)["status"] == "skipped"
-    enabled=judge(frames,ex.RimExperiments(min_rim_width_px=24),rim)
-    assert enabled["status"] == "made"
-    assert "min_rim_width_px" in enabled["experiment"]["matched_switches"]
-    assert judge(frames,ex.RimExperiments(min_rim_width_px=24),{**rim,"width":23})["status"] == "skipped"
-    cached=ex.judge_candidates([{"rim":rim}],[{"status":"skipped","reason":"small_rim","rim_width_px":26}],config=ex.RimExperiments(min_rim_width_px=24))[0]
-    assert cached["status"]=="skipped"
-    assert "small_rim_cache_requires_detection" in cached["experiment"]["notes"]
+def test_small_rim_still_skips():
+    rim = {**RIM, "width": 26}
+    frames = fall(hidden={6, 7})
+    config = ex.RimExperiments(track_mode="fable_stitch", visible_crossing=True)
+    assert judge(frames, config=config, rim=rim)["status"] == "skipped"
 
 
 def broken_fall(start=20):
@@ -59,58 +60,41 @@ def test_fable_stitch_positive_gap_limit_fps_and_ambiguity():
     assert events==[]
 
 
-def test_astra_only_recovers_existing_anchored_crossing(monkeypatch):
-    old={"version":"rim-dense-v2","status":"rejected","reason":"no_exit","x_cross":.1,"cross_frame":4}
-    new={**old,"status":"made","reason":None}
-    def raw(item,result,config,mode="off",fps=None):return (dict(old) if mode=="off" else dict(new)),[]
-    monkeypatch.setattr(ex,"_raw_check",raw)
-    cfg=ex.RimExperiments(track_mode="astra_fill")
-    fixed=judge([],cfg)
-    assert fixed["status"]=="made"
-    new["x_cross"]=.4
-    assert judge([],cfg)["status"]=="unsure"
-    new["x_cross"]=.1;old["reason"]="no_crossing"
-    assert judge([],cfg)["status"]=="unsure"
-
-
-def test_consecutive_filter_keeps_intermittent_motion_but_drops_static():
-    intermittent=[[{"x":0,"y":0,"conf":.9}]]*3+[[]]+[[{"x":0,"y":0,"conf":.9}]]*3
-    assert sum(map(len,ex.consecutive_static(intermittent)))==6
-    static=[[{"x":0,"y":0,"conf":.9}]]*6
-    assert sum(map(len,ex.consecutive_static(static)))==0
-
-
 def test_stitch_safety_envelope_does_not_overrule_negative_or_add_rejection(monkeypatch):
     old={"status":"rejected","reason":"rebound"};new={"status":"made","reason":None}
-    monkeypatch.setattr(ex,"_raw_check",lambda item,raw,config,mode="off",fps=None: (dict(old) if mode=="off" else dict(new),[]))
+    monkeypatch.setattr(ex,"_raw_check",lambda item,raw,mode="off",fps=None: (dict(old) if mode=="off" else dict(new),[]))
     cfg=ex.RimExperiments(track_mode="fable_stitch")
     assert judge([],cfg)["reason"]=="conflicting_negative_needs_review"
     old.update(status="made",reason=None);new.update(status="rejected",reason="rebound")
     assert judge([],cfg)["reason"]=="new_negative_needs_review"
 
 
-def test_net_weak_missing_and_calibration_limits(monkeypatch):
-    config=ex.RimExperiments(net_weak=True)
-    def raw(item,result,config,mode="off",fps=None):return {"status":"made","reason":None,"net_motion":result.get("motion")},[]
-    monkeypatch.setattr(ex,"_raw_check",raw)
-    def batch(motions):return ex.judge_candidates([{}]*len(motions),[{"motion":m} for m in motions],config=config)
-    checked=batch([10]*8+[1,None])
-    assert checked[-2]["reason"]=="net_weak" and checked[-2]["status"]=="unsure"
-    assert checked[-1]["reason"]=="net_missing"
-    assert checked[0]["status"]=="made"
-    assert batch([10]*6+[1])[-1]["status"]=="made"
+def test_visible_crossing_only_promotes_complete_centered_crossings(monkeypatch):
+    from engine.python.basketball_engine.tiers import classify
 
-
-def test_side_exit_support_both_paths_and_rebound(monkeypatch):
-    raw={"status":"rejected","reason":"off_center","x_exit":1,"track_points":4,"track_span":1.5}
-    monkeypatch.setattr(ex,"_raw_check",lambda *a,**kw:(dict(raw),[]))
-    assert judge([])["status"]=="rejected"
-    config=ex.RimExperiments(supported_side_exit=True)
-    assert judge([],config)["reason"]=="short_side_exit_track"
-    raw.update(track_points=10,track_span=1)
-    assert judge([],config)["status"]=="rejected"
-    raw.update(track_points=4,rebound=True)
-    assert judge([],config)["reason"]=="rebound"
+    visible = {
+        "status": "rejected", "reason": "not_occluded", "track_points": 30,
+        "entry": True, "reached_net_bottom": True, "rebound": False,
+        "x_cross": .08, "x_exit": -.12, "net_motion": 2,
+    }
+    calibration = [{"status": "made", "reason": None, "net_motion": 3}] * 8
+    candidates = [
+        visible,
+        {**visible, "x_cross": .4, "x_exit": .5, "net_motion": -1},
+        {**visible, "net_motion": None},
+        {**visible, "reached_net_bottom": False},
+    ]
+    monkeypatch.setattr(ex, "_raw_check", lambda item, raw, mode="off", fps=None: (raw, []))
+    rows = calibration + candidates
+    inputs = [{"time": i, "rim": RIM} for i in range(len(rows))]
+    baseline = ex.judge_candidates(inputs, rows)
+    config = ex.RimExperiments(visible_crossing=True)
+    changed = ex.judge_candidates(inputs, rows, config=config)
+    assert [result["status"] for result in baseline[-4:]] == ["unsure"] * 4
+    assert [result["status"] for result in changed[-4:]] == ["made", "unsure", "unsure", "unsure"]
+    assert changed[-4]["experiment"]["matched_switches"] == ["visible_crossing"]
+    assert classify({"analysis_source": "refined", "rim_check": changed[-4]})["tier"] == "must"
+    assert not ex._is_visible_crossing({**visible, "status": "unsure"}, None)
 
 
 def test_cli_scheduling_and_adapter_config_metadata():
@@ -118,13 +102,12 @@ def test_cli_scheduling_and_adapter_config_metadata():
     spec=importlib.util.spec_from_file_location("rim_script_test",path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     inputs=[{"time":1,"rim":{**RIM,"width":26}}]
     assert len(module.build_jobs(inputs,30,100,1920,1080)[0])==0
-    assert len(module.build_jobs(inputs,30,100,1920,1080,24)[0])==1
-    config=ex.RimExperiments(net_weak=True)
+    config=ex.RimExperiments(visible_crossing=True)
     matches=[{"time":1}]
     apply_rim_checks(matches,inputs,None,config=config)
     assert matches[0]["rim_check"]["experiment"]["config_hash"]==config.config_hash
     command=build_rim_check_command(Path('.'),Path('video'),Path('model'),Path('input'),Path('out'),experiment_config=config)
-    assert json.loads(command[-1])["net_weak"] is True
+    assert json.loads(command[-1])["visible_crossing"] is True
 
 
 @pytest.mark.skipif(not os.environ.get("BHE_RIM_REPLAY_DATA"),reason="Private frame cache not distributed")
@@ -156,19 +139,18 @@ def test_service_passes_frozen_config_and_separates_detection_cache(tmp_path,mon
         assert matches[0]['rim_check']['experiment']['config_hash']==ex.load_config(value).config_hash
         return pipeline
     verify({})
-    cached=verify({'net_weak':True})
+    cached=verify({'visible_crossing':True})
     assert len(calls)==1 and cached['cache_hits']==1
-    verify({'min_rim_width_px':24})
     verify({'track_mode':'fable_stitch'})
-    assert len(calls)==3
-    assert len({p for p,_ in calls})==3
+    assert len(calls)==2
+    assert len({p for p,_ in calls})==2
     assert calls[-1][1]['track_mode']=='fable_stitch'
     # Repair a cache produced by the old enabled-script serialization bug.
     broken_path=Path(calls[0][0]);broken=json.loads(broken_path.read_text())
     broken['results'][0]['frames']=16
     broken_path.write_text(json.dumps(broken))
     repaired=verify({})
-    assert len(calls)==4 and calls[-1][0]==calls[0][0]
+    assert len(calls)==3 and calls[-1][0]==calls[0][0]
     assert any('cached raw frames missing' in line for line in repaired['logs'])
     assert isinstance(json.loads(broken_path.read_text())['results'][0]['frames'],list)
 
@@ -190,14 +172,14 @@ def test_enabled_detection_script_keeps_raw_frames_for_engine_rejudging(tmp_path
     monkeypatch.setattr(module,'select_device',lambda _: 'cpu')
     monkeypatch.setattr(module,'current_device',lambda: 'cpu')
     monkeypatch.setattr(module,'load_yolo_model',lambda _:Detector())
-    inputs=[{'time':1,'rim':{'center_x':32,'rim_y':25,'width':26,'height':12}}]
+    inputs=[{'time':1,'rim':{'center_x':32,'rim_y':25,'width':36,'height':12}}]
     candidates=tmp_path/'input.json';candidates.write_text(json.dumps({'candidates':inputs}))
     output=tmp_path/'result.json'
-    module.main(SimpleNamespace(video=video,model=tmp_path/'unused.pt',candidates=candidates,output=output,conf=.05,batch=16,device='cpu',experiment_config='{"min_rim_width_px":24}'))
+    module.main(SimpleNamespace(video=video,model=tmp_path/'unused.pt',candidates=candidates,output=output,conf=.05,batch=16,device='cpu',experiment_config='{"visible_crossing":true}'))
     cached=json.loads(output.read_text())
     assert isinstance(cached['results'][0]['frames'],list)
     assert len(cached['results'][0]['frames'])==20
     matches=[{'time':1}]
-    apply_rim_checks(matches,inputs,cached,config=ex.RimExperiments(min_rim_width_px=24))
+    apply_rim_checks(matches,inputs,cached,config=ex.RimExperiments(visible_crossing=True))
     assert matches[0]['rim_check']['frames']==20
     assert matches[0]['rim_check']['reason']=='no_crossing'

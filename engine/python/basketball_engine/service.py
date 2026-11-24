@@ -2105,9 +2105,6 @@ class EngineService:
         key = hashlib.sha256(
             json.dumps(
                 {"version": RIM_CHECK_VERSION, "candidates": inputs,
-                 # Only this parameter changes which frames need detection.
-                 **({"min_rim_width_px": config.min_rim_width_px}
-                    if config.min_rim_width_px != 30 else {}),
                  # Historical caches did not record source fps. Acquire it
                  # once before enabling time-based fragment stitching.
                  **({"source_fps_required": True}

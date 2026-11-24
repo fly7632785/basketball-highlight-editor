@@ -22,6 +22,7 @@ from basketball_highlight.inference import (  # noqa: E402
     select_device as resolve_device,
 )
 from basketball_highlight.rim_check import (  # noqa: E402
+    MIN_RIM_WIDTH_PX,
     RIM_CHECK_VERSION,
     WINDOW_AFTER_S,
     WINDOW_BEFORE_S,
@@ -74,7 +75,7 @@ def valid_rim(rim):
         return False
 
 
-def build_jobs(candidates, fps, total_frames, frame_width, frame_height, min_rim_width=30.0):
+def build_jobs(candidates, fps, total_frames, frame_width, frame_height):
     jobs = []
     results = [None] * len(candidates)
     for index, candidate in enumerate(candidates):
@@ -82,7 +83,7 @@ def build_jobs(candidates, fps, total_frames, frame_width, frame_height, min_rim
         if not valid_rim(rim):
             results[index] = skipped_result("no_rim")
             continue
-        if float(rim["width"]) < min_rim_width:
+        if float(rim["width"]) < MIN_RIM_WIDTH_PX:
             results[index] = skipped_result("small_rim", rim["width"])
             continue
         event = float(candidate["time"])
@@ -153,7 +154,7 @@ def main(args):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    jobs, results = build_jobs(candidates, fps, total_frames, frame_width, frame_height, config.min_rim_width_px)
+    jobs, results = build_jobs(candidates, fps, total_frames, frame_width, frame_height)
     groups = group_jobs(jobs)
     print("progress=0.0", flush=True)
     device = None
@@ -196,7 +197,7 @@ def main(args):
     for job in jobs:
         # Keep the raw detections so the engine can re-judge cached runs.
         results[job["index"]] = {
-            **assess_rim_crossing(job["frames"], job["rim"], job["net_motion_series"], min_rim_width=config.min_rim_width_px),
+            **assess_rim_crossing(job["frames"], job["rim"], job["net_motion_series"]),
             "frames": job["frames"],
             "net_motion_series": job["net_motion_series"],
         }
