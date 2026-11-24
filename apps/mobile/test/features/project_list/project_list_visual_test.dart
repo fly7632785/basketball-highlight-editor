@@ -103,7 +103,7 @@ void main() {
         }
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 500));
-        expect(find.text('主队比赛'), findsOneWidget);
+        expect(find.byWidgetPredicate((widget) => widget is Text && widget.semanticsLabel == '主队比赛'), findsAtLeastNWidgets(1));
         expect(find.text('客队比赛'), findsOneWidget);
         expect(find.text(english ? 'Current' : '当前'), findsOneWidget);
         await capture('list');

@@ -83,7 +83,7 @@ class _VideoPreviewState extends State<_VideoPreview> {
     if (widget.unavailable) return;
     _failed = false;
     final generation = ++_playerGeneration;
-    final player = VideoPlayerController.file(File(path));
+    final player = sourceVideoController(path);
     controller = player;
     player.addListener(_changed);
     _playerInitialization = _initializePlayer(

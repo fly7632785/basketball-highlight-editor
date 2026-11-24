@@ -184,7 +184,7 @@ object InferenceTuner {
     private fun sampleBitmap(videoPath: String, startMs: Long): Bitmap? {
         val retriever = MediaMetadataRetriever()
         return try {
-            retriever.setDataSource(videoPath)
+            VideoInput.open(retriever, videoPath)
             val source = retriever.getFrameAtTime((startMs + 2_000L) * 1_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 ?: return null
             val scale = minOf(1.0, 960.0 / source.width, 960.0 / source.height)

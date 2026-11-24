@@ -55,6 +55,14 @@ class MainActivity : FlutterActivity() {
         val stability: Double,
     )
 
+    private val videoImportPicker by lazy { VideoImportPicker(this) }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (!videoImportPicker.onResult(requestCode, resultCode, data)) {
+            super.onActivityResult(requestCode, resultCode, data)
+        }
+    }
+
     private val tag = "BHE-Analysis"
     private val mediaChannelName = "com.bhe.bhe/mobile_media"
     private val analysisChannelName = "com.bhe.bhe/mobile_analysis"
@@ -81,6 +89,14 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "isAvailable" -> result.success(true)
+                    "pickVideo" -> videoImportPicker.pick(result)
+                    "pickProject" -> videoImportPicker.pick(result, project = true)
+                    "pruneVideoGrants" -> {
+                        val referenced = call.argument<List<String>>("referenced").orEmpty().toSet()
+                        videoImportPicker.pruneGrants(referenced)
+                        result.success(null)
+                    }
+                    "videoMetadata" -> videoMetadata(call, result)
                     "exportClip" -> exportClip(call, result)
                     "mergeClips" -> mergeClips(call, result)
                     "registerMergeExport" -> registerMergeExport(call, result)
@@ -218,7 +234,7 @@ class MainActivity : FlutterActivity() {
             var pipeline: FramePipeline? = null
             val retriever = MediaMetadataRetriever()
             try {
-                retriever.setDataSource(videoPath)
+                VideoInput.open(retriever, videoPath)
                 val duration = retriever
                     .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                     ?.toLongOrNull() ?: durationMs.toLong()
@@ -482,7 +498,7 @@ class MainActivity : FlutterActivity() {
         Thread {
             val retriever = MediaMetadataRetriever()
             val saved = try {
-                retriever.setDataSource(videoPath)
+                VideoInput.open(retriever, videoPath)
                 val source = retriever.getFrameAtTime(timeMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 if (source == null) {
                     false
@@ -638,12 +654,60 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun videoMetadata(call: MethodCall, result: MethodChannel.Result) {
+        val path = call.argument<String>("path") ?: run { result.success(null); return }
+        Thread {
+            val extractor = MediaExtractor()
+            val retriever = MediaMetadataRetriever()
+            val metadata = mutableMapOf<String, Any?>()
+            try {
+                if (VideoInput.isDocument(path)) {
+                    check(contentResolver.persistedUriPermissions.any {
+                        it.uri.toString() == path && it.isReadPermission
+                    }) { "Video document permission unavailable" }
+                }
+                VideoInput.open(retriever, path)
+                metadata["creationTime"] = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
+                if (VideoInput.isDocument(path)) {
+                    metadata["modifiedMs"] = VideoInput.modified(path).takeIf { it > 0 }
+                    metadata["sizeBytes"] = VideoInput.seekableSize(path)
+                    metadata["fingerprint"] = VideoInput.fingerprint(path)
+                }
+                VideoInput.open(extractor, path)
+                val formats = (0 until extractor.trackCount).map(extractor::getTrackFormat)
+                val format = formats.firstOrNull { it.getString(MediaFormat.KEY_MIME) == DolbyVisionPolicy.MIME }
+                    ?: formats.firstOrNull { it.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }
+                if (format != null) {
+                    metadata["codec"] = format.getString(MediaFormat.KEY_MIME)
+                    metadata["frameRate"] = runCatching { format.getInteger(MediaFormat.KEY_FRAME_RATE).toDouble() }
+                        .recoverCatching { format.getFloat(MediaFormat.KEY_FRAME_RATE).toDouble() }.getOrNull()
+                }
+            } catch (_: Exception) {
+                // Optional metadata must not stop import of an otherwise playable file.
+            } finally {
+                runCatching { retriever.release() }
+                extractor.release()
+                mainHandler.post { result.success(metadata) }
+            }
+        }.start()
+    }
+
     private fun addExportableTracks(extractor: MediaExtractor, muxer: MediaMuxer): ExportTrackSelection =
         ExportTrackPolicy.select(
             (0 until extractor.trackCount).mapNotNull { index ->
-                extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)?.let { ExportSourceTrack(index, it) }
+                val format = extractor.getTrackFormat(index)
+                format.getString(MediaFormat.KEY_MIME)?.let { mime ->
+                    val hasSamples = if (mime.startsWith("video/")) {
+                        extractor.selectTrack(index)
+                        try {
+                            extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                            extractor.sampleTrackIndex == index && extractor.sampleSize > 0
+                        } finally { extractor.unselectTrack(index) }
+                    } else true
+                    ExportSourceTrack(index, mime, DolbyVisionFormat.profile(format), hasSamples)
+                }
             },
-            addTrack = { index -> muxer.addTrack(extractor.getTrackFormat(index)) },
+            addTrack = { index -> muxer.addTrack(DolbyVisionFormat.forExport(extractor.getTrackFormat(index))) },
             onSkipped = { track, error ->
                 Log.w("BHE-Export", "skipping audio track ${track.index}: ${track.mime}", error)
                 AppDiagnostics.event("export.audio.skipped", mapOf("track" to track.index, "mime" to track.mime), error)
@@ -702,12 +766,14 @@ class MainActivity : FlutterActivity() {
             var extractor: MediaExtractor? = null
             var muxer: MediaMuxer? = null
             var muxerStarted = false
+            var transcoded: File? = null
             try {
                 File(outputPath).parentFile?.mkdirs()
                 File(outputPath).delete()
+                transcoded = DolbyExportSource.transcodeIfNeeded(applicationContext, inputPath, cancelled)
                 val currentExtractor = MediaExtractor()
                 extractor = currentExtractor
-                currentExtractor.setDataSource(inputPath)
+                VideoInput.open(currentExtractor, transcoded?.absolutePath ?: inputPath)
                 val currentMuxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
                 muxer = currentMuxer
                 val selection = addExportableTracks(currentExtractor, currentMuxer)
@@ -724,6 +790,8 @@ class MainActivity : FlutterActivity() {
                 MergeMediaFinalizer.requireLocation(clipStartUs, currentExtractor.sampleTrackIndex)
                 var buffer = ByteBuffer.allocate(16 * 1024 * 1024)
                 val info = android.media.MediaCodec.BufferInfo()
+                var writtenVideoSamples = 0L
+                val videoTracks = trackMap.keys.filter { currentExtractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }.toSet()
                 while (true) {
                     if (cancelled.get()) throw InterruptedException("导出已取消")
                     val sourceTrack = currentExtractor.sampleTrackIndex
@@ -741,9 +809,11 @@ class MainActivity : FlutterActivity() {
                         info.presentationTimeUs = (currentExtractor.sampleTime - clipStartUs).coerceAtLeast(0L)
                         info.flags = currentExtractor.sampleFlags
                         currentMuxer.writeSampleData(muxTrack, buffer, info)
+                        if (sourceTrack in videoTracks) writtenVideoSamples++
                     }
                     currentExtractor.advance()
                 }
+                MergeMediaFinalizer.requireVideoSamples(writtenVideoSamples)
                 if (muxerStarted) {
                     currentMuxer.stop()
                     muxerStarted = false
@@ -767,6 +837,7 @@ class MainActivity : FlutterActivity() {
                 }
                 try { muxer?.release() } catch (error: Exception) { AppDiagnostics.event("export.cleanup.failed", error = error) }
                 try { extractor?.release() } catch (error: Exception) { AppDiagnostics.event("export.cleanup.failed", error = error) }
+                transcoded?.delete()
                 exportCancelled.remove(exportId, cancelled)
                 ExportPathRegistry.finish(exportId)
                 mainHandler.post { completion?.invoke() }
@@ -859,6 +930,7 @@ class MainActivity : FlutterActivity() {
             var completion: (() -> Unit)? = null
             var muxer: MediaMuxer? = null
             var muxerStarted = false
+            var transcoded: File? = null
             var transaction: MergeOutputTransaction? = null
             try {
                 val destination = File(outputPath).absoluteFile
@@ -869,9 +941,11 @@ class MainActivity : FlutterActivity() {
                 transaction = currentTransaction
                 mergeTransactions[exportId] = currentTransaction
                 if (cancelled.get()) throw InterruptedException("合并导出已取消")
+                transcoded = DolbyExportSource.transcodeIfNeeded(applicationContext, inputPath, cancelled)
+                val sourcePath = transcoded?.absolutePath ?: inputPath
                 val firstExtractor = MediaExtractor()
                 val currentMuxer = try {
-                    firstExtractor.setDataSource(inputPath)
+                    VideoInput.open(firstExtractor, sourcePath)
                     MediaMuxer(temporary.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
                 } catch (error: Exception) {
                     firstExtractor.release()
@@ -901,7 +975,7 @@ class MainActivity : FlutterActivity() {
                     if (cancelled.get()) throw InterruptedException("合并导出已取消")
                     val extractor = MediaExtractor()
                     try {
-                        extractor.setDataSource(inputPath)
+                        VideoInput.open(extractor, sourcePath)
                         trackMap.keys.forEach(extractor::selectTrack)
                         val endUs = endMs * 1000L
                         extractor.seekTo(startMs * 1000L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
@@ -982,6 +1056,7 @@ class MainActivity : FlutterActivity() {
                     AppDiagnostics.event("export.cleanup.failed", error = error)
                 }
                 transaction?.let { mergeTransactions.remove(exportId, it) }
+                transcoded?.delete()
                 exportCancelled.remove(exportId, cancelled)
                 ExportPathRegistry.finish(exportId)
                 mainHandler.post { completion?.invoke() }

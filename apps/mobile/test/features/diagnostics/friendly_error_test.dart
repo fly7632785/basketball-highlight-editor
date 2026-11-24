@@ -7,6 +7,21 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('selection reports the additional space in Chinese and English', () {
+    final error = friendlyMobileError(
+      PlatformException(
+        code: 'VIDEO_STORAGE_INSUFFICIENT',
+        details: {'missingBytes': 1610612736},
+      ),
+      operation: 'video.pick',
+    );
+    expect(error.message, '手机空间不足，还需要约 1.5 GB。');
+    expect(
+      lookupBheLocalizations(const Locale('en')).text(error.message!),
+      'Not enough phone storage. Free about 1.5 GB and try again.',
+    );
+  });
+
   test(
     'disk, permissions, missing sources and update files use actionable text',
     () {

@@ -78,10 +78,15 @@ void main() {
               find.byKey(const ValueKey('review-undo-action')),
               findsNothing,
             );
+            expect(find.byKey(const ValueKey('review-undo-top')), findsNothing);
+            expect(
+              find.byTooltip(localizations.text('撤销上一步')),
+              findsOneWidget,
+            );
             expect(find.byType(SnackBar), findsNothing);
             expect(tester.takeException(), isNull);
             expect(tester.getRect(keep), before);
-            final undo = find.byKey(const ValueKey('review-undo-top'));
+            final undo = find.byKey(const ValueKey('review-undo-bottom'));
             expect(tester.widget<IconButton>(undo).onPressed, isNotNull);
             await tester.tap(undo);
             await tester.pump();

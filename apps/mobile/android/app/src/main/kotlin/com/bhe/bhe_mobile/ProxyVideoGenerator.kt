@@ -48,14 +48,16 @@ object ProxyVideoGenerator {
         onProgress: (Double) -> Unit,
     ): Result {
         val source = File(sourcePath)
-        require(source.isFile) { "视频文件不存在" }
+        val document = VideoInput.isDocument(sourcePath)
+        require(document || source.isFile) { "视频文件不存在" }
+        val modified = if (document) VideoInput.modified(sourcePath) else source.lastModified()
         val probe = probe(sourcePath)
         val outputSize = fitSize(probe.width, probe.height, MAX_WIDTH, MAX_HEIGHT)
         val cacheKey = sha256(
             listOf(
-                source.absolutePath,
-                source.length(),
-                source.lastModified(),
+                sourcePath,
+                if (document) VideoInput.fingerprint(sourcePath) else source.length(),
+                modified,
                 startMs,
                 endMs,
                 outputSize.first,
@@ -111,7 +113,7 @@ object ProxyVideoGenerator {
     private fun probe(path: String): Probe {
         val extractor = MediaExtractor()
         return try {
-            extractor.setDataSource(path)
+            VideoInput.open(extractor, path)
             for (index in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(index)
                 if (format.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true) {
@@ -168,7 +170,7 @@ object ProxyVideoGenerator {
         var muxerTrack = -1
         var muxerStarted = false
         try {
-            extractor.setDataSource(sourcePath)
+            VideoInput.open(extractor, sourcePath)
             var format: MediaFormat? = null
             for (index in 0 until extractor.trackCount) {
                 val candidate = extractor.getTrackFormat(index)
@@ -178,7 +180,7 @@ object ProxyVideoGenerator {
                     break
                 }
             }
-            val sourceFormat = format ?: throw IllegalStateException("未找到视频轨道")
+            val sourceFormat = DolbyVisionFormat.forDecode(format ?: throw IllegalStateException("未找到视频轨道"))
             extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
 
             val encoderFormat = MediaFormat.createVideoFormat("video/avc", width, height).apply {

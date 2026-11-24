@@ -82,6 +82,53 @@ import ImageIO
       switch call.method {
       case "isAvailable":
         result(true)
+      case "videoMetadata":
+        guard let path = (call.arguments as? [String: Any])?["path"] as? String else {
+          result(nil)
+          return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+          let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+          var metadata: [String: Any] = [:]
+          if let recordedAt = asset.creationDate?.dateValue {
+            metadata["creationTime"] = ISO8601DateFormatter().string(from: recordedAt)
+          }
+          if let track = asset.tracks(withMediaType: .video).first {
+            metadata["frameRate"] = Double(track.nominalFrameRate)
+            if let description = (track.formatDescriptions as? [CMFormatDescription])?.first {
+              let subtype = CMFormatDescriptionGetMediaSubType(description)
+              let bytes = [24, 16, 8, 0].map { UInt8(truncatingIfNeeded: subtype >> $0) }
+              let codec = String(bytes: bytes, encoding: .ascii)
+              let extensions = CMFormatDescriptionGetExtensions(description).map { $0 as NSDictionary }
+              let atoms = extensions?[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms] as? [String: Any]
+              let hasDolbyConfig = atoms?["dvcC"] != nil || atoms?["dvvC"] != nil
+              if hasDolbyConfig {
+                metadata["codec"] = "video/dolby-vision"
+              } else {
+                switch codec {
+                case "dvh1", "dvhe", "dva1", "dvav": metadata["codec"] = "video/dolby-vision"
+                case "hvc1", "hev1": metadata["codec"] = "video/hevc"
+                case "avc1": metadata["codec"] = "video/avc"
+                default: metadata["codec"] = codec
+                }
+              }
+            }
+          }
+          DispatchQueue.main.async { result(metadata) }
+        }
+      case "projectCover":
+        guard let args = call.arguments as? [String: Any],
+          let path = args["videoPath"] as? String,
+          let output = args["outputPath"] as? String else { result(false); return }
+        DispatchQueue.global(qos: .utility).async {
+          let generator = AVAssetImageGenerator(asset: AVURLAsset(url: URL(fileURLWithPath: path)))
+          generator.appliesPreferredTrackTransform = true
+          generator.maximumSize = CGSize(width: 320, height: 320)
+          let image = try? generator.copyCGImage(at: .zero, actualTime: nil)
+          let saved = image.flatMap { UIImage(cgImage: $0).jpegData(compressionQuality: 0.82) }
+            .map { (try? $0.write(to: URL(fileURLWithPath: output), options: .atomic)) != nil } ?? false
+          DispatchQueue.main.async { result(saved) }
+        }
       case "exportClip":
         self.exportClip(call.arguments as? [String: Any], result: result)
       case "mergeClips":

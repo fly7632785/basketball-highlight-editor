@@ -3,6 +3,7 @@ package com.bhe.bhe_mobile.diagnostics
 /** No arbitrary exception message, paths or request JSON may cross this API. */
 object NativeDiagnosticEvent {
     private val token = Regex("[a-zA-Z0-9_.:-]{1,120}")
+    private val causeChain = Regex("[a-zA-Z0-9_.$:-]{1,300}")
     private val keys = setOf(
         "stage", "progress", "processed", "total", "status", "code", "mime", "track",
         "provider", "count", "duration_ms", "available", "cancelled", "threads", "operation",
@@ -10,6 +11,9 @@ object NativeDiagnosticEvent {
         "written", "readable", "clips", "tracks", "interval", "samples", "clamped",
         "nonmono", "sync", "pts_first", "pts_last", "clip_start_us", "width", "height",
         "fps", "track_duration_ms",
+        "rotation_degrees", "yuv_frames", "bitmap_frames", "retriever_attempts",
+        "yuv_size", "bitmap_size",
+        "codec", "hardware_accelerated", "codec_diagnostic", "cause",
     )
     private val mime = Regex("(?:audio|video)/[a-zA-Z0-9._+-]{1,100}")
     fun format(event: String, fields: Map<String, Any?> = emptyMap(), error: Throwable? = null): String {
@@ -19,7 +23,9 @@ object NativeDiagnosticEvent {
             if (key !in keys) continue
             val safe = when (value) {
                 is Number, is Boolean -> value.toString()
-                is String -> value.takeIf { token.matches(it) || mime.matches(it) }
+                is String -> value.takeIf {
+                    if (key == "cause") causeChain.matches(it) else token.matches(it) || mime.matches(it)
+                }
                 else -> null
             }
             if (safe != null) body.append(" $key=$safe")

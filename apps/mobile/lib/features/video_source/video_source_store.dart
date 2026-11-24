@@ -57,6 +57,53 @@ class VideoSourceStore {
   final _active = <String>{};
   int _serial = 0;
 
+  /// Only stale picker copies with no saved or in-memory project reference.
+  /// Never follow symlinks or clear the entire picker cache through its plugin.
+  Future<void> cleanUnusedPickerCache(Set<String> referencedPaths) async {
+    final temporary = await temporaryDirectory();
+    final cache = Directory(p.join(temporary.path, 'file_picker'));
+    if (await FileSystemEntity.type(cache.path, followLinks: false) !=
+        FileSystemEntityType.directory)
+      return;
+    final protected = <String>{};
+    for (final path in referencedPaths) {
+      protected.add(p.normalize(p.absolute(path)));
+      if (await File(path).exists()) {
+        protected.add(await File(path).resolveSymbolicLinks());
+      }
+    }
+    final cutoff = DateTime.now().subtract(const Duration(days: 1));
+    await for (final entry in cache.list(recursive: true, followLinks: false)) {
+      if (entry is! File) continue;
+      final parent = p.dirname(entry.path);
+      final ownedCopy =
+          parent == cache.path &&
+          p.basename(entry.path).startsWith('bhe-import-');
+      final legacyVideo =
+          p.dirname(parent) == cache.path &&
+          RegExp(r'^\d+$').hasMatch(p.basename(parent)) &&
+          const {
+            '.mp4',
+            '.mov',
+            '.m4v',
+            '.mkv',
+            '.webm',
+            '.avi',
+            '.3gp',
+            '.ts',
+          }.contains(p.extension(entry.path).toLowerCase());
+      if (!ownedCopy && !legacyVideo) continue;
+      final stat = await entry.stat();
+      if (!stat.modified.isBefore(cutoff) ||
+          (ownedCopy && !stat.changed.isBefore(cutoff)))
+        continue;
+      if (protected.contains(p.normalize(entry.absolute.path)) ||
+          protected.contains(await entry.resolveSymbolicLinks()))
+        continue;
+      await files.delete(entry);
+    }
+  }
+
   Future<String?> existingVideo(String projectId) async {
     final directory = Directory(
       await projectStoragePath(

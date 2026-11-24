@@ -12,7 +12,10 @@ Future<void> _createManagedProject(
   MobileAppState state,
 ) async {
   if (!_canManageProjects(context, state)) return;
-  await state.createNewProjectAndPickVideo(requireIdle: true);
+  await state.createNewProjectAndPickVideo(
+    requireIdle: true,
+    locale: Localizations.localeOf(context).languageCode,
+  );
   if (context.mounted && state.projectManagementBlockReason != null) {
     _canManageProjects(context, state);
   }
@@ -158,13 +161,19 @@ class _ProjectListPageState extends State<_ProjectListPage> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Card(
-        child: IntrinsicHeight(
-          child: Row(
-            children: [
-              Container(
+        clipBehavior: Clip.antiAlias,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(
                 width: 3,
                 color: current ? BhePalette.orange : Colors.transparent,
               ),
+            ),
+          ),
+          child: Row(
+            children: [
+              const SizedBox(width: 3),
               Expanded(
                 child: InkWell(
                   onTap: () async {
@@ -213,10 +222,8 @@ class _ProjectListPageState extends State<_ProjectListPage> {
                               Row(
                                 children: [
                                   Expanded(
-                                    child: Text(
+                                    child: _ProjectNameText(
                                       project.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
                                       style: Theme.of(
                                         context,
                                       ).textTheme.titleSmall,
@@ -258,7 +265,9 @@ class _ProjectListPageState extends State<_ProjectListPage> {
               PopupMenuButton<String>(
                 tooltip: context.bheText('更多操作'),
                 onSelected: (action) async {
-                  if (action == 'rename') {
+                  if (action == 'info') {
+                    await _showProjectInfo(context, state, project);
+                  } else if (action == 'rename') {
                     final name = await showDialog<String>(
                       context: context,
                       builder: (_) => _ProjectRenameDialog(name: project.name),
@@ -283,6 +292,10 @@ class _ProjectListPageState extends State<_ProjectListPage> {
                   if (mounted) refresh();
                 },
                 itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'info',
+                    child: Text(context.bheText('项目信息')),
+                  ),
                   PopupMenuItem(
                     value: 'rename',
                     child: Text(context.bheText('重命名项目')),

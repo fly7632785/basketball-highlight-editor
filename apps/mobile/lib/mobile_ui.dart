@@ -20,6 +20,7 @@ import 'features/video_source/video_unavailable.dart';
 import 'features/roi_editor/roi_video_preview.dart';
 import 'mobile_app_state.dart';
 import 'features/project_list/project_catalog.dart';
+import 'features/project_list/project_video_metadata.dart';
 import 'features/export/export_modes.dart';
 import 'features/diagnostics/mobile_diagnostics.dart';
 import 'features/diagnostics/diagnostic_report.dart';
@@ -47,6 +48,7 @@ part 'features/player_groups/player_group_editor.dart';
 part 'features/operation_status/uncertain_task_notice.dart';
 part 'features/export/export_overlap_notice.dart';
 part 'features/project_list/project_list_page.dart';
+part 'features/project_list/project_info_page.dart';
 part 'features/export/export_modes_ui.dart';
 part 'features/export_history/export_history_ui.dart';
 
@@ -550,13 +552,6 @@ class _TopBar extends StatelessWidget {
               ),
             ),
           ),
-          if (section == _WorkspaceSection.review)
-            IconButton(
-              key: const ValueKey('review-undo-top'),
-              onPressed: state.canUndoReview ? () => unawaited(state.undoReview()) : null,
-              tooltip: context.bheText('撤销上一步'),
-              icon: const Icon(LucideIcons.rotateCcw, size: 19),
-            ),
           if (onOpenExport != null)
             IconButton(
               onPressed: onOpenExport,
@@ -663,6 +658,7 @@ Future<void> _showProjectActions(BuildContext context, MobileAppState state) asy
         group([
           row('projects', context.bheText('项目列表')),
           if (hasProject) row('renameProject', context.bheText('重命名项目')),
+          if (hasProject) row('projectInfo', context.bheText('项目信息')),
           row('import', l10n?.openPackage ?? '打开项目包', enabled: !state.pickerBusy),
           if (hasProject) row('closeProject', context.bheText('关闭项目')),
         ]),
@@ -676,6 +672,7 @@ Future<void> _showProjectActions(BuildContext context, MobileAppState state) asy
   if (!context.mounted) return;
   switch (action) {
     case 'projects': await _showProjectList(context, state);
+    case 'projectInfo': await _showProjectInfo(context, state, state.project);
     case 'renameProject': await _showProjectRename(context, state);
     case 'import':
       if (_canManageProjects(context, state)) {
@@ -1162,7 +1159,7 @@ class _RecentProjectRow extends StatelessWidget {
               ),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(project.name, overflow: TextOverflow.ellipsis),
+              child: _ProjectNameText(project.name),
             ),
             Text(
               context.bheText('候选 ${project.candidates.length}'),
@@ -1899,7 +1896,24 @@ class _ReviewViewState extends State<_ReviewView> {
       onBatchRange: () => _showBatchRangeSheet(context),
     );
     if (candidate == null) {
-      return rail;
+      if (!state.canUndoReview) return rail;
+      return Column(
+        children: [
+          Expanded(child: rail),
+          SafeArea(
+            top: false,
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Padding(
+                padding: const EdgeInsetsDirectional.only(start: 12, bottom: 8),
+                child: _ReviewUndoButton(
+                  onPressed: () => unawaited(state.undoReview()),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
     }
     final video = state.project.video!;
     return LayoutBuilder(
@@ -1931,6 +1945,8 @@ class _ReviewViewState extends State<_ReviewView> {
           ),
           _ReviewActionBar(
             candidate: candidate,
+            canUndo: state.canUndoReview,
+            onUndo: () => unawaited(state.undoReview()),
             controller: controller,
             annotations: annotations,
             autoReplay: autoReplay,
@@ -2744,19 +2760,6 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
                   },
                 ),
                 const SizedBox(width: 6),
-                PopupMenuButton<String>(
-                  key: const ValueKey('review-fullscreen-menu'),
-                  tooltip: context.bheText('更多操作'),
-                  icon: const Icon(LucideIcons.ellipsis, color: Colors.white70, size: 18),
-                  onSelected: (_) => unawaited(widget.state.undoReview()),
-                  itemBuilder: (context) => [
-                    PopupMenuItem(
-                      value: 'undo',
-                      enabled: widget.state.canUndoReview,
-                      child: Text(context.bheText('撤销上一步')),
-                    ),
-                  ],
-                ),
                 _LandscapeIconButton(
                   icon: LucideIcons.minimize,
                   tooltip: context.bheText('退出横屏审核'),
@@ -3015,6 +3018,17 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
           ),
         ];
         final decisions = <Widget>[
+          IconButton(
+            key: const ValueKey('review-undo-bottom'),
+            onPressed: widget.state.canUndoReview
+                ? () => unawaited(widget.state.undoReview())
+                : null,
+            tooltip: context.bheText('撤销上一步'),
+            icon: const Icon(LucideIcons.rotateCcw, size: 19),
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 34, height: 38),
+          ),
           const SizedBox(width: 7),
           OutlinedButton.icon(
             onPressed: () => _reviewCandidate(CandidateSelection.excluded),
@@ -3041,15 +3055,18 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
         return ColoredBox(
           color: const Color(0xFF111318),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(10, 7, 10, 8),
+            padding: const EdgeInsets.fromLTRB(10, 7, 8, 8),
             child: compact
                 ? Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Row(children: controls),
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: decisions,
+                        children: [
+                          decisions.first,
+                          const Spacer(),
+                          ...decisions.skip(1),
+                        ],
                       ),
                     ],
                   )

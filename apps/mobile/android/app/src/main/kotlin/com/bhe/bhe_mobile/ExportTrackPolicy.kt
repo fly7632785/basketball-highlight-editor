@@ -1,6 +1,6 @@
 package com.bhe.bhe_mobile
 
-internal data class ExportSourceTrack(val index: Int, val mime: String)
+internal data class ExportSourceTrack(val index: Int, val mime: String, val dolbyProfile: Int? = null, val hasSamples: Boolean = true)
 internal data class ExportTrackSelection(
     val trackMap: Map<Int, Int>,
     val skippedAudio: List<ExportSourceTrack>,
@@ -9,18 +9,15 @@ internal data class ExportTrackSelection(
 
 /** Container policy is independent of Android codecs so error paths are unit-testable. */
 internal object ExportTrackPolicy {
-    private const val DOLBY_VISION = "video/dolby-vision"
+    private const val DOLBY_VISION = DolbyVisionPolicy.MIME
 
-    /**
-     * 成品只能有 1 条视频轨：杜比视界的手机视频会被 Android 报成
-     * `video/dolby-vision` + `video/hevc` 两条视频轨，两条都写会让「写入样本数」
-     * 和「成品样本数」永远对不上（成品里 DV 轨还会再拆一条出来）。
-     * 优先留 HEVC/AVC 底层轨，DV 轨跳过并记诊断；只有 DV 一条时保持原样写入。
-     */
+    // Export a single video track. Prefer the readable profile 8 track, whose
+    // samples are remuxed as HEVC, over extractor-provided duplicate tracks.
     private fun chosenVideoIndex(tracks: List<ExportSourceTrack>): Int? {
-        val videos = tracks.filter { it.mime.startsWith("video/") }
+        val videos = tracks.filter { it.mime.startsWith("video/") && it.hasSamples }
         if (videos.isEmpty()) return null
-        return (videos.firstOrNull { it.mime == "video/hevc" }
+        return (videos.firstOrNull { DolbyVisionPolicy.hasHevcBase(it.mime, it.dolbyProfile) }
+            ?: videos.firstOrNull { it.mime == "video/hevc" }
             ?: videos.firstOrNull { it.mime == "video/avc" }
             ?: videos.firstOrNull { it.mime != DOLBY_VISION }
             ?: videos.first()).index
@@ -36,6 +33,7 @@ internal object ExportTrackPolicy {
         val skipped = mutableListOf<ExportSourceTrack>()
         val skippedVideo = mutableListOf<ExportSourceTrack>()
         val chosenVideo = chosenVideoIndex(tracks)
+        check(chosenVideo != null) { "视频没有可读取的视频轨道" }
         var videos = 0
         for (track in tracks) {
             val isVideo = track.mime.startsWith("video/")
@@ -46,6 +44,7 @@ internal object ExportTrackPolicy {
                 continue
             }
             try {
+                if (isVideo) DolbyVisionPolicy.exportMime(track.mime, track.dolbyProfile)
                 selected[track.index] = addTrack(track.index)
                 if (isVideo) videos++
             } catch (error: Exception) {

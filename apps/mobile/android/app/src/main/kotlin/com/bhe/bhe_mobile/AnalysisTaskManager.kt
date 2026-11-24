@@ -153,7 +153,7 @@ object AnalysisTaskManager {
             try {
                 analyze(appContext, request)
             } catch (error: Exception) {
-                if (error is InterruptedException || activeProvider != "qnn" || cancelRequested.get()) throw error
+                if (!DecodeWindowPolicy.retryOnCpu(error, activeProvider, cancelRequested.get())) throw error
                 // The NPU passed the startup check but failed later. Forget
                 // that choice and redo the whole analysis on the CPU so all
                 // candidates come from one provider.
@@ -353,6 +353,7 @@ object AnalysisTaskManager {
             }.coerceAtLeast(1)
             val aggregateCandidates = JSONArray()
             val windowRims = mutableMapOf<Long, JSONObject?>()
+            val skippedDecodeWindows = mutableSetOf<Long>()
             var completedFrames = 0
             var fineDetectionCount = 0
             var fineBallDetectionCount = 0
@@ -363,18 +364,24 @@ object AnalysisTaskManager {
             updateProgress("refineCandidates", 0.52, 0, fineTotal, "正在精筛候选片段")
             for (eventMs in candidateEvents) {
                 if (cancelRequested.get()) throw InterruptedException("分析已取消")
-                val window = runFineWindow(
-                    videoPath, modelPath, eventMs, startMs, actualEndMs, fps,
-                    confidence, hoopRoi, netRoi, effectiveRimRoi, duration, request,
-                    modelSize, resolvedEp, fineTotal, completedFrames,
-                ) { processed, total ->
-                    updateProgress(
-                        "refineCandidates",
-                        0.52 + (completedFrames + processed).toDouble() / fineTotal * 0.38,
-                        completedFrames + processed,
-                        fineTotal,
-                        "正在分析候选 ${candidateEvents.indexOf(eventMs) + 1}/${candidateEvents.size}",
-                    )
+                val window = try {
+                    runFineWindow(
+                        videoPath, modelPath, eventMs, startMs, actualEndMs, fps,
+                        confidence, hoopRoi, netRoi, effectiveRimRoi, duration, request,
+                        modelSize, resolvedEp, fineTotal, completedFrames,
+                    ) { processed, total ->
+                        updateProgress(
+                            "refineCandidates",
+                            0.52 + (completedFrames + processed).toDouble() / fineTotal * 0.38,
+                            completedFrames + processed,
+                            fineTotal,
+                            "正在分析候选 ${candidateEvents.indexOf(eventMs) + 1}/${candidateEvents.size}",
+                        )
+                    }
+                } catch (error: VideoDecodeException) {
+                    skippedDecodeWindows += eventMs
+                    AppDiagnostics.event("analysis.fine.decode_skipped", mapOf("eventMs" to eventMs), error)
+                    continue
                 }
                 completedFrames += window.processed
                 fineDetectionCount += window.detectionCount
@@ -396,6 +403,7 @@ object AnalysisTaskManager {
             var fallbackCount = 0
             if (coarseResult != null) {
                 for (eventMs in candidateEvents) {
+                    if (eventMs in skippedDecodeWindows) continue
                     if (refinedTimes.any { abs(it - eventMs) <= COARSE_FALLBACK_MERGE_MS }) continue
                     val fallback = reviewFallbackCandidate(eventMs, startMs, actualEndMs, request)
                     windowRims[eventMs]?.let { fallback.put("rim", it) }
@@ -477,12 +485,15 @@ object AnalysisTaskManager {
         completedProgressFrames: Int,
         onProgress: (processed: Int, total: Int) -> Unit,
     ): FineWindowResult {
+        val windowStarted = System.nanoTime()
+        val windowEndMs = minOf(endMs, duration, eventMs + FINE_WINDOW_MS)
         val timestampsUs = sampleTimes(
             max(startMs, eventMs - FINE_WINDOW_MS),
-            min(endMs, eventMs + FINE_WINDOW_MS),
+            windowEndMs,
             fps,
         ).map { it * 1000L }
-        val total = timestampsUs.size.coerceAtLeast(1)
+        val total = timestampsUs.size
+        if (total == 0) throw VideoDecodeException("精筛范围内没有可读视频帧")
         val config = JSONObject()
             .put("model_path", modelPath)
             .put("hoop_roi", rimRoi ?: fullRoi())
@@ -510,7 +521,7 @@ object AnalysisTaskManager {
             TAG,
             "fine runtime=${NativeRuntime.sessionInfo(session)} createMs=${nanosToMs(System.nanoTime() - sessionCreateStarted)} eventMs=$eventMs",
         )
-        val pipeline = FramePipeline(videoPath, 960).also { it.prepare(timestampsUs.first()) }
+        val pipeline = FramePipeline(videoPath, 960)
         var processed = 0
         var detectionCount = 0
         var ballDetectionCount = 0
@@ -518,7 +529,8 @@ object AnalysisTaskManager {
         var candidatePeak = 0
         var inferenceNanos = 0L
         try {
-            val delivered = pipeline.decodeFramesYuv(timestampsUs, { cancelRequested.get() }) { image, bitmap, _, targetTimestampUs ->
+            pipeline.prepare(timestampsUs.first())
+            val decoded = pipeline.decodeFramesYuv(timestampsUs, { cancelRequested.get() }) { image, bitmap, _, targetTimestampUs ->
                 if (cancelRequested.get()) throw InterruptedException("分析已取消")
                 try {
                     val inferenceStarted = System.nanoTime()
@@ -559,7 +571,11 @@ object AnalysisTaskManager {
                     onProgress(processed, total)
                 }
             }
-            if (delivered != total || processed != total) throw IllegalStateException("视频解码不完整：$processed/$total 帧")
+            DecodeWindowPolicy.requireUsable(decoded, total, windowEndMs, duration, fps)
+            if (processed < total) AppDiagnostics.event("analysis.fine.tail_truncated", mapOf(
+                "eventMs" to eventMs, "expected" to total, "actual" to processed,
+                "lastPtsUs" to decoded.lastFramePtsUs,
+            ))
             val response = JSONObject(NativeRuntime.finishSession(session))
             response.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
             Log.i(
@@ -567,6 +583,10 @@ object AnalysisTaskManager {
                 "fine performance eventMs=$eventMs frames=$processed nativeMs=${nanosToMs(inferenceNanos)} " +
                     "nativeFps=${formatFps(processed, inferenceNanos)} runtime=${NativeRuntime.sessionInfo(session)}",
             )
+            AppDiagnostics.event("analysis.fine.timing", mapOf(
+                "eventMs" to eventMs, "frames" to processed, "fallbackFrames" to pipeline.fallbackCount,
+                "elapsedMs" to nanosToMs(System.nanoTime() - windowStarted),
+            ))
             val rim = JSONObject(NativeRuntime.sessionInfo(session)).optJSONObject("rim")
             return FineWindowResult(response, processed, detectionCount, ballDetectionCount, rimDetectionCount, candidatePeak, inferenceNanos, rim)
         } finally {
@@ -595,11 +615,16 @@ object AnalysisTaskManager {
     ) {
         if (rimRoi == null || candidates.length() == 0) return
         val startedAt = System.nanoTime()
-        val probe = FramePipeline(videoPath).also { it.prepare() }
-        val width = probe.displayWidth.toDouble()
-        val height = probe.displayHeight.toDouble()
-        val fps = probe.frameRate
-        probe.release()
+        val probe = FramePipeline(videoPath)
+        val (width, height, fps) = try {
+            probe.prepare()
+            Triple(probe.displayWidth.toDouble(), probe.displayHeight.toDouble(), probe.frameRate)
+        } catch (error: VideoDecodeException) {
+            AppDiagnostics.event("analysis.rim_check.decode_skipped", error = error)
+            return
+        } finally {
+            probe.release()
+        }
         val inputs = JSONArray()
         var session = 0L
         var sessionCrop = ""
@@ -628,7 +653,7 @@ object AnalysisTaskManager {
                     .put("top", cropY / height)
                     .put("right", (cropX + side) / width)
                     .put("bottom", (cropY + side) / height)
-                val frames = JSONArray()
+                var frames = JSONArray()
                 if (rimWidth >= RIM_CHECK_MIN_RIM_PX) {
                     if (session != 0L && sessionCrop != crop.toString()) {
                         NativeRuntime.freeSession(session)
@@ -666,12 +691,31 @@ object AnalysisTaskManager {
                         )
                     }
                     val first = max(0L, eventMs - RIM_CHECK_WINDOW_MS)
-                    val last = min(duration, eventMs + RIM_CHECK_WINDOW_MS)
-                    val timestampsUs = sampleTimes(first, last + 1, fps).map { it * 1000L }
-                    val pipeline = FramePipeline(videoPath, 960).also { it.prepare(timestampsUs.first()) }
+                    val windowEndMs = min(duration, eventMs + RIM_CHECK_WINDOW_MS + 1)
+                    val timestampsUs = sampleTimes(first, windowEndMs, fps).map { it * 1000L }
+                    val pipeline = FramePipeline(videoPath, 960)
+                    val yuvSizes = linkedSetOf<String>()
+                    val bitmapSizes = linkedSetOf<String>()
+                    var yuvFrames = 0
+                    var bitmapFrames = 0
                     try {
-                        pipeline.decodeFramesYuv(timestampsUs, { cancelRequested.get() }) { image, bitmap, _, targetTimestampUs ->
+                        if (timestampsUs.isEmpty()) throw VideoDecodeException("复核范围内没有可读视频帧")
+                        pipeline.prepare(timestampsUs.first())
+                        val decoded = pipeline.decodeFramesYuv(timestampsUs, { cancelRequested.get() }) { image, bitmap, _, targetTimestampUs ->
                             try {
+                                val frameWidth = image?.width ?: requireNotNull(bitmap).width
+                                val frameHeight = image?.height ?: requireNotNull(bitmap).height
+                                val rotation = if (image == null) 0 else pipeline.rotationDegreesValue
+                                val frameCoordinates = RimCheckFrameCoordinates(
+                                    frameWidth, frameHeight, rotation, width, height,
+                                )
+                                if (image != null) {
+                                    yuvFrames++
+                                    yuvSizes += "${frameWidth}x$frameHeight"
+                                } else {
+                                    bitmapFrames++
+                                    bitmapSizes += "${frameWidth}x$frameHeight"
+                                }
                                 val response = if (image != null) {
                                     val planes = image.planes
                                     NativeRuntime.pushFrameYuv(
@@ -679,7 +723,7 @@ object AnalysisTaskManager {
                                         planes[0].buffer, planes[0].buffer.position(), planes[0].buffer.remaining(), planes[0].rowStride, planes[0].pixelStride,
                                         planes[1].buffer, planes[1].buffer.position(), planes[1].buffer.remaining(), planes[1].rowStride, planes[1].pixelStride,
                                         planes[2].buffer, planes[2].buffer.position(), planes[2].buffer.remaining(), planes[2].rowStride, planes[2].pixelStride,
-                                        pipeline.rotationDegreesValue,
+                                        rotation,
                                     )
                                 } else {
                                     NativeRuntime.pushFrameBitmap(session, targetTimestampUs / 1000L, requireNotNull(bitmap))
@@ -699,14 +743,7 @@ object AnalysisTaskManager {
                                         JSONObject()
                                             .put("name", name)
                                             .put("confidence", detection.getDouble("confidence"))
-                                            .put(
-                                                "xyxy",
-                                                JSONArray()
-                                                    .put(detection.getDouble("x1"))
-                                                    .put(detection.getDouble("y1"))
-                                                    .put(detection.getDouble("x2"))
-                                                    .put(detection.getDouble("y2")),
-                                            ),
+                                            .put("xyxy", frameCoordinates.toDisplay(detection)),
                                     )
                                 }
                                 frames.put(detections)
@@ -715,7 +752,25 @@ object AnalysisTaskManager {
                                 if (bitmap != null && !bitmap.isRecycled) bitmap.recycle()
                             }
                         }
+                        DecodeWindowPolicy.requireUsable(decoded, timestampsUs.size, windowEndMs, duration, fps)
+                    } catch (error: VideoDecodeException) {
+                        // An incomplete window cannot supply a rim verdict.
+                        frames = JSONArray()
+                        AppDiagnostics.event("analysis.rim_check.decode_skipped", mapOf("eventMs" to eventMs), error)
                     } finally {
+                        AppDiagnostics.event(
+                            "analysis.rim_check.frame_layout",
+                            mapOf(
+                                "width" to width.toInt(),
+                                "height" to height.toInt(),
+                                "rotation_degrees" to pipeline.rotationDegreesValue,
+                                "yuv_frames" to yuvFrames,
+                                "bitmap_frames" to bitmapFrames,
+                                "retriever_attempts" to pipeline.fallbackCount,
+                                "yuv_size" to yuvSizes.joinToString(":", limit = 4, truncated = "more").ifEmpty { "none" },
+                                "bitmap_size" to bitmapSizes.joinToString(":", limit = 4, truncated = "more").ifEmpty { "none" },
+                            ),
+                        )
                         pipeline.release()
                     }
                     decodedFrames += frames.length()
@@ -826,10 +881,7 @@ object AnalysisTaskManager {
             TAG,
             "coarse runtime=${NativeRuntime.sessionInfo(session)} createMs=${nanosToMs(System.nanoTime() - sessionCreateStarted)} sampleFps=$sampleFps",
         )
-        val pipeline = FramePipeline(videoPath, COARSE_MAX_DIMENSION).also {
-            it.prepare(times.first() * 1000L)
-            onPipeline(it)
-        }
+        val pipeline = FramePipeline(videoPath, COARSE_MAX_DIMENSION)
         var detectionCount = 0
         var ballDetectionCount = 0
         var rimDetectionCount = 0
@@ -838,8 +890,10 @@ object AnalysisTaskManager {
         var nativeNanos = 0L
         val passStarted = System.nanoTime()
         try {
+            pipeline.prepare(times.first() * 1000L)
+            onPipeline(pipeline)
             var processed = 0
-            val delivered = pipeline.decodeFramesYuv(times.map { it * 1000L }, { cancelRequested.get() }) { image, bitmap, _, targetUs ->
+            val decoded = pipeline.decodeFramesYuv(times.map { it * 1000L }, { cancelRequested.get() }) { image, bitmap, _, targetUs ->
                 if (cancelRequested.get()) throw InterruptedException("分析已取消")
                 try {
                     val nativeStarted = System.nanoTime()
@@ -903,8 +957,8 @@ object AnalysisTaskManager {
                     if (bitmap != null && !bitmap.isRecycled) bitmap.recycle()
                 }
             }
-            if (delivered != times.size) {
-                throw IllegalStateException("粗扫视频解码不完整：$delivered/${times.size} 帧")
+            if (decoded.delivered != times.size) {
+                throw VideoDecodeException("粗扫视频解码不完整：${decoded.delivered}/${times.size} 帧")
             }
             val finalResponse = JSONObject(NativeRuntime.finishSession(session))
             val passElapsed = System.nanoTime() - passStarted
@@ -937,6 +991,9 @@ object AnalysisTaskManager {
                 ballDetectionCount = ballDetectionCount,
                 rimDetectionCount = rimDetectionCount,
             )
+        } catch (error: Exception) {
+            pipeline.release()
+            throw error
         } finally {
             NativeRuntime.freeSession(session)
         }
@@ -1180,7 +1237,7 @@ object AnalysisTaskManager {
         fun read(path: String, fallback: Long): Long {
             val retriever = android.media.MediaMetadataRetriever()
             return try {
-                retriever.setDataSource(path)
+                VideoInput.open(retriever, path)
                 retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
                     ?.toLongOrNull() ?: fallback
             } finally {

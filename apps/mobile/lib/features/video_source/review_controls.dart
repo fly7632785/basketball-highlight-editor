@@ -3,6 +3,8 @@ part of '../../mobile_ui.dart';
 class _ReviewActionBar extends StatelessWidget {
   const _ReviewActionBar({
     required this.candidate,
+    required this.canUndo,
+    required this.onUndo,
     required this.controller,
     required this.annotations,
     required this.autoReplay,
@@ -26,6 +28,8 @@ class _ReviewActionBar extends StatelessWidget {
     required this.onShortcuts,
   });
   final Candidate candidate;
+  final bool canUndo;
+  final VoidCallback onUndo;
   final VideoPlayerController? controller;
   final bool annotations;
   final bool autoReplay;
@@ -358,6 +362,7 @@ class _ReviewActionBar extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
               child: Row(
                 children: [
+                  _ReviewUndoButton(onPressed: canUndo ? onUndo : null),
                   IconButton(
                     onPressed: onPlayer,
                     tooltip: context.bheText(
@@ -494,4 +499,21 @@ class _ReviewProgressHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ReviewUndoButton extends StatelessWidget {
+  const _ReviewUndoButton({required this.onPressed});
+
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    key: const ValueKey('review-undo-bottom'),
+    onPressed: onPressed,
+    tooltip: context.bheText('撤销上一步'),
+    icon: const Icon(LucideIcons.rotateCcw, size: 19),
+    visualDensity: VisualDensity.compact,
+    padding: EdgeInsets.zero,
+    constraints: const BoxConstraints.tightFor(width: 40, height: 48),
+  );
 }

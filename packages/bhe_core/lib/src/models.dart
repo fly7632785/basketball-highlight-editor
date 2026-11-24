@@ -29,6 +29,9 @@ class VideoInfo {
     required this.width,
     required this.height,
     this.sha256,
+    this.capturedAt,
+    this.frameRate,
+    this.codec,
   });
 
   final String path;
@@ -38,6 +41,9 @@ class VideoInfo {
   final int width;
   final int height;
   final String? sha256;
+  final DateTime? capturedAt;
+  final double? frameRate;
+  final String? codec;
 
   Map<String, dynamic> toJson() => {
     'path': path,
@@ -47,6 +53,9 @@ class VideoInfo {
     'width': width,
     'height': height,
     if (sha256 != null) 'sha256': sha256,
+    if (capturedAt != null) 'captured_at': capturedAt!.toIso8601String(),
+    if (frameRate != null) 'frame_rate': frameRate,
+    if (codec != null) 'codec': codec,
   };
 
   factory VideoInfo.fromJson(Map<String, dynamic> json) => VideoInfo(
@@ -57,6 +66,9 @@ class VideoInfo {
     width: (json['width'] as num?)?.toInt() ?? 0,
     height: (json['height'] as num?)?.toInt() ?? 0,
     sha256: json['sha256'] as String?,
+    capturedAt: DateTime.tryParse(json['captured_at'] as String? ?? ''),
+    frameRate: (json['frame_rate'] as num?)?.toDouble(),
+    codec: json['codec'] as String?,
   );
 }
 

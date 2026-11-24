@@ -46,12 +46,14 @@ class FramePipeline(
         private set
     private var fallbackRetriever: MediaMetadataRetriever? = null
     private var outputImageUnavailableLogged = false
-    private var fallbackCount = 0
+    var fallbackCount = 0
+        private set
 
     /** Opens the video and prepares the decoder near [startUs]. */
-    fun prepare(startUs: Long = 0L) {
+    fun prepare(startUs: Long = 0L) = DecodeWindowPolicy.decode {
         val ext = MediaExtractor()
-        ext.setDataSource(videoPath)
+        extractor = ext
+        VideoInput.open(ext, videoPath)
         for (i in 0 until ext.trackCount) {
             val format = ext.getTrackFormat(i)
             if (format.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true) {
@@ -77,14 +79,32 @@ class FramePipeline(
             // beginning of a potentially long source video.
             ext.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
         }
-        val format = ext.getTrackFormat(trackIndex)
+        val originalFormat = ext.getTrackFormat(trackIndex)
+        val format = DolbyVisionFormat.forDecode(originalFormat)
         val mime = format.getString(MediaFormat.KEY_MIME)!!
         if (format.containsKey(MediaFormat.KEY_ROTATION)) {
             rotationDegrees = format.getInteger(MediaFormat.KEY_ROTATION)
         }
-        codec = MediaCodec.createDecoderByType(mime).also { it.configure(format, null, null, 0); it.start() }
-        extractor = ext
-        Log.i(tag, "prepared ${videoWidth}x${videoHeight} mime=$mime startUs=$startUs")
+        fun startDecoder(config: MediaFormat): MediaCodec {
+            val decoder = MediaCodec.createDecoderByType(config.getString(MediaFormat.KEY_MIME)!!)
+            try {
+                decoder.configure(config, null, null, 0)
+                decoder.start()
+                return decoder
+            } catch (error: Exception) {
+                decoder.release()
+                throw error
+            }
+        }
+        val decoder = try {
+            startDecoder(format)
+        } catch (error: Exception) {
+            if (format === originalFormat) throw error
+            Log.w(tag, "HEVC base-layer decoder unavailable; retrying Dolby Vision", error)
+            startDecoder(originalFormat)
+        }
+        codec = decoder
+        Log.i(tag, "prepared ${videoWidth}x${videoHeight} mime=$mime decoder=${decoder.name} startUs=$startUs")
     }
 
     /**
@@ -190,7 +210,7 @@ class FramePipeline(
         timestampsUs: List<Long>,
         shouldCancel: () -> Boolean,
         onFrame: (Image?, Bitmap?, Long, Long) -> Unit,
-    ): Int {
+    ): FrameDecodeResult = DecodeWindowPolicy.decode { invokeCallback ->
         val ext = extractor ?: error("call prepare() first")
         val decoder = codec ?: error("call prepare() first")
         val info = MediaCodec.BufferInfo()
@@ -199,7 +219,8 @@ class FramePipeline(
         var inputDone = false
         var outputDone = false
         val matchToleranceUs = 0L
-        var lastOutputPtsUs = Long.MIN_VALUE
+        var lastFramePtsUs: Long? = null
+        var missingBeforeEos = false
         while (!outputDone && targetIdx < timestampsUs.size) {
             if (shouldCancel()) {
                 decoder.flush()
@@ -224,47 +245,54 @@ class FramePipeline(
                 outIdx >= 0 -> {
                     try {
                         val pts = info.presentationTimeUs
-                        lastOutputPtsUs = pts
-                        if (targetIdx < timestampsUs.size) {
+                        val eos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                        val codecConfig = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                        // Empty EOS carries the zero timestamp of the input
+                        // marker, never the time of the final video frame.
+                        if (DecodeWindowPolicy.isFrameOutput(eos, codecConfig, info.size)) {
+                            lastFramePtsUs = maxOf(lastFramePtsUs ?: pts, pts)
                             val target = timestampsUs[targetIdx]
                             if (pts + matchToleranceUs >= target) {
                                 var image: Image? = null
+                                val beforeDelivery = delivered
                                 try {
                                     image = try {
-                                        decoder.getOutputImage(outIdx)?.takeIf { it.format == ImageFormat.YUV_420_888 }
+                                        decoder.getOutputImage(outIdx)
                                     } catch (_: IllegalStateException) { null }
-                                    if (image != null && image.planes.all { it.buffer.isDirect }) {
+                                    if (image?.format == ImageFormat.YUV_420_888 && image.planes.all { it.buffer.isDirect }) {
                                         // The JNI path borrows these direct plane buffers only
                                         // during the callback. The caller owns and closes Image.
                                         val borrowedImage = image
                                         image = null
-                                        onFrame(borrowedImage, null, pts, target)
+                                        invokeCallback { onFrame(borrowedImage, null, pts, target) }
+                                        delivered++
                                     } else {
-                                        image?.close()
+                                        val bitmapSource = image
                                         image = null
-                                        val bitmap = renderToBitmap(decoder, outIdx) ?: fallbackFrameAt(target, pts)
+                                        val bitmap = renderToBitmap(decoder, outIdx, bitmapSource) ?: fallbackFrameAt(target, pts)
                                         if (bitmap != null) {
-                                            onFrame(null, bitmap, pts, target)
-                                        } else {
-                                            targetIdx++
-                                            continue
+                                            invokeCallback { onFrame(null, bitmap, pts, target) }
+                                            delivered++
+                                        } else if (!eos) {
+                                            missingBeforeEos = true
                                         }
                                     }
-                                    delivered++
-                                    targetIdx++
+                                    if (!eos || delivered > beforeDelivery) targetIdx++
                                 } finally {
                                     image?.close()
                                 }
                             }
                         }
-                        if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        if (eos) {
+                            val fallbackPts = lastFramePtsUs ?: pts
                             while (targetIdx < timestampsUs.size) {
                                 val target = timestampsUs[targetIdx]
-                                val bitmap = fallbackFrameAt(target, pts) ?: break
-                                onFrame(null, bitmap, pts, target)
+                                if (shouldCancel()) throw InterruptedException("分析已取消")
+                                val bitmap = fallbackFrameAt(target, fallbackPts) ?: break
+                                invokeCallback { onFrame(null, bitmap, fallbackPts, target) }
                                 delivered++
                                 targetIdx++
-                                Log.w(tag, "recovered target at EOS targetUs=$target decoderPtsUs=$pts")
+                                Log.w(tag, "recovered target at EOS targetUs=$target decoderPtsUs=$fallbackPts")
                             }
                             outputDone = true
                         }
@@ -282,14 +310,14 @@ class FramePipeline(
                 }
             }
         }
-        Log.i(tag, "decoded YUV $delivered/${timestampsUs.size} frames lastPtsUs=$lastOutputPtsUs")
-        return delivered
+        Log.i(tag, "decoded YUV $delivered/${timestampsUs.size} frames lastPtsUs=$lastFramePtsUs eos=$outputDone")
+        FrameDecodeResult(delivered, outputDone, lastFramePtsUs, missingBeforeEos)
     }
 
     /** Renders the decoder's current output buffer to an ARGB Bitmap. */
-    private fun renderToBitmap(decoder: MediaCodec, bufferIndex: Int): Bitmap? {
+    private fun renderToBitmap(decoder: MediaCodec, bufferIndex: Int, source: Image? = null): Bitmap? {
         // Method 1: Use Image API (API 21+)
-        val image = try {
+        val image = source ?: try {
             decoder.getOutputImage(bufferIndex)
         } catch (error: IllegalStateException) {
             if (!outputImageUnavailableLogged) {
@@ -298,6 +326,20 @@ class FramePipeline(
             }
             null
         } ?: return null
+        // P010 stores each 10-bit sample in the high bits of a little-endian
+        // 16-bit word. Read its high byte for the existing 8-bit detector.
+        val sampleOffset = when (image.format) {
+            ImageFormat.YUV_420_888 -> 0
+            ImageFormat.YCBCR_P010 -> 1
+            else -> {
+                image.close()
+                return null
+            }
+        }
+        if (image.planes.size < 3) {
+            image.close()
+            return null
+        }
         val sourceWidth = image.width
         val sourceHeight = image.height
         val limit = fallbackMaxDimension?.takeIf { it > 0 }
@@ -327,11 +369,11 @@ class FramePipeline(
                 for (col in 0 until width) {
                     val sourceCol = (col * sourceWidth / width).coerceAtMost(sourceWidth - 1)
                     val yIndex = sourceRow * yStride + sourceCol * yPixStride
-                    val y = (yBuffer.get(yIndex).toInt() and 0xFF) - 16
+                    val y = (yBuffer.get(yIndex + sampleOffset).toInt() and 0xFF) - 16
                     val uIndex = (sourceRow / 2) * uStride + (sourceCol / 2) * uPixStride
-                    val u = (uBuffer.get(uIndex).toInt() and 0xFF) - 128
+                    val u = (uBuffer.get(uIndex + sampleOffset).toInt() and 0xFF) - 128
                     val vIndex = (sourceRow / 2) * vStride + (sourceCol / 2) * vPixStride
-                    val v = (vBuffer.get(vIndex).toInt() and 0xFF) - 128
+                    val v = (vBuffer.get(vIndex + sampleOffset).toInt() and 0xFF) - 128
 
                     var r = (1.164 * y + 1.596 * v).toInt()
                     var g = (1.164 * y - 0.391 * u - 0.813 * v).toInt()
@@ -341,7 +383,7 @@ class FramePipeline(
                 }
             }
             bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
-            return normalizeBitmap(bitmap)
+            return normalizeBitmap(bitmap, rotationDegrees)
         } finally {
             image.close()
         }
@@ -349,32 +391,35 @@ class FramePipeline(
 
     private fun fallbackFrameAt(timestampUs: Long, decodedPtsUs: Long): Bitmap? = try {
         val retriever = fallbackRetriever ?: MediaMetadataRetriever().also {
-            it.setDataSource(videoPath)
+            VideoInput.open(it, videoPath)
             fallbackRetriever = it
         }
         val (width, height) = fallbackOutputSize()
         fallbackCount++
         Log.w(tag, "using retriever fallback #$fallbackCount at targetUs=$timestampUs decoderPtsUs=$decodedPtsUs output=${width}x$height")
+        // The retriever applies track rotation before fitting the bitmap.
         retriever.getScaledFrameAtTime(
             timestampUs,
             MediaMetadataRetriever.OPTION_CLOSEST,
             width,
             height,
-        )?.let(::normalizeBitmap)
+        )?.let { normalizeBitmap(it, rotation = 0) }
     } catch (error: RuntimeException) {
         Log.e(tag, "fallback frame decode failed at $timestampUs", error)
         null
     }
 
     private fun fallbackOutputSize(): Pair<Int, Int> {
-        val limit = fallbackMaxDimension?.takeIf { it > 0 } ?: return videoWidth to videoHeight
-        val scale = minOf(1.0, limit.toDouble() / videoWidth, limit.toDouble() / videoHeight)
-        return (videoWidth * scale).toInt().coerceAtLeast(2) to
-            (videoHeight * scale).toInt().coerceAtLeast(2)
+        val width = displayWidth
+        val height = displayHeight
+        val limit = fallbackMaxDimension?.takeIf { it > 0 } ?: return width to height
+        val scale = minOf(1.0, limit.toDouble() / width, limit.toDouble() / height)
+        return (width * scale).toInt().coerceAtLeast(2) to
+            (height * scale).toInt().coerceAtLeast(2)
     }
 
-    private fun normalizeBitmap(bitmap: Bitmap): Bitmap {
-        val rotated = if (rotationDegrees == 0) {
+    private fun normalizeBitmap(bitmap: Bitmap, rotation: Int): Bitmap {
+        val rotated = if (rotation == 0) {
             bitmap
         } else {
             Bitmap.createBitmap(
@@ -383,14 +428,14 @@ class FramePipeline(
                 0,
                 bitmap.width,
                 bitmap.height,
-                Matrix().apply { postRotate(rotationDegrees.toFloat()) },
+                Matrix().apply { postRotate(rotation.toFloat()) },
                 true,
             ).also { bitmap.recycle() }
         }
         // AndroidBitmap_lockPixels requires a software bitmap with writable
         // pixels. Rotation and retriever fallbacks may return immutable or
         // hardware-backed bitmaps, so normalize those before the JNI call.
-        if (rotated.isMutable && rotated.config != Bitmap.Config.HARDWARE) {
+        if (rotated.isMutable && rotated.config == Bitmap.Config.ARGB_8888) {
             return rotated
         }
         return rotated.copy(Bitmap.Config.ARGB_8888, true)?.also {

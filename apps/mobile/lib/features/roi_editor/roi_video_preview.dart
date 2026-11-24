@@ -98,7 +98,7 @@ class RoiVideoPreview extends ChangeNotifier {
   }
 
   void _failed() {
-    failure = File(_path).existsSync()
+    failure = isContentVideo(_path) || File(_path).existsSync()
         ? VideoSourceFailure.unplayable
         : VideoSourceFailure.missing;
     notifyListeners();

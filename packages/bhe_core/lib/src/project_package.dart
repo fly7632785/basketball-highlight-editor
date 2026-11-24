@@ -71,6 +71,11 @@ class ProjectPackageCodec {
             'size_bytes': project.video!.sizeBytes,
             if (project.video!.sha256 != null)
               'fingerprint': project.video!.sha256,
+            if (project.video!.capturedAt != null)
+              'captured_at': project.video!.capturedAt!.toUtc().toIso8601String(),
+            if (project.video!.frameRate != null)
+              'frame_rate': project.video!.frameRate,
+            if (project.video!.codec != null) 'codec': project.video!.codec,
           },
     'roi': {
       if (project.hoopRoi != null) 'analysis': project.hoopRoi!.toJson(),

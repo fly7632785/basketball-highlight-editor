@@ -79,6 +79,8 @@ flutter {
 }
 
 dependencies {
+    // Match the Media3 version used by video_player_android.
+    implementation("androidx.media3:media3-transformer:1.9.2")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

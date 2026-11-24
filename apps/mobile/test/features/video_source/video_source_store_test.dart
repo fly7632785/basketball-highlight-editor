@@ -65,6 +65,28 @@ void main() {
     return file;
   }
 
+  test(
+    'picker cache cleanup preserves project references and unrelated files',
+    () async {
+      final kept = await input('cache/file_picker/123/kept.mp4', 'referenced');
+      final stale = await input('cache/file_picker/123/stale.mov', 'unused');
+      final recent = await input('cache/file_picker/456/recent.mp4', 'recent');
+      final package = await input(
+        'cache/file_picker/123/project.bhe',
+        'package',
+      );
+      final older = DateTime.now().subtract(const Duration(days: 3));
+      await kept.setLastModified(older);
+      await stale.setLastModified(older);
+      await package.setLastModified(older);
+      await store.cleanUnusedPickerCache({kept.path});
+      expect(await kept.exists(), isTrue);
+      expect(await stale.exists(), isFalse);
+      expect(await recent.exists(), isTrue);
+      expect(await package.exists(), isTrue);
+    },
+  );
+
   Future<String> save(
     File file, {
     String id = 'A',

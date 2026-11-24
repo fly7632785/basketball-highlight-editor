@@ -53,6 +53,27 @@ FriendlyMobileError friendlyMobileError(
           raw.contains('securityexception'))) {
     return const FriendlyMobileError('没有相册保存权限，请在系统设置中允许 BHE 添加照片。');
   }
+  if (code == 'PROJECT_METADATA_TOO_LARGE') {
+    return const FriendlyMobileError('项目数据太大，无法在手机上导入。');
+  }
+  if (code == 'PROJECT_METADATA_MISSING' ||
+      operation == 'project.import' && raw.contains('缺少 project.json')) {
+    return const FriendlyMobileError('项目包缺少 project.json');
+  }
+  if (code == 'PROJECT_READ_PERMISSION') {
+    return const FriendlyMobileError('没有读取这个文件的权限，请重新选择。');
+  }
+  if (code == 'PROJECT_IMPORT_FAILED') {
+    return const FriendlyMobileError('无法导入项目，请重新选择 .bhe 或 .json 文件。');
+  }
+  if (code == 'VIDEO_STORAGE_INSUFFICIENT') {
+    final missing = detail['missingBytes'];
+    if (missing is num && missing > 0) {
+      final gb = (missing / (1024 * 1024 * 1024)).toStringAsFixed(1);
+      return FriendlyMobileError('手机空间不足，还需要约 ${gb == '0.0' ? '0.1' : gb} GB。');
+    }
+    return const FriendlyMobileError('手机存储空间不足，请清理后重试。');
+  }
   if (errno == 28 ||
       raw.contains('enospc') ||
       raw.contains('no space left') ||
@@ -81,6 +102,9 @@ FriendlyMobileError friendlyMobileError(
   if (error is SocketException ||
       operation.startsWith('update') && raw.contains('network')) {
     return const FriendlyMobileError('连不上更新服务器，请检查网络');
+  }
+  if (raw.contains('杜比视界视频转码失败')) {
+    return const FriendlyMobileError('杜比视界视频转码失败，无法导出画面。');
   }
   if (code == 'EXPORT_BUSY') {
     return const FriendlyMobileError('这个输出文件正在导出，请稍后重试。');

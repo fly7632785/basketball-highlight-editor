@@ -5,6 +5,12 @@ import 'package:video_player/video_player.dart';
 import '../diagnostics/mobile_diagnostics.dart';
 import 'video_source_failure.dart';
 
+bool isContentVideo(String path) => path.startsWith('content://');
+
+VideoPlayerController sourceVideoController(String path) => isContentVideo(path)
+    ? VideoPlayerController.contentUri(Uri.parse(path))
+    : VideoPlayerController.file(File(path));
+
 /// Async even for missing files: never notify app state during widget initState.
 Future<VideoPlayerController?> openSourceVideo(
   String path, {
@@ -17,7 +23,7 @@ Future<VideoPlayerController?> openSourceVideo(
 }) async {
   VideoPlayerController? player;
   try {
-    if (!await File(path).exists()) {
+    if (!isContentVideo(path) && !await File(path).exists()) {
       if (isCurrent()) {
         final diagnostic = MobileDiagnostics.instance.error(
           FileSystemException(
@@ -32,7 +38,7 @@ Future<VideoPlayerController?> openSourceVideo(
       }
       return null;
     }
-    player = VideoPlayerController.file(File(path));
+    player = sourceVideoController(path);
     await player.initialize();
     if (isCurrent()) return player;
   } catch (error, stack) {

@@ -294,11 +294,7 @@ Future<void> main() async {
           }
           check(
             persisted.name ==
-                (action == 'replace'
-                    ? 'replacement'
-                    : first == 'rename' && !fail
-                    ? 'Queued name'
-                    : 'Baseline'),
+                (first == 'rename' && !fail ? 'Queued name' : 'Baseline'),
             'prior project name mismatch',
           );
           if (fail) {

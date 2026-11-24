@@ -115,7 +115,7 @@ void main() {
           return;
         }
         if (scenario == 'undo') {
-          final undo = find.byKey(const ValueKey('review-undo-top'));
+          final undo = find.byKey(const ValueKey('review-undo-bottom'));
           expect(tester.widget<IconButton>(undo).onPressed, isNotNull);
           await tester.tap(undo);
           await tester.pump();

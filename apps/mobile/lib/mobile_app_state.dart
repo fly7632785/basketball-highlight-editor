@@ -19,6 +19,7 @@ import 'features/review_undo/review_action_result.dart';
 import 'features/player_roster/roster_selection.dart';
 import 'features/player_groups/player_group_store.dart';
 import 'features/project_list/project_catalog.dart';
+import 'features/project_list/project_video_metadata.dart';
 import 'features/export/export_modes.dart';
 
 export 'features/review_undo/review_action_result.dart';
@@ -27,6 +28,7 @@ import 'features/project_mutation/analysis_candidate_merge.dart';
 import 'features/video_source/project_paths.dart';
 import 'features/video_source/project_file_commit.dart';
 import 'features/video_source/video_source_store.dart';
+import 'features/video_source/video_playback.dart';
 import 'features/video_source/video_source_failure.dart';
 import 'media_bridge.dart';
 import 'features/diagnostics/diagnostic_state.dart';
@@ -81,6 +83,9 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     notifyListeners();
     try {
       try {
+        if (Platform.isAndroid && type == FileType.video) {
+          await _cleanUnusedVideoPickerCache();
+        }
         MobileDiagnostics.instance.event('picker.open.$kind');
         final result = await _filePicker(
           type: type,
@@ -240,7 +245,9 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     markVideoFailure(
       error is VideoSourceMismatch
           ? VideoSourceFailure.mismatch
-          : path != null && !File(path).existsSync()
+          : path != null && (isContentVideo(path)
+              ? error is FileSystemException && error.osError?.errorCode == 2
+              : !File(path).existsSync())
           ? VideoSourceFailure.missing
           : VideoSourceFailure.unplayable,
       diagnostic: MobileDiagnostics.instance.error(
@@ -704,7 +711,10 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       videoSourceFailure == null;
   bool get hasVideo => project.video != null;
   bool get sourceVideoExists =>
-      project.video != null && File(project.video!.path).existsSync();
+      project.video != null &&
+      (isContentVideo(project.video!.path)
+          ? Platform.isAndroid && videoSourceFailure == null
+          : File(project.video!.path).existsSync());
   Duration get analysisElapsed => analysisStartedAt == null
       ? Duration.zero
       : DateTime.now().difference(analysisStartedAt!);
@@ -753,6 +763,11 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         await controller.dispose();
       }
     }
+    _validateVideoIdentity(actual, expected);
+    return actual;
+  }
+
+  void _validateVideoIdentity(VideoInfo actual, VideoInfo? expected) {
     if (expected != null &&
         (expected.width != actual.width ||
             expected.height != actual.height ||
@@ -760,7 +775,44 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
             (expected.sha256 != null && expected.sha256 != actual.sha256))) {
       throw const VideoSourceMismatch();
     }
-    return actual;
+  }
+
+  Future<VideoInfo> _inspectDocument(
+    String path, {
+    required String name,
+    VideoInfo? expected,
+  }) async {
+    final data = await projectMediaChannel.invokeMapMethod<String, dynamic>(
+      'videoMetadata', {'path': path},
+    );
+    final size = (data?['sizeBytes'] as num?)?.toInt();
+    final fingerprint = data?['fingerprint'] as String?;
+    if (size == null || fingerprint == null) {
+      throw FileSystemException('Missing source video', path, const OSError('ENOENT', 2));
+    }
+    final player = sourceVideoController(path);
+    try {
+      await player.initialize();
+      final value = player.value;
+      final modified = (data?['modifiedMs'] as num?)?.toInt();
+      final actual = VideoInfo(
+        path: path,
+        name: name,
+        sizeBytes: size,
+        durationMs: value.duration.inMilliseconds,
+        width: value.size.width.round(),
+        height: value.size.height.round(),
+        sha256: fingerprint,
+        capturedAt: DateTime.tryParse(data?['creationTime'] as String? ?? '') ??
+            (modified == null ? null : DateTime.fromMillisecondsSinceEpoch(modified)),
+        frameRate: (data?['frameRate'] as num?)?.toDouble(),
+        codec: data?['codec'] as String?,
+      );
+      _validateVideoIdentity(actual, expected);
+      return actual;
+    } finally {
+      await player.dispose();
+    }
   }
 
   Future<VideoInfo> _storeVideo(
@@ -771,52 +823,79 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     bool replace = false,
     String? name,
     String? projectName,
+    String? recordingLocale,
     int? projectIntent,
   }) async {
     bool current() =>
         _isCurrentVideoPreparation(generation, snapshot.id, projectIntent);
+    final document = isContentVideo(path);
+    final metadata = !fromPicker || !replace || document ? null :
+        await readProjectVideoMetadata(path, useModifiedTime: true);
+    Future<void> persist(String localPath, VideoInfo info) async {
+      if (!current()) throw const VideoSourceCancelled();
+      final before = project;
+      final video = VideoInfo(
+        path: localPath,
+        name: name ?? before.video?.name ?? info.name,
+        sizeBytes: info.sizeBytes,
+        durationMs: info.durationMs,
+        width: info.width,
+        height: info.height,
+        sha256: info.sha256,
+        capturedAt: info.capturedAt ?? metadata?.capturedAt ?? (replace ? null : before.video?.capturedAt),
+        frameRate: info.frameRate ?? metadata?.frameRate ?? (replace ? null : before.video?.frameRate),
+        codec: info.codec ?? metadata?.codec ?? (replace ? null : before.video?.codec),
+      );
+      var title = projectName;
+      if (recordingLocale != null && video.capturedAt != null) {
+        final base = projectRecordingTitle(video.capturedAt!, video.durationMs, recordingLocale);
+        title = base;
+        var suffix = 2;
+        final used = recentProjects.where((item) => item.id != before.id)
+            .map((item) => item.name).toSet();
+        while (used.contains(title)) {
+          title = '$base (${suffix++})';
+        }
+      }
+      final next = before.copyWith(
+        video: video,
+        name: replace
+            ? (title ?? video.name.replaceFirst(RegExp(r'\.[^.]+$'), ''))
+            : before.name,
+        clearHoopRoi: replace,
+        clearRimRoi: replace,
+        clearNetRoi: replace,
+        candidates: replace ? const [] : before.candidates,
+        clearLastAnalysis: replace,
+      );
+      await _writeProject(next);
+      if (!current()) {
+        await _writeProject(project);
+        throw const VideoSourceCancelled();
+      }
+      project = next;
+      reviewHistory.clear();
+      _setReviewNotice(null);
+      videoSourceRevision++;
+    }
+
+    final expected = replace ? null : snapshot.video;
+    if (document) {
+      final info = await _inspectDocument(
+        path, name: name ?? expected?.name ?? 'video', expected: expected,
+      );
+      await _mutations.run(() => persist(path, info));
+      return info;
+    }
     return _videoStore.save(
       sourcePath: path,
       projectId: snapshot.id,
       previousPath: snapshot.video?.path,
       fromPicker: fromPicker,
       isCurrent: current,
-      validate: (file) =>
-          _inspectVideo(file, expected: replace ? null : snapshot.video),
+      validate: (file) => _inspectVideo(file, expected: expected),
       commit: (action) => _mutations.run(action),
-      persist: (localPath, info) async {
-        if (!current()) throw const VideoSourceCancelled();
-        final before = project;
-        final video = VideoInfo(
-          path: localPath,
-          name: name ?? before.video?.name ?? info.name,
-          sizeBytes: info.sizeBytes,
-          durationMs: info.durationMs,
-          width: info.width,
-          height: info.height,
-          sha256: info.sha256,
-        );
-        final next = before.copyWith(
-          video: video,
-          name: replace
-              ? (projectName ?? video.name.replaceFirst(RegExp(r'\.[^.]+$'), ''))
-              : before.name,
-          clearHoopRoi: replace,
-          clearRimRoi: replace,
-          clearNetRoi: replace,
-          candidates: replace ? const [] : before.candidates,
-          clearLastAnalysis: replace,
-        );
-        await _writeProject(next);
-        if (!current()) {
-          await _writeProject(project);
-          throw const VideoSourceCancelled();
-        }
-        project = next;
-        reviewHistory.clear();
-        _setReviewNotice(null);
-        videoSourceRevision++;
-      },
+      persist: persist,
     );
   }
 
@@ -849,30 +928,28 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     }
   }
 
-  /// Uses the first kept shot that passed the rim check, else the first kept
-  /// shot, else the first candidate.
+  /// Extract the first frame using the platform image generator.
   Future<void> _updateCover(ProjectSnapshot snapshot) async {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
     final video = snapshot.video;
-    if (video == null || snapshot.candidates.isEmpty) return;
-    final candidates = [...snapshot.candidates]
-      ..sort((a, b) => a.eventMs.compareTo(b.eventMs));
-    final kept = candidates
-        .where((item) => item.selection == CandidateSelection.included)
-        .toList();
-    final cover = kept.firstWhere(
-      (item) => item.rimCheckStatus == 'made',
-      orElse: () => kept.isEmpty ? candidates.first : kept.first,
-    );
-    final file = await _coverFile(snapshot.id);
-    final saved = await analysisEngine.extractCover(
-      videoPath: video.path,
-      timeMs: cover.eventMs,
-      outputPath: file.path,
-    );
-    if (!saved) return;
-    await FileImage(file).evict();
-    coverPaths = {...coverPaths, snapshot.id: file.path};
-    notifyListeners();
+    if (video == null) return;
+    try {
+      final file = await _coverFile(snapshot.id);
+      final bool saved;
+      saved = Platform.isIOS
+          ? await projectMediaChannel.invokeMethod<bool>('projectCover', {
+              'videoPath': video.path, 'outputPath': file.path,
+            }) ?? false
+          : await analysisEngine.extractCover(
+              videoPath: video.path, timeMs: 0, outputPath: file.path,
+            );
+      if (!saved) return;
+      await FileImage(file).evict();
+      coverPaths = {...coverPaths, snapshot.id: file.path};
+      notifyListeners();
+    } on Object catch (error, stack) {
+      MobileDiagnostics.instance.error(error, stack, operation: 'project.cover');
+    }
   }
 
   Future<String> _sha256(File file) async {
@@ -901,7 +978,11 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     final expected = project.video;
     if (expected == null) return false;
     try {
-      await _inspectVideo(File(expected.path), expected: expected);
+      if (isContentVideo(expected.path)) {
+        await _inspectDocument(expected.path, name: expected.name, expected: expected);
+      } else {
+        await _inspectVideo(File(expected.path), expected: expected);
+      }
       if (project.video == expected && (applyResult?.call() ?? true)) {
         videoSourceFailure = null;
         diagnosticError = null;
@@ -926,20 +1007,19 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     }
     final generation = _videoPreparationGeneration;
     try {
-      final source = await File(video.path).exists()
+      final source = isContentVideo(video.path) || await File(video.path).exists()
           ? video.path
           : await _videoStore.existingVideo(snapshot.id);
       if (source == null) {
         throw FileSystemException('Missing source video', video.path);
       }
-      // Existing records may share a legacy cache path. Migration is a copy;
-      // only a fresh picker selection grants permission to move its cache.
-      await _storeVideo(
-        source,
-        snapshot,
-        generation,
-        projectIntent: projectIntent,
-      );
+      if (isContentVideo(source)) {
+        await _inspectDocument(source, name: video.name, expected: video);
+      } else {
+        // Existing records may share a legacy cache path. Only a fresh
+        // selection grants permission to move its cache file.
+        await _storeVideo(source, snapshot, generation, projectIntent: projectIntent);
+      }
       if (_isCurrentVideoPreparation(generation, snapshot.id, projectIntent)) {
         videoSourceFailure = null;
         diagnosticError = null;
@@ -1455,7 +1535,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     return id;
   }
 
-  Future<void> createNewProjectAndPickVideo({bool requireIdle = false}) async {
+  Future<void> createNewProjectAndPickVideo({bool requireIdle = false, String? locale}) async {
     if (requireIdle && projectManagementBlockReason != null) return;
     final intent = _newProjectIntent();
     final id = project.id, session = _projectSession;
@@ -1472,6 +1552,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       await _prepareVideo(
         picked.path,
         name: picked.name,
+        locale: locale,
         projectIntent: intent,
       );
     } on Object catch (error, stack) {
@@ -1515,6 +1596,31 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     await _prepareVideo(picked.path, name: picked.name, projectIntent: intent);
   }
 
+  Future<void> _cleanUnusedVideoPickerCache() async {
+    if (loading || preparingVideo || relinkingVideo || projectTransitioning || analysing || exporting) return;
+    // Fail closed: an unreadable project may still reference a picker cache file.
+    try {
+      final data = await _dataDirectory();
+      final catalog = await readProjectCatalog(data);
+      if (catalog.errors.isNotEmpty) return;
+      final legacy = File('${data.path}/project.bhe.json');
+      final snapshots = [
+        project,
+        ...recentProjects,
+        ...catalog.items.map((item) => item.project),
+        if (await legacy.exists())
+          const ProjectPackageCodec().decode(await legacy.readAsString()),
+      ];
+      final paths = snapshots.map((item) => item.video?.path).whereType<String>().toSet();
+      await _videoStore.cleanUnusedPickerCache(paths.where((path) => !isContentVideo(path)).toSet());
+      await projectMediaChannel.invokeMethod<void>('pruneVideoGrants', {
+        'referenced': paths.where(isContentVideo).toList(),
+      });
+    } on Object catch (error, stack) {
+      MobileDiagnostics.instance.error(error, stack, operation: 'video.cache');
+    }
+  }
+
   Future<({String path, String name})?> _pickVideo() async {
     final result = await _pickFiles(type: FileType.video, kind: 'video');
     final file = result?.files.single;
@@ -1530,6 +1636,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   Future<void> _prepareVideo(
     String path, {
     String? name,
+    String? locale,
     int? projectIntent,
   }) async {
     final projectId = project.id;
@@ -1555,7 +1662,8 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         fromPicker: true,
         replace: true,
         name: name,
-        projectName: projectName,
+        projectName: project.video == null ? projectName : project.name,
+        recordingLocale: project.video == null ? (locale ?? Platform.localeName) : null,
         projectIntent: projectIntent,
       );
       if (!_isCurrentVideoPreparation(
@@ -1565,6 +1673,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       )) {
         return;
       }
+      unawaited(_updateCover(project));
       diagnosticError = null;
       errorMessage = null;
       preparingVideoMessage = '正在识别篮筐区域';
@@ -1731,17 +1840,21 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         kind: 'project',
         allowedExtensions: ['bhe', 'json'],
       );
-      final path = result?.files.single.path;
-      if (path == null ||
+      final selected = result?.files.single;
+      if (selected == null ||
           !_isProjectIntent(intent) ||
           project.id != id ||
           _projectSession != session) {
         return;
       }
-      final file = File(path);
-      final content = path.toLowerCase().endsWith('.bhe')
-          ? _readProjectFromArchive(await file.readAsBytes())
-          : await file.readAsString();
+      final metadata = selected.bytes;
+      final path = selected.path;
+      if (metadata == null && path == null) return;
+      final content = path == null
+          ? utf8.decode(metadata!)
+          : path.toLowerCase().endsWith('.bhe')
+          ? _readProjectFromArchive(path)
+          : await File(path).readAsString();
       if (!_isProjectIntent(intent) ||
           project.id != id ||
           _projectSession != session) {
@@ -3266,14 +3379,18 @@ Roi netRoiFromRim(Roi analysisRoi, Roi rimRoi) {
   );
 }
 
-String _readProjectFromArchive(List<int> bytes) {
-  final archive = ZipDecoder().decodeBytes(bytes);
-  final project = archive.files.cast<ArchiveFile?>().firstWhere(
-    (file) => file?.name == 'project.json',
-    orElse: () => null,
-  );
-  if (project == null) throw const FormatException('项目包缺少 project.json');
-  return utf8.decode(project.readBytes() ?? const <int>[]);
+String _readProjectFromArchive(String path) {
+  final input = InputFileStream(path);
+  try {
+    final archive = ZipDecoder().decodeStream(input);
+    final project = archive.find('project.json');
+    if (project == null || !project.isFile) {
+      throw const FormatException('项目包缺少 project.json');
+    }
+    return utf8.decode(project.readBytes() ?? const <int>[]);
+  } finally {
+    input.closeSync();
+  }
 }
 
 /// 可注入的系统文件选择器：默认是 file_picker 的真实实现，测试里换成假实现。
@@ -3286,7 +3403,30 @@ typedef MobileFilePicker =
 Future<FilePickerResult?> _systemFilePicker({
   required FileType type,
   List<String>? allowedExtensions,
-}) => FilePicker.platform.pickFiles(
-  type: type,
-  allowedExtensions: allowedExtensions,
-);
+}) async {
+  if (Platform.isAndroid &&
+      type == FileType.custom &&
+      allowedExtensions?.contains('bhe') == true) {
+    final metadata = await projectMediaChannel.invokeMethod<Uint8List>(
+      'pickProject',
+    );
+    if (metadata == null) return null;
+    // Native opens the URI and returns only the metadata, with no cached ZIP.
+    return FilePickerResult([
+      PlatformFile(name: 'project.json', size: metadata.length, bytes: metadata),
+    ]);
+  }
+  if (Platform.isAndroid && type == FileType.video) {
+    final file = await const MethodChannel('com.bhe.bhe/mobile_media')
+        .invokeMapMethod<String, dynamic>('pickVideo');
+    if (file == null) return null;
+    return FilePickerResult([
+      PlatformFile(path: file['path'] as String, name: file['name'] as String,
+        size: file['size'] as int),
+    ]);
+  }
+  return FilePicker.platform.pickFiles(
+    type: type,
+    allowedExtensions: allowedExtensions,
+  );
+}

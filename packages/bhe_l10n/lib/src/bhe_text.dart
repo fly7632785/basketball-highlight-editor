@@ -102,6 +102,9 @@ String? _translateDynamic(String source) {
   final tagPlus = RegExp(r'^标签 \+(\d+)$').firstMatch(source);
   if (tagPlus != null) return 'Tags +${tagPlus.group(1)}';
 
+  final storage = RegExp(r'^手机空间不足，还需要约 ([0-9.]+) GB。$').firstMatch(source);
+  if (storage != null) return 'Not enough phone storage. Free about ${storage.group(1)} GB and try again.';
+
   final missingOpened = RegExp(r'^第 ([\d、]+) 段的原视频找不到，请在导入页重新定位$').firstMatch(source);
   if (missingOpened != null) {
     return 'The original video for part ${missingOpened.group(1)!.replaceAll('、', ', ')} is missing - relink it on the Import page';
@@ -574,6 +577,20 @@ const _englishText = <String, String>{
   '没有相册保存权限，请在系统设置中允许 BHE 添加照片。': 'BHE does not have permission to save to Photos. Allow photo access in Settings and try again.',
   '出错了：更新操作未完成，请重试。': 'Something went wrong: the update did not finish. Please try again.',
   '出错了：操作未完成，请重试。': 'Something went wrong: the operation did not finish. Please try again.',
+  '项目信息': 'Project information',
+  '原视频文件名': 'Original video filename',
+  '拍摄时间': 'Recorded at',
+  '分辨率 / 帧率': 'Resolution / frame rate',
+  '视频格式': 'Video format',
+  '文件大小': 'File size',
+  '所在位置': 'File location',
+  '分析时间': 'Analyzed at',
+  '候选数': 'Candidates',
+  '杜比视界': 'Dolby Vision',
+  '杜比视界视频转码失败，无法导出画面。': 'Dolby Vision conversion failed, so the video could not be exported.',
+  '时长': 'Duration',
+  '项目名称': 'Project name',
+  '视频导入失败，请重新选择': 'Could not import the video. Please choose it again.',
   '重命名项目': 'Rename project',
   '项目列表': 'Projects',
   '还没有项目': 'No projects yet',
@@ -854,6 +871,8 @@ const _englishText = <String, String>{
   '本地模型复制不完整，请重试。': 'The local model copy is incomplete. Try again.',
   '当前设备未注册移动端分析模块。':
       'The mobile analysis module is not registered on this device.',
+  '项目数据太大，无法在手机上导入。': 'This project contains too much data to import on your phone.',
+  '无法导入项目，请重新选择 .bhe 或 .json 文件。': 'Could not import the project. Select a .bhe or .json file and try again.',
   '项目包缺少 project.json': 'The project package is missing project.json.',
   '当前平台不支持打开文件目录': 'Opening folders is not supported on this platform.',
   '配置草稿加载失败': 'Could not load the setup draft',

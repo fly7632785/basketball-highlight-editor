@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:bhe_l10n/bhe_l10n.dart';
 import 'package:flutter/gestures.dart';
@@ -10,6 +9,7 @@ import 'package:video_player/video_player.dart';
 import 'features/diagnostics/mobile_diagnostics.dart';
 import 'mobile_theme.dart';
 import 'features/video_source/video_unavailable.dart';
+import 'features/video_source/video_playback.dart';
 
 enum ClipRangeHandle { start, end }
 
@@ -129,7 +129,7 @@ class _ClipRangeEditorState extends State<ClipRangeEditor> {
   }
 
   Future<void> _openVideo() async {
-    final player = VideoPlayerController.file(File(widget.videoPath));
+    final player = sourceVideoController(widget.videoPath);
     _player = player;
     player.addListener(_onPlayerChanged);
     try {
