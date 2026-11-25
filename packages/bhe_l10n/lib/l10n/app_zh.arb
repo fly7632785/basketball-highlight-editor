@@ -410,6 +410,15 @@
   "mobileExportSaveAgain": "再次保存所选文件",
   "mobileExportSaved": "已保存到相册",
   "mobileExportSavedToday": "已保存到相册，按今天时间排最前",
+  "mobileExportMissingFiles": "{count} 个文件已不存在",
+  "@mobileExportMissingFiles": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mobileExportMissingFilesDetails": "失效文件清单",
   "mobileExportUnavailableFile": "本机文件已不可用：{name}",
   "@mobileExportUnavailableFile": {
     "placeholders": {

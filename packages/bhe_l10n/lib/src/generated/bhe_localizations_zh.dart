@@ -989,6 +989,14 @@ class BheLocalizationsZh extends BheLocalizations {
   String get mobileExportSavedToday => '已保存到相册，按今天时间排最前';
 
   @override
+  String mobileExportMissingFiles(int count) {
+    return '$count 个文件已不存在';
+  }
+
+  @override
+  String get mobileExportMissingFilesDetails => '失效文件清单';
+
+  @override
   String mobileExportUnavailableFile(String name) {
     return '本机文件已不可用：$name';
   }

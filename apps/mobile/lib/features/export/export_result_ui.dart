@@ -312,6 +312,8 @@ class _ExportResultPageState extends State<_ExportResultPage> {
     final partial = count > 0 && count < planned;
     final complete = count > 0 && !partial;
     final failure = live?.failure;
+    final saveFailure = _didSave ? state.gallerySaveFailure : null;
+    final shareFailure = _didShare ? state.shareFailure : null;
     final uncertain = live != null && state.hasUncertainExport;
     final error = !cancelled && count == 0;
     final canRun = state.exportStartBlockReason == null;
@@ -438,6 +440,35 @@ class _ExportResultPageState extends State<_ExportResultPage> {
                           message: state.exportHistoryWarning!,
                           diagnostic: state.exportHistoryDiagnostic,
                         ),
+                      ),
+                    if (saveFailure != null)
+                      _ExportFailureNotice(
+                        key: const ValueKey('export-save-error'),
+                        title: l10n.mobileExportSaveError,
+                        failure: saveFailure,
+                      ),
+                    if (shareFailure != null)
+                      _ExportFailureNotice(
+                        key: const ValueKey('export-share-error'),
+                        title: l10n.mobileExportShareError,
+                        failure: shareFailure,
+                      ),
+                    if (_newlyMissing.isNotEmpty)
+                      ExpansionTile(
+                        key: const ValueKey('export-missing-files'),
+                        tilePadding: EdgeInsets.zero,
+                        initiallyExpanded: true,
+                        title: Text(l10n.mobileExportMissingFilesDetails),
+                        children: [
+                          _InlineNotice(
+                            error: true,
+                            message: l10n.mobileExportUnavailableFile(
+                              _newlyMissing
+                                  .map((index) => files[index].name)
+                                  .join('\n'),
+                            ),
+                          ),
+                        ],
                       ),
                     if (showRetry && files.isNotEmpty)
                       Wrap(
@@ -593,28 +624,23 @@ class _ExportResultPageState extends State<_ExportResultPage> {
                         value: state.progress.clamp(0, 1),
                       ),
                     ],
-                    if (state.gallerySaveFailure case final saveFailure?
-                        when _didSave)
-                      _ExportFailureNotice(
-                        key: const ValueKey('export-save-error'),
-                        title: l10n.mobileExportSaveError,
-                        failure: saveFailure,
-                      ),
-                    if (state.shareFailure case final shareFailure?
-                        when _didShare)
-                      _ExportFailureNotice(
-                        title: l10n.mobileExportShareError,
-                        failure: shareFailure,
-                      ),
                     if (_checkingSelection)
                       Text(l10n.mobileExportCheckingFiles),
+                    if (saveFailure != null)
+                      Semantics(
+                        liveRegion: true,
+                        child: Text(l10n.mobileExportSaveError),
+                      ),
+                    if (shareFailure != null)
+                      Semantics(
+                        liveRegion: true,
+                        child: Text(l10n.mobileExportShareError),
+                      ),
                     if (_newlyMissing.isNotEmpty)
-                      _InlineNotice(
-                        error: true,
-                        message: l10n.mobileExportUnavailableFile(
-                          _newlyMissing
-                              .map((index) => files[index].name)
-                              .join(', '),
+                      Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          l10n.mobileExportMissingFiles(_newlyMissing.length),
                         ),
                       ),
                     if (paths != null && selected.isEmpty)
@@ -642,9 +668,7 @@ class _ExportResultPageState extends State<_ExportResultPage> {
                           : (origin) => _share(selected, origin),
                       saveText: allSaved
                           ? l10n.mobileExportSaved
-                          : unsaved.isNotEmpty &&
-                                _didSave &&
-                                state.gallerySaveFailure != null
+                          : unsaved.isNotEmpty && saveFailure != null
                           ? l10n.mobileExportTrySaveRemaining(unsaved.length)
                           : l10n.mobileSaveExportCount(unsaved.length),
                       onSave: unsaved.isEmpty || !canRun || fileActionsBusy

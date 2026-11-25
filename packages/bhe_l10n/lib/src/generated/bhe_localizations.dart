@@ -1886,6 +1886,18 @@ abstract class BheLocalizations {
   /// **'已保存到相册，按今天时间排最前'**
   String get mobileExportSavedToday;
 
+  /// No description provided for @mobileExportMissingFiles.
+  ///
+  /// In zh, this message translates to:
+  /// **'{count} 个文件已不存在'**
+  String mobileExportMissingFiles(int count);
+
+  /// No description provided for @mobileExportMissingFilesDetails.
+  ///
+  /// In zh, this message translates to:
+  /// **'失效文件清单'**
+  String get mobileExportMissingFilesDetails;
+
   /// No description provided for @mobileExportUnavailableFile.
   ///
   /// In zh, this message translates to:

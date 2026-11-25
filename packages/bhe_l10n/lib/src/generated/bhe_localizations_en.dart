@@ -1042,6 +1042,20 @@ class BheLocalizationsEn extends BheLocalizations {
   String get mobileExportSavedToday => 'Saved to Photos under today’s date';
 
   @override
+  String mobileExportMissingFiles(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files are missing',
+      one: '1 file is missing',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get mobileExportMissingFilesDetails => 'Missing file list';
+
+  @override
   String mobileExportUnavailableFile(String name) {
     return 'File is no longer available: $name';
   }

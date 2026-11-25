@@ -316,6 +316,8 @@
   "mobileExportSaveAgain": "Save selected again",
   "mobileExportSaved": "Saved to Photos",
   "mobileExportSavedToday": "Saved to Photos under today’s date",
+  "mobileExportMissingFiles": "{count, plural, one{1 file is missing} other{{count} files are missing}}",
+  "mobileExportMissingFilesDetails": "Missing file list",
   "mobileExportUnavailableFile": "File is no longer available: {name}",
   "mobileExportSelectAll": "Select all",
   "mobileExportClearSelection": "Clear selection",

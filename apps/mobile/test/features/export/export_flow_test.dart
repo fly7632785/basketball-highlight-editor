@@ -342,7 +342,7 @@ void main() {
       await tester.tap(first);
       await tester.pump();
       await tester.runAsync(() => tester.tap(find.byKey(_share)));
-      await _until(tester, find.textContaining('Sharing failed'));
+      await _until(tester, find.byKey(const Key('export-share-error')));
       expect(sent, [app.fixture.state.exportedPaths.last]);
       expect(find.text('2 videos ready'), findsOneWidget);
       expect(find.text('Save 1 to Photos'), findsOneWidget);
