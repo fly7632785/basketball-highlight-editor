@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:bhe_core/bhe_core.dart';
+import 'package:bhe_mobile/features/export/export_modes.dart';
 import 'package:bhe_mobile/mobile_app_state.dart';
 import 'package:bhe_mobile/media_bridge.dart';
 import 'package:flutter/services.dart';
@@ -78,6 +79,24 @@ void main() {
     expect(f.state.exportedPaths, paths);
     expect(f.state.exportBatchTotal, 2);
     expect(f.state.exporting, isFalse);
+  });
+  test('selected label alone exports a dual-tag clip to one group', () async {
+    final candidate = f.state.project.candidates.first.copyWith(
+      players: ['Alice', 'Bob'],
+    );
+    f.state.project = f.state.project.copyWith(candidates: [candidate]);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'registerMergeExport') return true;
+          if (call.method == 'mergeClips') {
+            final args = call.arguments as Map;
+            return {'outputPath': args['outputPath'], 'committed': true};
+          }
+          return null;
+        });
+    await f.state.exportByLabels(scope: const ExportScope.only({'Alice'}));
+    expect(f.state.exportBatchFiles.map((file) => file.label), ['Alice']);
+    expect(f.state.exportBatchTotal, 1);
   });
   test('cancel after a committed file stops the remaining groups', () async {
     final releaseStarted = Completer<void>(), release = Completer<void>();

@@ -69,10 +69,12 @@ GameStats computeGameStats(
     }
     kept++;
     if (!candidate.reviewed) unreviewed++;
-    final name = candidate.player?.trim();
-    if (name == null || name.isEmpty) {
-      unassigned++;
-    } else {
+    final names = {
+      for (final label in candidate.effectivePlayers)
+        if (label.trim().isNotEmpty) label.trim(),
+    };
+    if (names.isEmpty) unassigned++;
+    for (final name in names) {
       perPlayer[name] = (perPlayer[name] ?? 0) + 1;
     }
     var event = candidate.eventMs;

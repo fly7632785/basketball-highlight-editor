@@ -3408,14 +3408,22 @@ class _EvidenceSheet extends StatelessWidget {
           label: Text(context.bheText(candidate.note == null ? '写备注' : '编辑备注')),
         ),
         const SizedBox(height: 8),
+        if (candidate.effectivePlayers.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                for (final label in candidate.effectivePlayers)
+                  _PlayerTagChip(player: label),
+              ],
+            ),
+          ),
         OutlinedButton.icon(
           onPressed: () => _showPlayerEditor(context),
           icon: const Icon(LucideIcons.tag, size: 17),
-          label: Text(
-            context.bheText(
-              candidate.player == null ? '选择球员标签' : '球员：${candidate.player}',
-            ),
-          ),
+          label: Text(context.bheText('选择球员标签')),
         ),
       ],
     ),
@@ -3591,6 +3599,7 @@ class _PlayerTagChip extends StatelessWidget {
       child: Text(
         player,
         style: TextStyle(color: color, fontSize: 11),
+        maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
     );
@@ -3603,7 +3612,7 @@ Future<void> _showPlayerPicker(
   Candidate candidate,
 ) async {
   final session = state.projectSession;
-  final value = await showModalBottomSheet<String>(
+  final labels = await showModalBottomSheet<List<String>>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
@@ -3611,22 +3620,11 @@ Future<void> _showPlayerPicker(
     builder: (_) => _PlayerTagSheet(
       state: state,
       players: state.project.players,
-      initialPlayer: candidate.player,
+      initialPlayers: candidate.effectivePlayers,
     ),
   );
-  if (value == null || !context.mounted || session != state.projectSession) return;
-  final normalized = value.trim();
-  final player = normalized.isEmpty ? null : normalized;
-  if (player == candidate.player) return;
-  if (player != null && !state.project.players.contains(player)) {
-    final added = await state.addPlayer(player);
-    if (!context.mounted || session != state.projectSession) return;
-    if (!added) {
-      _showReviewSaveFailure(context, state.diagnosticError);
-      return;
-    }
-  }
-  final saved = await state.setCandidatePlayer(candidate.id, player);
+  if (labels == null || !context.mounted || session != state.projectSession) return;
+  final saved = await state.setCandidatePlayers(candidate.id, labels);
   if (!context.mounted || session != state.projectSession) return;
   if (!saved) {
     _showReviewSaveFailure(context, state.reviewDiagnosticError);
@@ -4021,6 +4019,7 @@ class _ExportViewState extends State<_ExportView> {
         .length;
     final summary = _ExportScopeSummary(
       selected: selected,
+      scope: currentScope,
       omitted: omitted,
       duration: duration,
       folded: folded,

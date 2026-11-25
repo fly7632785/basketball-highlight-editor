@@ -76,7 +76,12 @@ void main() {
         }
         expect(entered.isCompleted, isTrue);
         expect(find.byType(LinearProgressIndicator), findsWidgets);
-        expect(find.text(l10n.text('应用标签')), findsNothing);
+        expect(
+          tester.widget<FilledButton>(
+            find.byKey(const ValueKey('apply-candidate-tags')),
+          ).onPressed,
+          isNull,
+        );
         expect(tester.widget<InkWell>(find.byKey(const ValueKey('player-select-Alice'))).onTap, isNull);
         expect(
           tester

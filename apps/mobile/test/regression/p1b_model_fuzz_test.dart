@@ -255,7 +255,7 @@ Future<void> checkState(MobileVideoFixture f, Model m) async {
       final same = switch (expected.kind) {
         'selection' =>
           a.selection?.name == e.selection && a.reviewed == e.reviewed,
-        'player' => a.player == e.player,
+        'player' => jsonEncode(a.players) == jsonEncode([?e.player]),
         'note' => a.note == e.note,
         'range' =>
           a.startMs == e.start && a.endMs == e.end && a.rangeEdited == e.edited,

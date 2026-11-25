@@ -7,7 +7,7 @@ class ReviewFields {
   const ReviewFields({
     this.selection,
     this.reviewed,
-    this.player,
+    this.players = const [],
     this.note,
     this.startMs,
     this.endMs,
@@ -15,7 +15,7 @@ class ReviewFields {
   });
   final CandidateSelection? selection;
   final bool? reviewed;
-  final String? player;
+  final List<String> players;
   final String? note;
   final int? startMs;
   final int? endMs;
@@ -27,7 +27,7 @@ class ReviewFields {
           selection: c.selection,
           reviewed: c.reviewed,
         ),
-        ReviewChange.player => ReviewFields(player: c.player),
+        ReviewChange.player => ReviewFields(players: c.effectivePlayers),
         ReviewChange.note => ReviewFields(note: c.note),
         ReviewChange.range => ReviewFields(
           startMs: c.startMs,
@@ -41,10 +41,7 @@ class ReviewFields {
       selection: selection,
       reviewed: reviewed,
     ),
-    ReviewChange.player => current.copyWith(
-      player: player,
-      clearPlayer: player == null,
-    ),
+    ReviewChange.player => current.copyWith(players: players),
     ReviewChange.note => current.copyWith(note: note, clearNote: note == null),
     ReviewChange.range => current.copyWith(
       startMs: startMs,
@@ -86,8 +83,13 @@ class ReviewHistory {
     for (final entry in allEntries) {
       if (entry.kind != ReviewChange.player) continue;
       for (final item in entry.before.entries.toList()) {
-        if (item.value.player == oldName) {
-          entry.before[item.key] = ReviewFields(player: newName);
+        if (item.value.players.contains(oldName)) {
+          entry.before[item.key] = ReviewFields(
+            players: [
+              for (final name in item.value.players)
+                if (name == oldName) ...[?newName] else name,
+            ],
+          );
         }
       }
     }

@@ -115,7 +115,7 @@ void main() {
               .setMockMethodCallHandler(paths, (_) async {
                 if (phase == 'clear' &&
                     !clearEntered.isCompleted &&
-                    f.state.project.candidates.isEmpty) {
+                    f.state.project.lastAnalysisStatus == 'running') {
                   clearEntered.complete();
                   await clearRelease.future;
                 }
@@ -145,7 +145,7 @@ void main() {
               } else {
                 await until(
                   () =>
-                      f.state.project.candidates.isEmpty &&
+                      f.state.project.lastAnalysisStatus == 'running' &&
                       !f.state.canUndoReview,
                   'first progress commit',
                 );

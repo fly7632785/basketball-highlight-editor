@@ -46,6 +46,7 @@ class _ExportModeSelector extends StatelessWidget {
 class _ExportScopeSummary extends StatelessWidget {
   const _ExportScopeSummary({
     required this.selected,
+    required this.scope,
     required this.omitted,
     required this.duration,
     required this.folded,
@@ -55,6 +56,7 @@ class _ExportScopeSummary extends StatelessWidget {
   });
 
   final List<Candidate> selected;
+  final ExportScope scope;
   final Map<MobileTier, int> omitted;
   final int duration;
   final int folded;
@@ -65,7 +67,7 @@ class _ExportScopeSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final groups = mode == MobileOutputMode.labels
-        ? labelExportGroups(selected)
+        ? labelExportGroups(selected, scope: scope)
         : const <LabelExportGroup>[];
     final videoCount = mode == MobileOutputMode.merged ? 1 : groups.length;
     final summary = selected.isEmpty
@@ -146,7 +148,7 @@ class _ExportModeCard extends StatelessWidget {
     final (title, description) = switch (mode) {
       MobileOutputMode.clips => ('每个片段原样导出', '分别保存每个片段'),
       MobileOutputMode.merged => ('合并成一个视频', '按时间拼成一条集锦'),
-      MobileOutputMode.labels => ('每个标签各合成一个视频', '没标签的不导出；有两个标签的两边都放'),
+      MobileOutputMode.labels => ('每个标签各合成一个视频', '只为选中的标签生成视频，不限时按全部标签分组'),
     };
     final colors = Theme.of(context).colorScheme;
     return Material(

@@ -478,14 +478,23 @@ class _ReviewTierCandidateTile extends StatelessWidget {
                       if (players.isNotEmpty)
                         Flexible(
                           flex: 2,
-                          child: Wrap(
-                            alignment: WrapAlignment.end,
-                            spacing: 4,
-                            runSpacing: 4,
-                            children: [
-                              for (final name in players)
-                                _PlayerTagChip(player: name),
-                            ],
+                          child: Tooltip(
+                            message: players.join(', '),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              spacing: 4,
+                              children: [
+                                for (final name in players.take(2))
+                                  Flexible(child: _PlayerTagChip(player: name)),
+                                if (players.length > 2)
+                                  Text(
+                                    '+${players.length - 2}',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.labelSmall,
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
                     ],

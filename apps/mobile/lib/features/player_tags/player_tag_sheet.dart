@@ -4,11 +4,11 @@ class _PlayerTagSheet extends StatefulWidget {
   const _PlayerTagSheet({
     required this.state,
     required this.players,
-    this.initialPlayer,
+    required this.initialPlayers,
   });
   final MobileAppState state;
   final List<String> players;
-  final String? initialPlayer;
+  final List<String> initialPlayers;
 
   @override
   State<_PlayerTagSheet> createState() => _PlayerTagSheetState();
@@ -18,7 +18,7 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
   late final TextEditingController _input;
   late List<String> _players;
   late final int _session;
-  String? _selected;
+  late Set<String> _selected;
   bool _creating = false;
   bool _saving = false;
   bool _saveFailed = false;
@@ -31,7 +31,7 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
     super.initState();
     _session = widget.state.projectSession;
     widget.state.addListener(_onProjectState);
-    _selected = widget.initialPlayer;
+    _selected = widget.initialPlayers.toSet();
     _players = [...widget.players];
     _input = TextEditingController();
   }
@@ -61,14 +61,50 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
     super.dispose();
   }
 
-  void _close(String value) {
-    if (mounted && !_saving) Navigator.of(context).pop(value);
+  Future<bool> _saveRosterChange(
+    Future<bool> Function() change, {
+    String Function()? rejectedMessage,
+  }) async {
+    setState(() {
+      _saving = true;
+      _saveFailed = false;
+    });
+    final previousDiagnostic = widget.state.diagnosticError;
+    final success = await change();
+    if (!mounted || _closeIfStale()) return false;
+    setState(() {
+      _saving = false;
+      _saveFailed = !success;
+      _failureHasDiagnostic = !identical(
+        previousDiagnostic,
+        widget.state.diagnosticError,
+      );
+      _failureRecord = _failureHasDiagnostic
+          ? widget.state.diagnosticError
+          : null;
+      _failureMessage = _failureHasDiagnostic
+          ? '保存失败，请重试'
+          : rejectedMessage?.call() ?? '操作已取消';
+      if (success) _players = [...widget.state.project.players];
+    });
+    return success;
+  }
+
+  Future<void> _addLabel(String input) async {
+    final name = input.trim();
+    if (_saving || name.isEmpty) return;
+    if (!await _saveRosterChange(() => widget.state.addPlayer(name))) return;
+    setState(() {
+      _selected.add(name);
+      _creating = false;
+      _input.clear();
+    });
   }
 
   Future<void> _managePlayer(String player, String action) async {
     if (action == 'delete') {
       final count = widget.state.project.candidates
-          .where((c) => c.player == player)
+          .where((c) => c.effectivePlayers.contains(player))
           .length;
       final confirmed = await showDialog<bool>(
         context: context,
@@ -80,9 +116,7 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
           ),
           content: count == 0
               ? null
-              : Text(
-                  '${context.bheText('已标记的')} $count ${context.bheText('个片段会变成未标记。')}',
-                ),
+              : Text('${context.bheText('移除此标签的片段数')} $count'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialog, false),
@@ -97,31 +131,9 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
         ),
       );
       if (confirmed != true || !mounted) return;
-      setState(() {
-        _saving = true;
-        _saveFailed = false;
-      });
-      final previousDiagnostic = widget.state.diagnosticError;
-      final success = await widget.state.removePlayer(player);
-      if (!mounted) return;
-      if (_closeIfStale()) return;
-      setState(() {
-        _saving = false;
-        _saveFailed = !success;
-        _failureHasDiagnostic = !identical(
-          previousDiagnostic,
-          widget.state.diagnosticError,
-        );
-        _failureRecord = _failureHasDiagnostic
-            ? widget.state.diagnosticError
-            : null;
-        _failureMessage = _failureHasDiagnostic ? '保存失败，请重试' : '操作已取消';
-      });
-      if (!success) return;
-      setState(() {
-        _players = [...widget.state.project.players];
-        if (_selected == player) _selected = null;
-      });
+      if (await _saveRosterChange(() => widget.state.removePlayer(player))) {
+        setState(() => _selected.remove(player));
+      }
       return;
     }
     final name = await showDialog<String>(
@@ -129,35 +141,17 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
       builder: (_) => _RenamePlayerDialog(state: widget.state, player: player),
     );
     if (name == null || !mounted) return;
-    setState(() {
-      _saving = true;
-      _saveFailed = false;
-    });
-    final previousDiagnostic = widget.state.diagnosticError;
-    final success = await widget.state.renamePlayer(player, name);
-    if (!mounted) return;
-    if (_closeIfStale()) return;
-    setState(() {
-      _saving = false;
-      _saveFailed = !success;
-      _failureHasDiagnostic = !identical(
-        previousDiagnostic,
-        widget.state.diagnosticError,
-      );
-      _failureRecord = _failureHasDiagnostic
-          ? widget.state.diagnosticError
-          : null;
-      _failureMessage = _failureHasDiagnostic
-          ? '保存失败，请重试'
-          : widget.state.project.players.contains(name)
-          ? '已有同名球员'
-          : '操作已取消';
-    });
-    if (!success) return;
-    setState(() {
-      _players = [...widget.state.project.players];
-      if (_selected == player) _selected = name;
-    });
+    if (await _saveRosterChange(
+      () => widget.state.renamePlayer(player, name),
+      rejectedMessage: () =>
+          widget.state.project.players.contains(name) ? '已有同名球员' : '操作已取消',
+    )) {
+      setState(() {
+        _selected = {
+          for (final label in _selected) label == player ? name : label,
+        };
+      });
+    }
   }
 
   Future<void> _openGroups() async {
@@ -210,42 +204,85 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(12),
                 clipBehavior: Clip.antiAlias,
-                child: Column(children: [
-                  for (final (index, player) in _players.indexed) ...[
-                    if (index > 0) const Padding(
-                      padding: EdgeInsets.only(left: 16),
-                      child: Divider(height: 1),
-                    ),
-                    Row(children: [
-                      Expanded(child: InkWell(
-                        key: ValueKey('player-select-$player'),
-                        onTap: _saving ? null : () => _close(player),
-                        child: Container(
-                          constraints: const BoxConstraints(minHeight: 52),
-                          padding: const EdgeInsets.fromLTRB(16, 0, 4, 0),
-                          color: _selected == player ? BhePalette.orange.withValues(alpha: .10) : null,
-                          child: Row(children: [
-                            Expanded(child: Text(player, overflow: TextOverflow.ellipsis,
-                              style: _selected == player ? const TextStyle(color: BhePalette.orange, fontWeight: FontWeight.bold) : null)),
-                            if (_selected == player) const Icon(LucideIcons.check, size: 18, color: BhePalette.orange),
-                          ]),
+                child: Column(
+                  children: [
+                    for (final (index, player) in _players.indexed) ...[
+                      if (index > 0)
+                        const Padding(
+                          padding: EdgeInsets.only(left: 16),
+                          child: Divider(height: 1),
                         ),
-                      )),
-                      PopupMenuButton<String>(
-                        key: ValueKey('player-menu-$player'),
-                        tooltip: context.bheText('更多操作'),
-                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                        icon: const Icon(LucideIcons.ellipsis),
-                        enabled: !_saving,
-                        onSelected: (action) => _managePlayer(player, action),
-                        itemBuilder: (context) => [
-                          PopupMenuItem(value: 'rename', child: Text(context.bheText('重命名'))),
-                          PopupMenuItem(value: 'delete', child: Text(context.bheText('删除'))),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: InkWell(
+                              key: ValueKey('player-select-$player'),
+                              onTap: _saving
+                                  ? null
+                                  : () => setState(() {
+                                      if (!_selected.remove(player))
+                                        _selected.add(player);
+                                    }),
+                              child: Container(
+                                constraints: const BoxConstraints(
+                                  minHeight: 52,
+                                ),
+                                padding: const EdgeInsets.fromLTRB(16, 0, 4, 0),
+                                color: _selected.contains(player)
+                                    ? BhePalette.orange.withValues(alpha: .10)
+                                    : null,
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        player,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: _selected.contains(player)
+                                            ? const TextStyle(
+                                                color: BhePalette.orange,
+                                                fontWeight: FontWeight.bold,
+                                              )
+                                            : null,
+                                      ),
+                                    ),
+                                    if (_selected.contains(player))
+                                      const Icon(
+                                        LucideIcons.check,
+                                        size: 18,
+                                        color: BhePalette.orange,
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          PopupMenuButton<String>(
+                            key: ValueKey('player-menu-$player'),
+                            tooltip: context.bheText('更多操作'),
+                            constraints: const BoxConstraints(
+                              minWidth: 48,
+                              minHeight: 48,
+                            ),
+                            icon: const Icon(LucideIcons.ellipsis),
+                            enabled: !_saving,
+                            onSelected: (action) =>
+                                _managePlayer(player, action),
+                            itemBuilder: (context) => [
+                              PopupMenuItem(
+                                value: 'rename',
+                                child: Text(context.bheText('重命名')),
+                              ),
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Text(context.bheText('删除')),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
-                    ]),
+                    ],
                   ],
-                ]),
+                ),
               ),
             ],
             const SizedBox(height: 14),
@@ -260,12 +297,14 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
                   hintText: context.bheText('例如 #10 Kobe'),
                   prefixIcon: const Icon(LucideIcons.tag, size: 18),
                   suffixIcon: TextButton(
-                    onPressed: _saving || _input.text.trim().isEmpty ? null : () => _close(_input.text.trim()),
-                    child: Text(Localizations.localeOf(context).languageCode == 'zh' ? '添加' : 'Add'),
+                    onPressed: _saving || _input.text.trim().isEmpty
+                        ? null
+                        : () => _addLabel(_input.text),
+                    child: Text(context.bheText('添加')),
                   ),
                 ),
                 onChanged: (_) => setState(() {}),
-                onSubmitted: (value) { if (value.trim().isNotEmpty) _close(value.trim()); },
+                onSubmitted: _addLabel,
               )
             else
               Row(
@@ -288,9 +327,27 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
                 ],
               ),
             const SizedBox(height: 16),
-            OutlinedButton(
-              onPressed: _saving || _selected == null ? null : () => _close(''),
-              child: Text(context.bheText('清除标签')),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _saving || _selected.isEmpty
+                        ? null
+                        : () => setState(_selected.clear),
+                    child: Text(context.bheText('清除标签')),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    key: const ValueKey('apply-candidate-tags'),
+                    onPressed: _saving
+                        ? null
+                        : () => Navigator.pop(context, _selected.toList()),
+                    child: Text(context.bheText('应用标签')),
+                  ),
+                ),
+              ],
             ),
           ],
         ),

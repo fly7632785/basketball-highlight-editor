@@ -7,6 +7,7 @@ import 'package:archive/archive_io.dart';
 import 'package:bhe_core/bhe_core.dart';
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -475,7 +476,10 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
           ReviewChange.selection =>
             old.selection != updated.selection ||
                 old.reviewed != updated.reviewed,
-          ReviewChange.player => old.player != updated.player,
+          ReviewChange.player => !listEquals(
+            old.effectivePlayers,
+            updated.effectivePlayers,
+          ),
           ReviewChange.note => old.note != updated.note,
           ReviewChange.range =>
             old.startMs != updated.startMs ||
@@ -1182,7 +1186,11 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         if (!await _submitProjectChange(
           (value) => value.copyWith(
             candidates: completed
-                ? mergeAnalysisCandidates(value.candidates, update.candidates)
+                ? value.candidates.any(
+                    (candidate) => candidate.effectivePlayers.isNotEmpty,
+                  )
+                    ? inheritAnalysisTags(value.candidates, update.candidates)
+                    : mergeAnalysisCandidates(value.candidates, update.candidates)
                 : null,
             lastAnalysisStatus: status,
             lastAnalysisMessage: message,
@@ -2198,17 +2206,21 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     ],
   );
 
-  Future<bool> setCandidatePlayer(String id, String? player) => _changeReview(
-    kind: ReviewChange.player,
-    focusId: id,
-    notice: '已设标签',
-    change: (items) => [
-      for (final item in items)
-        item.id == id
-            ? item.copyWith(player: player, clearPlayer: player == null)
-            : item,
-    ],
-  );
+  Future<bool> setCandidatePlayer(String id, String? player) =>
+      setCandidatePlayers(id, [?player]);
+
+  Future<bool> setCandidatePlayers(String id, List<String> players) {
+    final ordered = List<String>.unmodifiable(players.toSet());
+    return _changeReview(
+      kind: ReviewChange.player,
+      focusId: id,
+      notice: '已设标签',
+      change: (items) => [
+        for (final item in items)
+          item.id == id ? item.copyWith(players: ordered) : item,
+      ],
+    );
+  }
 
   Future<bool> addPlayer(String player) {
     final normalized = player.trim();
@@ -2250,8 +2262,13 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         ],
         candidates: [
           for (final c in project.candidates)
-            if (c.player == oldName)
-              c.copyWith(player: newName, clearPlayer: newName == null)
+            if (c.effectivePlayers.contains(oldName))
+              c.copyWith(
+                players: [
+                  for (final name in c.effectivePlayers)
+                    if (name == oldName) ...[?newName] else name,
+                ],
+              )
             else
               c,
         ],
@@ -3003,13 +3020,20 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       final initialMessage = progressMessage;
       StreamController<AnalysisProgress>? controller;
       StreamSubscription<AnalysisProgress>? sourceSubscription;
+      var keepTagSources = false;
       if (!await _submitProjectChange(
-        (current) => current.copyWith(
-          candidates: const [],
-          lastAnalysisStatus: 'running',
-          lastAnalysisProgressPercent: 0,
-          lastAnalysisMessage: initialMessage,
-        ),
+        (current) {
+          // Keep the old review on disk until the successful replacement.
+          keepTagSources = current.candidates.any(
+            (candidate) => candidate.effectivePlayers.isNotEmpty,
+          );
+          return current.copyWith(
+            candidates: keepTagSources ? null : const [],
+            lastAnalysisStatus: 'running',
+            lastAnalysisProgressPercent: 0,
+            lastAnalysisMessage: initialMessage,
+          );
+        },
         guard: intentCurrent,
         recheckAfterWrite: true,
         inverse: (before) => _restoreOperationFields(before, {
@@ -3105,10 +3129,9 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         lastCheckpoint = percent;
         if (!await _submitProjectChange(
           (current) => current.copyWith(
-            candidates: mergeAnalysisCandidates(
-              current.candidates,
-              update.candidates,
-            ),
+            candidates: keepTagSources
+                ? null
+                : mergeAnalysisCandidates(current.candidates, update.candidates),
             lastAnalysisStatus: 'running',
             lastAnalysisProgressPercent: percent,
             lastAnalysisMessage: update.message,
@@ -3133,6 +3156,8 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         (current) => current.copyWith(
           candidates: latestCandidates == null
               ? null
+              : keepTagSources
+              ? inheritAnalysisTags(current.candidates, latestCandidates)
               : mergeAnalysisCandidates(current.candidates, latestCandidates),
           lastAnalysisDurationMs: duration,
           lastAnalysisAt: completedAt,

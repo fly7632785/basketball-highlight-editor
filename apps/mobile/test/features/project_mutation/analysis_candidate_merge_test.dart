@@ -2,7 +2,60 @@ import 'package:bhe_core/bhe_core.dart';
 import 'package:bhe_mobile/features/project_mutation/analysis_candidate_merge.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../support/mobile_video_fixture.dart';
+
+class _RepeatEngine extends MobileAnalysisEngineUnavailable {
+  const _RepeatEngine();
+
+  @override
+  Stream<AnalysisProgress> analyze({
+    required VideoInfo video,
+    required Roi hoopRoi,
+    Roi? rimRoi,
+    required Roi netRoi,
+    required AnalysisSettings settings,
+  }) async* {
+    yield const AnalysisProgress(
+      stage: AnalysisStage.completed,
+      progress: 1,
+      message: 'done',
+      candidates: [
+        Candidate(id: 'goal', startMs: 1050, endMs: 3050, eventMs: 2050),
+        Candidate(id: 'other', startMs: 6600, endMs: 8200, eventMs: 7500),
+      ],
+    );
+  }
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('redo analysis transfers both tags only to the same ID', () async {
+    final f = MobileVideoFixture();
+    await f.init(engine: const _RepeatEngine());
+    addTearDown(f.close);
+    final video = await f.file('original.mp4', 'original');
+    final base = f.project(video.path);
+    f.state.project = base.copyWith(
+      players: ['Alice', 'Bob'],
+      candidates: [
+        base.candidates.single.copyWith(players: ['Bob', 'Alice']),
+        const Candidate(
+          id: 'old-other',
+          startMs: 6500,
+          endMs: 8100,
+          eventMs: 7420,
+          players: ['Alice', 'Bob'],
+        ),
+      ],
+    );
+    await f.state.startAnalysis();
+    expect(f.state.project.lastAnalysisStatus, 'completed');
+    final clips = f.state.project.candidates;
+    expect(clips.map((candidate) => candidate.id), ['goal', 'other']);
+    expect(clips.first.players, ['Bob', 'Alice']);
+    expect(clips.last.players, isEmpty);
+  });
   test('engine updates preserve reviews and manual candidates by ID', () {
     const old = Candidate(
       id: 'a',
@@ -13,7 +66,7 @@ void main() {
       selection: CandidateSelection.excluded,
       reviewed: true,
       note: 'important',
-      player: 'Alice',
+      players: ['Alice', 'Bob'],
     );
     const manual = Candidate(
       id: 'manual',
@@ -43,6 +96,6 @@ void main() {
     expect(result.first.selection, CandidateSelection.excluded);
     expect(result.first.reviewed, isTrue);
     expect(result.first.note, 'important');
-    expect(result.first.player, 'Alice');
+    expect(result.first.players, ['Alice', 'Bob']);
   });
 }

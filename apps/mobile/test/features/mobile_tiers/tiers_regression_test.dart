@@ -44,7 +44,7 @@ class _FoldedState extends MobileAppState {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('both tags produce a group for the same clip', () {
+  test('only unrestricted grouping includes both tags for the same clip', () {
     final groups = labelExportGroups([_clips[1]]);
     expect(
       {for (final group in groups) group.label: group.candidates},
@@ -53,6 +53,12 @@ void main() {
         'Bob': [_clips[1]],
       },
     );
+    final selected = labelExportGroups(
+      [_clips[1]],
+      scope: const ExportScope.only({'Bob'}),
+    );
+    expect(selected.map((group) => group.label), ['Bob']);
+    expect(selected.single.candidates, [_clips[1]]);
   });
 
   test('grouped export never creates an untagged output group', () {

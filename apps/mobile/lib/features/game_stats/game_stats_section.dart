@@ -174,6 +174,11 @@ class _GameStatsBody extends StatelessWidget {
         if (players.isNotEmpty) ...[
           const SizedBox(height: 18),
           Text(context.bheText('每人进球'), style: theme.textTheme.titleSmall),
+          const SizedBox(height: 2),
+          Text(
+            context.bheText('多标签片段分别计入各标签'),
+            style: theme.textTheme.bodySmall,
+          ),
           const SizedBox(height: 8),
           for (final player in players)
             _GameStatsBar(

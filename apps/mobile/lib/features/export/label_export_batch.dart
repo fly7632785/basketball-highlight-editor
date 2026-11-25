@@ -28,7 +28,7 @@ extension MobileLabelExport on MobileAppState {
       await _mutations.drained;
       if (!eligible()) return;
       final selected = scope.select(project.candidates, MobileOutputMode.labels);
-      final groups = labelExportGroups(selected);
+      final groups = labelExportGroups(selected, scope: scope);
       if (groups.isEmpty) {
         errorMessage = '没有可导出的片段';
         _notifyLabelExport();

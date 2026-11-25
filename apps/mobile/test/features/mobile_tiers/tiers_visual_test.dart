@@ -107,6 +107,7 @@ Future<GlobalKey> openCandidateRow(
   Candidate candidate, {
   List<Candidate> others = const [],
   Locale locale = const Locale('zh'),
+  List<String> players = const ['科比', '乔丹'],
 }) async {
   tester.binding.platformDispatcher.localeTestValue = locale;
   addTearDown(tester.binding.platformDispatcher.clearLocaleTestValue);
@@ -117,7 +118,7 @@ Future<GlobalKey> openCandidateRow(
   );
   fixture.state.project = fixture
       .project(file!.path)
-      .copyWith(candidates: [candidate, ...others], players: ['科比', '乔丹']);
+      .copyWith(candidates: [candidate, ...others], players: players);
   final root = GlobalKey();
   addTearDown(() async {
     await tester.pumpWidget(const SizedBox());
@@ -138,6 +139,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final output = Platform.environment['BHE_L513_CAPTURE_DIR'];
   final rowOutput = Platform.environment['BHE_L515_CAPTURE_DIR'];
+  final multiTagOutput = Platform.environment['BHE_L517_CAPTURE_DIR'];
   final font = Platform.environment['BHE_L513_CAPTURE_FONT'];
 
   setUpAll(() async {
@@ -265,6 +267,8 @@ void main() {
     await tester.tap(find.byTooltip('球员标签'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('player-select-科比')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('apply-candidate-tags')));
     await tester.pumpAndSettle();
     await waitProjectWrites(tester, fixture.state.pendingProjectWrites);
     expect(fixture.state.project.candidates.single.player, '科比');
@@ -429,6 +433,62 @@ void main() {
     expectWholeRow('#1  0:03');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'legacy single tag grows into ordered tags and undoes in one edit',
+    (tester) async {
+      final legacy = Candidate.fromJson({
+        'id': 'legacy',
+        'start_ms': 0,
+        'end_ms': 2000,
+        'event_ms': 1000,
+        'player': 'Alice',
+      });
+      expect(legacy.players, ['Alice']);
+      final root = await openCandidateRow(
+        tester,
+        fixture,
+        legacy,
+        locale: const Locale('en'),
+        players: ['Alice', 'Bob', 'Carol', 'Drew'],
+      );
+      await tester.tap(find.byTooltip('Player: Alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('player-select-Bob')));
+      await tester.pumpAndSettle();
+      final save = find.byKey(const ValueKey('apply-candidate-tags'));
+      expect(save, findsOneWidget);
+      expect(fixture.state.project.candidates.single.players, ['Alice']);
+      await tester.tap(find.byKey(const ValueKey('player-select-Carol')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('player-select-Bob')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('player-select-Drew')));
+      await tester.pumpAndSettle();
+      assertEnglishWidgets(tester);
+      if (multiTagOutput != null) {
+        await capture(tester, root, '$multiTagOutput/portrait-tag-picker.png');
+      }
+      await tester.ensureVisible(save);
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      await waitProjectWrites(tester, fixture.state.pendingProjectWrites);
+      expect(fixture.state.project.candidates.single.players, [
+        'Alice',
+        'Carol',
+        'Drew',
+      ]);
+      expect(fixture.state.reviewHistory.allEntries, hasLength(1));
+      expect(find.text('+1'), findsOneWidget);
+      if (multiTagOutput != null) {
+        await capture(tester, root, '$multiTagOutput/portrait-review.png');
+      }
+      await tester.tap(find.byKey(const ValueKey('review-undo-bottom')));
+      await waitProjectWrites(tester, fixture.state.pendingProjectWrites);
+      await tester.pumpAndSettle();
+      expect(fixture.state.project.candidates.single.players, ['Alice']);
+    },
+  );
 
   testWidgets('folded confirmation, filtering, and one-step undo in English', (
     tester,

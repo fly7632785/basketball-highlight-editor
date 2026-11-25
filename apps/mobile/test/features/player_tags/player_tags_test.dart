@@ -1,12 +1,62 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:bhe_core/bhe_core.dart';
+import 'package:bhe_mobile/features/export/export_modes.dart';
+import 'package:bhe_mobile/features/game_stats/game_stats.dart';
 import 'package:bhe_mobile/features/review_undo/review_history.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../../support/mobile_video_fixture.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'a renamed secondary tag still drives export grouping and counts',
+    () async {
+      final f = MobileVideoFixture();
+      await f.init();
+      addTearDown(f.close);
+      final base = f.project('missing.mp4');
+      f.state.project = base.copyWith(
+        players: ['Alice', 'Bob'],
+        candidates: [
+          base.candidates.single.copyWith(players: ['Alice', 'Bob']),
+        ],
+      );
+      expect(await f.state.renamePlayer('Bob', 'Carol'), isTrue);
+      final clips = f.state.project.candidates;
+      expect(labelExportGroups(clips).map((group) => group.label), [
+        'Alice',
+        'Carol',
+      ]);
+      expect(
+        ExportScope.only({'Carol'}).select(clips, MobileOutputMode.labels),
+        clips,
+      );
+      final stats = computeGameStats(clips, f.state.project.players);
+      expect(stats.keptCount, 1);
+      expect(stats.playerCounts, [
+        (name: 'Alice', count: 1),
+        (name: 'Carol', count: 1),
+      ]);
+      expect(await f.state.removePlayer('Carol'), isTrue);
+      expect(f.state.project.candidates.single.players, ['Alice']);
+    },
+  );
+  test('undo of a tag edit restores all previous labels in order', () async {
+    final f = MobileVideoFixture();
+    await f.init();
+    addTearDown(f.close);
+    final base = f.project('missing.mp4');
+    f.state.project = base.copyWith(
+      players: ['Alice', 'Bob', 'Carol'],
+      candidates: [
+        base.candidates.single.copyWith(players: ['Bob', 'Alice']),
+      ],
+    );
+    expect(await f.state.setCandidatePlayer('goal', 'Carol'), isTrue);
+    await f.state.undoReview();
+    expect(f.state.project.candidates.single.players, ['Bob', 'Alice']);
+  });
   test(
     'rename validates, updates every candidate, history and project package',
     () async {
@@ -115,7 +165,7 @@ void main() {
       startMs: 0,
       endMs: 1,
       eventMs: 0,
-      player: 'Alice',
+      players: ['Bob', 'Alice'],
     );
     history.add(
       ReviewEntry(ReviewChange.player, {
@@ -124,9 +174,9 @@ void main() {
     );
     final pending = history.pop()!;
     history.remapPlayer('Alice', 'Carol');
-    expect(pending.before['c']!.player, 'Carol');
+    expect(pending.before['c']!.players, ['Bob', 'Carol']);
     history.remapPlayer('Carol', null);
-    expect(pending.before['c']!.player, isNull);
+    expect(pending.before['c']!.players, ['Bob']);
     expect(history.restore(pending), isTrue);
     expect(history.canUndo, isTrue);
   });

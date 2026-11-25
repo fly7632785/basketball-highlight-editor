@@ -146,7 +146,7 @@ void main() {
     }
   }
   test(
-    'cancel at clear commit waits for engine subscription to actually start',
+    'cancel at running commit waits for engine subscription to actually start',
     () async {
       final f = MobileVideoFixture();
       final engine = LaunchRaceEngine();
@@ -163,7 +163,7 @@ void main() {
         void listener() {
           if (cancel == null &&
               f.state.analysing &&
-              f.state.project.candidates.isEmpty &&
+              f.state.project.lastAnalysisStatus == 'running' &&
               !f.state.canUndoReview) {
             cancel = f.state.cancelAnalysis();
           }
@@ -182,6 +182,7 @@ void main() {
           await File('${f.data.path}/projects/A.json').readAsString(),
         );
         expect(disk.players, ['Bob']);
+        expect(disk.candidates.single.effectivePlayers, ['Alice']);
       } finally {
         if (!engine.done.isCompleted) engine.done.complete();
         await f.close();

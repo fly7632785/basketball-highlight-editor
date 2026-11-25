@@ -373,7 +373,7 @@ class _ReviewActionBar extends StatelessWidget {
                     tooltip: context.bheText(
                       candidate.player == null
                           ? '球员标签'
-                          : '球员：${candidate.player}',
+                          : '球员：${candidate.effectivePlayers.join(', ')}',
                     ),
                     icon: Icon(
                       LucideIcons.tag,

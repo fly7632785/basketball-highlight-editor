@@ -74,11 +74,16 @@ class LabelExportFile {
   final String path;
 }
 
-List<LabelExportGroup> labelExportGroups(Iterable<Candidate> candidates) {
+List<LabelExportGroup> labelExportGroups(
+  Iterable<Candidate> candidates, {
+  ExportScope scope = ExportScope.all,
+}) {
   final groups = <String, List<Candidate>>{};
   for (final candidate in candidates) {
     for (final label in exportLabels(candidate)) {
-      (groups[label] ??= []).add(candidate);
+      if (!scope.active || scope.players.contains(label)) {
+        (groups[label] ??= []).add(candidate);
+      }
     }
   }
   return [

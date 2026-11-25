@@ -17,8 +17,7 @@ List<Candidate> mergeAnalysisCandidates(
         candidate.copyWith(
           selection: old.selection,
           reviewed: old.reviewed,
-          player: old.player,
-          clearPlayer: old.player == null,
+          players: old.effectivePlayers,
           note: old.note,
           clearNote: old.note == null,
           startMs: old.rangeEdited ? old.startMs : null,
@@ -31,7 +30,7 @@ List<Candidate> mergeAnalysisCandidates(
   for (final old in previous.values) {
     if (old.reviewed ||
         old.rangeEdited ||
-        old.player != null ||
+        old.effectivePlayers.isNotEmpty ||
         old.note != null ||
         old.reason == 'manual' ||
         old.selection == CandidateSelection.excluded) {
@@ -40,4 +39,19 @@ List<Candidate> mergeAnalysisCandidates(
   }
   result.sort((a, b) => a.eventMs.compareTo(b.eventMs));
   return result;
+}
+
+/// Carry labels across a completed rerun using the existing ID match.
+List<Candidate> inheritAnalysisTags(
+  List<Candidate> previous,
+  List<Candidate> incoming,
+) {
+  final byId = {for (final candidate in previous) candidate.id: candidate};
+  return [
+    for (final candidate in incoming)
+      if (byId[candidate.id] case final exact?)
+        candidate.copyWith(players: exact.effectivePlayers)
+      else
+        candidate,
+  ]..sort((a, b) => a.eventMs.compareTo(b.eventMs));
 }
