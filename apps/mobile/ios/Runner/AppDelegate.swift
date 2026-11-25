@@ -1518,7 +1518,8 @@ import ImageIO
         return
       }
       PHPhotoLibrary.shared().performChanges({
-        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+        let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+        request?.creationDate = Date()
       }) { success, error in
         DispatchQueue.main.async {
           if success {
