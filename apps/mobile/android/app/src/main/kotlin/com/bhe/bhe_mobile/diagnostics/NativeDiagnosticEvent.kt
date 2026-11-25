@@ -19,6 +19,8 @@ object NativeDiagnosticEvent {
         "rotation_degrees", "yuv_frames", "bitmap_frames", "retriever_attempts",
         "yuv_size", "bitmap_size",
         "codec", "hardware_accelerated", "codec_diagnostic", "cause",
+        "clip_index", "event_ms", "native_error", "error_message",
+        "media3_error_code", "media3_error_name", "media3_message",
     )
     private val mime = Regex("(?:audio|video)/[a-zA-Z0-9._+-]{1,100}")
     fun format(event: String, fields: Map<String, Any?> = emptyMap(), error: Throwable? = null): String {
@@ -28,8 +30,10 @@ object NativeDiagnosticEvent {
             if (key !in keys) continue
             val safe = when (value) {
                 is Number, is Boolean -> value.toString()
-                is String -> value.takeIf {
-                    if (key == "cause") causeChain.matches(it) else token.matches(it) || mime.matches(it)
+                is String -> when (key) {
+                    "cause", "native_error" -> value.takeIf(causeChain::matches)
+                    "error_message", "media3_message" -> NativeFailureDetails.safeClipMessage(value)
+                    else -> value.takeIf { token.matches(it) || mime.matches(it) }
                 }
                 else -> null
             }

@@ -3821,7 +3821,7 @@ class _ExportViewState extends State<_ExportView> {
   Widget build(BuildContext context) {
     final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
     final portraitRequest = state.portraitRequest;
-    if (state.exporting && portraitRequest != null) {
+    if (state.exporting && portraitRequest != null && !state.savingToGallery) {
       return _PortraitExportRunning(
         state: state,
         merging: portraitRequest.mode != MobileOutputMode.clips,
@@ -3932,6 +3932,12 @@ class _ExportViewState extends State<_ExportView> {
                       ),
                     ],
                   ),
+                  if (portraitResults && state.savingToGallery) ...[
+                    const SizedBox(height: 12),
+                    Text(context.bheText(state.progressMessage)),
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(value: state.progress.clamp(0, 1)),
+                  ],
                 ],
               ),
             ),
@@ -4104,7 +4110,7 @@ class _ExportViewState extends State<_ExportView> {
           ),
         const SizedBox(height: 12),
         _GameStatsSection(state: state),
-        if (state.exporting) ...[
+        if (state.exporting && !(portraitResults && state.savingToGallery)) ...[
           const SizedBox(height: 12),
           Card(
             child: Padding(

@@ -735,6 +735,25 @@ class MainActivity : FlutterActivity() {
         "skippedAudioTracks" to selection.skippedAudio.map { mapOf("index" to it.index, "mime" to it.mime) },
     )
 
+    private fun clipDiagnosticFields(
+        call: MethodCall, operation: String, startMs: Long, endMs: Long,
+    ): Map<String, Any?> = mapOf(
+        "operation" to operation,
+        "clip_index" to (call.argument<Any>("clipIndex") as? Number)?.toInt(),
+        "clip_requested_start_us" to startMs * 1000,
+        "clip_end_us" to endMs * 1000,
+        "event_ms" to (call.argument<Any>("eventMs") as? Number)?.toLong(),
+        "duration_ms" to (call.argument<Any>("sourceDurationMs") as? Number)?.toLong(),
+    )
+
+    private fun clipExportFailure(
+        result: MethodChannel.Result, error: Throwable, fields: Map<String, Any?>, code: String = "EXPORT_FAILED",
+    ): () -> Unit {
+        val details = (fields + NativeFailureDetails.clip(error, code)).filterValues { it != null }
+        AppDiagnostics.event("export.failed", details, error)
+        return { result.error(code, details["error_message"] as String, details) }
+    }
+
     private fun exportClip(call: MethodCall, result: MethodChannel.Result) {
         AppDiagnostics.event("export.start", mapOf("operation" to "exportClip"))
         val exportId = call.argument<String>("exportId") ?: outputPathId(call)
@@ -746,6 +765,7 @@ class MainActivity : FlutterActivity() {
             result.error("INVALID_ARGUMENT", "视频片段参数无效", null)
             return
         }
+        val diagnosticFields = clipDiagnosticFields(call, "exportClip", startMs.toLong(), endMs.toLong())
         val reserved = try {
             ExportStart.acquire(
                 { ExportPathRegistry.reserve(exportId, outputPath) },
@@ -769,27 +789,35 @@ class MainActivity : FlutterActivity() {
             var muxer: MediaMuxer? = null
             var muxerStarted = false
             var transcoded: File? = null
+            var stage = "prepare_output"
             try {
                 File(outputPath).parentFile?.mkdirs()
                 File(outputPath).delete()
+                stage = "prepare_source"
                 transcoded = DolbyExportSource.transcodeIfNeeded(applicationContext, inputPath, cancelled)
+                stage = "open_source"
                 val currentExtractor = MediaExtractor()
                 extractor = currentExtractor
                 VideoInput.open(currentExtractor, transcoded?.absolutePath ?: inputPath)
+                stage = "open_muxer"
                 val currentMuxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
                 muxer = currentMuxer
+                stage = "select_tracks"
                 val selection = addExportableTracks(currentExtractor, currentMuxer)
                 val trackMap = selection.trackMap
                 applySourceOrientation(currentExtractor, currentMuxer)
                 trackMap.keys.forEach(currentExtractor::selectTrack)
                 if (trackMap.isEmpty()) throw IllegalStateException("视频没有可导出的音视频轨道")
+                stage = "start_muxer"
                 currentMuxer.start()
                 muxerStarted = true
                 val endUs = endMs.toLong() * 1000L
+                stage = "seek"
                 currentExtractor.seekTo(startMs.toLong() * 1000L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                 val clipStartUs = currentExtractor.sampleTime
                 // -1 且没有样本才是「定位不到」；负的起始 PTS（手机录制常见）是合法时间戳。
                 MergeMediaFinalizer.requireLocation(clipStartUs, currentExtractor.sampleTrackIndex)
+                stage = "mux_samples"
                 var buffer = ByteBuffer.allocate(16 * 1024 * 1024)
                 val info = android.media.MediaCodec.BufferInfo()
                 var writtenVideoSamples = 0L
@@ -815,8 +843,10 @@ class MainActivity : FlutterActivity() {
                     }
                     currentExtractor.advance()
                 }
+                stage = "verify_video_samples"
                 MergeMediaFinalizer.requireVideoSamples(writtenVideoSamples)
                 if (muxerStarted) {
+                    stage = "finish_muxer"
                     currentMuxer.stop()
                     muxerStarted = false
                 }
@@ -828,8 +858,9 @@ class MainActivity : FlutterActivity() {
                 completion = { result.error("EXPORT_CANCELLED", "导出已取消", null) }
             } catch (error: Exception) {
                 File(outputPath).delete()
-                AppDiagnostics.event("export.failed", error = error)
-                completion = { result.error("EXPORT_FAILED", error.message, NativeFailureDetails.from(error)) }
+                completion = clipExportFailure(result, error, diagnosticFields + mapOf(
+                    "stage" to stage, "was_transcoded" to (transcoded != null),
+                ))
             } finally {
                 if (muxerStarted) {
                     try {
@@ -851,8 +882,7 @@ class MainActivity : FlutterActivity() {
                 ExportPathRegistry.finish(exportId)
             })
         } catch (error: Throwable) {
-            AppDiagnostics.event("export.failed", error = error)
-            result.error("EXPORT_FAILED", error.message, NativeFailureDetails.from(error))
+            clipExportFailure(result, error, diagnosticFields + ("stage" to "launch")).invoke()
         }
     }
 
@@ -895,7 +925,10 @@ class MainActivity : FlutterActivity() {
             return
         }
         val (id, range) = parsed
-        launchPortraitTask(id, null, false, "portraitSampling", result) { cancelled, _ ->
+        launchPortraitTask(
+            id, null, false, "portraitSampling", result,
+            clipDiagnosticFields(call, "sampleBallTrack", range.startMs, range.endMs),
+        ) { cancelled, _ ->
             PortraitBallSampler(applicationContext).sample(range, cancelled) { done, total ->
                 emitPortraitProgress(mediaChannel, id, PortraitExportStage.SAMPLING, done, total)
             }
@@ -927,7 +960,10 @@ class MainActivity : FlutterActivity() {
             return
         }
         val (id, range, timeline) = request
-        launchPortraitTask(id, path, false, "portraitRendering", result) { cancelled, output ->
+        launchPortraitTask(
+            id, path, false, "portraitRendering", result,
+            clipDiagnosticFields(call, "exportPortraitClip", range.startMs, range.endMs),
+        ) { cancelled, output ->
             PortraitMedia(applicationContext).render(range, timeline, checkNotNull(output), cancelled) {
                 emitPortraitProgress(mediaChannel, id, PortraitExportStage.ENCODING, it, 100)
             }
@@ -964,6 +1000,7 @@ class MainActivity : FlutterActivity() {
         reserved: Boolean,
         stage: String,
         result: MethodChannel.Result,
+        clipFields: Map<String, Any?>? = null,
         run: (AtomicBoolean, File?) -> Map<String, Any>,
     ) {
         val cancelled = if (reserved) exportCancelled[id] else ExportStart.claimFlag(exportCancelled, id)
@@ -1013,12 +1050,14 @@ class MainActivity : FlutterActivity() {
             } catch (_: InterruptedException) {
                 AppDiagnostics.event("export.cancelled", mapOf("operation" to stage))
                 ({ result.error("EXPORT_CANCELLED", "导出已取消", null) })
-            } catch (error: PortraitSourceAspectException) {
-                AppDiagnostics.event("export.failed", mapOf("operation" to stage), error)
-                ({ result.error("PORTRAIT_SOURCE_ALREADY_VERTICAL", error.message, null) })
             } catch (error: Exception) {
-                AppDiagnostics.event("export.failed", mapOf("operation" to stage), error)
-                ({ result.error("EXPORT_FAILED", error.message, NativeFailureDetails.from(error)) })
+                val code = if (error is PortraitSourceAspectException) "PORTRAIT_SOURCE_ALREADY_VERTICAL" else "EXPORT_FAILED"
+                if (clipFields != null) {
+                    clipExportFailure(result, error, clipFields + ("stage" to stage), code)
+                } else {
+                    AppDiagnostics.event("export.failed", mapOf("operation" to stage), error)
+                    ({ result.error(code, error.message, NativeFailureDetails.from(error)) })
+                }
             } finally {
                 transaction?.let {
                     try {

@@ -74,6 +74,11 @@ void main() {
       expect(sample['sampleHz'], 10);
       expect(sample['startMs'], _first.startMs);
       expect(sample['endMs'], _first.endMs);
+      for (final request in [sample, render]) {
+        expect(request['clipIndex'], 1);
+        expect(request['eventMs'], _first.eventMs);
+        expect(request['sourceDurationMs'], 10000);
+      }
       expect(sample['exportId'], render['exportId']);
       expect(render['inputPath'], fixture.state.project.video!.path);
       expect(render['outWidth'], 1080);
@@ -84,6 +89,32 @@ void main() {
       expect(frames.first['cxNorm'], closeTo(.625, .001));
       expect(fixture.state.portraitNoBallCount, 1);
       expect(fixture.state.project.exportHistory.single.files, hasLength(1));
+    },
+  );
+
+  test(
+    'portrait export forwards a candidate at and past the source tail',
+    () async {
+      const tail = Candidate(
+        id: 'tail',
+        startMs: 9800,
+        endMs: 10200,
+        eventMs: 9983,
+        players: ['Alice'],
+        reviewed: true,
+      );
+      fixture.state.project = fixture.state.project.copyWith(
+        candidates: [tail],
+      );
+      await fixture.state.exportClipsInScope(_goals, framing: _portrait);
+      for (final method in ['sampleBallTrack', 'exportPortraitClip']) {
+        final args = media.callsTo(method).single.arguments as Map;
+        expect(args['clipIndex'], 1);
+        expect(args['sourceDurationMs'], 10000);
+        expect(args['startMs'], 9800);
+        expect(args['eventMs'], 9983);
+        expect(args['endMs'], 10200);
+      }
     },
   );
 

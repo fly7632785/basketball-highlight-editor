@@ -28,6 +28,26 @@ class NativeDiagnosticEventTest {
         )
     }
 
+    @Test fun endOfSourceClipFailureKeepsOnlySafeDiagnosticFields() {
+        val text = NativeDiagnosticEvent.format("export.failed", mapOf(
+            "operation" to "exportPortraitClip", "stage" to "portraitRendering",
+            "clip_index" to 9, "clip_requested_start_us" to 205_000_000L,
+            "clip_end_us" to 208_500_000L, "event_ms" to 208_000, "duration_ms" to 208_300,
+            "code" to "EXPORT_FAILED", "media3_error_code" to 5001,
+            "media3_error_name" to "ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED",
+            "error_message" to "Video frame processing error",
+            "inputPath" to "/private/basketball.mp4",
+        ), IllegalStateException("private basketball.mp4"))
+        assertTrue(text.contains("clip_index=9"))
+        assertTrue(text.contains("clip_end_us=208500000"))
+        assertTrue(text.contains("event_ms=208000 duration_ms=208300"))
+        assertTrue(text.contains("media3_error_code=5001 media3_error_name=ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED"))
+        assertTrue(text.contains("error_message=Video frame processing error"))
+        assertFalse(text.contains("basketball.mp4"))
+        val unsafe = NativeDiagnosticEvent.format("export.failed", mapOf("error_message" to "private-basketball.mp4"))
+        assertEquals("export.failed", unsafe)
+    }
+
     @Test fun nativeUncaughtHandlerDelegatesEvenWhenItsLoggerFails() {
         var original = 0; val failure = IllegalStateException("test")
         val handler = LoggingUncaughtHandler({ throw IllegalStateException("logger unavailable") },

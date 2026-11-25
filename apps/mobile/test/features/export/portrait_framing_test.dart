@@ -320,6 +320,51 @@ void main() {
     await _capture(tester, app.root, 'l525-7-result');
   });
 
+  testWidgets(
+    'saving portrait results to photos keeps export results visible',
+    (tester) async {
+      final app = await _openExport(tester);
+      await _choosePortrait(tester);
+      await tester.runAsync(() => tester.tap(find.text('Start export')));
+      await _finish(tester, app.fixture);
+      expect(find.text('Exported 2 portrait videos'), findsOneWidget);
+
+      final saving = Completer<void>();
+      final enteredSave = Completer<void>();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(FakePortraitMedia.channel, (call) async {
+            if (call.method == 'saveToLibrary') {
+              if (!enteredSave.isCompleted) enteredSave.complete();
+              await saving.future;
+              return null;
+            }
+            return app.media.handle(call);
+          });
+      try {
+        final save = find.text('Save all to gallery');
+        await _scrollTo(tester, save);
+        await tester.runAsync(() => tester.tap(save));
+        for (var i = 0; i < 60 && !enteredSave.isCompleted; i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 15)),
+          );
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        expect(enteredSave.isCompleted, isTrue);
+        await _advance(tester);
+
+        expect(find.text('Exported 2 portrait videos'), findsOneWidget);
+        expect(find.text('Find ball and rim'), findsNothing);
+        await _scrollTo(tester, find.text('Saving to photos 1/2'));
+      } finally {
+        saving.complete();
+        await _finish(tester, app.fixture);
+      }
+      expect(app.fixture.state.gallerySaveNotice, '已保存 2 个片段到相册');
+      expect(find.text('Exported 2 portrait videos'), findsOneWidget);
+    },
+  );
+
   testWidgets('failure shows the clip and allows retry as original', (
     tester,
   ) async {

@@ -1,5 +1,8 @@
 import 'package:bhe_core/bhe_core.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
+import 'package:bhe_mobile/features/diagnostics/diagnostic_report.dart';
+import 'package:bhe_mobile/features/diagnostics/friendly_error.dart';
+import 'package:bhe_mobile/features/diagnostics/mobile_diagnostics.dart';
 import 'package:bhe_mobile/media_bridge.dart';
 import 'package:bhe_mobile/mobile_ui.dart';
 import 'package:flutter/material.dart';
@@ -47,6 +50,75 @@ void main() {
   const candidates = [
     Candidate(id: 'goal', startMs: 0, endMs: 1000, eventMs: 500),
   ];
+  test(
+    'last-clip failure keeps its native phase and source boundary in feedback',
+    () async {
+      final clips = [
+        for (var index = 1; index <= 9; index++)
+          Candidate(
+            id: 'clip-$index',
+            startMs: index == 9 ? 9800 : index * 1000,
+            endMs: index == 9 ? 10200 : index * 1000 + 300,
+            eventMs: index == 9 ? 9983 : index * 1000 + 100,
+          ),
+      ];
+      const details = {
+        'operation': 'exportClip',
+        'stage': 'finish_muxer',
+        'clip_index': 9,
+        'clip_requested_start_us': 9800000,
+        'clip_end_us': 10200000,
+        'event_ms': 9983,
+        'duration_ms': 10000,
+        'native_error': 'java.lang.IllegalStateException',
+      };
+      final calls = <Map>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            final args = call.arguments as Map;
+            calls.add(args);
+            if (args['exportId'] == 'clip-9') {
+              throw PlatformException(
+                code: 'EXPORT_FAILED',
+                message: 'Failed to stop the muxer',
+                details: details,
+              );
+            }
+            return args['outputPath'];
+          });
+
+      final completed = <String>[];
+      MobileDiagnosticException? failure;
+      try {
+        await for (final update in NativeMediaExportEngine().exportClips(
+          video: video,
+          candidates: clips,
+          outputDirectory: 'out',
+        )) {
+          if (update.outputPath case final path?) completed.add(path);
+        }
+      } on MobileDiagnosticException catch (error) {
+        failure = error;
+      }
+      expect(completed, hasLength(8));
+      expect(calls.last, containsPair('clipIndex', 9));
+      expect(calls.last, containsPair('sourceDurationMs', 10000));
+      expect(calls.last, containsPair('eventMs', 9983));
+      expect(calls.last, containsPair('endMs', 10200));
+      final cause = failure!.cause as PlatformException;
+      expect(cause.code, 'EXPORT_FAILED');
+      final report = await buildMobileDiagnosticReport(
+        MobileDiagnostics(),
+        error: DiagnosticErrorRecord(cause, null, failure.operation),
+        text: (text) => text,
+      );
+      for (final field in details.entries) {
+        expect(report, contains('${field.key}: ${field.value}'));
+      }
+      expect(report, contains('Failed to stop the muxer'));
+    },
+  );
+
   for (final merge in [false, true]) {
     test(
       '${merge ? "merged" : "individual"} export returns skipped track metadata and accepts legacy string results',
