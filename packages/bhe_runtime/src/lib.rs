@@ -5772,10 +5772,9 @@ mod tests {
         session.frame_height = 720;
         session.processed_frames = 2;
         session.update_rim_from_detections(&[], 960, 720);
-        session.coarse_points.extend([
-            point(1000, 0.5, 0.4, 0.9),
-            point(1800, 0.5, 0.6, 0.9),
-        ]);
+        session
+            .coarse_points
+            .extend([point(1000, 0.5, 0.4, 0.9), point(1800, 0.5, 0.6, 0.9)]);
         assert!(session.rim_observations.is_empty());
         let response = session.finish().unwrap();
         println!(
