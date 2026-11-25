@@ -4,7 +4,7 @@ import java.io.File
 
 /** Process-wide reservations; a running worker retains its path until cleanup. */
 internal object ExportPathRegistry {
-    private data class Entry(val path: String, var started: Boolean = false)
+    private data class Entry(val path: String?, var started: Boolean = false)
     private val entries = mutableMapOf<String, Entry>()
     private val paths = mutableMapOf<String, String>()
 
@@ -23,6 +23,12 @@ internal object ExportPathRegistry {
         return true
     }
 
+    @Synchronized fun startRead(id: String): Boolean {
+        if (entries.containsKey(id)) return false
+        entries[id] = Entry(null, started = true)
+        return true
+    }
+
     @Synchronized fun releaseIdle(id: String): Boolean {
         val entry = entries[id] ?: return false
         if (entry.started) return false
@@ -34,6 +40,6 @@ internal object ExportPathRegistry {
 
     @Synchronized fun finish(id: String) {
         val entry = entries.remove(id) ?: return
-        paths.remove(entry.path, id)
+        entry.path?.let { paths.remove(it, id) }
     }
 }

@@ -98,6 +98,8 @@ class MainActivity : FlutterActivity() {
                     }
                     "videoMetadata" -> videoMetadata(call, result)
                     "exportClip" -> exportClip(call, result)
+                    "sampleBallTrack" -> sampleBallTrack(call, result)
+                    "exportPortraitClip" -> exportPortraitClip(call, result)
                     "mergeClips" -> mergeClips(call, result)
                     "registerMergeExport" -> registerMergeExport(call, result)
                     "releaseMergeExport" -> releaseMergeExport(call, result)
@@ -679,6 +681,9 @@ class MainActivity : FlutterActivity() {
                     ?: formats.firstOrNull { it.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }
                 if (format != null) {
                     metadata["codec"] = format.getString(MediaFormat.KEY_MIME)
+                    metadata["isHdr"] = isPortraitHdr(
+                        format.getString(MediaFormat.KEY_MIME), format.getInteger(MediaFormat.KEY_COLOR_TRANSFER, -1),
+                    )
                     metadata["frameRate"] = runCatching { format.getInteger(MediaFormat.KEY_FRAME_RATE).toDouble() }
                         .recoverCatching { format.getFloat(MediaFormat.KEY_FRAME_RATE).toDouble() }.getOrNull()
                 }
@@ -882,6 +887,188 @@ class MainActivity : FlutterActivity() {
         result.success(null)
     }
 
+    private fun sampleBallTrack(call: MethodCall, result: MethodChannel.Result) {
+        val parsed = try {
+            val id = portraitId(call)
+            val args = call.arguments as? Map<*, *> ?: throw IllegalArgumentException("Missing portrait arguments")
+            require(args["sampleHz"] == PORTRAIT_SAMPLE_HZ) { "Expected a 10 Hz portrait sample" }
+            id to portraitRange(args)
+        } catch (error: IllegalArgumentException) {
+            result.error("INVALID_ARGUMENT", error.message, null)
+            return
+        }
+        val (id, range) = parsed
+        launchPortraitTask(id, null, false, "portraitSampling", result) { cancelled, _ ->
+            PortraitBallSampler(applicationContext).sample(range, cancelled) { done, total ->
+                emitPortraitProgress(id, "portraitSampling", done, total, "找球和篮筐")
+            }
+        }
+    }
+
+    private fun exportPortraitClip(call: MethodCall, result: MethodChannel.Result) {
+        val request = try {
+            val id = portraitId(call)
+            val args = call.arguments as? Map<*, *> ?: throw IllegalArgumentException("Missing portrait arguments")
+            val range = portraitRange(args)
+            require((args["outWidth"] as? Number)?.toInt() == PORTRAIT_WIDTH &&
+                (args["outHeight"] as? Number)?.toInt() == PORTRAIT_HEIGHT)
+            val points = (args["keyframes"] as? List<*>)?.map { item ->
+                val frame = item as? Map<*, *> ?: throw IllegalArgumentException("Invalid portrait keyframe")
+                PortraitKeyframe(
+                    portraitMillis(frame["tMs"]),
+                    (frame["cxNorm"] as? Number)?.toDouble() ?: Double.NaN,
+                )
+            } ?: throw IllegalArgumentException("Missing portrait keyframes")
+            Triple(id, range, PortraitTimeline(range.startMs, range.endMs, points))
+        } catch (error: IllegalArgumentException) {
+            result.error("INVALID_ARGUMENT", error.message, null)
+            return
+        }
+        val path = call.argument<String>("outputPath")
+        if (path.isNullOrBlank()) {
+            result.error("INVALID_ARGUMENT", "Missing portrait output path", null)
+            return
+        }
+        val (id, range, timeline) = request
+        launchPortraitTask(id, path, false, "portraitRendering", result) { cancelled, output ->
+            PortraitMedia(applicationContext).render(range, timeline, checkNotNull(output), cancelled) {
+                emitPortraitProgress(id, "portraitRendering", it, 100, "裁切并生成画面")
+            }
+            mapOf("outputPath" to path, "skippedAudioTracks" to emptyList<Any>())
+        }
+    }
+
+    private fun mergePortraitClips(call: MethodCall, result: MethodChannel.Result) {
+        val request = try {
+            val id = portraitId(call)
+            val path = call.argument<String>("outputPath")
+            require(!path.isNullOrBlank())
+            val clips = call.argument<List<*>>("clips")?.map {
+                portraitRange(it as? Map<*, *> ?: throw IllegalArgumentException("Invalid rendered clip"))
+            }.orEmpty()
+            require(clips.isNotEmpty() && clips.all { it.startMs == 0L })
+            Triple(id, path, clips)
+        } catch (error: IllegalArgumentException) {
+            result.error("INVALID_ARGUMENT", error.message, null)
+            return
+        }
+        val (id, path, clips) = request
+        launchPortraitTask(id, path, call.argument<Boolean>("reservationRequired") == true, "portraitMerging", result) { cancelled, output ->
+            PortraitMedia(applicationContext).merge(clips, checkNotNull(output), cancelled) {
+                emitPortraitProgress(id, "portraitMerging", it, 100, "合并成一个视频")
+            }
+            mapOf("outputPath" to path, "skippedAudioTracks" to emptyList<Any>(), "committed" to true)
+        }
+    }
+
+    private fun launchPortraitTask(
+        id: String,
+        path: String?,
+        reserved: Boolean,
+        stage: String,
+        result: MethodChannel.Result,
+        run: (AtomicBoolean, File?) -> Map<String, Any>,
+    ) {
+        val cancelled = if (reserved) exportCancelled[id] else ExportStart.claimFlag(exportCancelled, id)
+        if (cancelled == null) {
+            result.error(if (reserved) "EXPORT_CANCELLED" else "EXPORT_BUSY", "竖屏导出任务不可用", null)
+            return
+        }
+        val started = try {
+            if (path == null) ExportPathRegistry.startRead(id) else ExportStart.acquire(
+                { reserved || ExportPathRegistry.reserve(id, path) },
+                { ExportPathRegistry.start(id, path) },
+                { if (ExportPathRegistry.releaseIdle(id)) exportCancelled.remove(id, cancelled) },
+            )
+        } catch (error: Exception) {
+            AppDiagnostics.event("export.failed", mapOf("operation" to stage), error)
+            if (!reserved) exportCancelled.remove(id, cancelled)
+            result.error("EXPORT_FAILED", error.message, NativeFailureDetails.from(error))
+            return
+        }
+        if (!started) {
+            if (!reserved) exportCancelled.remove(id, cancelled)
+            result.error("EXPORT_BUSY", "这个输出文件正在导出，请稍后重试。", null)
+            return
+        }
+        fun finish() {
+            // Once idle is visible, the worker owns no resources and the ID
+            // can be reused by Dart for the next stage.
+            exportCancelled.remove(id, cancelled)
+            ExportPathRegistry.finish(id)
+        }
+        val worker = Thread({
+            var transaction: MergeOutputTransaction? = null
+            val completion: () -> Unit = try {
+                requirePortraitActive(cancelled)
+                if (path != null) {
+                    val destination = File(path).absoluteFile
+                    transaction = MergeOutputTransaction(MergeOutputFiles.create(destination), destination, cancelled) { a, b ->
+                        android.system.Os.rename(a.absolutePath, b.absolutePath)
+                    }
+                    mergeTransactions[id] = transaction
+                }
+                val data = run(cancelled, transaction?.temporary)
+                requirePortraitActive(cancelled)
+                transaction?.publish { /* The media worker verified its container before publishing. */ }
+                AppDiagnostics.event("export.completed", mapOf("operation" to stage))
+                ({ result.success(data) })
+            } catch (_: InterruptedException) {
+                AppDiagnostics.event("export.cancelled", mapOf("operation" to stage))
+                ({ result.error("EXPORT_CANCELLED", "导出已取消", null) })
+            } catch (error: Exception) {
+                AppDiagnostics.event("export.failed", mapOf("operation" to stage), error)
+                ({ result.error("EXPORT_FAILED", error.message, NativeFailureDetails.from(error)) })
+            } finally {
+                transaction?.let {
+                    try {
+                        it.cleanup()
+                    } catch (error: Exception) {
+                        AppDiagnostics.event("export.cleanup.failed", error = error)
+                    }
+                    mergeTransactions.remove(id, it)
+                }
+                finish()
+            }
+            mainHandler.post(completion)
+        }, "BHE-$stage")
+        try {
+            ExportStart.launch({ worker.start() }, ::finish)
+        } catch (error: Exception) {
+            AppDiagnostics.event("export.failed", mapOf("operation" to stage), error)
+            result.error("EXPORT_FAILED", error.message, NativeFailureDetails.from(error))
+        }
+    }
+
+    private fun portraitId(call: MethodCall): String =
+        (call.argument<Any>("exportId") as? String)?.takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("Missing portrait export ID")
+
+    private fun portraitRange(args: Map<*, *>): PortraitMediaRange = PortraitMediaRange(
+        args["inputPath"] as? String ?: throw IllegalArgumentException("Missing portrait input path"),
+        portraitMillis(args["startMs"]),
+        portraitMillis(args["endMs"]),
+    )
+
+    private fun portraitMillis(value: Any?): Long = when (value) {
+        is Int -> value.toLong()
+        is Long -> value
+        else -> throw IllegalArgumentException("Invalid portrait timestamp")
+    }
+
+    private fun emitPortraitProgress(id: String, stage: String, done: Int, total: Int, label: String) {
+        mainHandler.post {
+            progressSink?.success(mapOf(
+                "exportId" to id,
+                "stage" to stage,
+                "progress" to done.toDouble() / total,
+                "processedFrames" to done,
+                "totalFrames" to total,
+                "message" to label,
+            ))
+        }
+    }
+
     private fun mergeClips(call: MethodCall, result: MethodChannel.Result) {
         AppDiagnostics.event("export.start", mapOf("operation" to "mergeClips"))
         val batchGroup = call.argument<Int>("batchGroup")
@@ -889,6 +1076,10 @@ class MainActivity : FlutterActivity() {
         val inputPath = call.argument<String>("inputPath")
         val outputPath = call.argument<String>("outputPath")
         val rawClips = call.argument<List<*>>("clips")
+        if (inputPath == null && rawClips?.any { (it as? Map<*, *>)?.containsKey("inputPath") == true } == true) {
+            mergePortraitClips(call, result)
+            return
+        }
         val plan = try {
             require(inputPath != null && outputPath != null && rawClips != null)
             val intervals = rawClips.map { item ->
