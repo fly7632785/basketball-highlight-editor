@@ -79,6 +79,23 @@ extension BheBuildContextText on BuildContext {
 }
 
 final _mobileCountCopy = <(RegExp, String Function(String))>[
+  (
+    RegExp(r'^将导出 (\d+) 个竖屏视频$'),
+    (n) => n == '1'
+        ? 'Will export 1 portrait video'
+        : 'Will export $n portrait videos',
+  ),
+  (
+    RegExp(r'^已导出 (\d+) 个竖屏视频$'),
+    (n) =>
+        n == '1' ? 'Exported 1 portrait video' : 'Exported $n portrait videos',
+  ),
+  (
+    RegExp(r'^(\d+) 段没找到球，画面可能不准$'),
+    (n) =>
+        'Ball not found in $n ${n == "1" ? "clip" : "clips"}; framing may be off',
+  ),
+  (RegExp(r'^第 (\d+) 段没导出成功，已停下$'), (n) => 'Clip $n failed. Export stopped.'),
   (RegExp(r'^很可能没进 (\d+)$'), (n) => 'Likely missed $n'),
   (RegExp(r'^看折叠的 (\d+)$'), (n) => 'View $n folded'),
   (RegExp(r'^把 (\d+) 段标为没进？$'), (n) => 'Mark $n clips as missed?'),
@@ -218,6 +235,10 @@ String? _translateDynamic(String source) {
   final httpFailure = RegExp(r'^(获取更新信息失败|下载失败)（HTTP (\d+)）$').firstMatch(source);
   if (httpFailure != null) {
     return '${httpFailure.group(1) == '下载失败' ? 'Download failed' : 'Could not get update information'} (HTTP ${httpFailure.group(2)})';
+  }
+  final portraitStep = RegExp(r'^第 (\d+) / (\d+) 段$').firstMatch(source);
+  if (portraitStep != null) {
+    return 'Clip ${portraitStep.group(1)} of ${portraitStep.group(2)}';
   }
   final segment = RegExp(r'^第 (\d+) 段$').firstMatch(source);
   if (segment != null) return 'Part ${segment.group(1)}';
@@ -1175,6 +1196,24 @@ const _englishText = <String, String>{
   '画面': 'Picture',
   '原比例': 'Original aspect',
   '竖屏 9:16（跟球）': 'Portrait 9:16 (follow ball)',
+  '导出中': 'Exporting',
+  '导出结果': 'Export results',
+  '重新导出': 'Export again',
+  '取消导出': 'Cancel export',
+  '当前平台尚未接入竖屏导出。': 'Portrait export is unavailable on this platform.',
+  '改用原比例导出': 'Use original aspect',
+  '合并没成功，已停下': 'Merge failed. Export stopped.',
+  '竖屏导出没成功，已停下': 'Portrait export failed. Export stopped.',
+  '手机可能发热。请保持本页打开。': 'Your phone may get warm. Keep this page open.',
+  '裁切并生成画面': 'Crop and render',
+  '找球和篮筐': 'Find ball and rim',
+  '正在导出竖屏视频': 'Exporting portrait video',
+  '需逐帧生成，比原比例慢且费电': 'Re-renders every frame, taking more time and battery',
+  '将转为普通画质导出，颜色会比原片略平': 'Exports in standard dynamic range. Colors may look flatter than the original.',
+  '逐帧重新生成，慢且费电。建议插电并保持本页打开。1080p 原片裁切放大后会变糊一些。': 'Re-renders every frame. Keep this page open and plug in if possible. Cropping and upscaling 1080p footage may soften the picture.',
+  '橙框内为保留画面，框外会裁掉。输出 1080 × 1920。': 'Keeps the picture inside the orange frame. Output: 1080 × 1920.',
+  '从横屏里裁出竖条，镜头跟着球走': 'Crops a vertical strip that follows the ball',
+  '不裁切，比竖屏快': 'No crop, faster than portrait',
   '标记画面': 'Mark frame',
   '缩小': 'Zoom out',
   '放大': 'Zoom in',

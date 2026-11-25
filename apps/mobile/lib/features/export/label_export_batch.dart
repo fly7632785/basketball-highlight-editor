@@ -1,8 +1,11 @@
 part of '../../mobile_app_state.dart';
 
 extension MobileLabelExport on MobileAppState {
-  Future<void> exportByLabels({ExportScope scope = ExportScope.all}) async {
-    final run = _beginExport();
+  Future<void> exportByLabels({
+    ExportScope scope = ExportScope.all,
+    ExportFraming framing = ExportFraming.original,
+  }) async {
+    final run = _beginExport(framing, scope, MobileOutputMode.labels);
     if (run == null) return;
     _batchExport = true;
     final watch = Stopwatch()..start();
@@ -27,7 +30,10 @@ extension MobileLabelExport on MobileAppState {
       if (!eligible()) return;
       await _mutations.drained;
       if (!eligible()) return;
-      final selected = scope.select(project.candidates, MobileOutputMode.labels);
+      final selected = scope.select(
+        project.candidates,
+        MobileOutputMode.labels,
+      );
       final groups = labelExportGroups(selected, scope: scope);
       if (groups.isEmpty) {
         errorMessage = '没有可导出的片段';
@@ -43,6 +49,9 @@ extension MobileLabelExport on MobileAppState {
       batchDirectory = batch;
       if (!eligible()) return;
       _exportPreflight = false;
+      final engine = framing == ExportFraming.portrait916
+          ? _portraitEngine
+          : exportEngine;
       Future<void> exportGroups() async {
         for (var index = 0; index < groups.length; index++) {
           if (!eligible()) break;
@@ -53,8 +62,15 @@ extension MobileLabelExport on MobileAppState {
           groupCommitted = false;
           _mergeCommitted = false;
           var first = true;
-          final engine = exportEngine;
-          final updates = engine is NativeMediaExportEngine
+          final updates = framing == ExportFraming.portrait916
+              ? _portraitEngine.exportPortrait(
+                  video: project.video!,
+                  candidates: ordered,
+                  outputDirectory: batch.path,
+                  mergedPath: path,
+                  batchGroup: index + 1,
+                )
+              : engine is NativeMediaExportEngine
               ? engine.mergeClipsInBatch(
                   video: project.video!,
                   candidates: ordered,
@@ -79,6 +95,7 @@ extension MobileLabelExport on MobileAppState {
               _mergeCommitted = true;
               exportCancelled = false;
             }
+            _applyPortraitProgress(update);
             exportAudioSkipped |= update.skippedAudioTracks.isNotEmpty;
             exportMergedOverlapCount =
                 (exportMergedOverlapCount ?? 0) +
@@ -100,7 +117,6 @@ extension MobileLabelExport on MobileAppState {
         }
       }
 
-      final engine = exportEngine;
       if (engine is NativeMediaExportEngine) {
         await engine.withMergeBatch(
           exportGroups,
@@ -186,6 +202,7 @@ extension MobileLabelExport on MobileAppState {
         exporting = false;
         _exportPreflight = false;
         _batchExport = false;
+        if (portraitRequest != null) portraitExportError = errorMessage;
         _notifyLabelExport();
       }
     }

@@ -1,0 +1,170 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:bhe_core/bhe_core.dart';
+import 'package:bhe_mobile/features/export/export_modes.dart';
+import 'package:bhe_mobile/features/review_tiers/mobile_tiers.dart';
+import 'package:bhe_mobile/mobile_app_state.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import '../../support/fake_portrait_media.dart';
+import '../../support/mobile_video_fixture.dart';
+
+const _first = Candidate(
+  id: 'first',
+  startMs: 1000,
+  endMs: 3000,
+  eventMs: 2000,
+  players: ['Alice', 'Bob'],
+  reviewed: true,
+);
+const _second = Candidate(
+  id: 'second',
+  startMs: 3100,
+  endMs: 5100,
+  eventMs: 4000,
+  players: ['Bob'],
+  reviewed: true,
+);
+const _uncertain = Candidate(
+  id: 'uncertain',
+  startMs: 5500,
+  endMs: 7500,
+  eventMs: 6500,
+  players: ['Alice'],
+);
+const _goals = ExportScope.anyTag(tiers: {MobileTier.goal});
+const _portrait = ExportFraming.portrait916;
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late MobileVideoFixture fixture;
+  late FakePortraitMedia media;
+
+  setUp(() async {
+    fixture = MobileVideoFixture();
+    await fixture.init();
+    media = FakePortraitMedia()..install();
+    final source = await fixture.file('original.mp4', 'original');
+    fixture.state.project = fixture
+        .project(source.path)
+        .copyWith(
+          candidates: [_second, _first, _uncertain],
+          players: ['Alice', 'Bob'],
+        );
+  });
+
+  tearDown(() async {
+    media.close();
+    await fixture.close();
+  });
+
+  test(
+    'portrait requests use the agreed channel and absolute keyframes',
+    () async {
+      await fixture.state.exportClipsInScope(
+        const ExportScope.only({'Alice'}, tiers: {MobileTier.goal}),
+        framing: _portrait,
+      );
+      final sample = media.callsTo('sampleBallTrack').single.arguments as Map;
+      final render =
+          media.callsTo('exportPortraitClip').single.arguments as Map;
+      expect(sample['sampleHz'], 10);
+      expect(sample['startMs'], _first.startMs);
+      expect(sample['endMs'], _first.endMs);
+      expect(sample['exportId'], render['exportId']);
+      expect(render['inputPath'], fixture.state.project.video!.path);
+      expect(render['outWidth'], 1080);
+      expect(render['outHeight'], 1920);
+      final frames = (render['keyframes'] as List).cast<Map>();
+      expect(frames.first['tMs'], _first.startMs);
+      expect(frames.last['tMs'], _first.endMs);
+      expect(frames.first['cxNorm'], closeTo(.625, .001));
+      expect(fixture.state.portraitNoBallCount, 1);
+      expect(fixture.state.project.exportHistory.single.files, hasLength(1));
+    },
+  );
+
+  test('merge uses only rendered files in source time order', () async {
+    await fixture.state.mergeClipsInScope(_goals, framing: _portrait);
+    expect(
+      media.callsTo('exportPortraitClip').map((c) => c.arguments['startMs']),
+      [1000, 3100],
+    );
+    final merge = media.callsTo('mergeClips').single.arguments as Map;
+    final paths = (merge['clips'] as List)
+        .map((clip) => clip['inputPath'] as String)
+        .toList();
+    expect(merge['inputPath'], isNull);
+    expect(
+      paths,
+      media.callsTo('exportPortraitClip').map((c) => c.arguments['outputPath']),
+    );
+    expect(paths.every((path) => !File(path).existsSync()), isTrue);
+    expect(fixture.state.exportedPaths, hasLength(1));
+    expect(fixture.state.portraitNoBallCount, 1);
+  });
+
+  test(
+    'a failed label merge preserves the prior group and counts its unique clips',
+    () async {
+      media.failMergeGroup = '2';
+      await fixture.state.exportByLabels(scope: _goals, framing: _portrait);
+      expect(fixture.state.exportBatchFiles, hasLength(1));
+      expect(fixture.state.exportedPaths, hasLength(1));
+      expect(File(fixture.state.exportedPaths.single).existsSync(), isTrue);
+      expect(fixture.state.portraitNoBallCount, 1);
+      expect(fixture.state.project.exportHistory.single.files, hasLength(1));
+      expect(fixture.state.errorMessage, isNotNull);
+    },
+  );
+
+  test(
+    'retry as original makes no further portrait calls and keeps prior files',
+    () async {
+      media.failAtMs = 3100;
+      fixture.state.project = fixture.state.project.copyWith(
+        candidates: [_first, _second, _uncertain],
+      );
+      await fixture.state.exportClipsInScope(
+        ExportScope.all,
+        framing: _portrait,
+      );
+      expect(media.callsTo('sampleBallTrack'), hasLength(2));
+      final partial = fixture.state.exportedPaths.single;
+      expect(fixture.state.project.exportHistory.single.files, hasLength(1));
+      expect(fixture.state.errorMessage, '手机存储空间不足，请清理后重试。');
+      await fixture.state.exportClipsInScope(ExportScope.all);
+      expect(media.callsTo('exportClip'), hasLength(3));
+      expect(media.callsTo('sampleBallTrack'), hasLength(2));
+      expect(File(partial).existsSync(), isTrue);
+      expect(fixture.state.portraitNoBallCount, 0);
+    },
+  );
+
+  test('HDR uses the same portrait requests as SDR', () async {
+    final project = fixture.state.project;
+    fixture.state.project = project.copyWith(
+      video: VideoInfo.fromJson({...project.video!.toJson(), 'is_hdr': true}),
+    );
+    await fixture.state.exportClipsInScope(_goals, framing: _portrait);
+    expect(media.callsTo('sampleBallTrack'), hasLength(2));
+    expect(media.callsTo('exportPortraitClip'), hasLength(2));
+    expect(fixture.state.exportedPaths, hasLength(2));
+    expect(fixture.state.errorMessage, isNull);
+  });
+
+  test('cancels the active sampling request before rendering', () async {
+    media.holdSample = Completer<void>();
+    final run = fixture.state.exportClipsInScope(_goals, framing: _portrait);
+    await media.enteredSample.future;
+    await fixture.state.cancelExport();
+    await run;
+    final sample = media.callsTo('sampleBallTrack').single.arguments as Map;
+    final cancel = media.callsTo('cancelExport').single.arguments as Map;
+    expect(cancel['exportId'], sample['exportId']);
+    expect(media.callsTo('exportPortraitClip'), isEmpty);
+    expect(fixture.state.exportedPaths, isEmpty);
+    expect(fixture.state.exportCancelled, isTrue);
+  });
+}

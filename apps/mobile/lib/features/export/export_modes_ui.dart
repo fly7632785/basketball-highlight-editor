@@ -52,6 +52,7 @@ class _ExportScopeSummary extends StatelessWidget {
     required this.folded,
     required this.skippedUntagged,
     required this.mode,
+    required this.framing,
     required this.onStart,
   });
 
@@ -62,6 +63,7 @@ class _ExportScopeSummary extends StatelessWidget {
   final int folded;
   final int skippedUntagged;
   final MobileOutputMode mode;
+  final ExportFraming framing;
   final VoidCallback? onStart;
 
   @override
@@ -74,13 +76,17 @@ class _ExportScopeSummary extends StatelessWidget {
         ? context.bheText('没有可导出的片段')
         : [
             context.bheText(
-              videoCount == 0
+              framing == ExportFraming.portrait916
+                  ? '将导出 ${videoCount == 0 ? selected.length : videoCount} 个竖屏视频'
+                  : videoCount == 0
                   ? '将导出 ${selected.length} 段'
                   : '将导出 $videoCount 个视频 · 共 ${selected.length} 段',
             ),
             _formatMs(duration),
           ].join(' · ');
     final details = [
+      if (framing == ExportFraming.portrait916 && selected.isNotEmpty)
+        context.bheText('需逐帧生成，比原比例慢且费电'),
       if (omitted.values.any((count) => count > 0))
         '${context.bheText('不导出')}  ${[for (final entry in omitted.entries)
           if (entry.value > 0) context.bheText('${entry.key.label} ${entry.value}')].join(' · ')}',

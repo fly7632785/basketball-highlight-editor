@@ -385,6 +385,18 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   bool _mergeCommitted = false;
   bool exportAudioSkipped = false;
   int? exportMergedOverlapCount;
+  PortraitExportProgress? portraitProgress;
+  String? portraitExportError;
+  ({ExportScope scope, MobileOutputMode mode})? portraitRequest;
+  final _portraitClipsWithoutBall = <String>{};
+  int get portraitNoBallCount => _portraitClipsWithoutBall.length;
+
+  void _applyPortraitProgress(ExportProgress update) {
+    if (update is PortraitExportProgress) {
+      portraitProgress = update;
+      _portraitClipsWithoutBall.addAll(update.clipsWithoutBall);
+    }
+  }
   List<String> exportedPaths = const [];
   final ProjectMutationQueue _mutations = ProjectMutationQueue();
   Future<void> get pendingProjectWrites => _mutations.drained;
@@ -830,6 +842,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
             (modified == null ? null : DateTime.fromMillisecondsSinceEpoch(modified)),
         frameRate: (data?['frameRate'] as num?)?.toDouble(),
         codec: data?['codec'] as String?,
+        isHdr: data?['isHdr'] as bool?,
       );
       _validateVideoIdentity(actual, expected);
       return actual;
@@ -868,6 +881,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         capturedAt: info.capturedAt ?? metadata?.capturedAt ?? (replace ? null : before.video?.capturedAt),
         frameRate: info.frameRate ?? metadata?.frameRate ?? (replace ? null : before.video?.frameRate),
         codec: info.codec ?? metadata?.codec ?? (replace ? null : before.video?.codec),
+        isHdr: info.isHdr ?? metadata?.isHdr ?? (replace ? null : before.video?.isHdr),
       );
       var title = projectName;
       if (recordingLocale != null && video.capturedAt != null) {
@@ -1847,6 +1861,10 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     eta = null;
     analysing = false;
     exporting = false;
+    portraitProgress = null;
+    portraitExportError = null;
+    portraitRequest = null;
+    _portraitClipsWithoutBall.clear();
     exportedPaths = const [];
     exportBatchTotal = 0;
     exportBatchFiles = const [];
@@ -2493,13 +2511,23 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   void _notifyLabelExport() => notifyListeners();
   void _notifyHistory() => notifyListeners();
 
-  int? _beginExport() {
+  int? _beginExport(
+    ExportFraming framing,
+    ExportScope scope,
+    MobileOutputMode mode,
+  ) {
     if (projectTransitioning || exportStartBlockReason != null) {
       notifyListeners();
       return null;
     }
     _exportDrainTimer?.cancel();
     final run = ++_exportRun;
+    portraitRequest = framing == ExportFraming.portrait916
+        ? (scope: scope, mode: mode)
+        : null;
+    portraitProgress = null;
+    portraitExportError = null;
+    _portraitClipsWithoutBall.clear();
     exporting = true;
     progress = 0;
     progressMessage = '正在检查视频';
@@ -2524,8 +2552,11 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     return run;
   }
 
-  Future<void> exportClipsInScope(ExportScope scope) async {
-    final run = _beginExport();
+  Future<void> exportClipsInScope(
+    ExportScope scope, {
+    ExportFraming framing = ExportFraming.original,
+  }) async {
+    final run = _beginExport(framing, scope, MobileOutputMode.clips);
     if (run == null) return;
     final stopwatch = Stopwatch()..start();
     final projectId = project.id, session = _projectSession;
@@ -2545,7 +2576,10 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         return;
       }
       if (!eligible()) return;
-      final candidates = scope.select(project.candidates, MobileOutputMode.clips);
+      final candidates = scope.select(
+        project.candidates,
+        MobileOutputMode.clips,
+      );
       if (candidates.isEmpty) {
         errorMessage = '没有可导出的片段';
         notifyListeners();
@@ -2559,16 +2593,26 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       if (!eligible()) return;
       _exportPreflight = false;
       var firstUpdate = true;
-      await for (final update in exportEngine.exportClips(
-        video: project.video!,
-        candidates: candidates,
-        outputDirectory: outputDirectory,
-        projectName: project.name,
-      )) {
+      final video = project.video!;
+      final updates = framing == ExportFraming.portrait916
+          ? _portraitEngine.exportPortrait(
+              video: video,
+              candidates: candidates,
+              outputDirectory: outputDirectory,
+              projectName: project.name,
+            )
+          : exportEngine.exportClips(
+              video: video,
+              candidates: candidates,
+              outputDirectory: outputDirectory,
+              projectName: project.name,
+            );
+      await for (final update in updates) {
         if (!current()) return;
         if (firstUpdate && exportCancelled) await exportEngine.cancel();
         firstUpdate = false;
         if (!current()) return;
+        _applyPortraitProgress(update);
         exportAudioSkipped |= update.skippedAudioTracks.isNotEmpty;
         progress = update.progress;
         progressMessage = update.message;
@@ -2598,20 +2642,35 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     } finally {
       stopwatch.stop();
       if (current() && exportedPaths.isNotEmpty) {
-        await _recordExportHistory(mode: 'clips', plannedCount: plannedCount, durationMs: stopwatch.elapsedMilliseconds, paths: List.of(exportedPaths), expectedRun: run);
+        await _recordExportHistory(
+          mode: 'clips',
+          plannedCount: plannedCount,
+          durationMs: stopwatch.elapsedMilliseconds,
+          paths: List.of(exportedPaths),
+          expectedRun: run,
+        );
       }
       await _removeEmptyExportDirectory(batchDirectory);
       if (current()) {
         _exportDrainTimer?.cancel();
         exporting = false;
         _exportPreflight = false;
+        if (portraitRequest != null) portraitExportError = errorMessage;
         notifyListeners();
       }
     }
   }
 
-  Future<void> mergeClipsInScope(ExportScope scope) async {
-    final run = _beginExport();
+  NativeMediaExportEngine get _portraitEngine => switch (exportEngine) {
+    final NativeMediaExportEngine engine => engine,
+    _ => throw const MobileExportException('当前平台尚未接入竖屏导出。'),
+  };
+
+  Future<void> mergeClipsInScope(
+    ExportScope scope, {
+    ExportFraming framing = ExportFraming.original,
+  }) async {
+    final run = _beginExport(framing, scope, MobileOutputMode.merged);
     if (run == null) return;
     final stopwatch = Stopwatch()..start();
     final projectId = project.id, session = _projectSession;
@@ -2630,8 +2689,10 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         return;
       }
       if (!eligible()) return;
-      final candidates = scope.select(project.candidates, MobileOutputMode.merged)
-        ..sort((a, b) => a.startMs.compareTo(b.startMs));
+      final candidates = scope.select(
+        project.candidates,
+        MobileOutputMode.merged,
+      )..sort((a, b) => a.startMs.compareTo(b.startMs));
       if (candidates.isEmpty) {
         errorMessage = '没有可导出的片段';
         notifyListeners();
@@ -2644,11 +2705,20 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       if (!eligible()) return;
       _exportPreflight = false;
       var firstUpdate = true;
-      await for (final update in exportEngine.mergeClips(
-        video: project.video!,
-        candidates: candidates,
-        outputPath: outputPath,
-      )) {
+      final video = project.video!;
+      final updates = framing == ExportFraming.portrait916
+          ? _portraitEngine.exportPortrait(
+              video: video,
+              candidates: candidates,
+              outputDirectory: batchDirectory.path,
+              mergedPath: outputPath,
+            )
+          : exportEngine.mergeClips(
+              video: video,
+              candidates: candidates,
+              outputPath: outputPath,
+            );
+      await for (final update in updates) {
         if (!current()) return;
         if (firstUpdate && exportCancelled && !update.committed) {
           await exportEngine.cancel();
@@ -2659,6 +2729,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
           _mergeCommitted = true;
           exportCancelled = false;
         }
+        _applyPortraitProgress(update);
         exportAudioSkipped |= update.skippedAudioTracks.isNotEmpty;
         exportMergedOverlapCount = update.mergedOverlapCount;
         progress = update.progress;
@@ -2702,13 +2773,20 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     } finally {
       stopwatch.stop();
       if (current() && exportedPaths.isNotEmpty) {
-        await _recordExportHistory(mode: 'merged', plannedCount: 1, durationMs: stopwatch.elapsedMilliseconds, paths: List.of(exportedPaths), expectedRun: run);
+        await _recordExportHistory(
+          mode: 'merged',
+          plannedCount: 1,
+          durationMs: stopwatch.elapsedMilliseconds,
+          paths: List.of(exportedPaths),
+          expectedRun: run,
+        );
       }
       await _removeEmptyExportDirectory(batchDirectory);
       if (current()) {
         _exportDrainTimer?.cancel();
         exporting = false;
         _exportPreflight = false;
+        if (portraitRequest != null) portraitExportError = errorMessage;
         notifyListeners();
       }
     }
@@ -2749,6 +2827,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       recordDiagnosticFailure(error, StackTrace.current, operation: 'export');
       errorMessage = '上一次导出尚未结束，请稍后重试。';
       progressMessage = errorMessage!;
+      if (portraitRequest != null) portraitExportError = errorMessage;
       _recordTimedOutPartialHistory(run);
       notifyListeners();
     });

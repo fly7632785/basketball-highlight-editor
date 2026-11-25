@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 
 const projectMediaChannel = MethodChannel('com.bhe.bhe/mobile_media');
 
-Future<({DateTime? capturedAt, double? frameRate, String? codec})>
+Future<({DateTime? capturedAt, double? frameRate, String? codec, bool? isHdr})>
 readProjectVideoMetadata(String path, {bool useModifiedTime = false}) async {
   Map<String, dynamic>? metadata;
   try {
@@ -34,6 +34,7 @@ readProjectVideoMetadata(String path, {bool useModifiedTime = false}) async {
         (stat?.type == FileSystemEntityType.file ? stat?.modified : null),
     frameRate: rate != null && rate.isFinite && rate > 0 ? rate : null,
     codec: metadata?['codec'] as String?,
+    isHdr: metadata?['isHdr'] as bool?,
   );
 }
 

@@ -26,6 +26,7 @@ import 'features/review_tiers/mobile_tiers.dart';
 import 'features/diagnostics/mobile_diagnostics.dart';
 import 'features/diagnostics/diagnostic_report.dart';
 import 'mobile_theme.dart';
+import 'media_bridge.dart' show PortraitExportStep;
 import 'features/game_stats/game_stats.dart';
 
 export 'mobile_theme.dart' show BhePalette, bheTheme;
@@ -52,6 +53,7 @@ part 'features/export/export_overlap_notice.dart';
 part 'features/project_list/project_list_page.dart';
 part 'features/project_list/project_info_page.dart';
 part 'features/export/export_modes_ui.dart';
+part 'features/export/portrait_export_ui.dart';
 part 'features/export_history/export_history_ui.dart';
 
 // (Theme extracted to mobile_theme.dart for maintainability.)
@@ -433,7 +435,7 @@ class _AppShell extends StatelessWidget {
         ),
       ),
       _WorkspaceSection.export || _WorkspaceSection.exportGoals => _ExportView(
-        key: ValueKey(section),
+        key: ValueKey((section, state.project.id)),
         state: state,
         goalsOnly: section == _WorkspaceSection.exportGoals,
         onBackToReview: () => onSectionChanged(_WorkspaceSection.review),
@@ -3731,10 +3733,34 @@ class _ExportViewState extends State<_ExportView> {
     if (widget.goalsOnly) MobileTier.goal else ...defaultMobileExportTiers,
   };
   MobileOutputMode outputMode = MobileOutputMode.clips;
+  ExportFraming framing = ExportFraming.original;
+  VideoInfo? _probedVideo;
+  Future<bool?>? _hdrProbe;
 
   MobileAppState get state => widget.state;
 
   bool _reminding = false;
+
+  Future<void> _chooseFraming(BuildContext context) async {
+    final video = state.project.video;
+    if (!identical(video, _probedVideo)) {
+      _probedVideo = video;
+      _hdrProbe = video == null || video.isHdr != null
+          ? null
+          : readProjectVideoMetadata(video.path).then((data) => data.isHdr);
+    }
+    final result = await showModalBottomSheet<ExportFraming>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      builder: (_) => _ExportFramingSheet(
+        initial: framing,
+        isHdr: video?.isHdr,
+        hdrProbe: _hdrProbe,
+      ),
+    );
+    if (mounted && result != null) setState(() => framing = result);
+  }
 
   Future<void> _startExport(
     BuildContext context,
@@ -3760,19 +3786,37 @@ class _ExportViewState extends State<_ExportView> {
       }
       if (choice != _UntaggedChoice.exportAnyway) return;
     }
+    _runExport(currentScope, mode, framing);
+  }
+
+  void _runExport(
+    ExportScope scope,
+    MobileOutputMode mode,
+    ExportFraming picture,
+  ) {
     switch (mode) {
       case MobileOutputMode.clips:
-        unawaited(state.exportClipsInScope(currentScope));
+        unawaited(state.exportClipsInScope(scope, framing: picture));
       case MobileOutputMode.merged:
-        unawaited(state.mergeClipsInScope(currentScope));
+        unawaited(state.mergeClipsInScope(scope, framing: picture));
       case MobileOutputMode.labels:
-        unawaited(state.exportByLabels(scope: currentScope));
+        unawaited(state.exportByLabels(scope: scope, framing: picture));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = Localizations.of<BheLocalizations>(context, BheLocalizations);
+    final portraitRequest = state.portraitRequest;
+    if (state.exporting && portraitRequest != null) {
+      return _PortraitExportRunning(
+        state: state,
+        merging: portraitRequest.mode != MobileOutputMode.clips,
+      );
+    }
+    final failed = portraitRequest != null && state.portraitExportError != null;
+    final portraitResults =
+        portraitRequest != null && state.exportedPaths.isNotEmpty;
     final candidates = state.project.candidates;
     final tierCounts = {for (final tier in MobileTier.values) tier: 0};
     final labelCounts = {for (final player in state.project.players) player: 0};
@@ -3793,16 +3837,134 @@ class _ExportViewState extends State<_ExportView> {
     final currentScope = scope.withTiers(tiers);
     final selected = currentScope.select(candidates, outputMode);
     final blocked = state.exportStartBlockReason != null;
+    final result = state.exportedPaths.isEmpty
+        ? null
+        : Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    portraitResults
+                        ? context.bheText(
+                            '已导出 ${state.exportedPaths.length} 个竖屏视频',
+                          )
+                        : l10n?.exportedClips(state.exportedPaths.length) ??
+                              '已导出 ${state.exportedPaths.length} 个片段',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (portraitResults) ...[
+                    const SizedBox(height: 6),
+                    const Text('1080 × 1920'),
+                    if (state.portraitNoBallCount > 0)
+                      Text(
+                        context.bheText(
+                          '${state.portraitNoBallCount} 段没找到球，画面可能不准',
+                        ),
+                      ),
+                  ],
+                  if (state.exportBatchTotal > 0) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      context.bheText(
+                        state.exportBatchFiles.length < state.exportBatchTotal
+                            ? '部分完成'
+                            : '全部完成',
+                      ),
+                    ),
+                    Text(
+                      context.bheText(
+                        '已完成 ${state.exportBatchFiles.length}/${state.exportBatchTotal} 个标签',
+                      ),
+                    ),
+                    for (final item in state.exportBatchFiles)
+                      _LabelExportResultRow(state: state, item: item),
+                  ] else ...[
+                    for (final path in state.exportedPaths)
+                      _LabelExportResultRow(
+                        state: state,
+                        item: LabelExportFile(
+                          File(path).uri.pathSegments.last,
+                          path,
+                        ),
+                      ),
+                  ],
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () => unawaited(state.shareExportedFiles()),
+                        icon: const Icon(LucideIcons.share2, size: 17),
+                        label: Text(
+                          context.bheText(
+                            state.exportedPaths.length > 1 ? '分享全部' : '分享',
+                          ),
+                        ),
+                      ),
+                      FilledButton.icon(
+                        onPressed: state.exportStartBlockReason == null
+                            ? () => unawaited(state.saveExportedFiles())
+                            : null,
+                        icon: const Icon(LucideIcons.save, size: 17),
+                        label: Text(
+                          context.bheText(
+                            state.exportedPaths.length > 1
+                                ? '保存全部到相册'
+                                : '保存到相册',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
     final options = ListView(
+      key: ValueKey(
+        failed || portraitResults ? 'portrait-result' : 'export-options',
+      ),
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
           child: Text(
-            l10n?.exportHighlights ?? '导出集锦',
+            failed || portraitResults
+                ? context.bheText('导出结果')
+                : l10n?.exportHighlights ?? '导出集锦',
             style: Theme.of(context).textTheme.headlineMedium,
           ),
         ),
+        if (failed) ...[
+          _PortraitExportFailure(
+            state: state,
+            onRetry: blocked
+                ? null
+                : () => _runExport(
+                    portraitRequest.scope,
+                    portraitRequest.mode,
+                    ExportFraming.portrait916,
+                  ),
+            onOriginal: blocked
+                ? null
+                : () {
+                    setState(() => framing = ExportFraming.original);
+                    _runExport(
+                      portraitRequest.scope,
+                      portraitRequest.mode,
+                      ExportFraming.original,
+                    );
+                  },
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (portraitResults && result != null) ...[
+          result,
+          const SizedBox(height: 14),
+        ],
         if (state.hasUncertainExport) _UncertainExportNotice(state: state),
         if (state.hasUncertainAnalysis) ...[
           _UncertainAnalysisNotice(state: state),
@@ -3910,6 +4072,23 @@ class _ExportViewState extends State<_ExportView> {
           enabled: !blocked,
           onChanged: (mode) => setState(() => outputMode = mode),
         ),
+        const SizedBox(height: 10),
+        Card(
+          child: ListTile(
+            title: Text(context.bheText('画面')),
+            subtitle: Text(context.bheText(_framingLabel(framing))),
+            trailing: const Icon(LucideIcons.chevronRight, size: 18),
+            enabled: !blocked,
+            onTap: blocked ? null : () => unawaited(_chooseFraming(context)),
+          ),
+        ),
+        if (framing == ExportFraming.portrait916)
+          _PortraitHdrHint(
+            isHdr: state.project.video?.isHdr,
+            probe: identical(state.project.video, _probedVideo)
+                ? _hdrProbe
+                : null,
+          ),
         const SizedBox(height: 12),
         _GameStatsSection(state: state),
         if (state.exporting) ...[
@@ -3942,78 +4121,9 @@ class _ExportViewState extends State<_ExportView> {
             ),
           ),
         ],
-        if (state.exportedPaths.isNotEmpty) ...[
+        if (!portraitResults && result != null) ...[
           const SizedBox(height: 14),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    l10n?.exportedClips(state.exportedPaths.length) ??
-                        '已导出 ${state.exportedPaths.length} 个片段',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  if (state.exportBatchTotal > 0) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      context.bheText(
-                        state.exportBatchFiles.length < state.exportBatchTotal
-                            ? '部分完成'
-                            : '全部完成',
-                      ),
-                    ),
-                    Text(
-                      context.bheText(
-                        '已完成 ${state.exportBatchFiles.length}/${state.exportBatchTotal} 个标签',
-                      ),
-                    ),
-                    for (final item in state.exportBatchFiles)
-                      _LabelExportResultRow(state: state, item: item),
-                  ] else ...[
-                    for (final path in state.exportedPaths)
-                      _LabelExportResultRow(
-                        state: state,
-                        item: LabelExportFile(
-                          File(path).uri.pathSegments.last,
-                          path,
-                        ),
-                      ),
-                  ],
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: () => unawaited(state.shareExportedFiles()),
-                        icon: const Icon(LucideIcons.share2, size: 17),
-                        label: Text(
-                          context.bheText(
-                            state.exportedPaths.length > 1 ? '分享全部' : '分享',
-                          ),
-                        ),
-                      ),
-                      FilledButton.icon(
-                        onPressed: state.exportStartBlockReason == null
-                            ? () => unawaited(state.saveExportedFiles())
-                            : null,
-                        icon: const Icon(LucideIcons.save, size: 17),
-                        label: Text(
-                          context.bheText(
-                            state.exportedPaths.length > 1
-                                ? '保存全部到相册'
-                                : '保存到相册',
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
+          result,
         ],
         _ExportOverlapNotice(state: state),
         _ExportAudioNotice(state: state),
@@ -4049,6 +4159,7 @@ class _ExportViewState extends State<_ExportView> {
           ? untaggedCount
           : 0,
       mode: outputMode,
+      framing: framing,
       onStart: blocked || selected.isEmpty
           ? null
           : () => unawaited(

@@ -9,3 +9,4 @@ export 'src/redact.dart';
 export 'src/contact_actions.dart';
 export 'src/default_project_name.dart';
 export 'src/review_position.dart';
+export 'src/portrait_planner.dart';

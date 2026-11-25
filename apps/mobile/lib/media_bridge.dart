@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:bhe_core/bhe_core.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,8 @@ import 'features/diagnostics/friendly_error.dart';
 import 'features/diagnostics/mobile_diagnostics.dart';
 import 'features/export/native_export_result.dart';
 import 'features/operation_status/task_stop_status.dart';
+
+part 'features/export/portrait_media.dart';
 
 String clipFileName(int index, Candidate candidate, {String projectName = 'Project'}) {
   final name =
@@ -40,6 +43,7 @@ class _ExportRun {
   bool cancelled = false;
   bool admitted = false;
   String? mergeId;
+  String? portraitId;
   String? nativeId;
   int nativeGeneration = 0;
   final Completer<void> cancelledSignal = Completer<void>();
@@ -250,6 +254,7 @@ class NativeMediaExportEngine implements MobileExportEngine {
     required String outputPath,
     _MergeBatchLease? lease,
     int? batchGroup,
+    List<String>? renderedPaths,
   }) async* {
     if (candidates.isEmpty) return;
     final run = lease?.run ?? _ExportRun();
@@ -284,18 +289,29 @@ class NativeMediaExportEngine implements MobileExportEngine {
         'exportId': exportId,
         'reservationRequired': reserved,
         if (batchGroup != null) 'batchGroup': batchGroup,
-        'inputPath': video.path,
+        // Original exports use one source. Portrait merges read the
+        // independently rendered files in the order of the clip list.
+        if (renderedPaths == null) 'inputPath': video.path,
         'outputPath': outputPath,
         'clips': [
-          for (final candidate in candidates)
-            {'startMs': candidate.startMs, 'endMs': candidate.endMs},
+          for (final (index, candidate) in candidates.indexed)
+            if (renderedPaths == null)
+              {'startMs': candidate.startMs, 'endMs': candidate.endMs}
+            else
+              {
+                'inputPath': renderedPaths[index],
+                'startMs': 0,
+                'endMs': candidate.duration.inMilliseconds,
+              },
         ],
       });
       final committed = raw is Map && raw['committed'] == true;
       if (run.cancelled && !committed) {
         throw const MobileExportException('导出已取消');
       }
-      final result = NativeExportResult.decode(raw, outputPath);
+      final result = renderedPaths == null
+          ? NativeExportResult.decode(raw, outputPath)
+          : _decodePortraitExport(raw, outputPath);
       yield ExportProgress(
         progress: 1,
         message: '合并导出完成',
@@ -387,7 +403,7 @@ class NativeMediaExportEngine implements MobileExportEngine {
     run.cancelled = true;
     if (!run.cancelledSignal.isCompleted) run.cancelledSignal.complete();
     if (!run.admitted) return;
-    final exportId = run.mergeId;
+    final exportId = run.portraitId ?? run.mergeId;
     try {
       await _channel.invokeMethod<void>(
         'cancelExport',

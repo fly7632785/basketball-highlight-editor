@@ -32,6 +32,7 @@ class VideoInfo {
     this.capturedAt,
     this.frameRate,
     this.codec,
+    this.isHdr,
   });
 
   final String path;
@@ -45,6 +46,9 @@ class VideoInfo {
   final double? frameRate;
   final String? codec;
 
+  /// Null indicates a project saved before HDR metadata was recorded.
+  final bool? isHdr;
+
   Map<String, dynamic> toJson() => {
     'path': path,
     'name': name,
@@ -56,6 +60,7 @@ class VideoInfo {
     if (capturedAt != null) 'captured_at': capturedAt!.toIso8601String(),
     if (frameRate != null) 'frame_rate': frameRate,
     if (codec != null) 'codec': codec,
+    if (isHdr != null) 'is_hdr': isHdr,
   };
 
   factory VideoInfo.fromJson(Map<String, dynamic> json) => VideoInfo(
@@ -69,6 +74,7 @@ class VideoInfo {
     capturedAt: DateTime.tryParse(json['captured_at'] as String? ?? ''),
     frameRate: (json['frame_rate'] as num?)?.toDouble(),
     codec: json['codec'] as String?,
+    isHdr: json['is_hdr'] as bool?,
   );
 }
 
