@@ -78,6 +78,9 @@ extension NativePortraitExport on NativeMediaExportEngine {
           'startMs': candidate.startMs,
           'endMs': candidate.endMs,
           'exportId': exportId,
+          'clipIndex': index + 1,
+          'eventMs': candidate.eventMs,
+          'sourceDurationMs': video.durationMs,
         };
         run.mergeId = null;
         run.portraitId = exportId;

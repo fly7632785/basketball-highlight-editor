@@ -299,6 +299,8 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   bool _batchStopRequested = false;
   bool exportCancelled = false;
   int _exportRun = 0;
+  int? _gallerySaveRun;
+  bool get savingToGallery => exporting && _gallerySaveRun == _exportRun;
   bool _exportPreflight = false;
   Timer? _exportDrainTimer;
   Timer? _uncertainExportWatch;
@@ -2867,6 +2869,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       return;
     }
     final run = ++_exportRun;
+    _gallerySaveRun = run;
     final id = project.id, session = _projectSession;
     bool current() => !_disposed && project.id == id && _projectSession == session && _exportRun == run;
     _mergeCommitted = false;
@@ -2898,6 +2901,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         MobileDiagnostics.instance.error(error, stack, operation: 'gallery.save');
       }
     } finally {
+      if (_gallerySaveRun == run) _gallerySaveRun = null;
       if (current()) {
         exporting = false;
         notifyListeners();

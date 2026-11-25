@@ -157,6 +157,9 @@ class NativeMediaExportEngine implements MobileExportEngine {
             'outputPath': outputPath,
             'startMs': candidate.startMs,
             'endMs': candidate.endMs,
+            'clipIndex': index,
+            'eventMs': candidate.eventMs,
+            'sourceDurationMs': video.durationMs,
           });
           if (run.cancelled) return;
           outputs.add(outputPath);
