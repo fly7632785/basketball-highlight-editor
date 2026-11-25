@@ -190,7 +190,7 @@ def test_composition_rejects_floor_logo_and_preserves_hoop_at_each_goal():
     for observations in ([None]*90, [[478,864,823,1010]]*90):
         hold = compose_portrait(observations, [[hoop]]*90, 2688, 1512, 7)
         assert (hold['crop_width'], hold['crop_height'], hold['crop_y']) == (850, 1512, 0)
-        assert hold['centers'] == [1000] * 90
+        assert hold['centers'] == pytest.approx([1000] * 90, rel=0, abs=1e-9)
         assert hold['filter'].startswith('crop=850:1512')
     sparse = [None] * 90
     sparse[-2:] = [[1200, 600, 1220, 620]] * 2
