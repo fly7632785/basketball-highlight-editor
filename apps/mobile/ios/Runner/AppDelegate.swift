@@ -128,7 +128,17 @@ import ImageIO
       case "exportClip":
         self.exportClip(call.arguments as? [String: Any], result: result)
       case "mergeClips":
-        self.mergeClips(call.arguments as? [String: Any], result: result)
+        let args = call.arguments as? [String: Any]
+        if let args, args["inputPath"] == nil {
+          self.mergePortraitClips(args, channel: channel, result: result)
+        } else {
+          self.mergeClips(args, result: result)
+        }
+      case "isExportActive":
+        guard let exportId = (call.arguments as? [String: Any])?["exportId"] as? String,
+              exportId.hasPrefix("portrait-")
+        else { result(FlutterMethodNotImplemented); return }
+        result(self.exportLock.withLock { self.portraitJobs[exportId] != nil })
       case "cancelExport":
         self.cancelExport(call.arguments as? [String: Any], result: result)
       case "saveToLibrary":
@@ -1039,7 +1049,7 @@ import ImageIO
     let code: String
     switch error {
     case is CancellationError: code = "EXPORT_CANCELLED"
-    case PortraitVideoError.invalidRange, PortraitVideoError.invalidKeyframes: code = "INVALID_ARGUMENT"
+    case PortraitVideoError.invalidRange, PortraitVideoError.invalidKeyframes, PortraitVideoError.invalidMergeClip: code = "INVALID_ARGUMENT"
     default: code = "EXPORT_FAILED"
     }
     return FlutterError(code: code, message: error.localizedDescription, details: nil)
@@ -1206,31 +1216,68 @@ import ImageIO
       result(portraitError(error))
       return
     }
+    runPortraitEncoding(
+      exportId: exportId, output: output, stage: "encoding", channel: channel, result: result,
+      success: { outputPath }
+    ) { temporary, _ in
+      try PortraitVideo.makeExporter(asset: AVURLAsset(url: input), output: temporary, plan: plan)
+    }
+  }
+
+  private func mergePortraitClips(
+    _ args: [String: Any], channel: FlutterMethodChannel, result: @escaping FlutterResult
+  ) {
+    guard let outputPath = args["outputPath"] as? String, !outputPath.isEmpty,
+          let exportId = args["exportId"] as? String, !exportId.isEmpty,
+          let rawClips = args["clips"] as? [[String: Any]], !rawClips.isEmpty
+    else {
+      result(portraitError(PortraitVideoError.invalidMergeClip))
+      return
+    }
+    let output = URL(fileURLWithPath: outputPath)
+    let clips: [PortraitMergeClip]
+    do {
+      clips = try rawClips.map(PortraitMergeClip.init)
+      guard clips.allSatisfy({ $0.url.resolvingSymlinksInPath() != output.resolvingSymlinksInPath() })
+      else { throw PortraitVideoError.invalidMergeClip }
+    } catch {
+      result(portraitError(error))
+      return
+    }
+    runPortraitEncoding(
+      exportId: exportId, output: output, stage: "merging", channel: channel, result: result,
+      success: { ["outputPath": outputPath, "committed": true] }
+    ) { temporary, checkCancellation in
+      try PortraitVideo.makeMergeExporter(clips: clips, output: temporary, checkCancellation: checkCancellation)
+    }
+  }
+
+  private func runPortraitEncoding(
+    exportId: String, output: URL, stage: String, channel: FlutterMethodChannel,
+    result: @escaping FlutterResult, success: @escaping () -> Any,
+    prepare: @escaping (URL, () throws -> Void) throws -> AVAssetExportSession
+  ) {
     guard let job = beginPortraitJob(exportId: exportId) else {
       result(FlutterError(code: "EXPORT_BUSY", message: nil, details: nil))
       return
     }
-
+    let directory = output.deletingLastPathComponent()
+    let temporary = directory.appendingPathComponent(".portrait-\(UUID().uuidString).mp4")
     DispatchQueue.global(qos: .userInitiated).async {
       let preparation = Result {
         try self.checkPortraitCancellation(job)
-        return try PortraitVideo.makeExporter(asset: AVURLAsset(url: input), output: output, plan: plan)
+        return try prepare(temporary) { try self.checkPortraitCancellation(job) }
       }
       DispatchQueue.main.async {
         do {
           try self.checkPortraitCancellation(job)
           let exporter = try preparation.get()
-          try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
-          var isDirectory: ObjCBool = false
-          if FileManager.default.fileExists(atPath: outputPath, isDirectory: &isDirectory) {
-            guard !isDirectory.boolValue else { throw CocoaError(.fileWriteInvalidFileName) }
-            try FileManager.default.removeItem(at: output)
-          }
+          try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
           self.exportLock.withLock { self.activeExporters[exportId] = exporter }
-          self.reportPortraitProgress(channel, exportId: exportId, stage: "encoding", fraction: 0)
+          self.reportPortraitProgress(channel, exportId: exportId, stage: stage, fraction: 0)
           let timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
             if !self.exportLock.withLock({ job.cancelled }) {
-              self.reportPortraitProgress(channel, exportId: exportId, stage: "encoding", fraction: Double(exporter.progress))
+              self.reportPortraitProgress(channel, exportId: exportId, stage: stage, fraction: Double(exporter.progress))
             }
           }
           exporter.exportAsynchronously {
@@ -1240,18 +1287,26 @@ import ImageIO
               guard exporter.status == .completed else {
                 throw exporter.error ?? PortraitVideoError.exporterUnavailable
               }
-              try PortraitVideo.validateOutput(output)
+              try PortraitVideo.validateOutput(temporary)
             }
             DispatchQueue.main.async {
               timer.invalidate()
-              let cancelled = self.finishPortraitJob(exportId, job: job)
+              defer { _ = self.finishPortraitJob(exportId, job: job) }
               do {
-                if cancelled { throw CancellationError() }
+                try self.checkPortraitCancellation(job)
                 try outcome.get()
-                self.reportPortraitProgress(channel, exportId: exportId, stage: "encoding", fraction: 1)
-                result(outputPath)
+                let files = FileManager.default
+                var isDirectory: ObjCBool = false
+                if files.fileExists(atPath: output.path, isDirectory: &isDirectory) {
+                  guard !isDirectory.boolValue else { throw CocoaError(.fileWriteInvalidFileName) }
+                  _ = try files.replaceItemAt(output, withItemAt: temporary)
+                } else {
+                  try files.moveItem(at: temporary, to: output)
+                }
+                self.reportPortraitProgress(channel, exportId: exportId, stage: stage, fraction: 1)
+                result(success())
               } catch {
-                try? FileManager.default.removeItem(at: output)
+                try? FileManager.default.removeItem(at: temporary)
                 result(self.portraitError(error))
               }
             }

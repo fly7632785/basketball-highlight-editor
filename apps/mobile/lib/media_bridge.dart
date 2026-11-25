@@ -259,7 +259,8 @@ class NativeMediaExportEngine implements MobileExportEngine {
     if (candidates.isEmpty) return;
     final run = lease?.run ?? _ExportRun();
     _activeRun = run;
-    final exportId = 'merge-${DateTime.now().microsecondsSinceEpoch}';
+    final prefix = renderedPaths == null ? 'merge' : 'portrait-merge';
+    final exportId = '$prefix-${DateTime.now().microsecondsSinceEpoch}';
     run.mergeId = exportId;
     var reserved = false;
     var releaseUncertain = false;

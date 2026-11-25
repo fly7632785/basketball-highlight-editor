@@ -5,6 +5,8 @@ import 'package:bhe_core/bhe_core.dart';
 import 'package:bhe_mobile/features/export/export_modes.dart';
 import 'package:bhe_mobile/features/review_tiers/mobile_tiers.dart';
 import 'package:bhe_mobile/mobile_app_state.dart';
+import 'package:bhe_mobile/media_bridge.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../support/fake_portrait_media.dart';
@@ -166,5 +168,62 @@ void main() {
     expect(media.callsTo('exportPortraitClip'), isEmpty);
     expect(fixture.state.exportedPaths, isEmpty);
     expect(fixture.state.exportCancelled, isTrue);
+  });
+  test(
+    'native portrait progress reaches only the matching active stage',
+    () async {
+      media.holdRender = Completer<void>();
+      final progress = <double>[];
+      fixture.state.addListener(() {
+        final update = fixture.state.portraitProgress;
+        if (update?.step == PortraitExportStep.render)
+          progress.add(update!.progress);
+      });
+      final run = fixture.state.exportClipsInScope(
+        const ExportScope.only({'Alice'}, tiers: {MobileTier.goal}),
+        framing: _portrait,
+      );
+      await media.enteredRender.future;
+      final id = media
+          .callsTo('exportPortraitClip')
+          .single
+          .arguments['exportId'];
+      Future<void> send(Object exportId, String stage, double fraction) async {
+        await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .handlePlatformMessage(
+              FakePortraitMedia.channel.name,
+              const StandardMethodCodec().encodeMethodCall(
+                MethodCall('exportProgress', {
+                  'exportId': exportId,
+                  'stage': stage,
+                  'progress': fraction,
+                }),
+              ),
+              (_) {},
+            );
+      }
+
+      await send('previous-job', 'encoding', .25);
+      await send(id, 'sampling', .25);
+      await send(id, 'encoding', .5);
+      await send(id, 'encoding', .25);
+      media.holdRender!.complete();
+      await run;
+      expect(progress, contains(.75));
+      expect(progress, isNot(contains(.625)));
+    },
+  );
+
+  test('a completed render stays in history after a late cancel', () async {
+    media.holdRender = Completer<void>();
+    final run = fixture.state.exportClipsInScope(_goals, framing: _portrait);
+    await media.enteredRender.future;
+    await fixture.state.cancelExport();
+    media.holdRender!.complete();
+    await run;
+    expect(media.callsTo('sampleBallTrack'), hasLength(1));
+    expect(fixture.state.exportedPaths, hasLength(1));
+    expect(File(fixture.state.exportedPaths.single).existsSync(), isTrue);
+    expect(fixture.state.project.exportHistory.single.files, hasLength(1));
   });
 }

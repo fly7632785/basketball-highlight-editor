@@ -90,11 +90,29 @@ extension NativePortraitExport on NativeMediaExportEngine {
         _checkPortraitCancelled(run);
         run.nativeId = exportId;
         run.nativeGeneration++;
-        final raw = await NativeMediaExportEngine._channel
-            .invokeMapMethod<String, Object?>('sampleBallTrack', {
-              ...range,
-              'sampleHz': PortraitPlanner.sampleHz,
-            });
+        Map<String, Object?>? raw;
+        await for (final event in _portraitStageEvents(
+          run,
+          'sampling',
+          () => Stream.fromFuture(
+            NativeMediaExportEngine._channel.invokeMapMethod<String, Object?>(
+              'sampleBallTrack',
+              {...range, 'sampleHz': PortraitPlanner.sampleHz},
+            ),
+          ),
+        )) {
+          if (event.fraction case final fraction?) {
+            yield PortraitExportProgress(
+              progress: (2 * index + fraction) / steps,
+              step: PortraitExportStep.sample,
+              clipIndex: index + 1,
+              clipCount: total,
+              eventMs: candidate.eventMs,
+            );
+          } else {
+            raw = event.value;
+          }
+        }
         _checkPortraitCancelled(run);
         final plan = _decodePortraitTrack(raw, candidate);
         yield PortraitExportProgress(
@@ -106,23 +124,39 @@ extension NativePortraitExport on NativeMediaExportEngine {
         );
         _checkPortraitCancelled(run);
         run.nativeGeneration++;
-        final result = _decodePortraitExport(
-          await NativeMediaExportEngine._channel.invokeMethod<Object?>(
-            'exportPortraitClip',
-            {
-              ...range,
-              'outputPath': path,
-              'outWidth': 1080,
-              'outHeight': 1920,
-              'keyframes': [
-                for (final frame in plan.keyframes)
-                  {'tMs': frame.tMs, 'cxNorm': frame.cxNorm},
-              ],
-            },
+        Object? rawOutput;
+        await for (final event in _portraitStageEvents(
+          run,
+          'encoding',
+          () => Stream.fromFuture(
+            NativeMediaExportEngine._channel.invokeMethod<Object?>(
+              'exportPortraitClip',
+              {
+                ...range,
+                'outputPath': path,
+                'outWidth': 1080,
+                'outHeight': 1920,
+                'keyframes': [
+                  for (final frame in plan.keyframes)
+                    {'tMs': frame.tMs, 'cxNorm': frame.cxNorm},
+                ],
+              },
+            ),
           ),
-          path,
-        );
-        _checkPortraitCancelled(run);
+        )) {
+          if (event.fraction case final fraction?) {
+            yield PortraitExportProgress(
+              progress: (2 * index + 1 + fraction) / steps,
+              step: PortraitExportStep.render,
+              clipIndex: index + 1,
+              clipCount: total,
+              eventMs: candidate.eventMs,
+            );
+          } else {
+            rawOutput = event.value;
+          }
+        }
+        final result = _decodePortraitExport(rawOutput, path);
         if (!plan.hasBallTrack) clipsWithoutBall.add(candidate.id);
         if (merging) {
           rendered.add(result.path);
@@ -139,6 +173,9 @@ extension NativePortraitExport on NativeMediaExportEngine {
             clipsWithoutBall: plan.hasBallTrack ? const [] : [candidate.id],
           );
         }
+        // Native success already published this file. Record it before
+        // honoring a late cancellation or starting any other clip.
+        _checkPortraitCancelled(run);
       }
 
       if (mergedPath != null) {
@@ -151,14 +188,29 @@ extension NativePortraitExport on NativeMediaExportEngine {
           eventMs: null,
         );
         _checkPortraitCancelled(run);
-        await for (final update in _mergeClips(
-          video: video,
-          candidates: candidates,
-          outputPath: mergedPath,
-          lease: lease,
-          batchGroup: batchGroup,
-          renderedPaths: rendered,
+        await for (final event in _portraitStageEvents(
+          run,
+          'merging',
+          () => _mergeClips(
+            video: video,
+            candidates: candidates,
+            outputPath: mergedPath,
+            lease: lease,
+            batchGroup: batchGroup,
+            renderedPaths: rendered,
+          ),
         )) {
+          if (event.fraction case final fraction?) {
+            yield PortraitExportProgress(
+              progress: (2 * total + fraction) / steps,
+              step: PortraitExportStep.merge,
+              clipIndex: total,
+              clipCount: total,
+              eventMs: null,
+            );
+            continue;
+          }
+          final update = event.value!;
           if (update.outputPath == null) continue;
           yield PortraitExportProgress(
             progress: 1,
@@ -199,6 +251,51 @@ extension NativePortraitExport on NativeMediaExportEngine {
         }
       }
     }
+  }
+}
+
+Stream<({T? value, double? fraction})> _portraitStageEvents<T>(
+  _ExportRun run,
+  String stage,
+  Stream<T> Function() start,
+) async* {
+  final channel = NativeMediaExportEngine._channel;
+  final events = StreamController<({T? value, double? fraction})>();
+  var lastFraction = 0.0;
+  channel.setMethodCallHandler((call) async {
+    final args = call.arguments;
+    if (call.method != 'exportProgress' ||
+        args is! Map ||
+        run.cancelled ||
+        run.nativeId == null ||
+        args['exportId'] != run.nativeId ||
+        args['stage'] != stage ||
+        events.isClosed) {
+      return;
+    }
+    final value = args['progress'];
+    if (value is num && value.isFinite && value > lastFraction && value < 1) {
+      lastFraction = value.toDouble();
+      events.add((value: null, fraction: lastFraction));
+    }
+  });
+  final drain = () async {
+    try {
+      await for (final value in start()) {
+        events.add((value: value, fraction: null));
+      }
+    } on Object catch (error, stack) {
+      events.addError(error, stack);
+    } finally {
+      unawaited(events.close());
+    }
+  }();
+  try {
+    yield* events.stream;
+  } finally {
+    // Unsubscribing cannot release the export gate while the file is in use.
+    await drain;
+    channel.setMethodCallHandler(null);
   }
 }
 

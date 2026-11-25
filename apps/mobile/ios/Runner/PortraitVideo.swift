@@ -8,6 +8,7 @@ enum PortraitVideoError: String, LocalizedError {
   case missingVideo = "The input has no video track."
   case unsupportedAspect = "The source is narrower than the portrait crop."
   case invalidOutputSize = "The portrait encoder did not produce a 1080 by 1920 picture."
+  case invalidMergeClip = "The rendered portrait clip does not match the requested merge."
   case invalidOutputColor = "The portrait encoder did not produce H.264 Rec.709 video."
   case exporterUnavailable = "The video export session could not be created."
   case readerFailed = "The video reader did not complete."
@@ -66,6 +67,7 @@ struct PortraitKeyframe {
 
 struct PortraitClipPlan {
   static let renderSize = CGSize(width: 1080, height: 1920)
+  static let frameDuration = CMTime(value: 1, timescale: 30)
 
   struct Ramp {
     let range: CMTimeRange
@@ -159,6 +161,20 @@ enum PortraitVideoFormat {
   }
 }
 
+struct PortraitMergeClip {
+  let url: URL
+  let expectedDuration: CMTime
+
+  init(arguments: [String: Any]) throws {
+    guard let path = arguments["inputPath"] as? String, !path.isEmpty,
+          arguments["startMs"] as? Int == 0,
+          let endMs = arguments["endMs"] as? Int, endMs > 0
+    else { throw PortraitVideoError.invalidMergeClip }
+    url = URL(fileURLWithPath: path)
+    expectedDuration = CMTime(value: Int64(endMs), timescale: 1000)
+  }
+}
+
 enum PortraitVideo {
   static func configureSDR(_ composition: AVMutableVideoComposition) {
     // The built-in compositor converts HDR pixels into the requested working
@@ -195,7 +211,7 @@ enum PortraitVideo {
     instruction.layerInstructions = [layer]
     let composition = AVMutableVideoComposition()
     composition.renderSize = PortraitClipPlan.renderSize
-    composition.frameDuration = CMTime(value: 1, timescale: 30)
+    composition.frameDuration = PortraitClipPlan.frameDuration
     composition.instructions = [instruction]
     configureSDR(composition)
 
@@ -210,8 +226,59 @@ enum PortraitVideo {
     return exporter
   }
 
+  static func makeMergeExporter(
+    clips: [PortraitMergeClip], output: URL, checkCancellation: () throws -> Void
+  ) throws -> AVAssetExportSession {
+    guard !clips.isEmpty else { throw PortraitVideoError.invalidMergeClip }
+    let composition = AVMutableComposition()
+    guard let video = composition.addMutableTrack(
+      withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid
+    ) else { throw PortraitVideoError.exporterUnavailable }
+
+    var audio: AVMutableCompositionTrack?
+    var cursor = CMTime.zero
+    for clip in clips {
+      try checkCancellation()
+      let asset = AVURLAsset(url: clip.url)
+      let source = try validatedVideoTrack(in: asset)
+      let range = source.timeRange
+      // The encoder rounds the rendered duration to its 30 fps frame cadence.
+      let tolerance = CMTimeAdd(PortraitClipPlan.frameDuration, CMTime(value: 1, timescale: 1000))
+      let durationError = CMTimeAbsoluteValue(CMTimeSubtract(range.duration, clip.expectedDuration))
+      guard source.preferredTransform.isIdentity, range.duration.isNumeric,
+            CMTimeCompare(range.duration, .zero) > 0,
+            CMTimeCompare(durationError, tolerance) <= 0
+      else { throw PortraitVideoError.invalidMergeClip }
+      try video.insertTimeRange(range, of: source, at: cursor)
+
+      if let sourceAudio = asset.tracks(withMediaType: .audio).first {
+        let audioRange = CMTimeRangeGetIntersection(range, otherRange: sourceAudio.timeRange)
+        if !audioRange.isEmpty {
+          if audio == nil {
+            audio = composition.addMutableTrack(
+              withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid
+            )
+          }
+          guard let audio else { throw PortraitVideoError.exporterUnavailable }
+          let offset = CMTimeSubtract(audioRange.start, range.start)
+          try audio.insertTimeRange(audioRange, of: sourceAudio, at: CMTimeAdd(cursor, offset))
+        }
+      }
+      cursor = CMTimeAdd(cursor, range.duration)
+    }
+
+    guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough)
+    else { throw PortraitVideoError.exporterUnavailable }
+    exporter.outputURL = output
+    exporter.outputFileType = .mp4
+    return exporter
+  }
+
   static func validateOutput(_ url: URL) throws {
-    let asset = AVURLAsset(url: url)
+    _ = try validatedVideoTrack(in: AVURLAsset(url: url))
+  }
+
+  private static func validatedVideoTrack(in asset: AVAsset) throws -> AVAssetTrack {
     guard let track = asset.tracks(withMediaType: .video).first,
           let descriptions = track.formatDescriptions as? [CMFormatDescription],
           !descriptions.isEmpty,
@@ -228,5 +295,6 @@ enum PortraitVideo {
     else { throw PortraitVideoError.invalidOutputColor }
     let size = PortraitGeometry(size: track.naturalSize, preferredTransform: track.preferredTransform).size
     guard size == PortraitClipPlan.renderSize else { throw PortraitVideoError.invalidOutputSize }
+    return track
   }
 }

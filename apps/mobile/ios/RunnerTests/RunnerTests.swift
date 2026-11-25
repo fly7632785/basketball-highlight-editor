@@ -80,3 +80,20 @@ final class PortraitVideoTests: XCTestCase {
     XCTAssertEqual(pts.filter { schedule.accepts($0) }, [1067, 1300, 1416])
   }
 }
+
+final class PortraitMergeTests: XCTestCase {
+  func testRenderedClipKeepsDeclaredPathAndDuration() throws {
+    let clip = try PortraitMergeClip(arguments: [
+      "inputPath": "/tmp/portrait-1.mp4", "startMs": 0, "endMs": 1275,
+    ])
+    XCTAssertEqual(clip.url.lastPathComponent, "portrait-1.mp4")
+    XCTAssertEqual(CMTimeGetSeconds(clip.expectedDuration), 1.275, accuracy: 1e-9)
+  }
+
+  func testRenderedClipRejectsMissingFilePathAndNonzeroTrim() {
+    XCTAssertThrowsError(try PortraitMergeClip(arguments: ["startMs": 0, "endMs": 1000]))
+    XCTAssertThrowsError(try PortraitMergeClip(arguments: [
+      "inputPath": "/tmp/portrait-1.mp4", "startMs": 1, "endMs": 1000,
+    ]))
+  }
+}
