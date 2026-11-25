@@ -394,7 +394,7 @@ class _ExportViewState extends State<_ExportView> {
 }
 
 BheLocalizations _exportL10n(BuildContext context) =>
-    BheLocalizations.of(context)!;
+    BheLocalizations.of(context);
 
 String _exportModeLabel(BheLocalizations l10n, MobileOutputMode mode) =>
     switch (mode) {

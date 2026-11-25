@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:bhe_core/bhe_core.dart';
 import 'package:bhe_mobile/mobile_app_state.dart';
 import 'package:bhe_mobile/mobile_ui.dart';
+import 'package:flutter/foundation.dart' show debugPrintSynchronously;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -198,7 +199,7 @@ void main() {
     await _until(tester, details);
 
     final error = tester.takeException();
-    print(
+    debugPrintSynchronously(
       'L541 saveRect=${tester.getRect(find.byKey(_save))} saveHit=${find.byKey(_save).hitTestable().evaluate().length}',
     );
     expect(
@@ -414,7 +415,7 @@ void main() {
       final actual = await tester.runAsync(
         () => f.state.exportHistoryFilePath(entry.files.single),
       );
-      print(
+      debugPrintSynchronously(
         'L541 acknowledged=${f.state.gallerySavedPaths.length} rawEqualsResolved=${raw == actual} currentSaveCalls=${app.media.saveCalls}',
       );
       expect(

@@ -63,8 +63,9 @@ class VideoSourceStore {
     final temporary = await temporaryDirectory();
     final cache = Directory(p.join(temporary.path, 'file_picker'));
     if (await FileSystemEntity.type(cache.path, followLinks: false) !=
-        FileSystemEntityType.directory)
+        FileSystemEntityType.directory) {
       return;
+    }
     final protected = <String>{};
     for (final path in referencedPaths) {
       protected.add(p.normalize(p.absolute(path)));
@@ -95,11 +96,13 @@ class VideoSourceStore {
       if (!ownedCopy && !legacyVideo) continue;
       final stat = await entry.stat();
       if (!stat.modified.isBefore(cutoff) ||
-          (ownedCopy && !stat.changed.isBefore(cutoff)))
+          (ownedCopy && !stat.changed.isBefore(cutoff))) {
         continue;
+      }
       if (protected.contains(p.normalize(entry.absolute.path)) ||
-          protected.contains(await entry.resolveSymbolicLinks()))
+          protected.contains(await entry.resolveSymbolicLinks())) {
         continue;
+      }
       await files.delete(entry);
     }
   }

@@ -9,8 +9,9 @@ class _ExportTaskPage extends StatelessWidget {
     listenable: state,
     builder: (context, _) {
       if (state.exportResult case final result?) {
-        if (ModalRoute.isCurrentOf(context) == true)
+        if (ModalRoute.isCurrentOf(context) == true) {
           state.exportResultSeen = true;
+        }
         return _ExportResultPage(
           key: ObjectKey(result),
           state: state,
@@ -193,8 +194,9 @@ class _ExportResultPageState extends State<_ExportResultPage> {
   }
 
   Future<String?> _availablePath(_ResultFile file) async {
-    if (file.historical case final historical?)
+    if (file.historical case final historical?) {
       return state.exportHistoryFilePath(historical);
+    }
     final local = file.localPath!;
     return await File(local).exists() ? local : null;
   }
@@ -241,8 +243,9 @@ class _ExportResultPageState extends State<_ExportResultPage> {
 
   bool _isSaved(int index, String? path) {
     final historical = files[index].historical;
-    if (state.gallerySavedPaths.contains(path ?? files[index].localPath))
+    if (state.gallerySavedPaths.contains(path ?? files[index].localPath)) {
       return true;
+    }
     if (historical == null) return false;
     return historical.savedToGallery ||
         state.project.exportHistory
@@ -564,7 +567,7 @@ class _ExportResultPageState extends State<_ExportResultPage> {
                           leading: Semantics(
                             label: [
                               title,
-                              if (status != null) status,
+                              ?status,
                             ].join(', '),
                             child: Checkbox(
                               value: enabled && !_unchecked.contains(index),
@@ -762,7 +765,7 @@ class _ExportFailureNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) => _InlineNotice(
     message: [
-      if (title != null) title!,
+      ?title,
       context.bheText(failure.message),
     ].join('\n'),
     error: true,

@@ -171,8 +171,9 @@ extension MobileExportHistory on MobileAppState {
     try {
       if (!current() ||
           !path.isAbsolute(value) ||
-          project.exportHistory.isEmpty)
+          project.exportHistory.isEmpty) {
         return;
+      }
       final root = await _projectPath(id, area: 'exports');
       final resolvedRoot = await Directory(root).resolveSymbolicLinks();
       if (!current()) return;

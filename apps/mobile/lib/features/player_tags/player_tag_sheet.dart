@@ -220,8 +220,9 @@ class _PlayerTagSheetState extends State<_PlayerTagSheet> {
                               onTap: _saving
                                   ? null
                                   : () => setState(() {
-                                      if (!_selected.remove(player))
+                                      if (!_selected.remove(player)) {
                                         _selected.add(player);
+                                      }
                                     }),
                               child: Container(
                                 constraints: const BoxConstraints(

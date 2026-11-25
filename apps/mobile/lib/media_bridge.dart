@@ -292,7 +292,7 @@ class NativeMediaExportEngine implements MobileExportEngine {
       final raw = await _channel.invokeMethod<Object?>('mergeClips', {
         'exportId': exportId,
         'reservationRequired': reserved,
-        if (batchGroup != null) 'batchGroup': batchGroup,
+        'batchGroup': ?batchGroup,
         // Original exports use one source. Portrait merges read the
         // independently rendered files in the order of the clip list.
         if (renderedPaths == null) 'inputPath': video.path,

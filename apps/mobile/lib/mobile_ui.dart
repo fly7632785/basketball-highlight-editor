@@ -2066,8 +2066,9 @@ class _ReviewViewState extends State<_ReviewView> {
         if (!context.mounted ||
             !mounted ||
             state.projectSession != session ||
-            choice == null)
+            choice == null) {
           return;
+        }
         if (!choice) {
           change(expanded: true);
           return;
@@ -2221,8 +2222,9 @@ class _ReviewViewState extends State<_ReviewView> {
       saved.then((result) {
         if (!mounted ||
             generation != _completionGeneration ||
-            projectId != state.project.id)
+            projectId != state.project.id) {
           return;
+        }
         if (result == ReviewActionResult.rejected) {
           final current = selected;
           if (nextId == null || current?.id == nextId) {

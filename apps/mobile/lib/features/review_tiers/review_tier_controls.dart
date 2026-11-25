@@ -731,7 +731,7 @@ Future<({String rim, String player})?> _showReviewFilterSheet(
                     ChoiceChip(
                       key: Key('review-player-option-$value'),
                       label: Text(
-                        '${label} ${candidates.where((c) => _matchesReviewFilters(c, rim: 'all', player: value)).length}',
+                        '$label ${candidates.where((c) => _matchesReviewFilters(c, rim: 'all', player: value)).length}',
                       ),
                       selected: selectedPlayer == value,
                       onSelected: (_) =>

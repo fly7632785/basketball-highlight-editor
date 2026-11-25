@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bhe_core/bhe_core.dart';
 import 'package:bhe_mobile/media_bridge.dart';
+import 'package:flutter/foundation.dart' show debugPrintSynchronously;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -67,7 +68,7 @@ void main() {
       final suffix = player.isEmpty
           ? '-highlights-goal_001_1.00s.mp4'
           : '-highlights-goal_001_1.00s_$player.mp4';
-      print(
+      debugPrintSynchronously(
         'source_bytes=${utf8.encode('$projectName.mp4').length}; export_bytes=${utf8.encode(name).length}',
       );
       expect(utf8.encode(name).length, lessThanOrEqualTo(255));

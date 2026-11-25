@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:bhe_core/bhe_core.dart';
 import 'package:bhe_l10n/bhe_l10n.dart';
 import 'package:bhe_mobile/mobile_ui.dart';
