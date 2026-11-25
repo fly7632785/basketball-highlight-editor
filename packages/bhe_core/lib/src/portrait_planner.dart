@@ -54,6 +54,9 @@ abstract final class PortraitPlanner {
   static const _smoothingMs = 450;
   static const _smoothingRadiusMs = 3 * _smoothingMs;
   static const _deadZoneFraction = .06;
+  // Desktop's normal-pan limits, in crop widths per second and second squared.
+  static const _maxPanSpeed = .6;
+  static const _maxPanAcceleration = .8;
   // Same framing margin as the desktop safe path, relaxed at image edges.
   static const _ballMarginFraction = .42;
 
@@ -76,10 +79,16 @@ abstract final class PortraitPlanner {
     };
     final times = {startMs, endMs, ...inRange.keys}.toList()..sort();
     final observations = <(int, double)>[];
+    PortraitDetection? previousBall;
     for (final t in times) {
       final sample = inRange[t];
       if (sample == null) continue;
-      PortraitDetection? best;
+      PortraitDetection? strongest, nearby;
+      final elapsed = observations.isEmpty
+          ? _supportMs + 1
+          : t - observations.last.$1;
+      final previous = elapsed <= _supportMs ? previousBall : null;
+      var nearestDistance = _observationRadius(half * 2, elapsed);
       for (final ball in sample.balls) {
         // Desktop bounds for a plausible ball box. Partially visible balls
         // at the source edges can still provide a center.
@@ -89,9 +98,22 @@ abstract final class PortraitPlanner {
             math.max(ball.w, ball.h) > .08 * width) {
           continue;
         }
-        if (best == null || ball.conf > best.conf) best = ball;
+        if (strongest == null || ball.conf > strongest.conf) strongest = ball;
+        // Keep a recent track when a distant detection briefly ranks higher.
+        if (previous != null) {
+          final dx = ball.cx - previous.cx, dy = ball.cy - previous.cy;
+          final distance = math.sqrt(dx * dx + dy * dy);
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearby = ball;
+          }
+        }
       }
-      if (best != null) observations.add((t, best.cx));
+      final selected = nearby ?? strongest;
+      if (selected != null) {
+        observations.add((t, selected.cx));
+        previousBall = selected;
+      }
     }
     final clean = [
       for (var i = 0; i < observations.length; i++)
@@ -145,7 +167,7 @@ abstract final class PortraitPlanner {
         targets[i] + deadZone,
       );
     }
-    final keyframes = <PortraitKeyframe>[];
+    final centers = <double>[];
     final observed = {for (final (time, x) in clean) time: x};
     final ballMargin = half * 2 * _ballMarginFraction;
     var lower = 0;
@@ -168,13 +190,95 @@ abstract final class PortraitPlanner {
       if (observed[times[i]] case final ball?) {
         smoothed = smoothed.clamp(ball - ballMargin, ball + ballMargin);
       }
-      keyframes.add(PortraitKeyframe(times[i], bound(smoothed) / width));
+      centers.add(bound(smoothed));
     }
+    final limited = _limitPan(times, centers, half * 2);
     final expectedSamples = ((endMs - startMs) / _samplePeriodMs).ceil();
     return PortraitPlan(
-      keyframes: List.unmodifiable(keyframes),
+      keyframes: List.unmodifiable([
+        for (var i = 0; i < times.length; i++)
+          PortraitKeyframe(times[i], bound(limited[i]) / width),
+      ]),
       trackingCoverage: math.min(1, clean.length / expectedSamples),
     );
+  }
+
+  static List<double> _limitPan(
+    List<int> times,
+    List<double> centers,
+    double cropWidth,
+  ) {
+    final speed = cropWidth * _maxPanSpeed / 1000;
+    final acceleration = cropWidth * _maxPanAcceleration / 1000000;
+    final periods = [
+      for (var i = 1; i < times.length; i++) times[i] - times[i - 1],
+    ];
+    final forward = [...centers], backward = [...centers];
+    for (var i = 0; i < periods.length; i++) {
+      final step = speed * periods[i];
+      forward[i + 1] = centers[i + 1].clamp(
+        forward[i] - step,
+        forward[i] + step,
+      );
+    }
+    for (var i = periods.length - 1; i >= 0; i--) {
+      final step = speed * periods[i];
+      backward[i] = centers[i].clamp(
+        backward[i + 1] - step,
+        backward[i + 1] + step,
+      );
+    }
+    final path = [
+      for (var i = 0; i < times.length; i++) (forward[i] + backward[i]) / 2,
+    ];
+
+    var minRate = 0.0, maxRate = 0.0, previousRate = 0.0;
+    var needsSmoothing = false;
+    for (var i = 0; i < periods.length; i++) {
+      final rate = (path[i + 1] - path[i]) / periods[i];
+      minRate = math.min(minRate, rate);
+      maxRate = math.max(maxRate, rate);
+      if (i > 0 &&
+          (rate - previousRate).abs() >
+              acceleration * (periods[i - 1] + periods[i]) / 2) {
+        needsSmoothing = true;
+      }
+      previousRate = rate;
+    }
+    if (!needsSmoothing) return path;
+
+    // Averaging the continuous, speed-limited path over a time window bounds
+    // its acceleration by (maxRate - minRate) / windowMs. The integral uses
+    // actual media timestamps, including short first and final intervals.
+    final radius = (maxRate - minRate) / (2 * acceleration);
+    final integral = [0.0];
+    for (var i = 0; i < periods.length; i++) {
+      integral.add(integral.last + (path[i] + path[i + 1]) * periods[i] / 2);
+    }
+
+    double areaAt(double time) {
+      if (time <= times.first) return (time - times.first) * path.first;
+      if (time >= times.last) {
+        return integral.last + (time - times.last) * path.last;
+      }
+      var left = 0, right = times.length - 1;
+      while (right - left > 1) {
+        final middle = (left + right) ~/ 2;
+        if (times[middle] <= time) {
+          left = middle;
+        } else {
+          right = middle;
+        }
+      }
+      final elapsed = time - times[left];
+      final rate = (path[right] - path[left]) / periods[left];
+      return integral[left] + elapsed * (path[left] + rate * elapsed / 2);
+    }
+
+    return [
+      for (final time in times)
+        (areaAt(time + radius) - areaAt(time - radius)) / (2 * radius),
+    ];
   }
 
   static bool _valid(PortraitDetection box, double width, int height) =>
@@ -187,6 +291,9 @@ abstract final class PortraitPlanner {
       box.conf.isFinite &&
       box.w > 0 &&
       box.h > 0;
+
+  static double _observationRadius(double crop, int deltaMs) =>
+      crop * math.min(.5, .12 + 2.2 * deltaMs / 1000);
 
   static bool _supportedObservation(
     List<(int, double)> track,
@@ -205,8 +312,7 @@ abstract final class PortraitPlanner {
         ].any((point) {
           final delta = (t - point.$1).abs();
           return delta <= _neighbourMs &&
-              (x - point.$2).abs() <=
-                  crop * math.min(.5, .12 + 2.2 * delta / 1000);
+              (x - point.$2).abs() <= _observationRadius(crop, delta);
         });
     if (!hasNeighbour || i == 0 || i == track.length - 1) return hasNeighbour;
     final (before, left) = track[i - 1];

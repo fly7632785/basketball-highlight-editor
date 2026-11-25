@@ -51,10 +51,81 @@ void main() {
     );
     expect(plan.keyframes[8].cxNorm, closeTo(500 / 1920, .04));
     expect(plan.keyframes[11].cxNorm, closeTo(500 / 1920, .06));
-    // The long gap pans toward the rim while the nearby track is preserved.
-    const halfCrop = 1080 * 9 / 16 / 2 / 1920;
-    expect((plan.keyframes[28].cxNorm - .75).abs(), lessThan(halfCrop));
+    // A long gap still pans toward the rim, at the same bounded rate as
+    // other moves, and turns back toward the ball when tracking resumes.
+    expect(plan.keyframes[28].cxNorm, greaterThan(plan.keyframes[18].cxNorm));
+    expect(plan.keyframes[28].cxNorm, greaterThan(.45));
+    expect(plan.keyframes.last.cxNorm, lessThan(plan.keyframes[28].cxNorm));
     expect(plan.trackingCoverage, closeTo(.45, .001));
+  });
+
+  test('keeps the recent ball when a distant candidate ranks higher', () {
+    final plan = _plan([
+      for (var i = 0; i < 40; i++)
+        PortraitTrackSample(
+          tMs: _start + 13 + i * 100 + (i.isEven ? 0 : 7),
+          balls: [
+            PortraitDetection(
+              cx: 450,
+              cy: 490,
+              w: 20,
+              h: 20,
+              conf: i ~/ 4 % 2 == 0 ? .9 : .7,
+            ),
+            PortraitDetection(
+              cx: 1350,
+              cy: 490,
+              w: 20,
+              h: 20,
+              conf: i ~/ 4 % 2 == 0 ? .7 : .9,
+            ),
+          ],
+          rims: [],
+        ),
+    ]);
+    expect(plan.trackingCoverage, 1);
+    expect(
+      plan.keyframes.map((frame) => frame.cxNorm),
+      everyElement(closeTo(450 / 1920, 1e-8)),
+    );
+  });
+
+  test('limits speed and acceleration across unequal sample intervals', () {
+    final plan = _plan([
+      for (var i = 0; i < 40; i++)
+        PortraitTrackSample(
+          tMs: _start + 13 + i * 100 + (i.isEven ? 0 : 7),
+          balls: [
+            PortraitDetection(
+              cx: i ~/ 4 % 2 == 0 ? 450 : 1350,
+              cy: 490,
+              w: 20,
+              h: 20,
+              conf: .9,
+            ),
+          ],
+          rims: [],
+        ),
+    ]);
+    final frames = plan.keyframes;
+    final durations = [
+      for (var i = 1; i < frames.length; i++)
+        (frames[i].tMs - frames[i - 1].tMs) / 1000,
+    ];
+    const normPerCrop = (1080 * 9 / 16) / 1920;
+    final velocities = [
+      for (var i = 0; i < durations.length; i++)
+        (frames[i + 1].cxNorm - frames[i].cxNorm) / normPerCrop / durations[i],
+    ];
+    expect(plan.hasBallTrack, isTrue);
+    for (var i = 0; i < velocities.length; i++) {
+      expect(velocities[i].abs(), lessThanOrEqualTo(.6 + 1e-8));
+      if (i == 0) continue;
+      final timeBetweenCenters = (durations[i - 1] + durations[i]) / 2;
+      final acceleration =
+          (velocities[i] - velocities[i - 1]).abs() / timeBetweenCenters;
+      expect(acceleration, lessThanOrEqualTo(.8 + 1e-8));
+    }
   });
 
   test('without a rim, a long gap retains the last framing target', () {
