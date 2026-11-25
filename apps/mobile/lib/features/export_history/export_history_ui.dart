@@ -42,6 +42,13 @@ class _ExportHistoryPage extends StatelessWidget {
                           ),
                         ),
                       if (entries.isEmpty) Text(context.bheText('暂无导出记录')),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Text(
+                          l10n.mobileExportRestartHistory,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
                     ],
                   );
                 }

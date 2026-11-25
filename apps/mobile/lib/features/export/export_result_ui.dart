@@ -21,6 +21,10 @@ class _ExportTaskPage extends StatelessWidget {
       final request = state.exportRequest!;
       final portrait = request.framing == ExportFraming.portrait916;
       final progress = state.portraitProgress;
+      final l10n = _exportL10n(context);
+      final waiting = state.progressMessage == '正在结束上一次导出';
+      final preparing = state.progressMessage == '正在检查视频';
+      final cancelling = state.exportCancelled;
       return Scaffold(
         key: const ValueKey('export-progress'),
         appBar: AppBar(title: Text(context.bheText('导出中'))),
@@ -45,12 +49,21 @@ class _ExportTaskPage extends StatelessWidget {
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const SizedBox(height: 8),
-                        Text(context.bheText(state.progressMessage)),
+                        Text(
+                          cancelling
+                              ? l10n.mobileExportCancelling
+                              : waiting
+                              ? l10n.mobileExportWaiting
+                              : context.bheText(state.progressMessage),
+                        ),
                         if (progress != null) ...[
                           const SizedBox(height: 8),
-                          Text(
-                            context.bheText(
-                              '第 ${progress.clipIndex} / ${progress.clipCount} 段',
+                          Semantics(
+                            liveRegion: true,
+                            child: Text(
+                              context.bheText(
+                                '第 ${progress.clipIndex} / ${progress.clipCount} 段',
+                              ),
                             ),
                           ),
                         ],
@@ -63,21 +76,24 @@ class _ExportTaskPage extends StatelessWidget {
                               children: [
                                 Positioned.fill(
                                   child: CircularProgressIndicator(
-                                    value: state.progress.clamp(0, 1),
+                                    value: waiting || preparing || cancelling
+                                        ? null
+                                        : state.progress.clamp(0, 1),
                                     backgroundColor: Theme.of(
                                       context,
                                     ).colorScheme.surfaceContainerHighest,
                                   ),
                                 ),
-                                Text(
-                                  '${(state.progress * 100).clamp(0, 100).round()}%',
-                                ),
+                                if (!waiting && !preparing && !cancelling)
+                                  Text(
+                                    '${(state.progress * 100).clamp(0, 100).round()}%',
+                                  ),
                               ],
                             ),
                           ),
                         ),
                         const SizedBox(height: 8),
-                        if (portrait)
+                        if (portrait && !waiting)
                           _PortraitExportSteps(
                             progress: progress,
                             merging: request.mode != MobileOutputMode.clips,
@@ -86,8 +102,7 @@ class _ExportTaskPage extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (portrait)
-                  _InlineNotice(message: context.bheText('手机可能发热。请保持本页打开。')),
+                _InlineNotice(message: l10n.mobileExportKeepOpen),
               ],
             ),
             actions: SizedBox(
@@ -96,7 +111,11 @@ class _ExportTaskPage extends StatelessWidget {
                 onPressed: state.exportCancelled
                     ? null
                     : () => unawaited(state.cancelExport()),
-                child: Text(context.bheText('取消导出')),
+                child: Text(
+                  waiting
+                      ? l10n.mobileExportStopWaiting
+                      : context.bheText('取消导出'),
+                ),
               ),
             ),
           ),
@@ -127,8 +146,13 @@ class _ExportResultPageState extends State<_ExportResultPage> {
   late final List<_ResultFile> files;
   late final Future<List<String?>> resolved;
   final _unchecked = <int>{};
+  final _noLongerAvailable = <int>{};
+  final _shareFocus = FocusNode();
   bool _didSave = false;
   bool _didShare = false;
+  bool _checkingSelection = false;
+  List<int> _newlyMissing = const [];
+  late bool _showFiles;
 
   @override
   void initState() {
@@ -144,7 +168,6 @@ class _ExportResultPageState extends State<_ExportResultPage> {
             historical: file,
           ),
       ];
-      resolved = Future.wait(entry.files.map(state.exportHistoryFilePath));
     } else {
       final result = widget.live!;
       files = [
@@ -155,15 +178,71 @@ class _ExportResultPageState extends State<_ExportResultPage> {
             untagged:
                 result.request.mode == MobileOutputMode.labels &&
                 file.label == null,
+            localPath: file.path,
           ),
       ];
-      resolved = Future.value([for (final file in result.files) file.path]);
+    }
+    _showFiles = files.length <= 3;
+    resolved = Future.wait(files.map(_availablePath));
+  }
+
+  @override
+  void dispose() {
+    _shareFocus.dispose();
+    super.dispose();
+  }
+
+  Future<String?> _availablePath(_ResultFile file) async {
+    if (file.historical case final historical?)
+      return state.exportHistoryFilePath(historical);
+    final local = file.localPath!;
+    return await File(local).exists() ? local : null;
+  }
+
+  Future<List<String>> _verifySelection(List<int> indices) async {
+    setState(() {
+      _checkingSelection = true;
+      _newlyMissing = const [];
+    });
+    final paths = await Future.wait(
+      indices.map((index) => _availablePath(files[index])),
+    );
+    if (!mounted) return const [];
+    final missing = [
+      for (var index = 0; index < indices.length; index++)
+        if (paths[index] == null) indices[index],
+    ];
+    setState(() {
+      _checkingSelection = false;
+      _newlyMissing = missing;
+      _noLongerAvailable.addAll(missing);
+      if (missing.isNotEmpty) _showFiles = true;
+    });
+    // Let the user see the changed selection before another system action.
+    return missing.isEmpty ? paths.cast<String>() : const [];
+  }
+
+  Future<void> _save(List<int> indices) async {
+    final paths = await _verifySelection(indices);
+    if (!mounted || paths.isEmpty) return;
+    setState(() => _didSave = true);
+    await state.saveExportedFiles(paths: paths);
+  }
+
+  Future<void> _share(List<int> indices, Rect origin) async {
+    final paths = await _verifySelection(indices);
+    if (!mounted || paths.isEmpty) return;
+    setState(() => _didShare = true);
+    await state.shareExportedFiles(paths: paths, origin: origin);
+    if (mounted && ModalRoute.isCurrentOf(context) == true) {
+      _shareFocus.requestFocus();
     }
   }
 
   bool _isSaved(int index, String? path) {
     final historical = files[index].historical;
-    if (path != null && state.gallerySavedPaths.contains(path)) return true;
+    if (state.gallerySavedPaths.contains(path ?? files[index].localPath))
+      return true;
     if (historical == null) return false;
     return historical.savedToGallery ||
         state.project.exportHistory
@@ -233,18 +312,25 @@ class _ExportResultPageState extends State<_ExportResultPage> {
     final partial = count > 0 && count < planned;
     final complete = count > 0 && !partial;
     final failure = live?.failure;
+    final uncertain = live != null && state.hasUncertainExport;
     final error = !cancelled && count == 0;
     final canRun = state.exportStartBlockReason == null;
-    final selected = <String>[];
-    final unsaved = <String>[];
-    if (paths != null) {
-      for (var index = 0; index < paths.length; index++) {
-        final path = paths[index];
-        if (path == null || _unchecked.contains(index)) continue;
-        selected.add(path);
-        if (!_isSaved(index, path)) unsaved.add(path);
-      }
-    }
+    final available = [
+      if (paths != null)
+        for (var index = 0; index < paths.length; index++)
+          if (paths[index] != null && !_noLongerAvailable.contains(index))
+            index,
+    ];
+    final selected = available
+        .where((index) => !_unchecked.contains(index))
+        .toList();
+    final unsaved = selected
+        .where((index) => !_isSaved(index, paths![index]))
+        .toList();
+    final alreadySaved = selected.length - unsaved.length;
+    final allSaved = alreadySaved > 0 && unsaved.isEmpty;
+    final fileActionsBusy =
+        _checkingSelection || state.savingToGallery || state.sharingExports;
     final (title, icon, color) = switch ((cancelled, partial, error)) {
       (true, _, _) => (
         l10n.mobileExportCancelled(count),
@@ -257,9 +343,11 @@ class _ExportResultPageState extends State<_ExportResultPage> {
         BhePalette.gold,
       ),
       (_, _, true) => (
-        l10n.mobileExportFailed,
-        LucideIcons.circleX,
-        Theme.of(context).colorScheme.error,
+        uncertain ? l10n.mobileExportStopUnconfirmed : l10n.mobileExportFailed,
+        uncertain ? LucideIcons.circleAlert : LucideIcons.circleX,
+        uncertain
+            ? Theme.of(context).colorScheme.onSurfaceVariant
+            : Theme.of(context).colorScheme.error,
       ),
       _ => (
         live?.request.framing == ExportFraming.portrait916
@@ -332,8 +420,8 @@ class _ExportResultPageState extends State<_ExportResultPage> {
                           '${live.noBallCount} 段没找到球，画面可能不准',
                         ),
                       ),
-                    if (live != null && state.hasUncertainExport)
-                      _UncertainExportNotice(state: state),
+                    if (uncertain)
+                      _UncertainExportNotice(state: state, forExport: true),
                     if (failure != null && !complete && !cancelled)
                       if (state.videoSourceFailure != null ||
                           state.relinkingVideo)
@@ -366,70 +454,117 @@ class _ExportResultPageState extends State<_ExportResultPage> {
                         ],
                       ),
                     if (count > 0)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Text(
-                          paths == null || count == 1
-                              ? l10n.mobileExportFileCount(count)
-                              : l10n.mobileExportSelected(
-                                  selected.length,
-                                  count,
-                                ),
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              l10n.mobileExportFileCount(count),
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                          ),
+                          if (count > 1)
+                            IconButton(
+                              onPressed: () =>
+                                  setState(() => _showFiles = !_showFiles),
+                              tooltip: context.bheText(
+                                _showFiles ? '收起' : '展开',
+                              ),
+                              icon: Icon(
+                                _showFiles
+                                    ? LucideIcons.chevronUp
+                                    : LucideIcons.chevronDown,
+                              ),
+                            ),
+                        ],
+                      ),
+                    if (count > 1 && paths != null)
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 8,
+                        children: [
+                          Text(
+                            l10n.mobileExportSelected(selected.length, count),
+                          ),
+                          TextButton(
+                            onPressed:
+                                available.length == selected.length ||
+                                    fileActionsBusy
+                                ? null
+                                : () => setState(_unchecked.clear),
+                            child: Text(l10n.mobileExportSelectAll),
+                          ),
+                          TextButton(
+                            onPressed: selected.isEmpty || fileActionsBusy
+                                ? null
+                                : () => setState(
+                                    () => _unchecked.addAll(available),
+                                  ),
+                            child: Text(l10n.mobileExportClearSelection),
+                          ),
+                        ],
                       ),
                   ],
                 ),
               ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                sliver: SliverList.builder(
-                  itemCount: count,
-                  itemBuilder: (context, index) {
-                    final file = files[index];
-                    final path = paths?[index];
-                    final saved = _isSaved(index, path);
-                    final status = paths == null
-                        ? l10n.mobileExportCheckingFiles
-                        : path == null
-                        ? context.bheText(saved ? '已保存到相册，请在相册查看' : '本机文件不可用')
-                        : saved
-                        ? context.bheText('已保存到相册')
-                        : null;
-                    return Card(
-                      child: CheckboxListTile(
-                        key: ValueKey('export-file-$index'),
-                        title: Text(
-                          file.label != null || file.untagged
-                              ? _exportLabel(context, file.label)
-                              : file.name,
+              if (_showFiles)
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  sliver: SliverList.builder(
+                    itemCount: count,
+                    itemBuilder: (context, index) {
+                      final file = files[index];
+                      final path = paths?[index];
+                      final saved = _isSaved(index, path);
+                      final enabled =
+                          path != null && !_noLongerAvailable.contains(index);
+                      final title = file.label != null || file.untagged
+                          ? _exportLabel(context, file.label)
+                          : file.name;
+                      final status = paths == null
+                          ? l10n.mobileExportCheckingFiles
+                          : !enabled
+                          ? context.bheText(saved ? '已保存到相册，请在相册查看' : '本机文件不可用')
+                          : saved
+                          ? l10n.mobileExportSaved
+                          : null;
+                      return Card(
+                        child: ListTile(
+                          key: ValueKey('export-file-$index'),
+                          leading: Semantics(
+                            label: [
+                              title,
+                              if (status != null) status,
+                            ].join(', '),
+                            child: Checkbox(
+                              value: enabled && !_unchecked.contains(index),
+                              onChanged: !enabled || fileActionsBusy
+                                  ? null
+                                  : (checked) => setState(() {
+                                      checked == true
+                                          ? _unchecked.remove(index)
+                                          : _unchecked.add(index);
+                                    }),
+                            ),
+                          ),
+                          title: Text(title),
+                          subtitle:
+                              file.label != null ||
+                                  file.untagged ||
+                                  status != null
+                              ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (file.label != null || file.untagged)
+                                      Text(file.name),
+                                    if (status != null) Text(status),
+                                  ],
+                                )
+                              : null,
                         ),
-                        subtitle:
-                            file.label != null ||
-                                file.untagged ||
-                                status != null
-                            ? Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (file.label != null || file.untagged)
-                                    Text(file.name),
-                                  if (status != null) Text(status),
-                                ],
-                              )
-                            : null,
-                        value: path != null && !_unchecked.contains(index),
-                        onChanged: path == null || state.savingToGallery
-                            ? null
-                            : (checked) => setState(() {
-                                checked == true
-                                    ? _unchecked.remove(index)
-                                    : _unchecked.add(index);
-                              }),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
-              ),
             ],
           ),
           actions: count == 0
@@ -471,27 +606,50 @@ class _ExportResultPageState extends State<_ExportResultPage> {
                         title: l10n.mobileExportShareError,
                         failure: shareFailure,
                       ),
+                    if (_checkingSelection)
+                      Text(l10n.mobileExportCheckingFiles),
+                    if (_newlyMissing.isNotEmpty)
+                      _InlineNotice(
+                        error: true,
+                        message: l10n.mobileExportUnavailableFile(
+                          _newlyMissing
+                              .map((index) => files[index].name)
+                              .join(', '),
+                        ),
+                      ),
                     if (paths != null && selected.isEmpty)
                       Text(l10n.mobileExportSelectFiles),
+                    if (alreadySaved > 0 && !allSaved)
+                      Text(l10n.mobileExportSavedSkipped(alreadySaved)),
+                    if (Platform.isAndroid &&
+                        _didSave &&
+                        state.gallerySaveNotice != null)
+                      Text(l10n.mobileExportSavedToday),
+                    if (allSaved)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: !canRun || fileActionsBusy
+                              ? null
+                              : () => unawaited(_save(selected)),
+                          child: Text(l10n.mobileExportSaveAgain),
+                        ),
+                      ),
                     _ResultActions(
-                      onShare: selected.isEmpty || state.sharingExports
+                      shareFocus: _shareFocus,
+                      onShare: selected.isEmpty || fileActionsBusy
                           ? null
-                          : (origin) {
-                              setState(() => _didShare = true);
-                              return state.shareExportedFiles(
-                                paths: selected,
-                                origin: origin,
-                              );
-                            },
-                      saveText: l10n.mobileSaveExportCount(unsaved.length),
-                      onSave: unsaved.isEmpty || !canRun
+                          : (origin) => _share(selected, origin),
+                      saveText: allSaved
+                          ? l10n.mobileExportSaved
+                          : unsaved.isNotEmpty &&
+                                _didSave &&
+                                state.gallerySaveFailure != null
+                          ? l10n.mobileExportTrySaveRemaining(unsaved.length)
+                          : l10n.mobileSaveExportCount(unsaved.length),
+                      onSave: unsaved.isEmpty || !canRun || fileActionsBusy
                           ? null
-                          : () {
-                              setState(() => _didSave = true);
-                              unawaited(
-                                state.saveExportedFiles(paths: unsaved),
-                              );
-                            },
+                          : () => unawaited(_save(unsaved)),
                     ),
                   ],
                 ),
@@ -507,8 +665,10 @@ class _ResultFile {
     this.label,
     this.untagged = false,
     this.historical,
+    this.localPath,
   });
   final String name;
+  final String? localPath;
   final String? label;
   final bool untagged;
   final ExportHistoryFile? historical;
@@ -516,10 +676,12 @@ class _ResultFile {
 
 class _ResultActions extends StatelessWidget {
   const _ResultActions({
+    required this.shareFocus,
     required this.onShare,
     required this.onSave,
     required this.saveText,
   });
+  final FocusNode shareFocus;
   final Future<void> Function(Rect)? onShare;
   final VoidCallback? onSave;
   final String saveText;
@@ -529,6 +691,10 @@ class _ResultActions extends StatelessWidget {
     final share = Builder(
       builder: (context) => OutlinedButton(
         key: const ValueKey('export-share'),
+        focusNode: shareFocus,
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        ),
         onPressed: onShare == null
             ? null
             : () {

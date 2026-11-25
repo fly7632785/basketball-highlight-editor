@@ -4,10 +4,12 @@ class _ExportView extends StatefulWidget {
   const _ExportView({
     super.key,
     required this.state,
+    required this.allowanceBuilder,
     required this.goalsOnly,
     required this.onBackToReview,
   });
   final MobileAppState state;
+  final WidgetBuilder? allowanceBuilder;
   final bool goalsOnly;
   final VoidCallback onBackToReview;
 
@@ -175,19 +177,18 @@ class _ExportViewState extends State<_ExportView> {
         scope: scope,
       ).length,
     };
-    final plan = context.bheText(
-      framing == ExportFraming.portrait916
-          ? '将导出 $outputCount 个竖屏视频'
-          : outputMode == MobileOutputMode.clips
-          ? '将导出 ${selected.length} 段'
-          : '将导出 $outputCount 个视频 · 共 ${selected.length} 段',
-    );
+    final plan = framing == ExportFraming.portrait916
+        ? context.bheText('将导出 $outputCount 个竖屏视频')
+        : outputMode == MobileOutputMode.clips
+        ? l10n.mobileExportClipPlan(selected.length)
+        : context.bheText('将导出 $outputCount 个视频 · 共 ${selected.length} 段');
     return _ExportLayout(
       body: ListView(
         key: const ValueKey('export-settings'),
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
         children: [
-          if (state.hasUncertainExport) _UncertainExportNotice(state: state),
+          if (state.hasUncertainExport)
+            _UncertainExportNotice(state: state, forExport: true),
           if (state.hasUncertainAnalysis) ...[
             _UncertainAnalysisNotice(state: state),
             const _InlineNotice(message: '上次分析尚未确认停止，暂时不能导出。'),
@@ -226,18 +227,21 @@ class _ExportViewState extends State<_ExportView> {
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
-              TextButton(
-                onPressed: () => showModalBottomSheet<void>(
-                  context: context,
-                  isScrollControlled: true,
-                  builder: (context) => _ExportFramingGuide(
-                    isHdr: state.project.video?.isHdr,
-                    hdrProbe: identical(state.project.video, _probedVideo)
-                        ? _hdrProbe
-                        : null,
+              Flexible(
+                flex: 2,
+                child: TextButton(
+                  onPressed: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    builder: (context) => _ExportFramingGuide(
+                      isHdr: state.project.video?.isHdr,
+                      hdrProbe: identical(state.project.video, _probedVideo)
+                          ? _hdrProbe
+                          : null,
+                    ),
                   ),
+                  child: Text(l10n.mobileCropGuide, textAlign: TextAlign.end),
                 ),
-                child: Text(l10n.mobileCropGuide),
               ),
             ],
           ),
@@ -351,6 +355,10 @@ class _ExportViewState extends State<_ExportView> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (widget.allowanceBuilder case final builder?) ...[
+            Builder(builder: builder),
+            const SizedBox(height: 8),
+          ],
           Text(
             running
                 ? '${context.bheText('导出中')} · ${(state.progress * 100).clamp(0, 100).round()}%'
@@ -408,7 +416,9 @@ class _ExportLayout extends StatelessWidget {
         builder: (context, constraints) {
           if (actions == null) return body;
           final panel = Material(
-            color: Theme.of(context).colorScheme.surfaceContainer,
+            color: Theme.of(context).brightness == Brightness.dark
+                ? BhePalette.surface
+                : Theme.of(context).colorScheme.surfaceContainerLow,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
               child: actions,
@@ -423,7 +433,13 @@ class _ExportLayout extends StatelessWidget {
                   width: (constraints.maxWidth * .35)
                       .clamp(250, 325)
                       .toDouble(),
-                  child: SingleChildScrollView(child: panel),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Flexible(child: SingleChildScrollView(child: panel)),
+                    ],
+                  ),
                 ),
               ],
             );

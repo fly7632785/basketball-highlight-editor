@@ -954,5 +954,64 @@ class BheLocalizationsZh extends BheLocalizations {
   }
 
   @override
-  String get mobileExportDisabledPortrait => '已是竖屏，保留原画面';
+  String get mobileExportKeepOpen => '请保持本页打开，不要锁屏。后台导出可能中断。';
+
+  @override
+  String get mobileExportWaiting => '等上一次导出结束';
+
+  @override
+  String get mobileExportStopWaiting => '取消等待';
+
+  @override
+  String get mobileExportStopUnconfirmed => '还没确认停下';
+
+  @override
+  String get mobileExportCanQueue => '上一次还没确认停下。新导出会等它结束。';
+
+  @override
+  String get mobileExportRestartHistory => '重启后可在导出历史查看已记录的文件。中断的导出不会继续。';
+
+  @override
+  String get mobileExportCancelling => '正在取消导出…';
+
+  @override
+  String mobileExportTrySaveRemaining(int count) {
+    return '继续保存 $count 个';
+  }
+
+  @override
+  String get mobileExportSaveAgain => '再次保存所选文件';
+
+  @override
+  String get mobileExportSaved => '已保存到相册';
+
+  @override
+  String get mobileExportSavedToday => '已保存到相册，按今天时间排最前';
+
+  @override
+  String mobileExportUnavailableFile(String name) {
+    return '本机文件已不可用：$name';
+  }
+
+  @override
+  String get mobileExportSelectAll => '全选';
+
+  @override
+  String get mobileExportClearSelection => '全不选';
+
+  @override
+  String mobileExportSavedSkipped(int count) {
+    return '所选里 $count 个存过，不重复存';
+  }
+
+  @override
+  String mobileExportClipPlan(int count) {
+    return '将导出 $count 段';
+  }
+
+  @override
+  String get mobileFrameFast => '不裁切 · 更快';
+
+  @override
+  String get mobileFrameBattery => '更慢 · 更费电';
 }

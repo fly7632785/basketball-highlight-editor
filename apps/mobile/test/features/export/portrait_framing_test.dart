@@ -38,6 +38,9 @@ Future<void> _advance(WidgetTester tester) async {
 
 Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
   for (var i = 0; i < 4 && finder.evaluate().isEmpty; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 15)),
+    );
     await tester.drag(find.byType(Scrollable).first, const Offset(0, -180));
     await tester.pump(const Duration(milliseconds: 400));
   }

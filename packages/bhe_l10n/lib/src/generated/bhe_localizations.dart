@@ -1820,11 +1820,113 @@ abstract class BheLocalizations {
   /// **'已选 {count} / {total}'**
   String mobileExportSelected(int count, int total);
 
-  /// No description provided for @mobileExportDisabledPortrait.
+  /// No description provided for @mobileExportKeepOpen.
   ///
   /// In zh, this message translates to:
-  /// **'已是竖屏，保留原画面'**
-  String get mobileExportDisabledPortrait;
+  /// **'请保持本页打开，不要锁屏。后台导出可能中断。'**
+  String get mobileExportKeepOpen;
+
+  /// No description provided for @mobileExportWaiting.
+  ///
+  /// In zh, this message translates to:
+  /// **'等上一次导出结束'**
+  String get mobileExportWaiting;
+
+  /// No description provided for @mobileExportStopWaiting.
+  ///
+  /// In zh, this message translates to:
+  /// **'取消等待'**
+  String get mobileExportStopWaiting;
+
+  /// No description provided for @mobileExportStopUnconfirmed.
+  ///
+  /// In zh, this message translates to:
+  /// **'还没确认停下'**
+  String get mobileExportStopUnconfirmed;
+
+  /// No description provided for @mobileExportCanQueue.
+  ///
+  /// In zh, this message translates to:
+  /// **'上一次还没确认停下。新导出会等它结束。'**
+  String get mobileExportCanQueue;
+
+  /// No description provided for @mobileExportRestartHistory.
+  ///
+  /// In zh, this message translates to:
+  /// **'重启后可在导出历史查看已记录的文件。中断的导出不会继续。'**
+  String get mobileExportRestartHistory;
+
+  /// No description provided for @mobileExportCancelling.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在取消导出…'**
+  String get mobileExportCancelling;
+
+  /// No description provided for @mobileExportTrySaveRemaining.
+  ///
+  /// In zh, this message translates to:
+  /// **'继续保存 {count} 个'**
+  String mobileExportTrySaveRemaining(int count);
+
+  /// No description provided for @mobileExportSaveAgain.
+  ///
+  /// In zh, this message translates to:
+  /// **'再次保存所选文件'**
+  String get mobileExportSaveAgain;
+
+  /// No description provided for @mobileExportSaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'已保存到相册'**
+  String get mobileExportSaved;
+
+  /// No description provided for @mobileExportSavedToday.
+  ///
+  /// In zh, this message translates to:
+  /// **'已保存到相册，按今天时间排最前'**
+  String get mobileExportSavedToday;
+
+  /// No description provided for @mobileExportUnavailableFile.
+  ///
+  /// In zh, this message translates to:
+  /// **'本机文件已不可用：{name}'**
+  String mobileExportUnavailableFile(String name);
+
+  /// No description provided for @mobileExportSelectAll.
+  ///
+  /// In zh, this message translates to:
+  /// **'全选'**
+  String get mobileExportSelectAll;
+
+  /// No description provided for @mobileExportClearSelection.
+  ///
+  /// In zh, this message translates to:
+  /// **'全不选'**
+  String get mobileExportClearSelection;
+
+  /// No description provided for @mobileExportSavedSkipped.
+  ///
+  /// In zh, this message translates to:
+  /// **'所选里 {count} 个存过，不重复存'**
+  String mobileExportSavedSkipped(int count);
+
+  /// No description provided for @mobileExportClipPlan.
+  ///
+  /// In zh, this message translates to:
+  /// **'将导出 {count} 段'**
+  String mobileExportClipPlan(int count);
+
+  /// No description provided for @mobileFrameFast.
+  ///
+  /// In zh, this message translates to:
+  /// **'不裁切 · 更快'**
+  String get mobileFrameFast;
+
+  /// No description provided for @mobileFrameBattery.
+  ///
+  /// In zh, this message translates to:
+  /// **'更慢 · 更费电'**
+  String get mobileFrameBattery;
 }
 
 class _BheLocalizationsDelegate

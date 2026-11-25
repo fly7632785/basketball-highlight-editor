@@ -202,6 +202,19 @@ void main() {
         await settleExportRoute(tester);
         final label = language == 'zh' ? '正在检查视频' : 'Checking video';
         expect(find.text(label), findsOneWidget);
+        f.state.progressMessage = '正在结束上一次导出';
+        f.state.notifyListeners();
+        await tester.pump();
+        expect(
+          find.text(
+            language == 'zh' ? '等上一次导出结束' : 'Waiting for the previous export',
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.text(language == 'zh' ? '取消等待' : 'Stop waiting'),
+          findsOneWidget,
+        );
         expect(tester.takeException(), isNull);
       } finally {
         await tester.pumpWidget(const SizedBox());

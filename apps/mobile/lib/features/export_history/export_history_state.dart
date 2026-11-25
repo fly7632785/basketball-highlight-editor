@@ -169,13 +169,20 @@ extension MobileExportHistory on MobileAppState {
     bool current() =>
         !_disposed && project.id == id && _projectSession == session;
     try {
-      final root = await _projectPath(id, area: 'exports');
       if (!current() ||
           !path.isAbsolute(value) ||
-          !path.isWithin(root, path.normalize(value))) {
+          project.exportHistory.isEmpty)
         return;
-      }
-      final relative = path.relative(path.normalize(value), from: root);
+      final root = await _projectPath(id, area: 'exports');
+      final resolvedRoot = await Directory(root).resolveSymbolicLinks();
+      if (!current()) return;
+      final normalized = path.normalize(value);
+      final relative = path.isWithin(root, normalized)
+          ? path.relative(normalized, from: root)
+          : path.isWithin(resolvedRoot, normalized)
+          ? path.relative(normalized, from: resolvedRoot)
+          : null;
+      if (relative == null) return;
       if (!project.exportHistory.any(
         (entry) => entry.files.any((file) => file.relativePath == relative),
       )) {

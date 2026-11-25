@@ -2611,7 +2611,8 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
             ? exportBatchFiles
             : exportedPaths.map((file) => LabelExportFile(null, file)),
       ),
-      cancelled: (exportCancelled || _batchStopRequested) && !hasUncertainExport,
+      cancelled: (exportCancelled || _batchStopRequested) && !hasUncertainExport &&
+          (exportedPaths.isEmpty || exportedPaths.length < snapshot.outputCount),
       failure: message == null ? null : (
         message: message,
         diagnostic: diagnostic?.operation.startsWith('export.history') == true
@@ -2918,9 +2919,16 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
       );
     } on Object catch (error, stack) {
       if (current()) {
+        final otherOperationRunning = exporting || analysing;
+        final earlierMessage = errorMessage;
+        final earlierDiagnostic = diagnosticError;
         recordDiagnosticFailure(error, stack, operation: 'share');
         if (errorMessage case final message?) {
           shareFailure = (message: message, diagnostic: diagnosticError);
+        }
+        if (otherOperationRunning) {
+          errorMessage = earlierMessage;
+          diagnosticError = earlierDiagnostic;
         }
       } else {
         MobileDiagnostics.instance.error(error, stack, operation: 'share');

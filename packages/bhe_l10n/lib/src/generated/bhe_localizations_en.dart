@@ -1004,6 +1004,73 @@ class BheLocalizationsEn extends BheLocalizations {
   }
 
   @override
-  String get mobileExportDisabledPortrait =>
-      'Already portrait. Keep the original frame.';
+  String get mobileExportKeepOpen =>
+      'Keep this page open and do not lock the screen. Export may stop in the background.';
+
+  @override
+  String get mobileExportWaiting => 'Waiting for the previous export';
+
+  @override
+  String get mobileExportStopWaiting => 'Stop waiting';
+
+  @override
+  String get mobileExportStopUnconfirmed => 'Not confirmed stopped';
+
+  @override
+  String get mobileExportCanQueue =>
+      'The previous export may still be running. A new export will wait for it to finish.';
+
+  @override
+  String get mobileExportRestartHistory =>
+      'After restarting, look in Export history for recorded files. Interrupted exports do not resume.';
+
+  @override
+  String get mobileExportCancelling => 'Cancelling export…';
+
+  @override
+  String mobileExportTrySaveRemaining(int count) {
+    return 'Save remaining $count';
+  }
+
+  @override
+  String get mobileExportSaveAgain => 'Save selected again';
+
+  @override
+  String get mobileExportSaved => 'Saved to Photos';
+
+  @override
+  String get mobileExportSavedToday => 'Saved to Photos under today’s date';
+
+  @override
+  String mobileExportUnavailableFile(String name) {
+    return 'File is no longer available: $name';
+  }
+
+  @override
+  String get mobileExportSelectAll => 'Select all';
+
+  @override
+  String get mobileExportClearSelection => 'Clear selection';
+
+  @override
+  String mobileExportSavedSkipped(int count) {
+    return '$count already saved; only new files will be saved';
+  }
+
+  @override
+  String mobileExportClipPlan(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Will export $count clips',
+      one: 'Will export 1 clip',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get mobileFrameFast => 'No crop · faster';
+
+  @override
+  String get mobileFrameBattery => 'Slower · uses more battery';
 }

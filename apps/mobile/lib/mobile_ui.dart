@@ -64,8 +64,9 @@ part 'features/export_history/export_history_ui.dart';
 enum _WorkspaceSection { project, review, export, exportGoals }
 
 class BheMobileApp extends StatefulWidget {
-  const BheMobileApp({super.key, this.appState});
+  const BheMobileApp({super.key, this.appState, this.exportAllowanceBuilder});
   final MobileAppState? appState;
+  final WidgetBuilder? exportAllowanceBuilder;
 
   @override
   State<BheMobileApp> createState() => _BheMobileAppState();
@@ -375,6 +376,7 @@ class _BheMobileAppState extends State<BheMobileApp> {
           animation: state,
           builder: (context, _) => _AppShell(
             state: state,
+            exportAllowanceBuilder: widget.exportAllowanceBuilder,
             dark: dark,
             onToggleTheme: () => setState(() => dark = !dark),
             onLocaleChanged: _setLocale,
@@ -395,6 +397,7 @@ class _BheMobileAppState extends State<BheMobileApp> {
 class _AppShell extends StatelessWidget {
   const _AppShell({
     required this.state,
+    required this.exportAllowanceBuilder,
     required this.dark,
     required this.onToggleTheme,
     required this.onLocaleChanged,
@@ -405,6 +408,7 @@ class _AppShell extends StatelessWidget {
   });
 
   final MobileAppState state;
+  final WidgetBuilder? exportAllowanceBuilder;
   final bool dark;
   final VoidCallback onToggleTheme;
   final ValueChanged<Locale> onLocaleChanged;
@@ -440,6 +444,7 @@ class _AppShell extends StatelessWidget {
       _WorkspaceSection.export || _WorkspaceSection.exportGoals => _ExportView(
         key: ValueKey((section, state.project.id)),
         state: state,
+        allowanceBuilder: exportAllowanceBuilder,
         goalsOnly: section == _WorkspaceSection.exportGoals,
         onBackToReview: () => onSectionChanged(_WorkspaceSection.review),
       ),

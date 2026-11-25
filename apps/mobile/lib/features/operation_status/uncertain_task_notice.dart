@@ -72,13 +72,16 @@ class _UncertainTaskNotice extends StatelessWidget {
 }
 
 class _UncertainExportNotice extends StatelessWidget {
-  const _UncertainExportNotice({required this.state});
+  const _UncertainExportNotice({required this.state, this.forExport = false});
   final MobileAppState state;
+  final bool forExport;
   @override
   Widget build(BuildContext context) => _UncertainTaskNotice(
     keyName: 'uncertain-export-notice',
     operation: '导出',
-    explanation: '上次任务尚未确认结束，暂时不能开始新的同类任务。',
+    explanation: forExport
+        ? _exportL10n(context).mobileExportCanQueue
+        : '上次任务尚未确认结束，暂时不能开始新的同类任务。',
     guidance: '请先复制诊断信息；若仍无法确认，请在系统设置中强制停止 BHE，重新打开后检查项目和已导出文件。',
     busy: state.checkingUncertainExport,
     status: state.uncertainExportStatus,

@@ -102,6 +102,12 @@ void main() {
         expect(find.textContaining('没标签的 1 段不导出'), findsOneWidget);
         await finishExportSettings(tester, '完成');
 
+        final rendered = (await tester.runAsync(
+          () async => [
+            await fixture.file('a.mp4', 'demo A'),
+            await fixture.file('b.mp4', 'demo B'),
+          ],
+        ))!;
         fixture.state.exportResult = MobileExportResult(
           request: MobileExportRequest(
             scope: ExportScope.all,
@@ -118,9 +124,9 @@ void main() {
                 ),
             ],
           ),
-          files: const [
-            LabelExportFile('Alice', '/tmp/a.mp4'),
-            LabelExportFile('Bob', '/tmp/b.mp4'),
+          files: [
+            LabelExportFile('Alice', rendered[0].path),
+            LabelExportFile('Bob', rendered[1].path),
           ],
           cancelled: false,
           failure: null,
@@ -134,6 +140,16 @@ void main() {
         await settleExportRoute(tester);
         expect(find.text('导出了 2 个，还差 1 个'), findsOneWidget);
         expect(find.text('分享'), findsOneWidget);
+        for (
+          var attempt = 0;
+          attempt < 20 && find.text('保存 2 个到相册').evaluate().isEmpty;
+          attempt++
+        ) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 10)),
+          );
+          await tester.pump();
+        }
         expect(find.text('保存 2 个到相册'), findsOneWidget);
         await capture('partial');
         expect(tester.takeException(), isNull);

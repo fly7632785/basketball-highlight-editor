@@ -305,5 +305,22 @@
   "mobileExportDidNotFinish": "Export did not finish",
   "mobileExportCheckingFiles": "Checking local files…",
   "mobileExportSelected": "{count} of {total} selected",
-  "mobileExportDisabledPortrait": "Already portrait. Keep the original frame."
+  "mobileExportKeepOpen": "Keep this page open and do not lock the screen. Export may stop in the background.",
+  "mobileExportWaiting": "Waiting for the previous export",
+  "mobileExportStopWaiting": "Stop waiting",
+  "mobileExportStopUnconfirmed": "Not confirmed stopped",
+  "mobileExportCanQueue": "The previous export may still be running. A new export will wait for it to finish.",
+  "mobileExportRestartHistory": "After restarting, look in Export history for recorded files. Interrupted exports do not resume.",
+  "mobileExportCancelling": "Cancelling export…",
+  "mobileExportTrySaveRemaining": "Save remaining {count}",
+  "mobileExportSaveAgain": "Save selected again",
+  "mobileExportSaved": "Saved to Photos",
+  "mobileExportSavedToday": "Saved to Photos under today’s date",
+  "mobileExportUnavailableFile": "File is no longer available: {name}",
+  "mobileExportSelectAll": "Select all",
+  "mobileExportClearSelection": "Clear selection",
+  "mobileExportSavedSkipped": "{count} already saved; only new files will be saved",
+  "mobileExportClipPlan": "{count, plural, one{Will export 1 clip} other{Will export {count} clips}}",
+  "mobileFrameFast": "No crop · faster",
+  "mobileFrameBattery": "Slower · uses more battery"
 }

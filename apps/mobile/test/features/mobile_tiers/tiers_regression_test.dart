@@ -199,7 +199,7 @@ void main() {
       await tester.tap(find.byTooltip('Export').first);
       await tester.pump();
       expect(
-        find.text('Will export 1 clips · Clip total 0:02'),
+        find.text('Will export 1 clip · Clip total 0:02'),
         findsOneWidget,
       );
       await openExportScope(tester);
