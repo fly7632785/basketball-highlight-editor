@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 import '../../support/fake_video_platform.dart';
+import '../../support/export_settings_actions.dart';
 import '../../support/mobile_video_fixture.dart';
 
 void main() {
@@ -168,7 +169,8 @@ void main() {
         await tester.pumpWidget(BheMobileApp(appState: fixture.state));
         await tester.pump();
         await tester.tap(find.byTooltip('导出'));
-        await tester.pump();
+        await settleExportRoute(tester);
+        await settleExportRoute(tester);
         await tester.scrollUntilVisible(find.text('导出成功，部分音轨无法保留'), 300);
         expect(find.text('导出成功，部分音轨无法保留'), findsOneWidget);
         skipAudio = false;
@@ -209,7 +211,8 @@ void main() {
             BheLocalizations,
           )!;
           await tester.tap(find.byTooltip(l10n.text('导出')));
-          await tester.pump();
+          await settleExportRoute(tester);
+          await settleExportRoute(tester);
           final message = language == 'zh'
               ? '合并后减少了 2 个片段'
               : 'Merging reduced the clip count by 2.';

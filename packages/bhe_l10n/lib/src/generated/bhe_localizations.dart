@@ -1651,6 +1651,180 @@ abstract class BheLocalizations {
   /// In zh, this message translates to:
   /// **'不支持这个文件，请拖入 MP4、MOV、M4V、AVI 或 MKV 视频'**
   String get homeDropUnsupported;
+
+  /// No description provided for @mobileWhatToExport.
+  ///
+  /// In zh, this message translates to:
+  /// **'导出哪些'**
+  String get mobileWhatToExport;
+
+  /// No description provided for @mobileAllTags.
+  ///
+  /// In zh, this message translates to:
+  /// **'全部标签'**
+  String get mobileAllTags;
+
+  /// No description provided for @mobileOnePerClip.
+  ///
+  /// In zh, this message translates to:
+  /// **'每段一个视频'**
+  String get mobileOnePerClip;
+
+  /// No description provided for @mobileOneMerged.
+  ///
+  /// In zh, this message translates to:
+  /// **'合成一个视频'**
+  String get mobileOneMerged;
+
+  /// No description provided for @mobileOnePerTag.
+  ///
+  /// In zh, this message translates to:
+  /// **'每个标签一个视频'**
+  String get mobileOnePerTag;
+
+  /// No description provided for @mobileCropGuide.
+  ///
+  /// In zh, this message translates to:
+  /// **'怎么裁的'**
+  String get mobileCropGuide;
+
+  /// No description provided for @mobileClipsTotal.
+  ///
+  /// In zh, this message translates to:
+  /// **'片段共 {time}'**
+  String mobileClipsTotal(String time);
+
+  /// No description provided for @mobileViewProgress.
+  ///
+  /// In zh, this message translates to:
+  /// **'查看进度'**
+  String get mobileViewProgress;
+
+  /// No description provided for @mobileExportReady.
+  ///
+  /// In zh, this message translates to:
+  /// **'{count} 个视频导出好了'**
+  String mobileExportReady(int count);
+
+  /// No description provided for @mobilePortraitReady.
+  ///
+  /// In zh, this message translates to:
+  /// **'{count} 个竖屏视频导出好了'**
+  String mobilePortraitReady(int count);
+
+  /// No description provided for @mobileHighlightsReady.
+  ///
+  /// In zh, this message translates to:
+  /// **'集锦导出好了'**
+  String get mobileHighlightsReady;
+
+  /// No description provided for @mobileExportPartial.
+  ///
+  /// In zh, this message translates to:
+  /// **'导出了 {count} 个，还差 {remaining} 个'**
+  String mobileExportPartial(int count, int remaining);
+
+  /// No description provided for @mobileExportFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'没有导出成功'**
+  String get mobileExportFailed;
+
+  /// No description provided for @mobileExportCancelled.
+  ///
+  /// In zh, this message translates to:
+  /// **'已取消，留下了 {count} 个'**
+  String mobileExportCancelled(int count);
+
+  /// No description provided for @mobileExportAllAgain.
+  ///
+  /// In zh, this message translates to:
+  /// **'全部重新导出'**
+  String get mobileExportAllAgain;
+
+  /// No description provided for @mobileChangeExportSettings.
+  ///
+  /// In zh, this message translates to:
+  /// **'换设置再导'**
+  String get mobileChangeExportSettings;
+
+  /// No description provided for @mobileRetryExportCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'重新导出 {count} 个视频？'**
+  String mobileRetryExportCount(int count);
+
+  /// No description provided for @mobileExistingExportsKept.
+  ///
+  /// In zh, this message translates to:
+  /// **'已有的 {count} 个留在导出历史'**
+  String mobileExistingExportsKept(int count);
+
+  /// No description provided for @mobileSaveExportCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'保存 {count} 个到相册'**
+  String mobileSaveExportCount(int count);
+
+  /// No description provided for @mobileExportFileCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'文件 · {count}'**
+  String mobileExportFileCount(int count);
+
+  /// No description provided for @mobileExportShareError.
+  ///
+  /// In zh, this message translates to:
+  /// **'分享失败'**
+  String get mobileExportShareError;
+
+  /// No description provided for @mobileExportSaveError.
+  ///
+  /// In zh, this message translates to:
+  /// **'保存到相册失败'**
+  String get mobileExportSaveError;
+
+  /// No description provided for @mobileExportSelectFiles.
+  ///
+  /// In zh, this message translates to:
+  /// **'先选文件，再分享或保存'**
+  String get mobileExportSelectFiles;
+
+  /// No description provided for @mobileExportClipFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'第 {clip} 段（{time}）没成功'**
+  String mobileExportClipFailed(int clip, String time);
+
+  /// No description provided for @mobileFailedMerge.
+  ///
+  /// In zh, this message translates to:
+  /// **'合并没成功'**
+  String get mobileFailedMerge;
+
+  /// No description provided for @mobileExportDidNotFinish.
+  ///
+  /// In zh, this message translates to:
+  /// **'导出没做完'**
+  String get mobileExportDidNotFinish;
+
+  /// No description provided for @mobileExportCheckingFiles.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在检查本机文件…'**
+  String get mobileExportCheckingFiles;
+
+  /// No description provided for @mobileExportSelected.
+  ///
+  /// In zh, this message translates to:
+  /// **'已选 {count} / {total}'**
+  String mobileExportSelected(int count, int total);
+
+  /// No description provided for @mobileExportDisabledPortrait.
+  ///
+  /// In zh, this message translates to:
+  /// **'已是竖屏，保留原画面'**
+  String get mobileExportDisabledPortrait;
 }
 
 class _BheLocalizationsDelegate

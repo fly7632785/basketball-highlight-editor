@@ -6,6 +6,7 @@ import 'package:bhe_mobile/features/review_tiers/mobile_tiers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../support/export_settings_actions.dart';
 import '../../support/mobile_video_fixture.dart';
 
 const _clips = [
@@ -53,10 +54,9 @@ void main() {
         'Bob': [_clips[1]],
       },
     );
-    final selected = labelExportGroups(
-      [_clips[1]],
-      scope: const ExportScope.only({'Bob'}),
-    );
+    final selected = labelExportGroups([
+      _clips[1],
+    ], scope: const ExportScope.only({'Bob'}));
     expect(selected.map((group) => group.label), ['Bob']);
     expect(selected.single.candidates, [_clips[1]]);
   });
@@ -199,6 +199,11 @@ void main() {
       await tester.tap(find.byTooltip('Export').first);
       await tester.pump();
       expect(
+        find.text('Will export 1 clips · Clip total 0:02'),
+        findsOneWidget,
+      );
+      await openExportScope(tester);
+      expect(
         tester
             .widget<FilterChip>(find.byKey(const Key('export-tier-goal')))
             .selected,
@@ -216,9 +221,9 @@ void main() {
             .selected,
         isFalse,
       );
-      expect(find.text('Will export 1 clips · 0:02'), findsOneWidget);
       await tester.tap(find.byKey(const Key('export-tier-uncertain')));
       await tester.pump();
+      await finishExportSettings(tester, 'Done');
       expect(find.text('No clips to export'), findsOneWidget);
       expect(
         tester

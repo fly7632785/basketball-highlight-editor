@@ -1,11 +1,15 @@
 import 'dart:async';
 import 'package:bhe_mobile/media_bridge.dart';
+import 'package:bhe_core/bhe_core.dart';
+import 'package:bhe_mobile/mobile_app_state.dart';
 import 'package:bhe_mobile/mobile_ui.dart';
+import 'package:bhe_mobile/features/export/export_modes.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 import '../../support/fake_video_platform.dart';
+import '../../support/export_settings_actions.dart';
 import '../../support/mobile_video_fixture.dart';
 
 void main() {
@@ -179,6 +183,12 @@ void main() {
           final file = await f.file('original.mp4', 'original');
           f.state.project = f.project(file.path);
         });
+        f.state.exportRequest = MobileExportRequest(
+          scope: ExportScope.all,
+          mode: MobileOutputMode.clips,
+          framing: ExportFraming.original,
+          candidates: f.state.project.candidates,
+        );
         f.state.exporting = true;
         f.state.progressMessage = '正在检查视频';
         f.state.progress = 0;
@@ -186,8 +196,11 @@ void main() {
         await tester.pump();
         await tester.tap(find.byTooltip(language == 'zh' ? '导出' : 'Export'));
         await tester.pump();
+        await tester.tap(
+          find.text(language == 'zh' ? '查看进度' : 'View progress'),
+        );
+        await settleExportRoute(tester);
         final label = language == 'zh' ? '正在检查视频' : 'Checking video';
-        await tester.scrollUntilVisible(find.text(label), 250);
         expect(find.text(label), findsOneWidget);
         expect(tester.takeException(), isNull);
       } finally {

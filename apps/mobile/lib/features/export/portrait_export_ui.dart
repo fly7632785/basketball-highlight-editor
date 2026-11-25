@@ -11,73 +11,40 @@ String _sourceAlreadyPortraitHint(BuildContext context) => context.bheText(
       : portraitSourceAlreadyVertical,
 );
 
-class _ExportFramingSheet extends StatefulWidget {
-  const _ExportFramingSheet({
-    required this.initial,
-    required this.sourceAlreadyPortrait,
-    required this.isHdr,
-    required this.hdrProbe,
-  });
+class _ExportFramingGuide extends StatelessWidget {
+  const _ExportFramingGuide({required this.isHdr, required this.hdrProbe});
 
-  final ExportFraming initial;
-  final bool sourceAlreadyPortrait;
   final bool? isHdr;
   final Future<bool?>? hdrProbe;
 
   @override
-  State<_ExportFramingSheet> createState() => _ExportFramingSheetState();
-}
-
-class _ExportFramingSheetState extends State<_ExportFramingSheet> {
-  late ExportFraming choice = widget.initial;
-
-  @override
   Widget build(BuildContext context) => _SheetFrame(
-    title: context.bheText('画面'),
+    title: _exportL10n(context).mobileCropGuide,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final value in ExportFraming.values)
-          _ChoiceRow(
-            title: context.bheText(_framingLabel(value)),
-            subtitle: switch (value) {
-              ExportFraming.original => context.bheText('不裁切，比竖屏快'),
-              ExportFraming.portrait916 when widget.sourceAlreadyPortrait =>
-                _sourceAlreadyPortraitHint(context),
-              ExportFraming.portrait916 => context.bheText('从横屏里裁出竖条，镜头跟着球走'),
-            },
-            selected: choice == value,
-            onTap:
-                value == ExportFraming.portrait916 &&
-                    widget.sourceAlreadyPortrait
-                ? null
-                : () => setState(() => choice = value),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: const CustomPaint(
+            size: Size(double.infinity, 112),
+            painter: _PortraitFramingDiagram(),
           ),
-        if (choice == ExportFraming.portrait916) ...[
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: const CustomPaint(
-              size: Size(double.infinity, 112),
-              painter: _PortraitFramingDiagram(),
-            ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          context.bheText('橙框内为保留画面，框外会裁掉。输出 1080 × 1920。'),
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 8),
+        _InlineNotice(
+          message: context.bheText(
+            '逐帧重新生成，慢且费电。建议插电并保持本页打开。1080p 原片裁切放大后会变糊一些。',
           ),
-          const SizedBox(height: 8),
-          Text(
-            context.bheText('橙框内为保留画面，框外会裁掉。输出 1080 × 1920。'),
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 8),
-          _InlineNotice(
-            message: context.bheText(
-              '逐帧重新生成，慢且费电。建议插电并保持本页打开。1080p 原片裁切放大后会变糊一些。',
-            ),
-          ),
-          _PortraitHdrHint(isHdr: widget.isHdr, probe: widget.hdrProbe),
-        ],
+        ),
+        _PortraitHdrHint(isHdr: isHdr, probe: hdrProbe),
         const SizedBox(height: 12),
         FilledButton(
-          onPressed: () => Navigator.pop(context, choice),
+          onPressed: () => Navigator.pop(context),
           child: Text(context.bheText('完成')),
         ),
       ],
@@ -86,7 +53,8 @@ class _ExportFramingSheetState extends State<_ExportFramingSheet> {
 }
 
 class _PortraitFramingDiagram extends CustomPainter {
-  const _PortraitFramingDiagram();
+  const _PortraitFramingDiagram({this.cropped = true});
+  final bool cropped;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -113,6 +81,7 @@ class _PortraitFramingDiagram extends CustomPainter {
     paint.style = PaintingStyle.fill;
     paint.color = BhePalette.orange;
     canvas.drawCircle(rim.translate(-10, 0), 5, paint);
+    if (!cropped) return;
     final crop = Rect.fromCenter(
       center: Offset(size.width * .61, size.height / 2),
       width: size.height * 9 / 16,
@@ -132,7 +101,8 @@ class _PortraitFramingDiagram extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_PortraitFramingDiagram oldDelegate) => false;
+  bool shouldRepaint(_PortraitFramingDiagram oldDelegate) =>
+      cropped != oldDelegate.cropped;
 }
 
 class _PortraitHdrHint extends StatelessWidget {
@@ -155,155 +125,40 @@ class _PortraitHdrHint extends StatelessWidget {
   );
 }
 
-class _PortraitExportRunning extends StatelessWidget {
-  const _PortraitExportRunning({required this.state, required this.merging});
-
-  final MobileAppState state;
+class _PortraitExportSteps extends StatelessWidget {
+  const _PortraitExportSteps({required this.progress, required this.merging});
+  final PortraitExportProgress? progress;
   final bool merging;
 
   @override
-  Widget build(BuildContext context) {
-    final progress = state.portraitProgress;
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 600),
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text(
-              context.bheText('导出中'),
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      context.bheText('正在导出竖屏视频'),
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      context.bheText(
-                        progress == null
-                            ? state.progressMessage
-                            : '第 ${progress.clipIndex} / ${progress.clipCount} 段',
-                      ),
-                    ),
-                    if (progress != null &&
-                        state.exportBatchTotal > 0 &&
-                        !state.exportCancelled)
-                      Text(context.bheText(state.progressMessage)),
-                    const SizedBox(height: 10),
-                    LinearProgressIndicator(value: state.progress.clamp(0, 1)),
-                    const SizedBox(height: 10),
-                    for (final (step, label) in [
-                      (PortraitExportStep.sample, context.bheText('找球和篮筐')),
-                      (
-                        PortraitExportStep.plan,
-                        context.bheText(
-                          Localizations.localeOf(context).languageCode == 'zh'
-                              ? '规划取景'
-                              : 'Plan framing',
-                        ),
-                      ),
-                      (PortraitExportStep.render, context.bheText('裁切并生成画面')),
-                      if (merging)
-                        (PortraitExportStep.merge, context.bheText('合并成一个视频')),
-                    ])
-                      ListTile(
-                        dense: true,
-                        visualDensity: VisualDensity.compact,
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          progress != null && progress.step.index > step.index
-                              ? LucideIcons.check
-                              : progress?.step == step
-                              ? LucideIcons.play
-                              : LucideIcons.circle,
-                          size: 17,
-                        ),
-                        title: Text(label),
-                        selected: progress?.step == step,
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            _InlineNotice(message: context.bheText('手机可能发热。请保持本页打开。')),
-            const SizedBox(height: 10),
-            OutlinedButton(
-              onPressed: state.exportCancelled
-                  ? null
-                  : () => unawaited(state.cancelExport()),
-              child: Text(context.bheText('取消导出')),
-            ),
-          ],
+  Widget build(BuildContext context) => Column(
+    children: [
+      for (final (step, label) in [
+        (PortraitExportStep.sample, context.bheText('找球和篮筐')),
+        (
+          PortraitExportStep.plan,
+          Localizations.localeOf(context).languageCode == 'zh'
+              ? '规划取景'
+              : 'Plan framing',
         ),
-      ),
-    );
-  }
-}
-
-class _PortraitExportFailure extends StatelessWidget {
-  const _PortraitExportFailure({
-    required this.state,
-    required this.onRetry,
-    required this.onOriginal,
-  });
-
-  final MobileAppState state;
-  final VoidCallback? onRetry, onOriginal;
-
-  @override
-  Widget build(BuildContext context) {
-    final progress = state.portraitProgress;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  context.bheText(switch (progress?.step) {
-                    PortraitExportStep.merge => '合并没成功，已停下',
-                    PortraitExportStep.sample ||
-                    PortraitExportStep.plan ||
-                    PortraitExportStep.render =>
-                      '第 ${progress!.clipIndex} 段没导出成功，已停下',
-                    null => '竖屏导出没成功，已停下',
-                  }),
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                if (progress?.eventMs case final event?) ...[
-                  const SizedBox(height: 4),
-                  Text('#${progress!.clipIndex} · ${_formatMs(event)}'),
-                ],
-                const SizedBox(height: 6),
-                Text(
-                  state.portraitExportError == portraitSourceAlreadyVertical
-                      ? _sourceAlreadyPortraitHint(context)
-                      : context.bheText(state.portraitExportError!),
-                ),
-              ],
-            ),
+        (PortraitExportStep.render, context.bheText('裁切并生成画面')),
+        if (merging) (PortraitExportStep.merge, context.bheText('合并成一个视频')),
+      ])
+        ListTile(
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(
+            progress != null && progress!.step.index > step.index
+                ? LucideIcons.check
+                : progress?.step == step
+                ? LucideIcons.play
+                : LucideIcons.circle,
+            size: 17,
           ),
+          title: Text(label),
+          selected: progress?.step == step,
         ),
-        const SizedBox(height: 10),
-        FilledButton(onPressed: onRetry, child: Text(context.bheText('重新导出'))),
-        const SizedBox(height: 8),
-        OutlinedButton(
-          onPressed: onOriginal,
-          child: Text(context.bheText('改用原比例导出')),
-        ),
-      ],
-    );
-  }
+    ],
+  );
 }

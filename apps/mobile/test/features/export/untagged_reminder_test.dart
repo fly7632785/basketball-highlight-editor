@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 import '../../support/fake_video_platform.dart';
+import '../../support/export_settings_actions.dart';
 import '../../support/mobile_video_fixture.dart';
 
 const _channel = MethodChannel('com.bhe.bhe/mobile_media');
@@ -17,8 +18,9 @@ Candidate _c(String id, int n, {String? player, bool excluded = false}) =>
       endMs: n * 1000 + 800,
       eventMs: n * 1000 + 400,
       player: player,
-      selection:
-          excluded ? CandidateSelection.excluded : CandidateSelection.included,
+      selection: excluded
+          ? CandidateSelection.excluded
+          : CandidateSelection.included,
     );
 
 void main() {
@@ -79,80 +81,98 @@ void main() {
   ];
 
   testWidgets('asks first and goes back to review', (tester) async {
-    await run(tester, players: const ['Alice'], candidates: withUntagged,
-        body: (fixture) async {
-      await tester.tap(find.text('合并成一个视频'));
-      await tester.pump();
-      await tester.tap(find.text('开始导出'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byKey(const ValueKey('untagged-reminder')), findsOneWidget);
-      // The excluded untagged clip is not counted.
-      expect(find.text('还有 2 个片段未标标签'), findsOneWidget);
-      await tester.tap(find.text('返回审核'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byKey(const ValueKey('untagged-reminder')), findsNothing);
-      expect(find.byKey(const ValueKey('game-stats-card')), findsNothing);
-      expect(fixture.state.exporting, isFalse);
-    });
+    await run(
+      tester,
+      players: const ['Alice'],
+      candidates: withUntagged,
+      body: (fixture) async {
+        await chooseExportMode(tester, '合成一个视频', '完成');
+        await tester.tap(find.text('开始导出'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byKey(const ValueKey('untagged-reminder')), findsOneWidget);
+        // The excluded untagged clip is not counted.
+        expect(find.text('还有 2 个片段未标标签'), findsOneWidget);
+        await tester.tap(find.text('返回审核'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byKey(const ValueKey('untagged-reminder')), findsNothing);
+        expect(find.byKey(const ValueKey('export-stats')), findsNothing);
+        expect(fixture.state.exporting, isFalse);
+      },
+    );
   });
 
   testWidgets('export anyway starts the export', (tester) async {
-    await run(tester, players: const ['Alice'], candidates: withUntagged,
-        body: (fixture) async {
-      await tester.tap(find.text('合并成一个视频'));
-      await tester.pump();
-      await tester.tap(find.text('开始导出'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.text('仍然导出'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byKey(const ValueKey('untagged-reminder')), findsNothing);
-      expect(fixture.state.exporting, isTrue);
-    });
+    await run(
+      tester,
+      players: const ['Alice'],
+      candidates: withUntagged,
+      body: (fixture) async {
+        await chooseExportMode(tester, '合成一个视频', '完成');
+        await tester.tap(find.text('开始导出'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.text('仍然导出'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byKey(const ValueKey('untagged-reminder')), findsNothing);
+        expect(fixture.state.exporting, isTrue);
+      },
+    );
   });
 
-  testWidgets('no reminder when nothing is tagged and there is no roster',
-      (tester) async {
-    await run(tester, players: const [], candidates: [_c('u1', 1), _c('u2', 2)],
-        body: (fixture) async {
-      await tester.tap(find.text('合并成一个视频'));
-      await tester.pump();
-      await tester.tap(find.text('开始导出'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byKey(const ValueKey('untagged-reminder')), findsNothing);
-      expect(fixture.state.exporting, isTrue);
-    });
+  testWidgets('no reminder when nothing is tagged and there is no roster', (
+    tester,
+  ) async {
+    await run(
+      tester,
+      players: const [],
+      candidates: [_c('u1', 1), _c('u2', 2)],
+      body: (fixture) async {
+        await chooseExportMode(tester, '合成一个视频', '完成');
+        await tester.tap(find.text('开始导出'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byKey(const ValueKey('untagged-reminder')), findsNothing);
+        expect(fixture.state.exporting, isTrue);
+      },
+    );
   });
 
   testWidgets('no reminder when filtered to one player', (tester) async {
-    await run(tester, players: const ['Alice'], candidates: withUntagged,
-        body: (fixture) async {
-      await tester.tap(find.text('Alice  1'));
-      await tester.pump();
-      await tester.tap(find.text('合并成一个视频'));
-      await tester.pump();
-      await tester.tap(find.text('开始导出'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byKey(const ValueKey('untagged-reminder')), findsNothing);
-      expect(fixture.state.exporting, isTrue);
-    });
+    await run(
+      tester,
+      players: const ['Alice'],
+      candidates: withUntagged,
+      body: (fixture) async {
+        await openExportScope(tester);
+        await tester.tap(find.text('Alice  1'));
+        await tester.pump();
+        await finishExportSettings(tester, '完成');
+        await chooseExportMode(tester, '合成一个视频', '完成');
+        await tester.tap(find.text('开始导出'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byKey(const ValueKey('untagged-reminder')), findsNothing);
+        expect(fixture.state.exporting, isTrue);
+      },
+    );
   });
 
   testWidgets('no reminder in per-label mode', (tester) async {
-    await run(tester, players: const ['Alice'], candidates: withUntagged,
-        body: (fixture) async {
-      await tester.tap(find.text('每个标签各合成一个视频'));
-      await tester.pump();
-      await tester.tap(find.text('开始导出'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byKey(const ValueKey('untagged-reminder')), findsNothing);
-      expect(fixture.state.exporting, isTrue);
-    });
+    await run(
+      tester,
+      players: const ['Alice'],
+      candidates: withUntagged,
+      body: (fixture) async {
+        await chooseExportMode(tester, '每个标签一个视频', '完成');
+        await tester.tap(find.text('开始导出'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byKey(const ValueKey('untagged-reminder')), findsNothing);
+        expect(fixture.state.exporting, isTrue);
+      },
+    );
   });
 }

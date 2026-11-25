@@ -8,6 +8,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../support/export_settings_actions.dart';
 import '../../support/mobile_video_fixture.dart';
 
 void main() {
@@ -96,28 +97,15 @@ void main() {
         for (var i = 0; i < 6; i++) {
           await tester.pump(const Duration(milliseconds: 100));
         }
-        await tester.scrollUntilVisible(
-          find.text('查看全部 4 条'),
-          180,
-          scrollable: find.byType(Scrollable).last,
+        await openExportControl(tester, 'export-history');
+        expect(
+          find.byKey(const ValueKey('export-history-page')),
+          findsOneWidget,
         );
-        await tester.pump();
-        expect(find.byKey(const ValueKey('history-entry-r4')), findsNothing);
         await capture('recent');
-        await tester.tap(find.text('查看全部 4 条'));
-        await tester.pump();
-        expect(find.byKey(const ValueKey('history-entry-r4')), findsOneWidget);
-        await tester.ensureVisible(
-          find.byKey(const ValueKey('history-entry-r1')),
-        );
-        await tester.pump();
-        final tile = find.descendant(
-          of: find.byKey(const ValueKey('history-entry-r1')),
-          matching: find.byType(ListTile),
-        );
-        await tester.tap(tile);
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
+        final first = find.byKey(const ValueKey('history-entry-r1'));
+        await tester.tap(first);
+        await settleExportRoute(tester);
         for (var i = 0; i < 10; i++) {
           await tester.runAsync(
             () => Future<void>.delayed(const Duration(milliseconds: 20)),
@@ -126,7 +114,7 @@ void main() {
           if (find.text('已保存到相册，请在相册查看').evaluate().isNotEmpty) break;
         }
         expect(find.text('已保存到相册，请在相册查看'), findsOneWidget);
-        await tester.ensureVisible(find.text('Alice 1'));
+        await tester.ensureVisible(find.text('missing_1.mp4'));
         await tester.pump();
         await capture('expanded');
         expect(tester.takeException(), isNull);

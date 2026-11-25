@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 import '../../support/fake_video_platform.dart';
+import '../../support/export_settings_actions.dart';
 import '../../support/mobile_video_fixture.dart';
 
 Candidate _c(
@@ -34,7 +35,8 @@ Candidate _c(
 
 List<Candidate> _candidates() => [
   for (var i = 0; i < 6; i++) _c('a$i', i * 2, player: 'Alice'),
-  for (var i = 0; i < 4; i++) _c('b$i', 3 + i * 3, player: 'Bob', reviewed: i > 0),
+  for (var i = 0; i < 4; i++)
+    _c('b$i', 3 + i * 3, player: 'Bob', reviewed: i > 0),
   _c('n0', 24),
   _c('n1', 12, reviewed: false),
   for (var i = 0; i < 6; i++)
@@ -81,8 +83,9 @@ void main() {
               root.currentContext!.findRenderObject()! as RenderRepaintBoundary;
           final image = await boundary.toImage(pixelRatio: 2);
           final data = await image.toByteData(format: ui.ImageByteFormat.png);
-          await File('$dir/${locale}_$name.png')
-              .writeAsBytes(data!.buffer.asUint8List());
+          await File(
+            '$dir/${locale}_$name.png',
+          ).writeAsBytes(data!.buffer.asUint8List());
         });
       }
 
@@ -92,7 +95,10 @@ void main() {
         );
         fixture.state.project = fixture
             .project(file!.path)
-            .copyWith(candidates: _candidates(), players: const ['Alice', 'Bob']);
+            .copyWith(
+              candidates: _candidates(),
+              players: const ['Alice', 'Bob'],
+            );
         await tester.pumpWidget(
           RepaintBoundary(
             key: root,
@@ -100,46 +106,27 @@ void main() {
           ),
         );
         await tester.pump();
-        await tester.tap(find.byTooltip(locale == 'zh' ? '导出' : 'Export').first);
-        await tester.pump();
-        for (var i = 0; i < 6; i++) {
-          await tester.pump(const Duration(milliseconds: 100));
-        }
-        final card = find.byKey(const ValueKey('game-stats-card'));
-        await tester.scrollUntilVisible(card, 200, scrollable: find.byType(Scrollable).last);
-        expect(card, findsOneWidget);
-        expect(
-          find.descendant(
-            of: card,
-            matching: find.text(
-              locale == 'zh'
-                  ? '保留 12 个 · 命中率估算 50%'
-                  : '12 kept · est. hit rate 50%',
-            ),
-          ),
-          findsOneWidget,
+        await tester.tap(
+          find.byTooltip(locale == 'zh' ? '导出' : 'Export').first,
         );
-        expect(find.byKey(const ValueKey('game-stats-rate')), findsNothing);
-        await capture('collapsed');
-
-        await tester.tap(find.byKey(const ValueKey('game-stats-toggle')));
         await tester.pump();
         for (var i = 0; i < 6; i++) {
           await tester.pump(const Duration(milliseconds: 100));
         }
+        expect(find.byKey(const ValueKey('game-stats-rate')), findsNothing);
+        await capture('entry');
+        await openExportControl(tester, 'export-stats');
         expect(
-          tester.widget<Text>(find.byKey(const ValueKey('game-stats-rate'))).data,
+          tester
+              .widget<Text>(find.byKey(const ValueKey('game-stats-rate')))
+              .data,
           '50%',
         );
         expect(find.text('Alice'), findsOneWidget);
         expect(find.text('Bob'), findsOneWidget);
         expect(find.text(locale == 'zh' ? '未标记' : 'Untagged'), findsOneWidget);
         expect(
-          find.text(
-            locale == 'zh'
-                ? '手动 6 · 复核 6'
-                : 'Manual 6 · Rim 6',
-          ),
+          find.text(locale == 'zh' ? '手动 6 · 复核 6' : 'Manual 6 · Rim 6'),
           findsOneWidget,
         );
         expect(
@@ -153,8 +140,8 @@ void main() {
         await tester.binding.setSurfaceSize(const Size(360, 800));
         await tester.pump();
 
-        await tester.tap(find.byKey(const ValueKey('game-stats-toggle')));
-        await tester.pump();
+        await tester.tap(find.byType(BackButton));
+        await settleExportRoute(tester);
         expect(find.byKey(const ValueKey('game-stats-rate')), findsNothing);
       } finally {
         VideoPlayerPlatform.instance = previous;

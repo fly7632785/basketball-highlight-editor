@@ -61,6 +61,7 @@ extension MobileExportHistory on MobileAppState {
     final id = project.id, session = _projectSession;
     final createdAt = DateTime.now().toUtc();
     final previousError = errorMessage;
+    final previousDiagnostic = diagnosticError;
     bool current() =>
         !_disposed &&
         project.id == id &&
@@ -103,6 +104,8 @@ extension MobileExportHistory on MobileAppState {
         operation: 'export.history',
       );
       if (!saved && current()) {
+        exportHistoryDiagnostic = diagnosticError;
+        diagnosticError = previousDiagnostic ?? exportHistoryDiagnostic;
         errorMessage = previousError;
         exportHistoryWarning = '视频已导出，历史记录保存失败。';
         _notifyHistory();
@@ -110,6 +113,8 @@ extension MobileExportHistory on MobileAppState {
     } on Object catch (error, stack) {
       if (current()) {
         recordDiagnosticFailure(error, stack, operation: 'export.history');
+        exportHistoryDiagnostic = diagnosticError;
+        diagnosticError = previousDiagnostic ?? exportHistoryDiagnostic;
         errorMessage = previousError;
         exportHistoryWarning = '视频已导出，历史记录保存失败。';
         _notifyHistory();
@@ -195,6 +200,7 @@ extension MobileExportHistory on MobileAppState {
         operation: 'export.history.gallery',
       );
       if (!saved && current()) {
+        exportHistoryDiagnostic = diagnosticError;
         errorMessage = null;
         exportHistoryWarning = '已保存到相册，历史记录更新失败。';
         _notifyHistory();
@@ -206,6 +212,7 @@ extension MobileExportHistory on MobileAppState {
           stack,
           operation: 'export.history.gallery',
         );
+        exportHistoryDiagnostic = diagnosticError;
         errorMessage = null;
         exportHistoryWarning = '已保存到相册，历史记录更新失败。';
         _notifyHistory();

@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../support/fake_portrait_media.dart';
+import '../../support/export_settings_actions.dart';
 import '../../support/mobile_video_fixture.dart';
 
 const _clip = Candidate(
@@ -32,7 +33,7 @@ final _captureFont =
 
 Future<void> _advance(WidgetTester tester) async {
   await tester.pump();
-  await tester.pump(const Duration(milliseconds: 350));
+  await tester.pump(const Duration(milliseconds: 500));
 }
 
 Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
@@ -128,19 +129,16 @@ _openExport(
 }
 
 Future<void> _openPicture(WidgetTester tester, {bool zh = false}) async {
-  final picture = find.text(zh ? '画面' : 'Picture');
-  await _scrollTo(tester, picture);
-  await tester.tap(picture);
+  final guide = find.text(zh ? '怎么裁的' : 'How does it crop?');
+  await _scrollTo(tester, guide);
+  await tester.tap(guide);
   await _advance(tester);
 }
 
 Future<void> _choosePortrait(WidgetTester tester) async {
-  await _openPicture(tester);
-  await tester.tap(find.text('Portrait 9:16 (follow ball)'));
-  await _advance(tester);
-  final done = find.text('Done');
-  await tester.ensureVisible(done);
-  await tester.tap(done);
+  final portrait = find.text('Portrait 9:16 (follow ball)');
+  await _scrollTo(tester, portrait);
+  await tester.tap(portrait);
   await _advance(tester);
 }
 
@@ -195,10 +193,10 @@ void main() {
         locale: Locale(language),
       );
       final zh = language == 'zh';
-      await _openPicture(tester, zh: zh);
       final title = find.text(
         zh ? '竖屏 9:16（跟球）' : 'Portrait 9:16 (follow ball)',
       );
+      await _scrollTo(tester, title);
       final row = tester.widget<ListTile>(
         find.ancestor(of: title, matching: find.byType(ListTile)),
       );
@@ -207,8 +205,6 @@ void main() {
       expect(find.text(hint), findsOneWidget);
       if (!zh) _assertEnglish(tester);
       await _capture(tester, app.root, 'l531-disabled-$language');
-      await tester.tap(find.text(zh ? '完成' : 'Done'));
-      await _advance(tester);
       expect(find.text(zh ? '原比例' : 'Original aspect'), findsOneWidget);
       final startExport = find.text(zh ? '开始导出' : 'Start export');
       await tester.ensureVisible(startExport);
@@ -257,8 +253,6 @@ void main() {
   ) async {
     final app = await _openExport(tester, locale: const Locale('zh'));
     await _openPicture(tester, zh: true);
-    await tester.tap(find.text('竖屏 9:16（跟球）'));
-    await _advance(tester);
     expect(find.textContaining('输出 1080 × 1920'), findsOneWidget);
     expect(find.textContaining('逐帧重新生成'), findsOneWidget);
     await _capture(tester, app.root, 'l525-3-picture-picker');
@@ -268,10 +262,9 @@ void main() {
     tester,
   ) async {
     final app = await _openExport(tester, hdr: true);
+    await _choosePortrait(tester);
     await _openPicture(tester);
-    await tester.tap(find.text('Portrait 9:16 (follow ball)'));
-    await _advance(tester);
-    expect(find.text(_hdrCopy), findsOneWidget);
+    expect(find.text(_hdrCopy).hitTestable(), findsOneWidget);
     expect(find.textContaining('Cropping and upscaling'), findsOneWidget);
     _assertEnglish(tester);
     await _capture(tester, app.root, 'l525-4-hdr-sdr');
@@ -288,9 +281,7 @@ void main() {
     tester,
   ) async {
     final app = await _openExport(tester);
-    await _scrollTo(tester, find.text('Merge into one video'));
-    await tester.tap(find.text('Merge into one video'));
-    await _advance(tester);
+    await chooseExportMode(tester, 'One merged video', 'Done');
     await _choosePortrait(tester);
     app.media.holdRender = Completer<void>();
     await tester.runAsync(() => tester.tap(find.text('Start export')));
@@ -311,7 +302,7 @@ void main() {
     await _capture(tester, app.root, 'l525-5-progress');
     app.media.holdRender!.complete();
     await _finish(tester, app.fixture);
-    expect(find.text('Exported 1 portrait video'), findsOneWidget);
+    expect(find.text('1 portrait video ready'), findsOneWidget);
     expect(
       find.text('Ball not found in 1 clip; framing may be off'),
       findsOneWidget,
@@ -327,7 +318,7 @@ void main() {
       await _choosePortrait(tester);
       await tester.runAsync(() => tester.tap(find.text('Start export')));
       await _finish(tester, app.fixture);
-      expect(find.text('Exported 2 portrait videos'), findsOneWidget);
+      expect(find.text('2 portrait videos ready'), findsOneWidget);
 
       final saving = Completer<void>();
       final enteredSave = Completer<void>();
@@ -341,7 +332,7 @@ void main() {
             return app.media.handle(call);
           });
       try {
-        final save = find.text('Save all to gallery');
+        final save = find.text('Save 2 to Photos');
         await _scrollTo(tester, save);
         await tester.runAsync(() => tester.tap(save));
         for (var i = 0; i < 60 && !enteredSave.isCompleted; i++) {
@@ -353,7 +344,7 @@ void main() {
         expect(enteredSave.isCompleted, isTrue);
         await _advance(tester);
 
-        expect(find.text('Exported 2 portrait videos'), findsOneWidget);
+        expect(find.text('2 portrait videos ready'), findsOneWidget);
         expect(find.text('Find ball and rim'), findsNothing);
         await _scrollTo(tester, find.text('Saving to photos 1/2'));
       } finally {
@@ -361,7 +352,7 @@ void main() {
         await _finish(tester, app.fixture);
       }
       expect(app.fixture.state.gallerySaveNotice, '已保存 2 个片段到相册');
-      expect(find.text('Exported 2 portrait videos'), findsOneWidget);
+      expect(find.text('2 portrait videos ready'), findsOneWidget);
     },
   );
 
@@ -373,16 +364,27 @@ void main() {
     app.media.failAtMs = _clip.startMs;
     await tester.runAsync(() => tester.tap(find.text('Start export')));
     await _finish(tester, app.fixture);
-    expect(find.text('Clip 2 failed. Export stopped.'), findsOneWidget);
+    expect(find.textContaining('Clip 2 (0:04) failed'), findsOneWidget);
     expect(find.textContaining('running out of storage'), findsOneWidget);
-    expect(find.text('Exported 1 portrait video'), findsOneWidget);
-    expect(find.text('Export again'), findsOneWidget);
+    expect(find.text('1 exported, 1 to go'), findsOneWidget);
+    expect(find.text('Export all again'), findsOneWidget);
     _assertEnglish(tester);
     await _capture(tester, app.root, 'l525-6-failure');
     final previous = app.fixture.state.exportedPaths.single;
+    app.fixture.state.project = app.fixture.state.project.copyWith(
+      candidates: [_clip],
+    );
+    await tester.runAsync(() => tester.tap(find.text('Export all again')));
+    await _advance(tester);
+    expect(find.text('Export 2 videos again?'), findsOneWidget);
     await tester.runAsync(() => tester.tap(find.text('Use original aspect')));
+    await _advance(tester);
     await _finish(tester, app.fixture);
-    expect(app.media.callsTo('exportClip'), hasLength(2));
+    expect(
+      app.media.callsTo('exportClip'),
+      hasLength(2),
+      reason: '${app.fixture.state.errorMessage}',
+    );
     expect(File(previous).existsSync(), isTrue);
   });
 }

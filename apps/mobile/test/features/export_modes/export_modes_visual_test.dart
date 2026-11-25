@@ -3,12 +3,14 @@ import 'dart:ui' as ui;
 
 import 'package:bhe_core/bhe_core.dart';
 import 'package:bhe_mobile/mobile_ui.dart';
+import 'package:bhe_mobile/mobile_app_state.dart';
 import 'package:bhe_mobile/features/export/export_modes.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../support/export_settings_actions.dart';
 import '../../support/mobile_video_fixture.dart';
 
 void main() {
@@ -89,46 +91,51 @@ void main() {
         for (var i = 0; i < 6; i++) {
           await tester.pump(const Duration(milliseconds: 100));
         }
-        final labels = find.text('每个标签各合成一个视频');
-        await tester.scrollUntilVisible(
-          labels,
-          160,
-          scrollable: find.byType(Scrollable).last,
-        );
-        await tester.pump();
-        await tester.tap(labels);
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
-        expect(find.textContaining('将导出 1 个视频 · 共 1 段'), findsOneWidget);
-        expect(find.textContaining('Alice (1)'), findsOneWidget);
-        expect(find.textContaining('没标签的 1 段不导出'), findsOneWidget);
-        await tester.ensureVisible(find.text('输出方式'));
-        await tester.pump();
+        await openExportControl(tester, 'export-mode');
         await capture('selector');
-        await tester.ensureVisible(find.text('开始导出'));
+        await tester.tap(find.text('每个标签一个视频'));
         await tester.pump();
+        await finishExportSettings(tester, '完成');
+        expect(find.textContaining('将导出 1 个视频 · 共 1 段'), findsOneWidget);
         await capture('summary');
-        fixture.state.exportBatchTotal = 3;
-        fixture.state.exportBatchFiles = const [
-          LabelExportFile('Alice', '/tmp/a.mp4'),
-          LabelExportFile(null, '/tmp/b.mp4'),
-        ];
-        fixture.state.exportedPaths = const ['/tmp/a.mp4', '/tmp/b.mp4'];
-        fixture.state.notifyListeners();
-        await tester.pump();
-        await tester.scrollUntilVisible(
-          find.text('分享全部'),
-          160,
-          scrollable: find.byType(Scrollable).last,
+        await openExportScope(tester);
+        expect(find.textContaining('没标签的 1 段不导出'), findsOneWidget);
+        await finishExportSettings(tester, '完成');
+
+        fixture.state.exportResult = MobileExportResult(
+          request: MobileExportRequest(
+            scope: ExportScope.all,
+            mode: MobileOutputMode.labels,
+            framing: ExportFraming.original,
+            candidates: [
+              for (final name in ['Alice', 'Bob', 'Carol'])
+                Candidate(
+                  id: name,
+                  startMs: 100,
+                  endMs: 1000,
+                  eventMs: 500,
+                  player: name,
+                ),
+            ],
+          ),
+          files: const [
+            LabelExportFile('Alice', '/tmp/a.mp4'),
+            LabelExportFile('Bob', '/tmp/b.mp4'),
+          ],
+          cancelled: false,
+          failure: null,
+          portraitProgress: null,
+          audioSkipped: false,
+          mergedOverlapCount: null,
+          noBallCount: 0,
         );
-        await tester.pump();
-        expect(find.text('已完成 2/3 个标签'), findsOneWidget);
-        expect(find.text('部分完成'), findsOneWidget);
-        expect(find.text('保存全部到相册'), findsOneWidget);
+        fixture.state.notifyListeners();
+        await settleExportRoute(tester);
+        await settleExportRoute(tester);
+        expect(find.text('导出了 2 个，还差 1 个'), findsOneWidget);
+        expect(find.text('分享'), findsOneWidget);
+        expect(find.text('保存 2 个到相册'), findsOneWidget);
         await capture('partial');
-        await tester.ensureVisible(find.text('部分完成'));
-        await tester.pump();
-        await capture('partial_details');
         expect(tester.takeException(), isNull);
       } finally {
         await tester.pumpWidget(const SizedBox());

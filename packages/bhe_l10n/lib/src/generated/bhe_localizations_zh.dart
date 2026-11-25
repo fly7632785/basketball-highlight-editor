@@ -846,4 +846,113 @@ class BheLocalizationsZh extends BheLocalizations {
 
   @override
   String get homeDropUnsupported => '不支持这个文件，请拖入 MP4、MOV、M4V、AVI 或 MKV 视频';
+
+  @override
+  String get mobileWhatToExport => '导出哪些';
+
+  @override
+  String get mobileAllTags => '全部标签';
+
+  @override
+  String get mobileOnePerClip => '每段一个视频';
+
+  @override
+  String get mobileOneMerged => '合成一个视频';
+
+  @override
+  String get mobileOnePerTag => '每个标签一个视频';
+
+  @override
+  String get mobileCropGuide => '怎么裁的';
+
+  @override
+  String mobileClipsTotal(String time) {
+    return '片段共 $time';
+  }
+
+  @override
+  String get mobileViewProgress => '查看进度';
+
+  @override
+  String mobileExportReady(int count) {
+    return '$count 个视频导出好了';
+  }
+
+  @override
+  String mobilePortraitReady(int count) {
+    return '$count 个竖屏视频导出好了';
+  }
+
+  @override
+  String get mobileHighlightsReady => '集锦导出好了';
+
+  @override
+  String mobileExportPartial(int count, int remaining) {
+    return '导出了 $count 个，还差 $remaining 个';
+  }
+
+  @override
+  String get mobileExportFailed => '没有导出成功';
+
+  @override
+  String mobileExportCancelled(int count) {
+    return '已取消，留下了 $count 个';
+  }
+
+  @override
+  String get mobileExportAllAgain => '全部重新导出';
+
+  @override
+  String get mobileChangeExportSettings => '换设置再导';
+
+  @override
+  String mobileRetryExportCount(int count) {
+    return '重新导出 $count 个视频？';
+  }
+
+  @override
+  String mobileExistingExportsKept(int count) {
+    return '已有的 $count 个留在导出历史';
+  }
+
+  @override
+  String mobileSaveExportCount(int count) {
+    return '保存 $count 个到相册';
+  }
+
+  @override
+  String mobileExportFileCount(int count) {
+    return '文件 · $count';
+  }
+
+  @override
+  String get mobileExportShareError => '分享失败';
+
+  @override
+  String get mobileExportSaveError => '保存到相册失败';
+
+  @override
+  String get mobileExportSelectFiles => '先选文件，再分享或保存';
+
+  @override
+  String mobileExportClipFailed(int clip, String time) {
+    return '第 $clip 段（$time）没成功';
+  }
+
+  @override
+  String get mobileFailedMerge => '合并没成功';
+
+  @override
+  String get mobileExportDidNotFinish => '导出没做完';
+
+  @override
+  String get mobileExportCheckingFiles => '正在检查本机文件…';
+
+  @override
+  String mobileExportSelected(int count, int total) {
+    return '已选 $count / $total';
+  }
+
+  @override
+  String get mobileExportDisabledPortrait => '已是竖屏，保留原画面';
 }

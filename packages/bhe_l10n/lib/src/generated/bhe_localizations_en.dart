@@ -878,4 +878,132 @@ class BheLocalizationsEn extends BheLocalizations {
   @override
   String get homeDropUnsupported =>
       'Unsupported file. Drop an MP4, MOV, M4V, AVI or MKV video.';
+
+  @override
+  String get mobileWhatToExport => 'What to export';
+
+  @override
+  String get mobileAllTags => 'All tags';
+
+  @override
+  String get mobileOnePerClip => 'One video per clip';
+
+  @override
+  String get mobileOneMerged => 'One merged video';
+
+  @override
+  String get mobileOnePerTag => 'One video per tag';
+
+  @override
+  String get mobileCropGuide => 'How does it crop?';
+
+  @override
+  String mobileClipsTotal(String time) {
+    return 'Clip total $time';
+  }
+
+  @override
+  String get mobileViewProgress => 'View progress';
+
+  @override
+  String mobileExportReady(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count videos ready',
+      one: '1 video ready',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String mobilePortraitReady(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count portrait videos ready',
+      one: '1 portrait video ready',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get mobileHighlightsReady => 'Highlights ready';
+
+  @override
+  String mobileExportPartial(int count, int remaining) {
+    return '$count exported, $remaining to go';
+  }
+
+  @override
+  String get mobileExportFailed => 'Nothing was exported';
+
+  @override
+  String mobileExportCancelled(int count) {
+    return 'Cancelled, kept $count';
+  }
+
+  @override
+  String get mobileExportAllAgain => 'Export all again';
+
+  @override
+  String get mobileChangeExportSettings => 'Change settings';
+
+  @override
+  String mobileRetryExportCount(int count) {
+    return 'Export $count videos again?';
+  }
+
+  @override
+  String mobileExistingExportsKept(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'The $count existing files stay in Export history',
+      one: 'The existing file stays in Export history',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String mobileSaveExportCount(int count) {
+    return 'Save $count to Photos';
+  }
+
+  @override
+  String mobileExportFileCount(int count) {
+    return 'Files · $count';
+  }
+
+  @override
+  String get mobileExportShareError => 'Sharing failed';
+
+  @override
+  String get mobileExportSaveError => 'Could not save to Photos';
+
+  @override
+  String get mobileExportSelectFiles => 'Select files to share or save';
+
+  @override
+  String mobileExportClipFailed(int clip, String time) {
+    return 'Clip $clip ($time) failed';
+  }
+
+  @override
+  String get mobileFailedMerge => 'Merge failed';
+
+  @override
+  String get mobileExportDidNotFinish => 'Export did not finish';
+
+  @override
+  String get mobileExportCheckingFiles => 'Checking local files…';
+
+  @override
+  String mobileExportSelected(int count, int total) {
+    return '$count of $total selected';
+  }
+
+  @override
+  String get mobileExportDisabledPortrait =>
+      'Already portrait. Keep the original frame.';
 }

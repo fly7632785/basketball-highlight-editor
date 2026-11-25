@@ -4,9 +4,16 @@ extension MobileLabelExport on MobileAppState {
   Future<void> exportByLabels({
     ExportScope scope = ExportScope.all,
     ExportFraming framing = ExportFraming.original,
+    MobileExportRequest? request,
   }) async {
-    final run = _beginExport(framing, scope, MobileOutputMode.labels);
+    final run = _beginExport(
+      framing,
+      scope,
+      MobileOutputMode.labels,
+      request: request,
+    );
     if (run == null) return;
+    final frozen = exportRequest!;
     _batchExport = true;
     final watch = Stopwatch()..start();
     final id = project.id, session = _projectSession;
@@ -30,11 +37,7 @@ extension MobileLabelExport on MobileAppState {
       if (!eligible()) return;
       await _mutations.drained;
       if (!eligible()) return;
-      final selected = scope.select(
-        project.candidates,
-        MobileOutputMode.labels,
-      );
-      final groups = labelExportGroups(selected, scope: scope);
+      final groups = frozen.groups;
       if (groups.isEmpty) {
         errorMessage = '没有可导出的片段';
         _notifyLabelExport();
@@ -198,12 +201,8 @@ extension MobileLabelExport on MobileAppState {
         }
       }
       if (current()) {
-        _exportDrainTimer?.cancel();
-        exporting = false;
-        _exportPreflight = false;
         _batchExport = false;
-        if (portraitRequest != null) portraitExportError = errorMessage;
-        _notifyLabelExport();
+        _finishExport();
       }
     }
   }

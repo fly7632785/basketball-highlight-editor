@@ -22,23 +22,26 @@ enum _UntaggedChoice { backToReview, exportAnyway }
 Future<_UntaggedChoice?> _showUntaggedReminder(
   BuildContext context,
   int count,
-) => showDialog<_UntaggedChoice>(
+) => showModalBottomSheet<_UntaggedChoice>(
   context: context,
-  builder: (context) => AlertDialog(
-    key: const ValueKey('untagged-reminder'),
-    title: Text(context.bheText('还有 $count 个片段未标标签')),
-    content: Text(context.bheText('本次导出会包含这些片段。')),
-    actions: [
-      TextButton(
-        onPressed: () =>
-            Navigator.of(context).pop(_UntaggedChoice.backToReview),
-        child: Text(context.bheText('返回审核')),
-      ),
-      FilledButton(
-        onPressed: () =>
-            Navigator.of(context).pop(_UntaggedChoice.exportAnyway),
-        child: Text(context.bheText('仍然导出')),
-      ),
-    ],
+  isScrollControlled: true,
+  builder: (context) => _SheetFrame(
+    title: context.bheText('还有 $count 个片段未标标签'),
+    child: Column(
+      key: const ValueKey('untagged-reminder'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(context.bheText('本次导出会包含这些片段。')),
+        const SizedBox(height: 12),
+        OutlinedButton(
+          onPressed: () => Navigator.pop(context, _UntaggedChoice.backToReview),
+          child: Text(context.bheText('返回审核')),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _UntaggedChoice.exportAnyway),
+          child: Text(context.bheText('仍然导出')),
+        ),
+      ],
+    ),
   ),
 );

@@ -277,5 +277,120 @@
   "reviewUnreviewed": "未审核",
   "homeDropHint": "也可以把一段或多段视频拖到这里",
   "homeDropActive": "松开即可新建项目",
-  "homeDropUnsupported": "不支持这个文件，请拖入 MP4、MOV、M4V、AVI 或 MKV 视频"
+  "homeDropUnsupported": "不支持这个文件，请拖入 MP4、MOV、M4V、AVI 或 MKV 视频",
+  "mobileWhatToExport": "导出哪些",
+  "mobileAllTags": "全部标签",
+  "mobileOnePerClip": "每段一个视频",
+  "mobileOneMerged": "合成一个视频",
+  "mobileOnePerTag": "每个标签一个视频",
+  "mobileCropGuide": "怎么裁的",
+  "mobileClipsTotal": "片段共 {time}",
+  "@mobileClipsTotal": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "mobileViewProgress": "查看进度",
+  "mobileExportReady": "{count} 个视频导出好了",
+  "@mobileExportReady": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mobilePortraitReady": "{count} 个竖屏视频导出好了",
+  "@mobilePortraitReady": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mobileHighlightsReady": "集锦导出好了",
+  "mobileExportPartial": "导出了 {count} 个，还差 {remaining} 个",
+  "@mobileExportPartial": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "remaining": {
+        "type": "int"
+      }
+    }
+  },
+  "mobileExportFailed": "没有导出成功",
+  "mobileExportCancelled": "已取消，留下了 {count} 个",
+  "@mobileExportCancelled": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mobileExportAllAgain": "全部重新导出",
+  "mobileChangeExportSettings": "换设置再导",
+  "mobileRetryExportCount": "重新导出 {count} 个视频？",
+  "@mobileRetryExportCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mobileExistingExportsKept": "已有的 {count} 个留在导出历史",
+  "@mobileExistingExportsKept": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mobileSaveExportCount": "保存 {count} 个到相册",
+  "@mobileSaveExportCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mobileExportFileCount": "文件 · {count}",
+  "@mobileExportFileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mobileExportShareError": "分享失败",
+  "mobileExportSaveError": "保存到相册失败",
+  "mobileExportSelectFiles": "先选文件，再分享或保存",
+  "mobileExportClipFailed": "第 {clip} 段（{time}）没成功",
+  "@mobileExportClipFailed": {
+    "placeholders": {
+      "clip": {
+        "type": "int"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "mobileFailedMerge": "合并没成功",
+  "mobileExportDidNotFinish": "导出没做完",
+  "mobileExportCheckingFiles": "正在检查本机文件…",
+  "mobileExportSelected": "已选 {count} / {total}",
+  "@mobileExportSelected": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "mobileExportDisabledPortrait": "已是竖屏，保留原画面"
 }

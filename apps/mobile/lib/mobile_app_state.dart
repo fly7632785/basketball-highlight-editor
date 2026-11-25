@@ -42,6 +42,7 @@ import 'native_analysis_engine.dart';
 
 part 'features/project_list/project_management.dart';
 part 'features/export/label_export_batch.dart';
+part 'features/export/export_session.dart';
 part 'features/export_history/export_history_state.dart';
 
 class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
@@ -289,6 +290,15 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   bool analysing = false;
   String? exportHistoryWarning;
   String? gallerySaveNotice;
+  DiagnosticErrorRecord? exportHistoryDiagnostic;
+  MobileExportFailure? gallerySaveFailure;
+  MobileExportFailure? shareFailure;
+  bool sharingExports = false;
+  final gallerySavedPaths = <String>{};
+  MobileExportRequest? exportRequest;
+  MobileExportResult? exportResult;
+  bool exportResultSeen = false;
+  bool get exportInProgress => exporting && !savingToGallery;
   String? _historyActiveMode;
   int _historyPlannedCount = 0;
   DateTime? _historyExportStartedAt;
@@ -1866,6 +1876,14 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     portraitProgress = null;
     portraitExportError = null;
     portraitRequest = null;
+    exportRequest = null;
+    exportResult = null;
+    exportResultSeen = false;
+    gallerySaveFailure = null;
+    shareFailure = null;
+    sharingExports = false;
+    gallerySavedPaths.clear();
+    exportHistoryDiagnostic = null;
     _portraitClipsWithoutBall.clear();
     exportedPaths = const [];
     exportBatchTotal = 0;
@@ -2516,14 +2534,26 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   int? _beginExport(
     ExportFraming framing,
     ExportScope scope,
-    MobileOutputMode mode,
-  ) {
+    MobileOutputMode mode, {
+    MobileExportRequest? request,
+  }) {
     if (projectTransitioning || exportStartBlockReason != null) {
       notifyListeners();
       return null;
     }
     _exportDrainTimer?.cancel();
     final run = ++_exportRun;
+    exportRequest = request ?? MobileExportRequest(
+      scope: scope,
+      mode: mode,
+      framing: framing,
+      candidates: scope.select(project.candidates, mode),
+    );
+    exportResult = null;
+    exportResultSeen = false;
+    gallerySaveFailure = null;
+    shareFailure = null;
+    exportHistoryDiagnostic = null;
     portraitRequest = framing == ExportFraming.portrait916
         ? (scope: scope, mode: mode)
         : null;
@@ -2554,12 +2584,55 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     return run;
   }
 
+  Future<void> runExportRequest(MobileExportRequest request) => switch (request.mode) {
+    MobileOutputMode.clips => exportClipsInScope(
+      request.scope, framing: request.framing, request: request,
+    ),
+    MobileOutputMode.merged => mergeClipsInScope(
+      request.scope, framing: request.framing, request: request,
+    ),
+    MobileOutputMode.labels => exportByLabels(
+      scope: request.scope, framing: request.framing, request: request,
+    ),
+  };
+
+  void _finishExport() {
+    _exportDrainTimer?.cancel();
+    exporting = false;
+    _exportPreflight = false;
+    final snapshot = exportRequest!;
+    final diagnostic = diagnosticError;
+    final message = errorMessage;
+    if (portraitRequest != null) portraitExportError = message;
+    exportResult = MobileExportResult(
+      request: snapshot,
+      files: List.unmodifiable(
+        snapshot.mode == MobileOutputMode.labels
+            ? exportBatchFiles
+            : exportedPaths.map((file) => LabelExportFile(null, file)),
+      ),
+      cancelled: (exportCancelled || _batchStopRequested) && !hasUncertainExport,
+      failure: message == null ? null : (
+        message: message,
+        diagnostic: diagnostic?.operation.startsWith('export.history') == true
+            ? null : diagnostic,
+      ),
+      portraitProgress: portraitProgress,
+      audioSkipped: exportAudioSkipped,
+      mergedOverlapCount: exportMergedOverlapCount,
+      noBallCount: portraitNoBallCount,
+    );
+    notifyListeners();
+  }
+
   Future<void> exportClipsInScope(
     ExportScope scope, {
     ExportFraming framing = ExportFraming.original,
+    MobileExportRequest? request,
   }) async {
-    final run = _beginExport(framing, scope, MobileOutputMode.clips);
+    final run = _beginExport(framing, scope, MobileOutputMode.clips, request: request);
     if (run == null) return;
+    final frozen = exportRequest!;
     final stopwatch = Stopwatch()..start();
     final projectId = project.id, session = _projectSession;
     bool current() =>
@@ -2578,10 +2651,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         return;
       }
       if (!eligible()) return;
-      final candidates = scope.select(
-        project.candidates,
-        MobileOutputMode.clips,
-      );
+      final candidates = frozen.candidates;
       if (candidates.isEmpty) {
         errorMessage = '没有可导出的片段';
         notifyListeners();
@@ -2653,13 +2723,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         );
       }
       await _removeEmptyExportDirectory(batchDirectory);
-      if (current()) {
-        _exportDrainTimer?.cancel();
-        exporting = false;
-        _exportPreflight = false;
-        if (portraitRequest != null) portraitExportError = errorMessage;
-        notifyListeners();
-      }
+      if (current()) _finishExport();
     }
   }
 
@@ -2671,9 +2735,11 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
   Future<void> mergeClipsInScope(
     ExportScope scope, {
     ExportFraming framing = ExportFraming.original,
+    MobileExportRequest? request,
   }) async {
-    final run = _beginExport(framing, scope, MobileOutputMode.merged);
+    final run = _beginExport(framing, scope, MobileOutputMode.merged, request: request);
     if (run == null) return;
+    final frozen = exportRequest!;
     final stopwatch = Stopwatch()..start();
     final projectId = project.id, session = _projectSession;
     bool current() =>
@@ -2691,10 +2757,8 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         return;
       }
       if (!eligible()) return;
-      final candidates = scope.select(
-        project.candidates,
-        MobileOutputMode.merged,
-      )..sort((a, b) => a.startMs.compareTo(b.startMs));
+      final candidates = [...frozen.candidates]
+        ..sort((a, b) => a.startMs.compareTo(b.startMs));
       if (candidates.isEmpty) {
         errorMessage = '没有可导出的片段';
         notifyListeners();
@@ -2784,18 +2848,12 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         );
       }
       await _removeEmptyExportDirectory(batchDirectory);
-      if (current()) {
-        _exportDrainTimer?.cancel();
-        exporting = false;
-        _exportPreflight = false;
-        if (portraitRequest != null) portraitExportError = errorMessage;
-        notifyListeners();
-      }
+      if (current()) _finishExport();
     }
   }
 
   Future<void> cancelExport() async {
-    if (!exporting) return;
+    if (!exportInProgress) return;
     if (_batchExport) {
       _batchStopRequested = true;
       if (_mergeCommitted) {
@@ -2809,10 +2867,8 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     if (!_batchExport) exportMergedOverlapCount = null;
     if (_exportPreflight) {
       _exportRun++;
-      _exportPreflight = false;
-      exporting = false;
       progressMessage = '导出已取消';
-      notifyListeners();
+      _finishExport();
       return;
     }
     notifyListeners();
@@ -2822,16 +2878,13 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         return;
       }
       _exportRun++;
-      exporting = false;
-      _exportPreflight = false;
       final error = TimeoutException('上一次导出尚未结束，请稍后重试。');
       _markExportUncertain(error, StackTrace.current);
       recordDiagnosticFailure(error, StackTrace.current, operation: 'export');
       errorMessage = '上一次导出尚未结束，请稍后重试。';
       progressMessage = errorMessage!;
-      if (portraitRequest != null) portraitExportError = errorMessage;
       _recordTimedOutPartialHistory(run);
-      notifyListeners();
+      _finishExport();
     });
     try {
       await exportEngine.cancel().timeout(exportCancelTimeout);
@@ -2848,16 +2901,35 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     if (!_disposed && run == _exportRun) notifyListeners();
   }
 
-  Future<void> shareExportedFiles({List<String>? paths}) async {
+  Future<void> shareExportedFiles({List<String>? paths, Rect? origin}) async {
     final selectedPaths = paths ?? exportedPaths;
-    if (selectedPaths.isEmpty) return;
+    if (selectedPaths.isEmpty || sharingExports) return;
+    final session = _projectSession;
+    bool current() => !_disposed && _projectSession == session;
+    sharingExports = true;
+    shareFailure = null;
+    notifyListeners();
     try {
       await SharePlus.instance.share(
-        ShareParams(files: selectedPaths.map((path) => XFile(path, mimeType: 'video/mp4')).toList()),
+        ShareParams(
+          files: selectedPaths.map((path) => XFile(path, mimeType: 'video/mp4')).toList(),
+          sharePositionOrigin: origin,
+        ),
       );
     } on Object catch (error, stack) {
-      recordDiagnosticFailure(error, stack, operation: 'share');
-      notifyListeners();
+      if (current()) {
+        recordDiagnosticFailure(error, stack, operation: 'share');
+        if (errorMessage case final message?) {
+          shareFailure = (message: message, diagnostic: diagnosticError);
+        }
+      } else {
+        MobileDiagnostics.instance.error(error, stack, operation: 'share');
+      }
+    } finally {
+      if (current()) {
+        sharingExports = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -2876,8 +2948,12 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     exporting = true;
     diagnosticError = null;
     errorMessage = null;
-    exportHistoryWarning = null;
+    gallerySaveFailure = null;
     gallerySaveNotice = null;
+    if (exportHistoryDiagnostic?.operation == 'export.history.gallery') {
+      exportHistoryDiagnostic = null;
+      exportHistoryWarning = null;
+    }
     _historyActiveMode = null;
     _historyPlannedCount = 0;
     _historyExportStartedAt = null;
@@ -2888,6 +2964,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
         notifyListeners();
         await exportEngine.saveToLibrary(selectedPaths[index]);
         if (!current()) return;
+        gallerySavedPaths.add(selectedPaths[index]);
         await _markHistoryGallerySaved(selectedPaths[index], id: id, session: session);
         if (!current()) return;
       }
@@ -2897,6 +2974,9 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
     } on Object catch (error, stack) {
       if (current()) {
         recordDiagnosticFailure(error, stack, operation: 'gallery.save');
+        if (errorMessage case final message?) {
+          gallerySaveFailure = (message: message, diagnostic: diagnosticError);
+        }
       } else {
         MobileDiagnostics.instance.error(error, stack, operation: 'gallery.save');
       }

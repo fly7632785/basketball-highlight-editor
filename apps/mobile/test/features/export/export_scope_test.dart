@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 import '../../support/fake_video_platform.dart';
+import '../../support/export_settings_actions.dart';
 import '../../support/mobile_video_fixture.dart';
 
 Candidate _c(String id, int n, {String? player, bool excluded = false}) =>
@@ -16,8 +17,9 @@ Candidate _c(String id, int n, {String? player, bool excluded = false}) =>
       endMs: n * 1000 + 800,
       eventMs: n * 1000 + 400,
       player: player,
-      selection:
-          excluded ? CandidateSelection.excluded : CandidateSelection.included,
+      selection: excluded
+          ? CandidateSelection.excluded
+          : CandidateSelection.included,
     );
 
 void main() {
@@ -61,8 +63,9 @@ void main() {
     });
   });
 
-  testWidgets('export scope chips are multi-select and drive the summary',
-      (tester) async {
+  testWidgets('export scope chips are multi-select and drive the summary', (
+    tester,
+  ) async {
     final fixture = MobileVideoFixture();
     await tester.runAsync(fixture.init);
     final previous = VideoPlayerPlatform.instance;
@@ -95,16 +98,18 @@ void main() {
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
+      await openExportScope(tester);
       // Counts only cover kept clips.
-      expect(find.text('不限  5'), findsOneWidget);
+      expect(find.text('全部标签  5'), findsOneWidget);
       expect(find.text('Alice  2'), findsOneWidget);
       expect(find.text('Bob  1'), findsOneWidget);
       expect(find.text('Carol  1'), findsOneWidget);
       expect(find.text('未标记  1'), findsOneWidget);
+      await finishExportSettings(tester, '完成');
 
-      await tester.tap(find.text('每个标签各合成一个视频'));
-      await tester.pump();
+      await chooseExportMode(tester, '每个标签一个视频', '完成');
       expect(find.textContaining('将导出 3 个视频 · 共 4 段'), findsOneWidget);
+      await openExportScope(tester);
       expect(find.text('未标记  1'), findsNothing);
       expect(find.textContaining('没标签的 1 段不导出'), findsOneWidget);
 
@@ -112,30 +117,36 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('Bob  1'));
       await tester.pump();
+      await finishExportSettings(tester, '完成');
       expect(find.textContaining('将导出 2 个视频 · 共 3 段'), findsOneWidget);
 
       // Merge mode still supports explicit inclusion of untagged clips.
-      await tester.tap(find.text('合并成一个视频'));
-      await tester.pump();
+      await chooseExportMode(tester, '合成一个视频', '完成');
+      await openExportScope(tester);
       await tester.tap(find.text('未标记  1'));
       await tester.pump();
+      await finishExportSettings(tester, '完成');
       expect(find.textContaining('将导出 1 个视频 · 共 4 段'), findsOneWidget);
 
       // Deselecting everything falls back to the whole project.
-      await tester.tap(find.text('Alice  2'));
-      await tester.pump();
-      await tester.tap(find.text('Bob  1'));
-      await tester.pump();
-      await tester.tap(find.text('未标记  1'));
-      await tester.pump();
+      await openExportScope(tester);
+      for (final choice in ['Alice  2', 'Bob  1', '未标记  1']) {
+        await tester.tap(find.text(choice));
+        await tester.pump();
+      }
+      await finishExportSettings(tester, '完成');
       expect(find.textContaining('将导出 1 个视频 · 共 5 段'), findsOneWidget);
 
       // The "all" chip clears a selection in one tap.
+      await openExportScope(tester);
       await tester.tap(find.text('Carol  1'));
       await tester.pump();
+      await finishExportSettings(tester, '完成');
       expect(find.textContaining('将导出 1 个视频 · 共 1 段'), findsOneWidget);
-      await tester.tap(find.text('不限  5'));
+      await openExportScope(tester);
+      await tester.tap(find.text('全部标签  5'));
       await tester.pump();
+      await finishExportSettings(tester, '完成');
       expect(find.textContaining('将导出 1 个视频 · 共 5 段'), findsOneWidget);
       expect(tester.takeException(), isNull);
     } finally {
