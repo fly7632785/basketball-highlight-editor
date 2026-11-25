@@ -37,12 +37,21 @@ internal class PortraitTimeline(
     }
 }
 
+internal class PortraitSourceAspectException :
+    IllegalArgumentException("The source is already portrait. Follow-ball cropping is unnecessary.")
+
+internal fun requirePortraitSourceAspect(width: Int, height: Int) {
+    if (width.toLong() * 16 <= height.toLong() * 9) throw PortraitSourceAspectException()
+}
+
 internal class PortraitGeometry(private val width: Int, height: Int) {
-    private val aspect = PORTRAIT_WIDTH.toDouble() / PORTRAIT_HEIGHT
-    private val cropWidth = minOf(width.toDouble(), height * aspect)
-    private val cropHeight = minOf(height.toDouble(), width / aspect)
+    init {
+        requirePortraitSourceAspect(width, height)
+    }
+
+    private val cropWidth = height * (PORTRAIT_WIDTH.toDouble() / PORTRAIT_HEIGHT)
     val scaleX = width / cropWidth
-    val scaleY = height / cropHeight
+    val scaleY = 1.0
 
     fun translationX(center: Double): Double {
         val half = cropWidth / 2
@@ -53,6 +62,31 @@ internal class PortraitGeometry(private val width: Int, height: Int) {
 
 internal fun portraitSampleTimes(startMs: Long, endMs: Long): List<Long> =
     (startMs until endMs step (1000L / PORTRAIT_SAMPLE_HZ)).toList()
+
+// Compare video track duration in microseconds, allowing one 30 fps frame plus 1 ms.
+internal fun portraitMergeDurationMatches(durationUs: Long, expectedMs: Long): Boolean =
+    durationUs > 0L && kotlin.math.abs(durationUs - expectedMs * 1000) <= 1_000_000 / 30 + 1000
+
+internal enum class PortraitExportStage(private val wireName: String) {
+    SAMPLING("sampling"), ENCODING("encoding"), MERGING("merging");
+
+    fun sendProgress(invoke: (String, Any) -> Unit, exportId: String, completed: Int, total: Int) {
+        invoke("exportProgress", mapOf(
+            "exportId" to exportId,
+            "stage" to wireName,
+            "progress" to completed.toDouble() / total,
+        ))
+    }
+}
+
+internal fun portraitVideoFormat(formats: List<MediaFormat>): MediaFormat? =
+    formats.firstOrNull { it.getString(MediaFormat.KEY_MIME) == DolbyVisionPolicy.MIME }
+        ?: formats.firstOrNull { it.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }
+
+internal fun isPortraitHdr(format: MediaFormat): Boolean = isPortraitHdr(
+    format.getString(MediaFormat.KEY_MIME),
+    format.getInteger(MediaFormat.KEY_COLOR_TRANSFER, -1),
+)
 
 internal fun isPortraitHdr(mime: String?, transfer: Int): Boolean =
     mime == DolbyVisionPolicy.MIME ||

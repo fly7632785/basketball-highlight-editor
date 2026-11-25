@@ -1,6 +1,6 @@
 part of '../../media_bridge.dart';
 
-enum PortraitExportStep { sample, render, merge }
+enum PortraitExportStep { sample, plan, render, merge }
 
 class PortraitExportProgress extends ExportProgress {
   const PortraitExportProgress({
@@ -54,7 +54,7 @@ extension NativePortraitExport on NativeMediaExportEngine {
     final skippedAudio = <SkippedAudioTrack>[];
     final rendered = <String>[];
     final total = candidates.length;
-    final steps = 2 * total + (merging ? 1 : 0);
+    final steps = 3 * total + (merging ? 1 : 0);
     Directory? staging;
     try {
       if (batch == null) {
@@ -69,6 +69,7 @@ extension NativePortraitExport on NativeMediaExportEngine {
       final directory = staging?.path ?? outputDirectory;
       final runId = 'portrait-${DateTime.now().microsecondsSinceEpoch}';
       for (final (index, candidate) in candidates.indexed) {
+        final clipStep = 3 * index;
         final exportId = '$runId-${index + 1}';
         final path =
             '$directory/${clipFileName(index + 1, candidate, projectName: projectName)}';
@@ -81,7 +82,7 @@ extension NativePortraitExport on NativeMediaExportEngine {
         run.mergeId = null;
         run.portraitId = exportId;
         yield PortraitExportProgress(
-          progress: 2 * index / steps,
+          progress: clipStep / steps,
           step: PortraitExportStep.sample,
           clipIndex: index + 1,
           clipCount: total,
@@ -103,7 +104,7 @@ extension NativePortraitExport on NativeMediaExportEngine {
         )) {
           if (event.fraction case final fraction?) {
             yield PortraitExportProgress(
-              progress: (2 * index + fraction) / steps,
+              progress: (clipStep + fraction) / steps,
               step: PortraitExportStep.sample,
               clipIndex: index + 1,
               clipCount: total,
@@ -113,10 +114,17 @@ extension NativePortraitExport on NativeMediaExportEngine {
             raw = event.value;
           }
         }
+        yield PortraitExportProgress(
+          progress: (clipStep + 1) / steps,
+          step: PortraitExportStep.plan,
+          clipIndex: index + 1,
+          clipCount: total,
+          eventMs: candidate.eventMs,
+        );
         _checkPortraitCancelled(run);
         final plan = _decodePortraitTrack(raw, candidate);
         yield PortraitExportProgress(
-          progress: (2 * index + 1) / steps,
+          progress: (clipStep + 2) / steps,
           step: PortraitExportStep.render,
           clipIndex: index + 1,
           clipCount: total,
@@ -146,7 +154,7 @@ extension NativePortraitExport on NativeMediaExportEngine {
         )) {
           if (event.fraction case final fraction?) {
             yield PortraitExportProgress(
-              progress: (2 * index + 1 + fraction) / steps,
+              progress: (clipStep + 2 + fraction) / steps,
               step: PortraitExportStep.render,
               clipIndex: index + 1,
               clipCount: total,
@@ -163,7 +171,7 @@ extension NativePortraitExport on NativeMediaExportEngine {
           skippedAudio.addAll(result.skippedAudioTracks);
         } else {
           yield PortraitExportProgress(
-            progress: (2 * index + 2) / steps,
+            progress: (clipStep + 3) / steps,
             step: PortraitExportStep.render,
             clipIndex: index + 1,
             clipCount: total,
@@ -181,7 +189,7 @@ extension NativePortraitExport on NativeMediaExportEngine {
       if (mergedPath != null) {
         run.portraitId = null;
         yield PortraitExportProgress(
-          progress: 2 * total / steps,
+          progress: 3 * total / steps,
           step: PortraitExportStep.merge,
           clipIndex: total,
           clipCount: total,
@@ -202,7 +210,7 @@ extension NativePortraitExport on NativeMediaExportEngine {
         )) {
           if (event.fraction case final fraction?) {
             yield PortraitExportProgress(
-              progress: (2 * total + fraction) / steps,
+              progress: (3 * total + fraction) / steps,
               step: PortraitExportStep.merge,
               clipIndex: total,
               clipCount: total,

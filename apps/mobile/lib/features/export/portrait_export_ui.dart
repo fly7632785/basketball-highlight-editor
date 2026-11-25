@@ -5,14 +5,22 @@ String _framingLabel(ExportFraming value) => switch (value) {
   ExportFraming.portrait916 => '竖屏 9:16（跟球）',
 };
 
+String _sourceAlreadyPortraitHint(BuildContext context) => context.bheText(
+  Localizations.localeOf(context).languageCode == 'zh'
+      ? '这个视频本来就是竖屏，不需要跟球'
+      : portraitSourceAlreadyVertical,
+);
+
 class _ExportFramingSheet extends StatefulWidget {
   const _ExportFramingSheet({
     required this.initial,
+    required this.sourceAlreadyPortrait,
     required this.isHdr,
     required this.hdrProbe,
   });
 
   final ExportFraming initial;
+  final bool sourceAlreadyPortrait;
   final bool? isHdr;
   final Future<bool?>? hdrProbe;
 
@@ -32,11 +40,18 @@ class _ExportFramingSheetState extends State<_ExportFramingSheet> {
         for (final value in ExportFraming.values)
           _ChoiceRow(
             title: context.bheText(_framingLabel(value)),
-            subtitle: context.bheText(
-              value == ExportFraming.original ? '不裁切，比竖屏快' : '从横屏里裁出竖条，镜头跟着球走',
-            ),
+            subtitle: switch (value) {
+              ExportFraming.original => context.bheText('不裁切，比竖屏快'),
+              ExportFraming.portrait916 when widget.sourceAlreadyPortrait =>
+                _sourceAlreadyPortraitHint(context),
+              ExportFraming.portrait916 => context.bheText('从横屏里裁出竖条，镜头跟着球走'),
+            },
             selected: choice == value,
-            onTap: () => setState(() => choice = value),
+            onTap:
+                value == ExportFraming.portrait916 &&
+                    widget.sourceAlreadyPortrait
+                ? null
+                : () => setState(() => choice = value),
           ),
         if (choice == ExportFraming.portrait916) ...[
           const SizedBox(height: 12),
@@ -186,9 +201,18 @@ class _PortraitExportRunning extends StatelessWidget {
                     LinearProgressIndicator(value: state.progress.clamp(0, 1)),
                     const SizedBox(height: 10),
                     for (final (step, label) in [
-                      (PortraitExportStep.sample, '找球和篮筐'),
-                      (PortraitExportStep.render, '裁切并生成画面'),
-                      if (merging) (PortraitExportStep.merge, '合并成一个视频'),
+                      (PortraitExportStep.sample, context.bheText('找球和篮筐')),
+                      (
+                        PortraitExportStep.plan,
+                        context.bheText(
+                          Localizations.localeOf(context).languageCode == 'zh'
+                              ? '规划取景'
+                              : 'Plan framing',
+                        ),
+                      ),
+                      (PortraitExportStep.render, context.bheText('裁切并生成画面')),
+                      if (merging)
+                        (PortraitExportStep.merge, context.bheText('合并成一个视频')),
                     ])
                       ListTile(
                         dense: true,
@@ -202,7 +226,7 @@ class _PortraitExportRunning extends StatelessWidget {
                               : LucideIcons.circle,
                           size: 17,
                         ),
-                        title: Text(context.bheText(label)),
+                        title: Text(label),
                         selected: progress?.step == step,
                       ),
                   ],
@@ -250,7 +274,9 @@ class _PortraitExportFailure extends StatelessWidget {
                 Text(
                   context.bheText(switch (progress?.step) {
                     PortraitExportStep.merge => '合并没成功，已停下',
-                    PortraitExportStep.sample || PortraitExportStep.render =>
+                    PortraitExportStep.sample ||
+                    PortraitExportStep.plan ||
+                    PortraitExportStep.render =>
                       '第 ${progress!.clipIndex} 段没导出成功，已停下',
                     null => '竖屏导出没成功，已停下',
                   }),
@@ -261,7 +287,11 @@ class _PortraitExportFailure extends StatelessWidget {
                   Text('#${progress!.clipIndex} · ${_formatMs(event)}'),
                 ],
                 const SizedBox(height: 6),
-                Text(context.bheText(state.portraitExportError!)),
+                Text(
+                  state.portraitExportError == portraitSourceAlreadyVertical
+                      ? _sourceAlreadyPortraitHint(context)
+                      : context.bheText(state.portraitExportError!),
+                ),
               ],
             ),
           ),

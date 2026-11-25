@@ -9,6 +9,9 @@ class MobileDiagnosticException implements Exception {
   String toString() => cause.toString();
 }
 
+const portraitSourceAlreadyVertical =
+    'This video is already portrait. Follow-ball cropping is unnecessary.';
+
 class FriendlyMobileError {
   const FriendlyMobileError(this.message, {this.cancelled = false});
   final String? message;
@@ -34,6 +37,9 @@ FriendlyMobileError friendlyMobileError(
       raw.contains('导出已取消') ||
       raw.contains('分析已取消')) {
     return const FriendlyMobileError(null, cancelled: true);
+  }
+  if (code == 'PORTRAIT_SOURCE_ALREADY_VERTICAL') {
+    return const FriendlyMobileError(portraitSourceAlreadyVertical);
   }
   if (code == 'ALREADY_ACTIVE' || raw.contains('already_active')) {
     return const FriendlyMobileError(

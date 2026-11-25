@@ -26,6 +26,7 @@ import 'features/review_tiers/mobile_tiers.dart';
 import 'features/diagnostics/mobile_diagnostics.dart';
 import 'features/diagnostics/diagnostic_report.dart';
 import 'mobile_theme.dart';
+import 'features/diagnostics/friendly_error.dart' show portraitSourceAlreadyVertical;
 import 'media_bridge.dart' show PortraitExportStep;
 import 'features/game_stats/game_stats.dart';
 
@@ -3733,7 +3734,18 @@ class _ExportViewState extends State<_ExportView> {
     if (widget.goalsOnly) MobileTier.goal else ...defaultMobileExportTiers,
   };
   MobileOutputMode outputMode = MobileOutputMode.clips;
-  ExportFraming framing = ExportFraming.original;
+  ExportFraming _framing = ExportFraming.original;
+  bool get _sourceAlreadyPortrait {
+    final video = state.project.video;
+    // VideoInfo stores the player's display size, after applying track rotation.
+    return video != null &&
+        video.width > 0 &&
+        video.height > 0 &&
+        video.width * 16 <= video.height * 9;
+  }
+
+  ExportFraming get framing =>
+      _sourceAlreadyPortrait ? ExportFraming.original : _framing;
   VideoInfo? _probedVideo;
   Future<bool?>? _hdrProbe;
 
@@ -3743,7 +3755,7 @@ class _ExportViewState extends State<_ExportView> {
 
   Future<void> _chooseFraming(BuildContext context) async {
     final video = state.project.video;
-    if (!identical(video, _probedVideo)) {
+    if (!_sourceAlreadyPortrait && !identical(video, _probedVideo)) {
       _probedVideo = video;
       _hdrProbe = video == null || video.isHdr != null
           ? null
@@ -3755,11 +3767,12 @@ class _ExportViewState extends State<_ExportView> {
       backgroundColor: Theme.of(context).colorScheme.surface,
       builder: (_) => _ExportFramingSheet(
         initial: framing,
+        sourceAlreadyPortrait: _sourceAlreadyPortrait,
         isHdr: video?.isHdr,
         hdrProbe: _hdrProbe,
       ),
     );
-    if (mounted && result != null) setState(() => framing = result);
+    if (mounted && result != null) setState(() => _framing = result);
   }
 
   Future<void> _startExport(
@@ -3951,7 +3964,7 @@ class _ExportViewState extends State<_ExportView> {
             onOriginal: blocked
                 ? null
                 : () {
-                    setState(() => framing = ExportFraming.original);
+                    setState(() => _framing = ExportFraming.original);
                     _runExport(
                       portraitRequest.scope,
                       portraitRequest.mode,
@@ -4475,10 +4488,11 @@ class _ChoiceRow extends StatelessWidget {
   final String title;
   final String subtitle;
   final bool selected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) => ListTile(
+    enabled: onTap != null,
     onTap: onTap,
     contentPadding: EdgeInsets.zero,
     leading: Icon(

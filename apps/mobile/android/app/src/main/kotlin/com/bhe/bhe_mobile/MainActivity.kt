@@ -85,8 +85,8 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         com.bhe.bhe_mobile.diagnostics.DiagnosticsChannel.register(flutterEngine, applicationContext)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, mediaChannelName)
-            .setMethodCallHandler { call, result ->
+        val mediaChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, mediaChannelName)
+        mediaChannel.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "isAvailable" -> result.success(true)
                     "pickVideo" -> videoImportPicker.pick(result)
@@ -98,9 +98,9 @@ class MainActivity : FlutterActivity() {
                     }
                     "videoMetadata" -> videoMetadata(call, result)
                     "exportClip" -> exportClip(call, result)
-                    "sampleBallTrack" -> sampleBallTrack(call, result)
-                    "exportPortraitClip" -> exportPortraitClip(call, result)
-                    "mergeClips" -> mergeClips(call, result)
+                    "sampleBallTrack" -> sampleBallTrack(call, result, mediaChannel)
+                    "exportPortraitClip" -> exportPortraitClip(call, result, mediaChannel)
+                    "mergeClips" -> mergeClips(call, result, mediaChannel)
                     "registerMergeExport" -> registerMergeExport(call, result)
                     "releaseMergeExport" -> releaseMergeExport(call, result)
                     "cancelExport" -> cancelExport(call, result)
@@ -677,13 +677,10 @@ class MainActivity : FlutterActivity() {
                 }
                 VideoInput.open(extractor, path)
                 val formats = (0 until extractor.trackCount).map(extractor::getTrackFormat)
-                val format = formats.firstOrNull { it.getString(MediaFormat.KEY_MIME) == DolbyVisionPolicy.MIME }
-                    ?: formats.firstOrNull { it.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }
+                val format = portraitVideoFormat(formats)
                 if (format != null) {
                     metadata["codec"] = format.getString(MediaFormat.KEY_MIME)
-                    metadata["isHdr"] = isPortraitHdr(
-                        format.getString(MediaFormat.KEY_MIME), format.getInteger(MediaFormat.KEY_COLOR_TRANSFER, -1),
-                    )
+                    metadata["isHdr"] = isPortraitHdr(format)
                     metadata["frameRate"] = runCatching { format.getInteger(MediaFormat.KEY_FRAME_RATE).toDouble() }
                         .recoverCatching { format.getFloat(MediaFormat.KEY_FRAME_RATE).toDouble() }.getOrNull()
                 }
@@ -887,7 +884,7 @@ class MainActivity : FlutterActivity() {
         result.success(null)
     }
 
-    private fun sampleBallTrack(call: MethodCall, result: MethodChannel.Result) {
+    private fun sampleBallTrack(call: MethodCall, result: MethodChannel.Result, mediaChannel: MethodChannel) {
         val parsed = try {
             val id = portraitId(call)
             val args = call.arguments as? Map<*, *> ?: throw IllegalArgumentException("Missing portrait arguments")
@@ -900,12 +897,12 @@ class MainActivity : FlutterActivity() {
         val (id, range) = parsed
         launchPortraitTask(id, null, false, "portraitSampling", result) { cancelled, _ ->
             PortraitBallSampler(applicationContext).sample(range, cancelled) { done, total ->
-                emitPortraitProgress(id, "portraitSampling", done, total, "找球和篮筐")
+                emitPortraitProgress(mediaChannel, id, PortraitExportStage.SAMPLING, done, total)
             }
         }
     }
 
-    private fun exportPortraitClip(call: MethodCall, result: MethodChannel.Result) {
+    private fun exportPortraitClip(call: MethodCall, result: MethodChannel.Result, mediaChannel: MethodChannel) {
         val request = try {
             val id = portraitId(call)
             val args = call.arguments as? Map<*, *> ?: throw IllegalArgumentException("Missing portrait arguments")
@@ -932,13 +929,13 @@ class MainActivity : FlutterActivity() {
         val (id, range, timeline) = request
         launchPortraitTask(id, path, false, "portraitRendering", result) { cancelled, output ->
             PortraitMedia(applicationContext).render(range, timeline, checkNotNull(output), cancelled) {
-                emitPortraitProgress(id, "portraitRendering", it, 100, "裁切并生成画面")
+                emitPortraitProgress(mediaChannel, id, PortraitExportStage.ENCODING, it, 100)
             }
             mapOf("outputPath" to path, "skippedAudioTracks" to emptyList<Any>())
         }
     }
 
-    private fun mergePortraitClips(call: MethodCall, result: MethodChannel.Result) {
+    private fun mergePortraitClips(call: MethodCall, result: MethodChannel.Result, mediaChannel: MethodChannel) {
         val request = try {
             val id = portraitId(call)
             val path = call.argument<String>("outputPath")
@@ -955,7 +952,7 @@ class MainActivity : FlutterActivity() {
         val (id, path, clips) = request
         launchPortraitTask(id, path, call.argument<Boolean>("reservationRequired") == true, "portraitMerging", result) { cancelled, output ->
             PortraitMedia(applicationContext).merge(clips, checkNotNull(output), cancelled) {
-                emitPortraitProgress(id, "portraitMerging", it, 100, "合并成一个视频")
+                emitPortraitProgress(mediaChannel, id, PortraitExportStage.MERGING, it, 100)
             }
             mapOf("outputPath" to path, "skippedAudioTracks" to emptyList<Any>(), "committed" to true)
         }
@@ -1016,6 +1013,9 @@ class MainActivity : FlutterActivity() {
             } catch (_: InterruptedException) {
                 AppDiagnostics.event("export.cancelled", mapOf("operation" to stage))
                 ({ result.error("EXPORT_CANCELLED", "导出已取消", null) })
+            } catch (error: PortraitSourceAspectException) {
+                AppDiagnostics.event("export.failed", mapOf("operation" to stage), error)
+                ({ result.error("PORTRAIT_SOURCE_ALREADY_VERTICAL", error.message, null) })
             } catch (error: Exception) {
                 AppDiagnostics.event("export.failed", mapOf("operation" to stage), error)
                 ({ result.error("EXPORT_FAILED", error.message, NativeFailureDetails.from(error)) })
@@ -1056,20 +1056,13 @@ class MainActivity : FlutterActivity() {
         else -> throw IllegalArgumentException("Invalid portrait timestamp")
     }
 
-    private fun emitPortraitProgress(id: String, stage: String, done: Int, total: Int, label: String) {
-        mainHandler.post {
-            progressSink?.success(mapOf(
-                "exportId" to id,
-                "stage" to stage,
-                "progress" to done.toDouble() / total,
-                "processedFrames" to done,
-                "totalFrames" to total,
-                "message" to label,
-            ))
-        }
+    private fun emitPortraitProgress(
+        channel: MethodChannel, id: String, stage: PortraitExportStage, done: Int, total: Int,
+    ) {
+        mainHandler.post { stage.sendProgress(channel::invokeMethod, id, done, total) }
     }
 
-    private fun mergeClips(call: MethodCall, result: MethodChannel.Result) {
+    private fun mergeClips(call: MethodCall, result: MethodChannel.Result, mediaChannel: MethodChannel) {
         AppDiagnostics.event("export.start", mapOf("operation" to "mergeClips"))
         val batchGroup = call.argument<Int>("batchGroup")
         val exportId = call.argument<String>("exportId") ?: "merge-${System.nanoTime()}"
@@ -1077,7 +1070,7 @@ class MainActivity : FlutterActivity() {
         val outputPath = call.argument<String>("outputPath")
         val rawClips = call.argument<List<*>>("clips")
         if (inputPath == null && rawClips?.any { (it as? Map<*, *>)?.containsKey("inputPath") == true } == true) {
-            mergePortraitClips(call, result)
+            mergePortraitClips(call, result, mediaChannel)
             return
         }
         val plan = try {

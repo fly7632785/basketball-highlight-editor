@@ -39,27 +39,27 @@ internal data class PortraitMediaRange(val path: String, val startMs: Long, val 
 internal data class PortraitSource(
     val width: Int,
     val height: Int,
-    val durationMs: Long,
+    val durationUs: Long,
     val isHdr: Boolean,
     val hasAudio: Boolean,
 ) {
+    val durationMs: Long get() = durationUs / 1000
+
     companion object {
         fun read(path: String): PortraitSource {
             val extractor = MediaExtractor()
             try {
                 VideoInput.open(extractor, path)
                 val formats = (0 until extractor.trackCount).map(extractor::getTrackFormat)
-                val video = formats.firstOrNull { it.getString(MediaFormat.KEY_MIME) == DolbyVisionPolicy.MIME }
-                    ?: formats.firstOrNull { it.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }
-                    ?: throw IllegalArgumentException("No video track")
+                val video = portraitVideoFormat(formats) ?: throw IllegalArgumentException("No video track")
                 val width = video.getInteger(MediaFormat.KEY_WIDTH)
                 val height = video.getInteger(MediaFormat.KEY_HEIGHT)
                 val rotated = video.getInteger(MediaFormat.KEY_ROTATION, 0) % 180 != 0
                 return PortraitSource(
                     if (rotated) height else width,
                     if (rotated) width else height,
-                    video.getLong(MediaFormat.KEY_DURATION) / 1000,
-                    isPortraitHdr(video.getString(MediaFormat.KEY_MIME), video.getInteger(MediaFormat.KEY_COLOR_TRANSFER, -1)),
+                    video.getLong(MediaFormat.KEY_DURATION),
+                    isPortraitHdr(video),
                     formats.any { it.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true },
                 )
             } finally {
@@ -79,6 +79,7 @@ internal class PortraitMedia(private val context: Context) {
         progress: (Int) -> Unit,
     ) {
         val source = PortraitSource.read(range.path)
+        requirePortraitSourceAspect(source.width, source.height)
         val effect = object : MatrixTransformation {
             private var geometry: PortraitGeometry? = null
 
@@ -130,8 +131,12 @@ internal class PortraitMedia(private val context: Context) {
     ) {
         val sources = clips.map { PortraitSource.read(it.path) }
         val hasAudio = sources.first().hasAudio
-        check(sources.all { it.width == PORTRAIT_WIDTH && it.height == PORTRAIT_HEIGHT &&
-            !it.isHdr && it.hasAudio == hasAudio }) { "Incompatible rendered portrait tracks" }
+        for ((clip, source) in clips.zip(sources)) {
+            require(source.width == PORTRAIT_WIDTH && source.height == PORTRAIT_HEIGHT &&
+                !source.isHdr && source.hasAudio == hasAudio &&
+                portraitMergeDurationMatches(source.durationUs, clip.endMs)
+            ) { "The rendered portrait clip does not match the requested merge." }
+        }
         // These items are complete, independently encoded outputs, not source
         // trims. The encoder may have rounded the planned length to its frame grid.
         val items = clips.map { EditedMediaItem.Builder(MediaItem.fromUri(VideoInput.uri(it.path))).build() }

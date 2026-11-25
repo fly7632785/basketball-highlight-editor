@@ -24,8 +24,11 @@ const _clip = Candidate(
 const _hdrCopy =
     'Exports in standard dynamic range. Colors may look flatter than the original.';
 
+final _disabledCaptureDir = Platform.environment['BHE_L531_CAPTURE_DIR'];
 final _captureDir = Platform.environment['BHE_L525_CAPTURE_DIR'];
-final _captureFont = Platform.environment['BHE_L525_CAPTURE_FONT'];
+final _captureFont =
+    Platform.environment['BHE_L531_CAPTURE_FONT'] ??
+    Platform.environment['BHE_L525_CAPTURE_FONT'];
 
 Future<void> _advance(WidgetTester tester) async {
   await tester.pump();
@@ -43,7 +46,10 @@ Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
 }
 
 Future<void> _capture(WidgetTester tester, GlobalKey root, String name) async {
-  if (_captureDir == null) return;
+  final directory = name.startsWith('l531-')
+      ? _disabledCaptureDir
+      : _captureDir;
+  if (directory == null) return;
   await tester.pump();
   await tester.runAsync(() async {
     final boundary =
@@ -51,9 +57,7 @@ Future<void> _capture(WidgetTester tester, GlobalKey root, String name) async {
     final image = await boundary.toImage(pixelRatio: 2);
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
     image.dispose();
-    await File(
-      '$_captureDir/$name.png',
-    ).writeAsBytes(data!.buffer.asUint8List());
+    await File('$directory/$name.png').writeAsBytes(data!.buffer.asUint8List());
   });
 }
 
@@ -70,10 +74,21 @@ _openExport(
   Size size = const Size(390, 844),
   Locale locale = const Locale('en'),
   bool hdr = false,
+  (int, int)? displaySize,
 }) async {
   final fixture = MobileVideoFixture();
+  VideoInfo withDisplaySize(VideoInfo video) => displaySize == null
+      ? video
+      : VideoInfo.fromJson({
+          ...video.toJson(),
+          'width': displaySize.$1,
+          'height': displaySize.$2,
+        });
   await tester.runAsync(() async {
-    await fixture.init();
+    await fixture.init(
+      probe: (file) async =>
+          withDisplaySize(await MobileVideoFixture.inspect(file)),
+    );
     final preferences = await SharedPreferences.getInstance();
     await preferences.setBool('bhe.github-star-prompt-shown', true);
   });
@@ -91,6 +106,7 @@ _openExport(
   fixture.state.project = project.copyWith(
     name: locale.languageCode == 'zh' ? '比赛 1119' : 'Game 1119',
     candidates: [...project.candidates, _clip],
+    video: withDisplaySize(project.video!),
   );
   tester.binding.platformDispatcher.localeTestValue = locale;
   addTearDown(tester.binding.platformDispatcher.clearLocaleTestValue);
@@ -160,6 +176,54 @@ void main() {
       'MaterialIcons',
     )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
   });
+
+  for (final (width, height, language, hint) in [
+    (2160, 3840, 'zh', '这个视频本来就是竖屏，不需要跟球'),
+    (
+      900,
+      1920,
+      'en',
+      'This video is already portrait. Follow-ball cropping is unnecessary.',
+    ),
+  ]) {
+    testWidgets('portrait crop is disabled for $width × $height ($language)', (
+      tester,
+    ) async {
+      final app = await _openExport(
+        tester,
+        displaySize: (width, height),
+        locale: Locale(language),
+      );
+      final zh = language == 'zh';
+      await _openPicture(tester, zh: zh);
+      final title = find.text(
+        zh ? '竖屏 9:16（跟球）' : 'Portrait 9:16 (follow ball)',
+      );
+      final row = tester.widget<ListTile>(
+        find.ancestor(of: title, matching: find.byType(ListTile)),
+      );
+      expect(row.enabled, isFalse);
+      expect(row.onTap, isNull);
+      expect(find.text(hint), findsOneWidget);
+      if (!zh) _assertEnglish(tester);
+      await _capture(tester, app.root, 'l531-disabled-$language');
+      await tester.tap(find.text(zh ? '完成' : 'Done'));
+      await _advance(tester);
+      expect(find.text(zh ? '原比例' : 'Original aspect'), findsOneWidget);
+      final startExport = find.text(zh ? '开始导出' : 'Start export');
+      await tester.ensureVisible(startExport);
+      await tester.runAsync(() => tester.tap(startExport));
+      await _advance(tester);
+      await _finish(tester, app.fixture);
+      expect(
+        app.media.callsTo('exportClip'),
+        hasLength(2),
+        reason:
+            '${app.fixture.state.progressMessage} / ${app.fixture.state.errorMessage} / ${app.media.calls}',
+      );
+      expect(app.media.callsTo('sampleBallTrack'), isEmpty);
+    });
+  }
 
   testWidgets('portrait framing is opt-in from the export page', (
     tester,
@@ -240,6 +304,7 @@ void main() {
     await _advance(tester);
     expect(find.text('Clip 1 of 2'), findsOneWidget);
     expect(find.text('Find ball and rim'), findsOneWidget);
+    expect(find.text('Plan framing'), findsOneWidget);
     expect(find.text('Crop and render'), findsOneWidget);
     expect(find.text('Merge into one video'), findsOneWidget);
     _assertEnglish(tester);

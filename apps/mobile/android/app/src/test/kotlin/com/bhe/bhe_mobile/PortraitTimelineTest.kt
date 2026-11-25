@@ -17,15 +17,18 @@ class PortraitTimelineTest {
         assertEquals(.70, plan.centerAt(1_000_000), 1e-9)
     }
 
-    @Test fun landscapeCropsSidewaysAndNarrowPortraitCropsVertically() {
+    @Test fun landscapeCropsSidewaysAndAlreadyPortraitSourcesAreRejected() {
         val landscape = PortraitGeometry(1920, 1080)
         assertEquals(1920 / 607.5, landscape.scaleX, 1e-6)
         assertEquals(-landscape.translationX(0.0), landscape.translationX(1.0), 1e-6)
         assertEquals(1.0, landscape.scaleY, 1e-6)
-        val narrow = PortraitGeometry(900, 1920)
-        assertEquals(1.0, narrow.scaleX, 1e-6)
-        assertEquals(0.0, narrow.translationX(.73), 1e-6)
-        assertEquals(1.2, narrow.scaleY, 1e-6)
+        for ((width, height) in listOf(2160 to 3840, 900 to 1920)) {
+            val error = assertThrows(IllegalArgumentException::class.java) {
+                PortraitGeometry(width, height)
+            }
+            assertEquals("The source is already portrait. Follow-ball cropping is unnecessary.", error.message)
+        }
+        assertTrue(PortraitGeometry(2161, 3840).scaleX > 1)
     }
 
     @Test fun directYuvAndDisplayBitmapScaleToTheSameRotatedSource() {
@@ -56,6 +59,24 @@ class PortraitTimelineTest {
         assertThrows(IllegalArgumentException::class.java) {
             PortraitTimeline(100, 300, listOf(PortraitKeyframe(100, Double.NaN)))
         }
+    }
+
+    @Test fun mergeDurationUsesTrackTimeWithOneFrameOfTolerance() {
+        assertTrue(portraitMergeDurationMatches(1_234_333, 1200))
+        assertTrue(portraitMergeDurationMatches(1_165_667, 1200))
+        assertFalse(portraitMergeDurationMatches(1_234_334, 1200))
+        assertFalse(portraitMergeDurationMatches(1_165_666, 1200))
+        assertFalse(portraitMergeDurationMatches(0, 1))
+    }
+
+    @Test fun nativeProgressCallsTheDartMediaContractWithinEachStage() {
+        val events = mutableListOf<Pair<String, Any>>()
+        for (stage in PortraitExportStage.entries) {
+            stage.sendProgress({ method, payload -> events.add(method to payload) }, "portrait-job", 60, 200)
+        }
+        assertEquals(listOf("sampling", "encoding", "merging").map { stage ->
+            "exportProgress" to mapOf("stage" to stage, "exportId" to "portrait-job", "progress" to .3)
+        }, events)
     }
 
     @Test fun cancellationIsObservableByTheActiveExportRegistry() {

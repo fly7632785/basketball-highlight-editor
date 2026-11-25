@@ -6,7 +6,7 @@ enum PortraitVideoError: String, LocalizedError {
   case invalidRange = "The clip range is outside the video track."
   case invalidKeyframes = "The crop keyframes must be ordered and inside the clip."
   case missingVideo = "The input has no video track."
-  case unsupportedAspect = "The source is narrower than the portrait crop."
+  case unsupportedAspect = "The source is already portrait. Follow-ball cropping is unnecessary."
   case invalidOutputSize = "The portrait encoder did not produce a 1080 by 1920 picture."
   case invalidMergeClip = "The rendered portrait clip does not match the requested merge."
   case invalidOutputColor = "The portrait encoder did not produce H.264 Rec.709 video."
@@ -30,6 +30,10 @@ struct PortraitGeometry {
     displayTransform = preferredTransform.concatenating(
       CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY)
     )
+  }
+
+  func requireFollowBallSource() throws {
+    guard size.width * 16 > size.height * 9 else { throw PortraitVideoError.unsupportedAspect }
   }
 
   func detectionBox(_ box: CGRect, sampledSize: CGSize) -> CGRect {
@@ -97,9 +101,9 @@ struct PortraitClipPlan {
   }
 
   func ramps(in geometry: PortraitGeometry) throws -> [Ramp] {
+    try geometry.requireFollowBallSource()
     let size = geometry.size
     let cropWidth = size.height * Self.renderSize.width / Self.renderSize.height
-    guard cropWidth > 0, size.width >= cropWidth else { throw PortraitVideoError.unsupportedAspect }
     let scale = Self.renderSize.height / size.height
     let halfCrop = cropWidth / 2
 
@@ -128,7 +132,7 @@ enum PortraitVideoFormat {
   static func codec(subtype: String?, hasDolbyConfig: Bool) -> String? {
     if hasDolbyConfig { return "video/dolby-vision" }
     switch subtype {
-    case "dvh1", "dvhe", "dva1", "dvav": return "video/dolby-vision"
+    case "dvh1", "dvhe", "dva1", "dvav", "dav1": return "video/dolby-vision"
     case "hvc1", "hev1": return "video/hevc"
     case "avc1": return "video/avc"
     default: return subtype
@@ -143,7 +147,7 @@ enum PortraitVideoFormat {
     ) as? [String: Any]
     return codec(
       subtype: String(bytes: bytes, encoding: .ascii),
-      hasDolbyConfig: atoms?["dvcC"] != nil || atoms?["dvvC"] != nil
+      hasDolbyConfig: atoms?["dvcC"] != nil || atoms?["dvvC"] != nil || atoms?["dvwC"] != nil
     )
   }
 
@@ -184,10 +188,21 @@ enum PortraitVideo {
     composition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
   }
 
+  static func videoTrack(in asset: AVAsset) -> AVAssetTrack? {
+    let tracks = asset.tracks(withMediaType: .video)
+    return tracks.first { track in
+      let formats = track.formatDescriptions as? [CMFormatDescription] ?? []
+      return formats.contains { PortraitVideoFormat.codec($0) == "video/dolby-vision" }
+    } ?? tracks.first
+  }
+
   static func sourceTrack(in asset: AVAsset, range: CMTimeRange) throws -> AVAssetTrack {
-    guard let track = asset.tracks(withMediaType: .video).first else {
+    guard let track = videoTrack(in: asset) else {
       throw PortraitVideoError.missingVideo
     }
+    try PortraitGeometry(
+      size: track.naturalSize, preferredTransform: track.preferredTransform
+    ).requireFollowBallSource()
     // The channel range is in whole milliseconds and can include a short
     // audio tail after the final video sample.
     let durationMs = CMTimeConvertScale(asset.duration, timescale: 1000, method: .roundHalfAwayFromZero)
@@ -236,6 +251,7 @@ enum PortraitVideo {
     ) else { throw PortraitVideoError.exporterUnavailable }
 
     var audio: AVMutableCompositionTrack?
+    var expectsAudio: Bool?
     var cursor = CMTime.zero
     for clip in clips {
       try checkCancellation()
@@ -251,7 +267,13 @@ enum PortraitVideo {
       else { throw PortraitVideoError.invalidMergeClip }
       try video.insertTimeRange(range, of: source, at: cursor)
 
-      if let sourceAudio = asset.tracks(withMediaType: .audio).first {
+      let sourceAudio = asset.tracks(withMediaType: .audio).first
+      let hasAudio = sourceAudio != nil
+      if let expectsAudio, expectsAudio != hasAudio {
+        throw PortraitVideoError.invalidMergeClip
+      }
+      expectsAudio = hasAudio
+      if let sourceAudio {
         let audioRange = CMTimeRangeGetIntersection(range, otherRange: sourceAudio.timeRange)
         if !audioRange.isEmpty {
           if audio == nil {

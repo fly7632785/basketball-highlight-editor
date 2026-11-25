@@ -174,10 +174,14 @@ void main() {
     () async {
       media.holdRender = Completer<void>();
       final progress = <double>[];
+      final steps = <PortraitExportStep>{};
       fixture.state.addListener(() {
         final update = fixture.state.portraitProgress;
-        if (update?.step == PortraitExportStep.render)
-          progress.add(update!.progress);
+        if (update == null) return;
+        steps.add(update.step);
+        if (update.step == PortraitExportStep.render) {
+          progress.add(update.progress);
+        }
       });
       final run = fixture.state.exportClipsInScope(
         const ExportScope.only({'Alice'}, tiers: {MobileTier.goal}),
@@ -209,8 +213,13 @@ void main() {
       await send(id, 'encoding', .25);
       media.holdRender!.complete();
       await run;
-      expect(progress, contains(.75));
-      expect(progress, isNot(contains(.625)));
+      expect(steps, {
+        PortraitExportStep.sample,
+        PortraitExportStep.plan,
+        PortraitExportStep.render,
+      });
+      expect(progress, contains(2.5 / 3));
+      expect(progress, isNot(contains(2.25 / 3)));
     },
   );
 

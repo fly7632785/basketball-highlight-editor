@@ -210,6 +210,7 @@ class FramePipeline(
     fun decodeFramesYuv(
         timestampsUs: List<Long>,
         shouldCancel: () -> Boolean,
+        useActualFrameBuckets: Boolean = false,
         onFrame: (Image?, Bitmap?, Long, Long) -> Unit,
     ): FrameDecodeResult = DecodeWindowPolicy.decode { invokeCallback ->
         val ext = extractor ?: error("call prepare() first")
@@ -219,7 +220,8 @@ class FramePipeline(
         var targetIdx = 0
         var inputDone = false
         var outputDone = false
-        val matchToleranceUs = 0L
+        // Portrait timestamps round to the nearest millisecond on both platforms.
+        val matchToleranceUs = if (useActualFrameBuckets) 500L else 0L
         var lastFramePtsUs: Long? = null
         var missingBeforeEos = false
         while (!outputDone && targetIdx < timestampsUs.size) {
@@ -252,6 +254,10 @@ class FramePipeline(
                         // marker, never the time of the final video frame.
                         if (DecodeWindowPolicy.isFrameOutput(eos, codecConfig, info.size)) {
                             lastFramePtsUs = maxOf(lastFramePtsUs ?: pts, pts)
+                            // An actual frame can belong to a later bucket after a gap.
+                            // Skip empty buckets so the next decoded frame is not used for them.
+                            while (useActualFrameBuckets && targetIdx + 1 < timestampsUs.size &&
+                                pts + matchToleranceUs >= timestampsUs[targetIdx + 1]) targetIdx++
                             val target = timestampsUs[targetIdx]
                             if (pts + matchToleranceUs >= target) {
                                 var image: Image? = null
@@ -275,7 +281,7 @@ class FramePipeline(
                                         if (bitmap != null) {
                                             invokeCallback { onFrame(null, bitmap, pts, target) }
                                             delivered++
-                                        } else if (!eos) {
+                                        } else if (!eos || useActualFrameBuckets) {
                                             missingBeforeEos = true
                                         }
                                     }

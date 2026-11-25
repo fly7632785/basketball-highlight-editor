@@ -55,6 +55,23 @@ final class PortraitVideoTests: XCTestCase {
     XCTAssertEqual(1920 * ramp.to.a + ramp.to.tx, 1080, accuracy: 1e-6)
   }
 
+  func testCropRejectsExactlyPortraitAfterRotationAndNarrower() throws {
+    let plan = try PortraitClipPlan(startMs: 0, endMs: 1000, keyframes: [
+      PortraitKeyframe(tMs: 0, cxNorm: 0.5),
+    ])
+    let rotation = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 0, ty: 0)
+    for geometry in [
+      PortraitGeometry(size: CGSize(width: 3840, height: 2160), preferredTransform: rotation),
+      PortraitGeometry(size: CGSize(width: 900, height: 1920), preferredTransform: .identity),
+    ] {
+      XCTAssertThrowsError(try plan.ramps(in: geometry)) {
+        XCTAssertEqual($0 as? PortraitVideoError, .unsupportedAspect)
+      }
+    }
+    let wider = PortraitGeometry(size: CGSize(width: 2161, height: 3840), preferredTransform: .identity)
+    XCTAssertNoThrow(try plan.ramps(in: wider))
+  }
+
   func testPlanRejectsUnorderedOrNonFiniteCenters() {
     XCTAssertThrowsError(try PortraitClipPlan(startMs: 0, endMs: 1000, keyframes: [
       PortraitKeyframe(tMs: 500, cxNorm: 0.5),

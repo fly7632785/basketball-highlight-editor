@@ -98,7 +98,7 @@ import ImageIO
           if let recordedAt = asset.creationDate?.dateValue {
             metadata["creationTime"] = ISO8601DateFormatter().string(from: recordedAt)
           }
-          if let track = asset.tracks(withMediaType: .video).first {
+          if let track = PortraitVideo.videoTrack(in: asset) {
             metadata["frameRate"] = Double(track.nominalFrameRate)
             let descriptions = track.formatDescriptions as? [CMFormatDescription] ?? []
             metadata["codec"] = descriptions.first.flatMap(PortraitVideoFormat.codec)
@@ -1049,6 +1049,7 @@ import ImageIO
     let code: String
     switch error {
     case is CancellationError: code = "EXPORT_CANCELLED"
+    case PortraitVideoError.unsupportedAspect: code = "PORTRAIT_SOURCE_ALREADY_VERTICAL"
     case PortraitVideoError.invalidRange, PortraitVideoError.invalidKeyframes, PortraitVideoError.invalidMergeClip: code = "INVALID_ARGUMENT"
     default: code = "EXPORT_FAILED"
     }

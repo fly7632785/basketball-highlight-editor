@@ -14,6 +14,7 @@ internal class PortraitBallSampler(private val context: Context) {
         onProgress: (Int, Int) -> Unit,
     ): Map<String, Any> {
         val source = PortraitSource.read(range.path)
+        requirePortraitSourceAspect(source.width, source.height)
         val timestamps = portraitSampleTimes(range.startMs, range.endMs)
         val onnxPath = File(context.applicationInfo.nativeLibraryDir, "libonnxruntime.so").absolutePath
         check(NativeRuntime.ensureOnnxLoaded(onnxPath) && NativeRuntime.initializeOnnx(onnxPath)) {
@@ -51,13 +52,16 @@ internal class PortraitBallSampler(private val context: Context) {
             try {
                 requirePortraitActive(cancelled)
                 pipeline.prepare(decodeTimes.first())
-                val result = pipeline.decodeFramesYuv(decodeTimes, cancelled::get) { image, bitmap, _, targetUs ->
+                val result = pipeline.decodeFramesYuv(
+                    decodeTimes, cancelled::get, useActualFrameBuckets = true,
+                ) { image, bitmap, ptsUs, targetUs ->
                     try {
                         requirePortraitActive(cancelled)
+                        val timeMs = (ptsUs + 500) / 1000 + offsetMs
+                        if (timeMs !in range.startMs until range.endMs) return@decodeFramesYuv
                         val frameWidth = image?.width ?: requireNotNull(bitmap).width
                         val frameHeight = image?.height ?: requireNotNull(bitmap).height
                         val rotation = if (image != null) pipeline.rotationDegreesValue else 0
-                        val timeMs = targetUs / 1000 + offsetMs
                         val coords = RimCheckFrameCoordinates(
                             frameWidth, frameHeight, rotation, source.width.toDouble(), source.height.toDouble(),
                         )
@@ -84,7 +88,8 @@ internal class PortraitBallSampler(private val context: Context) {
                             }
                         }
                         samples.add(mapOf("tMs" to timeMs, "balls" to balls, "rims" to rims))
-                        val percentage = samples.size * 100 / timestamps.size
+                        val percentage = ((targetUs - decodeTimes.first()) / (1_000_000 / PORTRAIT_SAMPLE_HZ) + 1)
+                            .toInt() * 100 / timestamps.size
                         if (percentage / 10 > progressBucket) {
                             progressBucket = percentage / 10
                             val processed = if (source.isHdr) 100 + percentage else percentage
@@ -96,10 +101,9 @@ internal class PortraitBallSampler(private val context: Context) {
                     }
                 }
                 requirePortraitActive(cancelled)
-                val decodeDuration = if (source.isHdr) PortraitSource.read(decodeRange.path).durationMs else source.durationMs
-                DecodeWindowPolicy.requireUsable(
-                    result, timestamps.size, decodeRange.endMs, decodeDuration, PORTRAIT_SAMPLE_HZ.toDouble(),
-                )
+                if (samples.isEmpty() || result.missingBeforeEos) {
+                    throw VideoDecodeException("The video reader could not decode the portrait samples.")
+                }
                 return mapOf("frameWidth" to source.width, "frameHeight" to source.height, "samples" to samples)
             } finally {
                 pipeline.release()
