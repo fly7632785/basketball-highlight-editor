@@ -11,6 +11,7 @@ import android.media.MediaMuxer
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -24,7 +25,6 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
-import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -1363,9 +1363,11 @@ class MainActivity : FlutterActivity() {
         Thread {
             try {
                 val source = File(path)
+                val savedAtMs = System.currentTimeMillis()
                 val values = ContentValues().apply {
                     put(MediaStore.Video.Media.DISPLAY_NAME, source.name)
                     put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    putGallerySaveDates(savedAtMs, ::put)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/BHE")
                         put(MediaStore.Video.Media.IS_PENDING, 1)
@@ -1375,9 +1377,9 @@ class MainActivity : FlutterActivity() {
                 val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
                     ?: throw IllegalStateException("无法创建相册文件")
                 try {
-                    resolver.openOutputStream(uri).use { output ->
-                        requireNotNull(output)
-                        FileInputStream(source).use { input -> input.copyTo(output) }
+                    val descriptor = requireNotNull(resolver.openFileDescriptor(uri, "rw"))
+                    ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { output ->
+                        copyVideoForGallery(source, output, savedAtMs)
                     }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         resolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
