@@ -2637,6 +2637,23 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
     _refresh();
   }
 
+  Future<void> _editPlayerTags(Candidate candidate) async {
+    final session = review.state.projectSession;
+    final wasPlaying = widget.controller.value.isPlaying;
+    if (wasPlaying) await review._pausePlayback();
+    if (!mounted || review.state.projectSession != session) return;
+    try {
+      await _showPlayerPicker(context, review.state, candidate);
+    } finally {
+      if (wasPlaying &&
+          mounted &&
+          review.state.projectSession == session &&
+          _candidate?.id == candidate.id) {
+        await review._resumePlayback();
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     const railWidth = 220.0;
@@ -2842,7 +2859,7 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
     final excluded = review.statusFilter == 'excluded';
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxWidth < 700;
+        final compact = constraints.maxWidth < 750;
         final controls = <Widget>[
           _LandscapeIconButton(
             icon: LucideIcons.rotateCcw,
@@ -2931,6 +2948,14 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
             highlighted: review.state.reviewBatchNoticeCount > 0,
           ),
           const SizedBox(width: 7),
+          _LandscapeIconButton(
+            icon: LucideIcons.tag,
+            tooltip: context.bheText('选择球员标签'),
+            onPressed: candidate == null
+                ? null
+                : () => _editPlayerTags(candidate),
+          ),
+          const SizedBox(width: 7),
           SizedBox(
             width: 108,
             child: OutlinedButton.icon(
@@ -2979,11 +3004,8 @@ class _FullscreenReviewPageState extends State<_FullscreenReviewPage> {
                     children: [
                       Row(children: controls),
                       Row(
-                        children: [
-                          decisions.first,
-                          const Spacer(),
-                          ...decisions.skip(1),
-                        ],
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: decisions,
                       ),
                     ],
                   )

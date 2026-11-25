@@ -62,6 +62,27 @@ class _VisualVideoPlatform extends FakeVideoPlatform {
       const ColoredBox(color: Color(0xFF17332E));
 }
 
+class _LandscapeTagVideoPlatform extends _VisualVideoPlatform {
+  bool playing = false;
+  Duration position = Duration.zero;
+  final seeks = <Duration>[];
+
+  @override
+  Future<void> play(int playerId) async => playing = true;
+
+  @override
+  Future<void> pause(int playerId) async => playing = false;
+
+  @override
+  Future<Duration> getPosition(int playerId) async => position;
+
+  @override
+  Future<void> seekTo(int playerId, Duration next) async {
+    position = next;
+    seeks.add(next);
+  }
+}
+
 void assertEnglishWidgets(WidgetTester tester) {
   final chinese = RegExp(r'[\u3400-\u9FFF]');
   for (final text in tester.widgetList<Text>(find.byType(Text))) {
@@ -140,6 +161,7 @@ void main() {
   final output = Platform.environment['BHE_L513_CAPTURE_DIR'];
   final rowOutput = Platform.environment['BHE_L515_CAPTURE_DIR'];
   final multiTagOutput = Platform.environment['BHE_L517_CAPTURE_DIR'];
+  final landscapeTagOutput = Platform.environment['BHE_L518_CAPTURE_DIR'];
   final font = Platform.environment['BHE_L513_CAPTURE_FONT'];
 
   setUpAll(() async {
@@ -489,6 +511,98 @@ void main() {
       expect(fixture.state.project.candidates.single.players, ['Alice']);
     },
   );
+
+  testWidgets('landscape tags open the shared picker without losing playback', (
+    tester,
+  ) async {
+    final video = _LandscapeTagVideoPlatform();
+    VideoPlayerPlatform.instance = video;
+    final root = await openCandidateRow(
+      tester,
+      fixture,
+      clips[1],
+      locale: const Locale('en'),
+      players: ['Alice', 'Bob', 'Carol'],
+    );
+    await tester.tap(find.byTooltip('Landscape full screen'));
+    await tester.binding.setSurfaceSize(const Size(640, 360));
+    await settleVideo(tester);
+    expect(find.byTooltip('Exit landscape review'), findsOneWidget);
+    expect(find.text('Alice'), findsOneWidget);
+    final tag = find.byTooltip('Choose player tag');
+    expect(tag, findsOneWidget);
+    final undo = find.byKey(const ValueKey('review-undo-bottom'));
+    final exclude = find.widgetWithText(OutlinedButton, 'Exclude');
+    final include = find.widgetWithText(FilledButton, 'Include');
+    final excludeRect = tester.getRect(exclude);
+    final includeRect = tester.getRect(include);
+    expect(
+      tester.getRect(undo).right,
+      lessThanOrEqualTo(tester.getRect(tag).left),
+    );
+    expect(tester.getRect(tag).right, lessThanOrEqualTo(excludeRect.left));
+    expect(includeRect.right, lessThanOrEqualTo(640));
+    expect(includeRect.bottom, lessThanOrEqualTo(360));
+
+    const position = Duration(milliseconds: 3150);
+    expect(video.playing, isTrue);
+    video.position = position;
+    await tester.pump(const Duration(milliseconds: 550));
+    final slider = find.byType(Slider);
+    expect(tester.widget<Slider>(slider).value, 3150);
+    final seekCount = video.seeks.length;
+    await tester.tap(tag);
+    await tester.pumpAndSettle();
+    expect(find.text('Player tags'), findsOneWidget);
+    expect(video.playing, isFalse);
+    assertEnglishWidgets(tester);
+    for (final name in ['Bob', 'Carol']) {
+      final label = find.byKey(ValueKey('player-select-$name'));
+      await tester.ensureVisible(label);
+      await tester.tap(label);
+      await tester.pump();
+    }
+    final apply = find.byKey(const ValueKey('apply-candidate-tags'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await waitProjectWrites(tester, fixture.state.pendingProjectWrites);
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Exit landscape review'), findsOneWidget);
+    expect(fixture.state.project.candidates.single.effectivePlayers, [
+      'Alice',
+      'Bob',
+      'Carol',
+    ]);
+    expect(find.text('Alice'), findsOneWidget);
+    expect(find.text('Bob'), findsOneWidget);
+    expect(find.text('+1'), findsOneWidget);
+    expect(video.position, position);
+    expect(video.seeks, hasLength(seekCount));
+    expect(video.playing, isTrue);
+    expect(tester.widget<Slider>(slider).value, 3150);
+    expect(tester.getRect(exclude), excludeRect);
+    expect(tester.getRect(include), includeRect);
+    assertEnglishWidgets(tester);
+    expect(tester.takeException(), isNull);
+    if (landscapeTagOutput != null) {
+      await capture(tester, root, '$landscapeTagOutput/landscape-review.png');
+    }
+    await tester.binding.setSurfaceSize(const Size(750, 360));
+    await settleVideo(tester);
+    expect(tester.getRect(include).right, lessThanOrEqualTo(750));
+    await tester.tap(find.byTooltip('Pause'));
+    await tester.pumpAndSettle();
+    await tester.tap(tag);
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Exit landscape review'), findsOneWidget);
+    expect(video.playing, isFalse);
+    expect(tester.widget<Slider>(slider).value, 3150);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('folded confirmation, filtering, and one-step undo in English', (
     tester,
