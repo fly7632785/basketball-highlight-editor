@@ -217,25 +217,27 @@ class _CandidateRail extends StatelessWidget {
     required int goals,
   }) {
     final (title, detail) = switch (statusFilter) {
-      _ when filtering => ('没有符合筛选的片段', null),
+      _ when filtering => (
+        '没有符合筛选的片段',
+        switch ((playerFilter != 'all', rimFilter != 'all')) {
+          (true, true) => '已按球员标签和篮筐复核筛选',
+          (true, false) => '已按球员标签筛选',
+          _ => '已按篮筐复核筛选',
+        },
+      ),
       'included' => ('还没有进球', '这台手机的分析还不能自动确认进球。你在「疑似」里点「选中」的会出现在这里。'),
       'uncertain' => ('疑似审完了', null),
       _ => ('没有片段', null),
     };
     final actions = <Widget>[
-      if (filtering)
-        TextButton(
-          key: const Key('review-clear-filters'),
-          onPressed: () => onFilters('all', 'all'),
-          child: Text(context.bheText('清除')),
+      if (!filtering && statusFilter == 'uncertain' && goals > 0)
+        FilledButton(
+          onPressed: onExportGoals,
+          child: Text(context.bheText('导出 $goals 段进球')),
         )
-      else if (statusFilter == 'uncertain') ...[
-        if (goals > 0)
-          FilledButton(
-            onPressed: onExportGoals,
-            child: Text(context.bheText('导出 $goals 段进球')),
-          ),
-      ] else if (statusFilter == 'included' && uncertain + foldedCount > 0)
+      else if (!filtering &&
+          statusFilter == 'included' &&
+          uncertain + foldedCount > 0)
         FilledButton(
           onPressed: () => onTier('uncertain'),
           child: Text(context.bheText('去审 $uncertain 段疑似')),
@@ -260,6 +262,14 @@ class _CandidateRail extends StatelessWidget {
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
+                    if (filtering) ...[
+                      const SizedBox(height: 12),
+                      FilledButton(
+                        key: const Key('review-clear-filters'),
+                        onPressed: () => onFilters('all', 'all'),
+                        child: Text(context.bheText('清除筛选')),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -389,6 +399,23 @@ class _ReviewTierCandidateTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tier = mobileTier(candidate);
+    final players = candidate.effectivePlayers;
+    final (status, statusColor) = switch (tier) {
+      MobileTier.goal => ('已确认', BhePalette.green),
+      MobileTier.excluded => (
+        candidate.reviewed
+            ? '你排除的'
+            : candidate.rimCheckStatus == 'rejected'
+            ? '自动排除'
+            : '已排除',
+        null,
+      ),
+      MobileTier.uncertain => switch (candidate.rimCheckStatus) {
+        'made' => ('通过', BhePalette.green),
+        'unsure' => ('未确认', BhePalette.warning),
+        _ => (null, null),
+      },
+    };
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -407,41 +434,65 @@ class _ReviewTierCandidateTile extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    '#$number  ${candidate.displayTime}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelLarge,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    spacing: 8,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '#$number  ${candidate.displayTime}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                      ),
+                      if (status != null)
+                        Flexible(
+                          child: Text(
+                            context.bheText(status),
+                            maxLines: compact ? 2 : 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: statusColor,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                        ),
+                    ],
                   ),
-                  Text(
-                    _formatMs(candidate.duration.inMilliseconds),
-                    style: Theme.of(context).textTheme.bodySmall,
+                  if (players.isNotEmpty) const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    spacing: 8,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _formatMs(candidate.duration.inMilliseconds),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                      if (players.isNotEmpty)
+                        Flexible(
+                          flex: 2,
+                          child: Wrap(
+                            alignment: WrapAlignment.end,
+                            spacing: 4,
+                            runSpacing: 4,
+                            children: [
+                              for (final name in players)
+                                _PlayerTagChip(player: name),
+                            ],
+                          ),
+                        ),
+                    ],
                   ),
                 ],
               ),
             ),
-            if (tier == MobileTier.excluded)
-              Flexible(
-                child: Text(
-                  context.bheText(
-                    candidate.reviewed
-                        ? '你排除的'
-                        : candidate.rimCheckStatus == 'rejected'
-                        ? '自动排除'
-                        : '已排除',
-                  ),
-                  maxLines: compact ? 2 : 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelSmall,
-                ),
-              )
-            else if (!compact) ...[
-              _RimCheckTag(candidate: candidate),
-              if (candidate.player case final name?)
-                Flexible(child: _PlayerTagChip(player: name)),
-            ],
           ],
         ),
       ),

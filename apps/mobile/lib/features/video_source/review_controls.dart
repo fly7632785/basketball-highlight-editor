@@ -396,7 +396,13 @@ class _ReviewActionBar extends StatelessWidget {
                     child: FilledButton.icon(
                       onPressed: onInclude,
                       icon: const Icon(LucideIcons.check, size: 18),
-                      label: Text(context.bheText(onExclude == null ? '恢复·算进球' : '选中')),
+                      label: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          context.bheText(onExclude == null ? '恢复·算进球' : '选中'),
+                          maxLines: 1,
+                        ),
+                      ),
                     ),
                   ),
                 ],

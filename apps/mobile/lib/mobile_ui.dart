@@ -3234,37 +3234,6 @@ class _CandidateOverlayPainter extends CustomPainter {
       oldDelegate.positionMs != positionMs;
 }
 
-/// The rim check verdict next to a candidate's time: passed, unsure, or
-/// excluded by the check.
-class _RimCheckTag extends StatelessWidget {
-  const _RimCheckTag({required this.candidate});
-
-  final Candidate candidate;
-
-  @override
-  Widget build(BuildContext context) {
-    final excluded = candidate.selection == CandidateSelection.excluded;
-    final (label, color) = switch (candidate.rimCheckStatus) {
-      'rejected' when excluded => ('自动排除', BhePalette.error),
-      'made' when !excluded => ('通过', BhePalette.green),
-      'unsure' when !excluded => ('未确认', BhePalette.warning),
-      _ => (null, null),
-    };
-    if (label == null) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(left: 6),
-      child: Text(
-        context.bheText(label),
-        style: TextStyle(
-          color: color,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
 class _BatchSecondsSlider extends StatelessWidget {
   const _BatchSecondsSlider({
     required this.label,

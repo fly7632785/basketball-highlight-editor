@@ -57,11 +57,11 @@ class _ReviewSourceBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      // Reserve space for the tabs and a candidate on short portrait screens.
-      final railHeight = math.max(
-        constraints.maxHeight * .4,
-        math.min(hasReviewFooter ? 192.0 : 144.0, constraints.maxHeight),
-      );
+      final available = constraints.maxHeight;
+      // Fit two tagged rows under the header, or one on short screens.
+      final minimum =
+          (available >= 380 ? 232.0 : 176.0) + (hasReviewFooter ? 48 : 0);
+      final railHeight = math.min(available, math.max(available * .4, minimum));
       return Column(
         children: [
           SizedBox(height: railHeight, child: rail),
