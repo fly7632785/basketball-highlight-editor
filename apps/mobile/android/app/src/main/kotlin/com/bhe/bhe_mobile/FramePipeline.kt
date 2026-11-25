@@ -27,6 +27,7 @@ import android.util.Log
 class FramePipeline(
     private val videoPath: String,
     private val fallbackMaxDimension: Int? = null,
+    private val strictFrames: Boolean = false,
 ) {
     private val tag = "BHE-FramePipeline"
     private var extractor: MediaExtractor? = null
@@ -99,7 +100,7 @@ class FramePipeline(
         val decoder = try {
             startDecoder(format)
         } catch (error: Exception) {
-            if (format === originalFormat) throw error
+            if (strictFrames || format === originalFormat) throw error
             Log.w(tag, "HEVC base-layer decoder unavailable; retrying Dolby Vision", error)
             startDecoder(originalFormat)
         }
@@ -172,7 +173,7 @@ class FramePipeline(
                             }
                         }
                         if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                            while (targetIdx < timestampsUs.size) {
+                            while (!strictFrames && targetIdx < timestampsUs.size) {
                                 val target = timestampsUs[targetIdx]
                                 val bitmap = fallbackFrameAt(target, pts) ?: break
                                 onFrame(bitmap, pts, target)
@@ -269,7 +270,8 @@ class FramePipeline(
                                     } else {
                                         val bitmapSource = image
                                         image = null
-                                        val bitmap = renderToBitmap(decoder, outIdx, bitmapSource) ?: fallbackFrameAt(target, pts)
+                                        val bitmap = renderToBitmap(decoder, outIdx, bitmapSource)
+                                            ?: if (strictFrames) null else fallbackFrameAt(target, pts)
                                         if (bitmap != null) {
                                             invokeCallback { onFrame(null, bitmap, pts, target) }
                                             delivered++
@@ -285,7 +287,7 @@ class FramePipeline(
                         }
                         if (eos) {
                             val fallbackPts = lastFramePtsUs ?: pts
-                            while (targetIdx < timestampsUs.size) {
+                            while (!strictFrames && targetIdx < timestampsUs.size) {
                                 val target = timestampsUs[targetIdx]
                                 if (shouldCancel()) throw InterruptedException("分析已取消")
                                 val bitmap = fallbackFrameAt(target, fallbackPts) ?: break
