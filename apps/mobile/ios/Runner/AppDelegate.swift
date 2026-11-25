@@ -41,6 +41,11 @@ import ImageIO
   private var analysisState: [String: Any] = ["status": "idle"]
   private let exportLock = NSLock()
   private var activeExporters = [String: AVAssetExportSession]()
+  // The existing export lock also protects the sampling and preparation phases.
+  private final class PortraitJob {
+    var cancelled = false
+  }
+  private var portraitJobs = [String: PortraitJob]()
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -95,24 +100,11 @@ import ImageIO
           }
           if let track = asset.tracks(withMediaType: .video).first {
             metadata["frameRate"] = Double(track.nominalFrameRate)
-            if let description = (track.formatDescriptions as? [CMFormatDescription])?.first {
-              let subtype = CMFormatDescriptionGetMediaSubType(description)
-              let bytes = [24, 16, 8, 0].map { UInt8(truncatingIfNeeded: subtype >> $0) }
-              let codec = String(bytes: bytes, encoding: .ascii)
-              let extensions = CMFormatDescriptionGetExtensions(description).map { $0 as NSDictionary }
-              let atoms = extensions?[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms] as? [String: Any]
-              let hasDolbyConfig = atoms?["dvcC"] != nil || atoms?["dvvC"] != nil
-              if hasDolbyConfig {
-                metadata["codec"] = "video/dolby-vision"
-              } else {
-                switch codec {
-                case "dvh1", "dvhe", "dva1", "dvav": metadata["codec"] = "video/dolby-vision"
-                case "hvc1", "hev1": metadata["codec"] = "video/hevc"
-                case "avc1": metadata["codec"] = "video/avc"
-                default: metadata["codec"] = codec
-                }
-              }
-            }
+            let descriptions = track.formatDescriptions as? [CMFormatDescription] ?? []
+            metadata["codec"] = descriptions.first.flatMap(PortraitVideoFormat.codec)
+            metadata["isHdr"] = descriptions.contains(where: PortraitVideoFormat.isHDR)
+          } else {
+            metadata["isHdr"] = false
           }
           DispatchQueue.main.async { result(metadata) }
         }
@@ -129,6 +121,10 @@ import ImageIO
             .map { (try? $0.write(to: URL(fileURLWithPath: output), options: .atomic)) != nil } ?? false
           DispatchQueue.main.async { result(saved) }
         }
+      case "sampleBallTrack":
+        self.sampleBallTrack(call.arguments as? [String: Any], channel: channel, result: result)
+      case "exportPortraitClip":
+        self.exportPortraitClip(call.arguments as? [String: Any], channel: channel, result: result)
       case "exportClip":
         self.exportClip(call.arguments as? [String: Any], result: result)
       case "mergeClips":
@@ -864,19 +860,19 @@ import ImageIO
       }
     }
   }
-  private func makeVideoReader(asset: AVAsset, startMs: Int, endMs: Int, maxDimension: Int? = nil) throws -> AVAssetReader {
+  private func makeVideoReader(
+    asset: AVAsset, startMs: Int, endMs: Int, maxDimension: Int? = nil, convertToSDR: Bool = false
+  ) throws -> AVAssetReader {
     let reader = try AVAssetReader(asset: asset)
     guard let track = asset.tracks(withMediaType: .video).first else { throw NSError(domain: "BHERuntime", code: 10, userInfo: [NSLocalizedDescriptionKey: "视频没有视频轨道"]) }
     let output = AVAssetReaderVideoCompositionOutput(videoTracks: [track], videoSettings: [
       kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
     ])
     output.alwaysCopiesSampleData = false
-    let transformedRect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
-    let sourceWidth = abs(transformedRect.width)
-    let sourceHeight = abs(transformedRect.height)
-    let longestSide = max(Double(sourceWidth), Double(sourceHeight))
-    let scale = maxDimension.map { min(1.0, Double($0) / longestSide) } ?? 1.0
-    let renderSize = CGSize(width: sourceWidth * CGFloat(scale), height: sourceHeight * CGFloat(scale))
+    let geometry = PortraitGeometry(size: track.naturalSize, preferredTransform: track.preferredTransform)
+    let longestSide = max(geometry.size.width, geometry.size.height)
+    let scale = maxDimension.map { min(1.0, CGFloat($0) / longestSide) } ?? 1.0
+    let renderSize = CGSize(width: geometry.size.width * scale, height: geometry.size.height * scale)
     let videoComposition = AVMutableVideoComposition()
     videoComposition.renderSize = renderSize
     videoComposition.frameDuration = track.minFrameDuration.isValid
@@ -885,9 +881,7 @@ import ImageIO
     let instruction = AVMutableVideoCompositionInstruction()
     instruction.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
     let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-    var displayTransform = track.preferredTransform
-    displayTransform.tx -= transformedRect.minX
-    displayTransform.ty -= transformedRect.minY
+    var displayTransform = geometry.displayTransform
     if scale < 1.0 {
       // Scale the translation to the display origin along with the rotated frame.
       displayTransform = displayTransform.concatenating(CGAffineTransform(scaleX: CGFloat(scale), y: CGFloat(scale)))
@@ -895,6 +889,7 @@ import ImageIO
     layerInstruction.setTransform(displayTransform, at: .zero)
     instruction.layerInstructions = [layerInstruction]
     videoComposition.instructions = [instruction]
+    if convertToSDR { PortraitVideo.configureSDR(videoComposition) }
     output.videoComposition = videoComposition
     reader.timeRange = CMTimeRange(
       start: CMTime(value: CMTimeValue(startMs), timescale: 1000),
@@ -1019,6 +1014,262 @@ import ImageIO
     ])
   }
 
+  private func beginPortraitJob(exportId: String) -> PortraitJob? {
+    exportLock.withLock {
+      guard portraitJobs[exportId] == nil, activeExporters[exportId] == nil else { return nil }
+      let job = PortraitJob()
+      portraitJobs[exportId] = job
+      return job
+    }
+  }
+
+  private func checkPortraitCancellation(_ job: PortraitJob) throws {
+    if exportLock.withLock({ job.cancelled }) { throw CancellationError() }
+  }
+
+  private func finishPortraitJob(_ exportId: String, job: PortraitJob) -> Bool {
+    exportLock.withLock {
+      portraitJobs.removeValue(forKey: exportId)
+      activeExporters.removeValue(forKey: exportId)
+      return job.cancelled
+    }
+  }
+
+  private func portraitError(_ error: Error) -> FlutterError {
+    let code: String
+    switch error {
+    case is CancellationError: code = "EXPORT_CANCELLED"
+    case PortraitVideoError.invalidRange, PortraitVideoError.invalidKeyframes: code = "INVALID_ARGUMENT"
+    default: code = "EXPORT_FAILED"
+    }
+    return FlutterError(code: code, message: error.localizedDescription, details: nil)
+  }
+
+  private func sampleBallTrack(
+    _ args: [String: Any]?, channel: FlutterMethodChannel, result: @escaping FlutterResult
+  ) {
+    guard let input = args?["inputPath"] as? String, !input.isEmpty,
+          let startMs = args?["startMs"] as? Int, startMs >= 0,
+          let endMs = args?["endMs"] as? Int, endMs > startMs,
+          args?["sampleHz"] as? Int == PortraitSamplingSchedule.frequency,
+          let exportId = args?["exportId"] as? String, !exportId.isEmpty
+    else {
+      result(FlutterError(code: "INVALID_ARGUMENT", message: "Invalid ball sampling request.", details: nil))
+      return
+    }
+    guard let job = beginPortraitJob(exportId: exportId) else {
+      result(FlutterError(code: "EXPORT_BUSY", message: nil, details: nil))
+      return
+    }
+
+    DispatchQueue.global(qos: .userInitiated).async {
+      let outcome = Result {
+        try self.readPortraitSamples(input: input, startMs: startMs, endMs: endMs, job: job) { fraction in
+          DispatchQueue.main.async {
+            if !self.exportLock.withLock({ job.cancelled }) {
+              self.reportPortraitProgress(channel, exportId: exportId, stage: "sampling", fraction: fraction)
+            }
+          }
+        }
+      }
+      DispatchQueue.main.async {
+        if self.finishPortraitJob(exportId, job: job) {
+          result(self.portraitError(CancellationError()))
+        } else {
+          switch outcome {
+          case .success(let response):
+            self.reportPortraitProgress(channel, exportId: exportId, stage: "sampling", fraction: 1)
+            result(response)
+          case .failure(let error):
+            result(self.portraitError(error))
+          }
+        }
+      }
+    }
+  }
+
+  private func readPortraitSamples(
+    input: String, startMs: Int, endMs: Int, job: PortraitJob, progress: (Double) -> Void
+  ) throws -> [String: Any] {
+    try checkPortraitCancellation(job)
+    let asset = AVURLAsset(url: URL(fileURLWithPath: input))
+    let range = CMTimeRange(
+      start: CMTime(value: Int64(startMs), timescale: 1000),
+      end: CMTime(value: Int64(endMs), timescale: 1000)
+    )
+    let track = try PortraitVideo.sourceTrack(in: asset, range: range)
+    let geometry = PortraitGeometry(size: track.naturalSize, preferredTransform: track.preferredTransform)
+
+    let modelKey = FlutterDartProject.lookupKey(forAsset: "assets/models/bball_model.onnx")
+    guard let modelPath = Bundle.main.path(forResource: modelKey, ofType: nil) else {
+      throw PortraitVideoError.modelUnavailable
+    }
+    let config: [String: Any] = [
+      "model_path": modelPath, "hoop_roi": fullRoi(), "net_roi": fullRoi(), "analysis_roi": fullRoi(),
+      "confidence_threshold": 0.15, "model_size": 640, "crop_scale": 1.0, "detection_only": true,
+      "inference_batch_size": 1, "intra_threads": runtimeIntraThreads, "execution_provider": "coreml",
+    ]
+    let data = try JSONSerialization.data(withJSONObject: config)
+    let json = String(decoding: data, as: UTF8.self)
+    guard let session = json.withCString({ bhe_runtime_create_session($0) }) else {
+      throw PortraitVideoError.modelUnavailable
+    }
+    defer { bhe_runtime_free_session(session) }
+
+    try checkPortraitCancellation(job)
+    let reader = try makeVideoReader(
+      asset: asset, startMs: startMs, endMs: endMs, maxDimension: coarseMaxDimension, convertToSDR: true
+    )
+    defer { if reader.status == .reading { reader.cancelReading() } }
+    guard let output = reader.outputs.first else { throw PortraitVideoError.readerFailed }
+    var schedule = PortraitSamplingSchedule(startMs: startMs, endMs: endMs)
+    var samples = [[String: Any]]()
+    while let sample = output.copyNextSampleBuffer() {
+      defer { CMSampleBufferInvalidate(sample) }
+      try checkPortraitCancellation(job)
+      let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+      guard pts.isNumeric else { throw PortraitVideoError.readerFailed }
+      let ptsMs = Int(CMTimeConvertScale(pts, timescale: 1000, method: .roundHalfAwayFromZero).value)
+      guard schedule.accepts(ptsMs) else { continue }
+      guard let image = CMSampleBufferGetImageBuffer(sample) else { throw PortraitVideoError.readerFailed }
+      guard let pointer = try pushPixelBuffer(session: session, pixelBuffer: image, timeMs: ptsMs) else {
+        throw PortraitVideoError.detectionFailed
+      }
+      let responseData = Data(bytes: pointer, count: strlen(pointer))
+      bhe_runtime_free_string(pointer)
+      guard let response = try JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+            response["error"] == nil,
+            let detections = response["detections"] as? [[String: Double]]
+      else { throw PortraitVideoError.detectionFailed }
+
+      let sampledSize = CGSize(width: CVPixelBufferGetWidth(image), height: CVPixelBufferGetHeight(image))
+      var balls = [[String: Double]]()
+      var rims = [[String: Double]]()
+      for detection in detections {
+        guard let kind = detection["class_id"], let conf = detection["confidence"],
+              let x1 = detection["x1"], let x2 = detection["x2"],
+              let y1 = detection["y1"], let y2 = detection["y2"]
+        else { throw PortraitVideoError.detectionFailed }
+        let box = geometry.detectionBox(
+          CGRect(x: x1, y: y1, width: x2 - x1, height: y2 - y1), sampledSize: sampledSize
+        )
+        let position = [
+          "cx": Double(box.midX), "cy": Double(box.midY),
+          "w": Double(box.width), "h": Double(box.height), "conf": conf,
+        ]
+        switch kind {
+        case 0: balls.append(position)
+        case 1: rims.append(position)
+        default: throw PortraitVideoError.detectionFailed
+        }
+      }
+      samples.append(["tMs": ptsMs, "balls": balls, "rims": rims])
+      progress(Double(ptsMs - startMs) / Double(endMs - startMs))
+    }
+    try checkPortraitCancellation(job)
+    guard reader.status == .completed else { throw reader.error ?? PortraitVideoError.readerFailed }
+    guard !samples.isEmpty else { throw PortraitVideoError.noFrames }
+    return ["frameWidth": Int(geometry.size.width.rounded()), "frameHeight": Int(geometry.size.height.rounded()), "samples": samples]
+  }
+
+  private func exportPortraitClip(
+    _ args: [String: Any]?, channel: FlutterMethodChannel, result: @escaping FlutterResult
+  ) {
+    guard let inputPath = args?["inputPath"] as? String, !inputPath.isEmpty,
+          let outputPath = args?["outputPath"] as? String, !outputPath.isEmpty,
+          let startMs = args?["startMs"] as? Int,
+          let endMs = args?["endMs"] as? Int,
+          args?["outWidth"] as? Int == Int(PortraitClipPlan.renderSize.width),
+          args?["outHeight"] as? Int == Int(PortraitClipPlan.renderSize.height),
+          let keys = args?["keyframes"] as? [[String: Any]],
+          let exportId = args?["exportId"] as? String, !exportId.isEmpty
+    else {
+      result(FlutterError(code: "INVALID_ARGUMENT", message: "Invalid portrait export request.", details: nil))
+      return
+    }
+    let input = URL(fileURLWithPath: inputPath)
+    let output = URL(fileURLWithPath: outputPath)
+    let plan: PortraitClipPlan
+    do {
+      let keyframes = try keys.map { item in
+        guard let tMs = item["tMs"] as? Int, let cxNorm = item["cxNorm"] as? Double else {
+          throw PortraitVideoError.invalidKeyframes
+        }
+        return PortraitKeyframe(tMs: tMs, cxNorm: cxNorm)
+      }
+      guard input.resolvingSymlinksInPath() != output.resolvingSymlinksInPath() else {
+        result(FlutterError(code: "INVALID_ARGUMENT", message: "The output must differ from the input.", details: nil))
+        return
+      }
+      plan = try PortraitClipPlan(startMs: startMs, endMs: endMs, keyframes: keyframes)
+    } catch {
+      result(portraitError(error))
+      return
+    }
+    guard let job = beginPortraitJob(exportId: exportId) else {
+      result(FlutterError(code: "EXPORT_BUSY", message: nil, details: nil))
+      return
+    }
+
+    DispatchQueue.global(qos: .userInitiated).async {
+      let preparation = Result {
+        try self.checkPortraitCancellation(job)
+        return try PortraitVideo.makeExporter(asset: AVURLAsset(url: input), output: output, plan: plan)
+      }
+      DispatchQueue.main.async {
+        do {
+          try self.checkPortraitCancellation(job)
+          let exporter = try preparation.get()
+          try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+          var isDirectory: ObjCBool = false
+          if FileManager.default.fileExists(atPath: outputPath, isDirectory: &isDirectory) {
+            guard !isDirectory.boolValue else { throw CocoaError(.fileWriteInvalidFileName) }
+            try FileManager.default.removeItem(at: output)
+          }
+          self.exportLock.withLock { self.activeExporters[exportId] = exporter }
+          self.reportPortraitProgress(channel, exportId: exportId, stage: "encoding", fraction: 0)
+          let timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+            if !self.exportLock.withLock({ job.cancelled }) {
+              self.reportPortraitProgress(channel, exportId: exportId, stage: "encoding", fraction: Double(exporter.progress))
+            }
+          }
+          exporter.exportAsynchronously {
+            let outcome = Result {
+              try self.checkPortraitCancellation(job)
+              if exporter.status == .cancelled { throw CancellationError() }
+              guard exporter.status == .completed else {
+                throw exporter.error ?? PortraitVideoError.exporterUnavailable
+              }
+              try PortraitVideo.validateOutput(output)
+            }
+            DispatchQueue.main.async {
+              timer.invalidate()
+              let cancelled = self.finishPortraitJob(exportId, job: job)
+              do {
+                if cancelled { throw CancellationError() }
+                try outcome.get()
+                self.reportPortraitProgress(channel, exportId: exportId, stage: "encoding", fraction: 1)
+                result(outputPath)
+              } catch {
+                try? FileManager.default.removeItem(at: output)
+                result(self.portraitError(error))
+              }
+            }
+          }
+        } catch {
+          _ = self.finishPortraitJob(exportId, job: job)
+          result(self.portraitError(error))
+        }
+      }
+    }
+  }
+
+  private func reportPortraitProgress(
+    _ channel: FlutterMethodChannel, exportId: String, stage: String, fraction: Double
+  ) {
+    channel.invokeMethod("exportProgress", arguments: ["exportId": exportId, "stage": stage, "progress": fraction])
+  }
+
   private func exportClip(_ arguments: [String: Any]?, result: @escaping FlutterResult) {
     guard
       let arguments,
@@ -1080,7 +1331,14 @@ import ImageIO
   private func cancelExport(_ arguments: [String: Any]?, result: @escaping FlutterResult) {
     exportLock.lock()
     let exportId = arguments?["exportId"] as? String
-    let exporters = exportId.flatMap { activeExporters[$0] }.map { [$0] } ?? Array(activeExporters.values)
+    let exporters: [AVAssetExportSession]
+    if let exportId {
+      portraitJobs[exportId]?.cancelled = true
+      exporters = activeExporters[exportId].map { [$0] } ?? []
+    } else {
+      portraitJobs.values.forEach { $0.cancelled = true }
+      exporters = Array(activeExporters.values)
+    }
     exportLock.unlock()
     exporters.forEach { $0.cancelExport() }
     result(nil)
