@@ -7,6 +7,11 @@ on:
         description: "Existing GitHub Release tag, for example v0.1.0-alpha.6"
         required: true
         type: string
+      notes_ref:
+        description: "Git ref for the release notes (leave blank to use the release tag)"
+        required: false
+        type: string
+        default: ""
       platform:
         description: "Release assets and latest aliases to upload"
         required: true
@@ -77,7 +82,7 @@ jobs:
         id: checkout_source
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG_NAME }}
+          ref: ${{ inputs.notes_ref || env.TAG_NAME }}
           path: source
       - name: Configure Alibaba Cloud credentials
         id: credentials

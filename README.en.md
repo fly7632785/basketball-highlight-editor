@@ -37,13 +37,13 @@ Use the suggested hoop area and adjust it when needed. Desktop export offers opt
 
 ## Download
 
-Current desktop release: [v0.1.15](https://github.com/fly7632785/basketball-highlight-editor/releases/tag/v0.1.15). Downloads are also available from the [website](https://bhe.jafir.top/en/#download) and [GitHub Releases](https://github.com/fly7632785/basketball-highlight-editor/releases).
+Current desktop release: [v0.1.16](https://github.com/fly7632785/basketball-highlight-editor/releases/tag/v0.1.16). Downloads are also available from the [website](https://bhe.jafir.top/en/#download) and [GitHub Releases](https://github.com/fly7632785/basketball-highlight-editor/releases).
 
 | System | Package | Notes |
 |---|---|---|
-| macOS | [Apple silicon](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.15/BHE-macos-arm64-v0.1.15-adhoc.dmg) · [Intel](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.15/BHE-macos-x86_64-v0.1.15-adhoc.dmg) | Intel Macs require macOS 13 or later. On first launch, right-click and select Open. |
-| Windows 10 / 11 | [x64 .zip](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.15/BHE-windows-x64-v0.1.15.zip) | Extract the archive; see [setup notes](docs/GETTING_STARTED.en.md). |
-| Android | [arm64-v8a .apk](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.14/BHE-android-arm64-v8a-v0.1.14-debug-signed.apk) | Still the v0.1.14 sideloaded test package; allow installation from unknown sources. |
+| macOS | [Apple silicon](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.16/BHE-macos-arm64-v0.1.16-adhoc.dmg) · [Intel](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.16/BHE-macos-x86_64-v0.1.16-adhoc.dmg) | Intel Macs require macOS 13 or later. On first launch, right-click and select Open. |
+| Windows 10 / 11 | [x64 .zip](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.16/BHE-windows-x64-v0.1.16.zip) | Extract the archive; see [setup notes](docs/GETTING_STARTED.en.md). |
+| Android | [arm64-v8a .apk](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.16/BHE-android-arm64-v8a-v0.1.16-debug-signed.apk) | v0.1.16 test build for sideloading. Allow installation from unknown sources. |
 
 On a Snapdragon 8 Elite Gen 5 phone, a 10-minute video took about 4.5 minutes to analyze; other devices differ. See the v0.1.9 notes below. iPhone can play, review and export, but cannot analyze yet.
 
@@ -86,6 +86,7 @@ See [CHANGELOG](CHANGELOG.md) for all changes. Windows one-click updates start w
 
 | Version | Date | Highlights |
 |---|---|---|
+| v0.1.16 | 2026-11-25 | Adds made, uncertain, and excluded groups to desktop review and portrait exports that follow the ball, brings multiple tags per clip and simpler exporting and sharing to mobile, and fixes large-project review on Windows and large imports and clip joins on Android |
 | v0.1.15 | 2026-11-15 | Improves Intel Mac analysis, candidate coverage for small balls and adjacent shots, low-confidence handling and duplicate detection; improves Windows folder opening and shared-folder playback with cancellable waits; review filters keep the nearest clip; retains the Windows.5 fixes and waits for pending drafts after leaving import; makes naming more consistent and improves Mac save-dialog recovery |
 | v0.1.14-windows.5 | 2026-11-09 | Fixes the Windows import page freezing while dragging the hoop box or the analysis range (draft saves are now debounced and serialised, and switching projects, changing the video or closing the app waits for the pending save); fixes washed-out preview and cover frames on HDR sources (same SDR tone mapping as export, reset when switching to a non-HDR clip); a DirectML inference failure no longer aborts the whole analysis — it rebuilds a CPU session and retries once, keeping the original error in the log; the 90 s file-picker restore watchdog now runs on the platform thread and a failed COM init answers the call immediately; the Chinese IME and file-picker fixes from windows.4 are included |
 | v0.1.14-windows.4 | 2026-11-08 | Fixes Chinese IME input dying in dialog text fields after switching away and back; file/folder pickers now run on a dedicated thread so an unresponsive network location can no longer freeze the whole app (the stuck picker is auto-closed after ~90 s and the UI recovers); pickers default to a local folder |

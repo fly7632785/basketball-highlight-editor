@@ -37,13 +37,13 @@ BHE 在自己的电脑或安卓手机上分析，先把疑似进球排好队，�
 
 ## 下载
 
-当前桌面版本：[v0.1.15](https://github.com/fly7632785/basketball-highlight-editor/releases/tag/v0.1.15)。也可从[官网](https://bhe.jafir.top/#download)或 [GitHub Releases](https://github.com/fly7632785/basketball-highlight-editor/releases)下载。
+当前桌面版本：[v0.1.16](https://github.com/fly7632785/basketball-highlight-editor/releases/tag/v0.1.16)。也可从[官网](https://bhe.jafir.top/#download)或 [GitHub Releases](https://github.com/fly7632785/basketball-highlight-editor/releases)下载。
 
 | 系统 | 安装包 | 说明 |
 |---|---|---|
-| macOS | [Apple 芯片](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.15/BHE-macos-arm64-v0.1.15-adhoc.dmg) · [Intel](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.15/BHE-macos-x86_64-v0.1.15-adhoc.dmg) | Intel Mac 需 macOS 13 及以上；Apple 芯片见现有说明。首次打开时右键选择「打开」。 |
-| Windows 10 / 11 | [x64 .zip](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.15/BHE-windows-x64-v0.1.15.zip) | 下载后解压；安装与兼容性见[说明](docs/GETTING_STARTED.md)。 |
-| Android | [arm64-v8a .apk](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.14/BHE-android-arm64-v8a-v0.1.14-debug-signed.apk) | 仍为 v0.1.14 侧载测试包，需允许安装未知来源应用。 |
+| macOS | [Apple 芯片](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.16/BHE-macos-arm64-v0.1.16-adhoc.dmg) · [Intel](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.16/BHE-macos-x86_64-v0.1.16-adhoc.dmg) | Intel Mac 需 macOS 13 及以上；Apple 芯片见现有说明。首次打开时右键选择「打开」。 |
+| Windows 10 / 11 | [x64 .zip](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.16/BHE-windows-x64-v0.1.16.zip) | 下载后解压；安装与兼容性见[说明](docs/GETTING_STARTED.md)。 |
+| Android | [arm64-v8a .apk](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.16/BHE-android-arm64-v8a-v0.1.16-debug-signed.apk) | v0.1.16 侧载测试包，需允许安装未知来源应用。 |
 
 骁龙 8 至尊版第五代手机分析 10 分钟视频约需 4.5 分钟；其他设备耗时不同，参见下方 v0.1.9 更新说明。iPhone 当前可播放、审核和导出，不能分析。
 
@@ -84,6 +84,7 @@ BHE 在自己的电脑或安卓手机上分析，先把疑似进球排好队，�
 
 | 版本 | 日期 | 主要更新 |
 |---|---|---|
+| v0.1.16 | 2026-11-25 | 桌面端按进球、疑似和排除分组审核，竖屏导出可让镜头跟着球走，手机端支持给片段添加多个标签并简化导出与分享，同时修复 Windows 大项目审核及安卓大项目导入和片段衔接问题 |
 | v0.1.15 | 2026-11-15 | 改进英特尔 Mac 分析、小球与相邻出手的候选保留，证据不足标为低可信并减少重复；改善 Windows 目录及共享视频播放、慢盘等待与取消；审核筛选保持最近位置，保留 Windows.5 修复并补齐离页草稿等待；统一命名、改善 Mac 保存窗口 |
 | v0.1.14-windows.5 | 2026-11-09 | 修复 Windows 导入页拖动篮筐框/分析范围时界面无响应（草稿保存改去抖加串行，切换项目、换视频、关应用前先把草稿写完）；修 HDR 源片的预览与封面帧偏色发灰（按与导出相同条件做色调映射，切到非 HDR 视频时复位）；显卡（DirectML）推理偶发报错不再让整次分析失败，自动退回 CPU 重试一次；文件选择窗口的 90 秒恢复定时器改到平台线程、COM 失败立即应答；中文输入法与文件选择窗口的修复沿用 windows.4 |
 | v0.1.14-windows.4 | 2026-11-08 | 修复弹窗输入框中文输入法失效（窗口切走再切回后打不了字）；文件/文件夹选择窗口改在独立线程打开，网络位置无响应时不再卡死整个应用，约 90 秒自动关闭并恢复界面；选择窗口默认打开本地文件夹 |
