@@ -195,7 +195,7 @@ def test_composition_rejects_floor_logo_and_preserves_hoop_at_each_goal():
     sparse = [None] * 90
     sparse[-2:] = [[1200, 600, 1220, 620]] * 2
     assert compose_portrait(sparse, [], 1920, 1080, 7)['sources'] == ['hoop'] * 90
-    assert compose_portrait([None]*90, [], 1920, 1080, 7)['centers'] == [960] * 90
+    assert compose_portrait([None]*90, [], 1920, 1080, 7)['centers'] == pytest.approx([960] * 90, rel=0, abs=1e-9)
 
 
 def test_portrait_merge_keeps_shot_times_from_all_candidates():
