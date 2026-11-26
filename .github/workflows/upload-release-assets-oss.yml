@@ -92,7 +92,7 @@ jobs:
           role-to-assume: ${{ vars.ALIYUN_RAM_ROLE_ARN }}
           oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
           role-session-name: bhe-release-${{ github.run_id }}
-          role-session-expiration: 1800
+          role-session-expiration: 3600
           audience: sts.aliyuncs.com
       - name: Install ossutil
         id: install
