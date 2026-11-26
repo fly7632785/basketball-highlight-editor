@@ -98,6 +98,12 @@ Future<({MobileVideoFixture fixture, _Media media, GlobalKey root})> _open(
     find.byTooltip(locale.languageCode == 'zh' ? '导出' : 'Export').first,
   );
   await _frame(tester);
+  final zh = locale.languageCode == 'zh';
+  await chooseExportMode(
+    tester,
+    zh ? '每段一个视频' : 'One video per clip',
+    zh ? '完成' : 'Done',
+  );
   return (fixture: fixture, media: media, root: root);
 }
 

@@ -1,4 +1,4 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Future<void> openExportScope(WidgetTester tester) =>
@@ -25,7 +25,12 @@ Future<void> chooseExportMode(
   String done,
 ) async {
   await openExportControl(tester, 'export-mode');
-  await tester.tap(find.text(label));
+  final option = find.descendant(
+    of: find.byType(BottomSheet),
+    matching: find.text(label),
+  );
+  await tester.ensureVisible(option);
+  await tester.tap(option);
   await tester.pump();
   await finishExportSettings(tester, done);
 }

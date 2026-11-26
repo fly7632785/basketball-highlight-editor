@@ -75,8 +75,15 @@ void main() {
                   endMs: 1000,
                   eventMs: 500,
                   player: 'Alice',
+                  reviewed: true,
                 ),
-                Candidate(id: 'b', startMs: 1200, endMs: 2000, eventMs: 1500),
+                Candidate(
+                  id: 'b',
+                  startMs: 1200,
+                  endMs: 2000,
+                  eventMs: 1500,
+                  reviewed: true,
+                ),
               ],
             );
         await tester.pumpWidget(

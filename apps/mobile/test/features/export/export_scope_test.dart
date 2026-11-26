@@ -17,6 +17,7 @@ Candidate _c(String id, int n, {String? player, bool excluded = false}) =>
       endMs: n * 1000 + 800,
       eventMs: n * 1000 + 400,
       player: player,
+      reviewed: true,
       selection: excluded
           ? CandidateSelection.excluded
           : CandidateSelection.included,

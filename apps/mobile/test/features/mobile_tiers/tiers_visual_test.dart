@@ -222,7 +222,8 @@ void main() {
       if (screen == 'export') {
         await tester.tap(find.byTooltip('Export').first);
         await tester.pumpAndSettle();
-        expect(find.textContaining('Will export 4 clips'), findsOneWidget);
+        expect(find.text('One merged video'), findsOneWidget);
+        expect(find.textContaining('Will export 1'), findsOneWidget);
       } else {
         await openReview(tester, clips.length);
         if (screen == 'landscape-review') {

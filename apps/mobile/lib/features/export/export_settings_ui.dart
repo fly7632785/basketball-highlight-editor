@@ -18,12 +18,34 @@ class _ExportView extends StatefulWidget {
 }
 
 class _ExportViewState extends State<_ExportView> {
-  late ExportScope scope = ExportScope.anyTag(
-    tiers: widget.goalsOnly
-        ? const {MobileTier.goal}
-        : defaultMobileExportTiers,
-  );
-  MobileOutputMode outputMode = MobileOutputMode.clips;
+  ExportScope scope = const ExportScope.anyTag(tiers: {MobileTier.goal});
+  MobileOutputMode outputMode = MobileOutputMode.merged;
+  late final _preferences = SharedPreferences.getInstance();
+
+  static const _modeKey = 'bhe.export.mode';
+  String get _tiersKey =>
+      widget.goalsOnly ? 'bhe.export-goals.tiers' : 'bhe.export.tiers';
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_restoreSettings());
+  }
+
+  Future<void> _restoreSettings() async {
+    final preferences = await _preferences;
+    if (!mounted) return;
+    final tiers = preferences.getStringList(_tiersKey);
+    final mode = preferences.getString(_modeKey);
+    if (tiers == null && mode == null) return;
+    setState(() {
+      if (tiers != null) {
+        scope = scope.withTiers(tiers.map(MobileTier.values.byName).toSet());
+      }
+      if (mode != null) outputMode = MobileOutputMode.values.byName(mode);
+    });
+  }
+
   ExportFraming _framing = ExportFraming.original;
   VideoInfo? _probedVideo;
   Future<bool?>? _hdrProbe;
@@ -103,7 +125,17 @@ class _ExportViewState extends State<_ExportView> {
         likelyMissIds: state.likelyMissCandidateIds,
       ),
     );
-    if (mounted && updated != null) setState(() => scope = updated);
+    if (!mounted || updated == null) return;
+    final tiersChanged =
+        scope.tiers.length != updated.tiers.length ||
+        !scope.tiers.containsAll(updated.tiers);
+    setState(() => scope = updated);
+    if (tiersChanged) {
+      await (await _preferences).setStringList(
+        _tiersKey,
+        updated.tiers.map((tier) => tier.name).toList(),
+      );
+    }
   }
 
   Future<void> _chooseOutputMode() async {
@@ -138,7 +170,9 @@ class _ExportViewState extends State<_ExportView> {
         ),
       ),
     );
-    if (mounted && updated != null) setState(() => outputMode = updated);
+    if (!mounted || updated == null || updated == outputMode) return;
+    setState(() => outputMode = updated);
+    await (await _preferences).setString(_modeKey, updated.name);
   }
 
   @override
@@ -185,7 +219,7 @@ class _ExportViewState extends State<_ExportView> {
     return _ExportLayout(
       body: ListView(
         key: const ValueKey('export-settings'),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         children: [
           if (state.hasUncertainExport)
             _UncertainExportNotice(state: state, forExport: true),
@@ -200,48 +234,54 @@ class _ExportViewState extends State<_ExportView> {
             _InlineNotice(message: reason),
           if (state.videoSourceFailure != null || state.relinkingVideo)
             VideoSourceNotice(state: state),
-          _ExportSettingsRow(
-            key: const ValueKey('export-scope'),
-            icon: LucideIcons.listFilter,
-            title: l10n.mobileWhatToExport,
-            subtitle: [
-              for (final tier in MobileTier.values)
-                if (scope.tiers.contains(tier)) context.bheText(tier.label),
-              tagSummary,
-            ].join(' · '),
-            onTap: blocked ? null : _chooseScope,
-          ),
-          _ExportSettingsRow(
-            key: const ValueKey('export-mode'),
-            icon: LucideIcons.layers,
-            title: context.bheText('输出方式'),
-            subtitle: _exportModeLabel(l10n, outputMode),
-            onTap: blocked ? null : _chooseOutputMode,
+          Card(
+            margin: EdgeInsets.zero,
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                _ExportSettingsRow(
+                  key: const ValueKey('export-scope'),
+                  title: l10n.mobileWhatToExport,
+                  subtitle: [
+                    for (final tier in MobileTier.values)
+                      if (scope.tiers.contains(tier))
+                        context.bheText(tier.label),
+                    if (state.project.players.isNotEmpty || scope.active)
+                      tagSummary,
+                  ].join(' · '),
+                  onTap: blocked ? null : _chooseScope,
+                ),
+                const Divider(height: 1),
+                _ExportSettingsRow(
+                  key: const ValueKey('export-mode'),
+                  title: context.bheText('输出方式'),
+                  subtitle: _exportModeLabel(l10n, outputMode),
+                  onTap: blocked ? null : _chooseOutputMode,
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 12),
-          Row(
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Expanded(
-                child: Text(
-                  context.bheText('画面'),
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
+              Text(
+                context.bheText('画面'),
+                style: Theme.of(context).textTheme.titleSmall,
               ),
-              Flexible(
-                flex: 2,
-                child: TextButton(
-                  onPressed: () => showModalBottomSheet<void>(
-                    context: context,
-                    isScrollControlled: true,
-                    builder: (context) => _ExportFramingGuide(
-                      isHdr: state.project.video?.isHdr,
-                      hdrProbe: identical(state.project.video, _probedVideo)
-                          ? _hdrProbe
-                          : null,
-                    ),
+              TextButton(
+                onPressed: () => showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  builder: (context) => _ExportFramingGuide(
+                    isHdr: state.project.video?.isHdr,
+                    hdrProbe: identical(state.project.video, _probedVideo)
+                        ? _hdrProbe
+                        : null,
                   ),
-                  child: Text(l10n.mobileCropGuide, textAlign: TextAlign.end),
                 ),
+                child: Text(l10n.mobileCropGuide, textAlign: TextAlign.end),
               ),
             ],
           ),
@@ -249,60 +289,27 @@ class _ExportViewState extends State<_ExportView> {
             builder: (context, limits) {
               final tiles = [
                 for (final value in ExportFraming.values)
-                  Card(
-                    margin: EdgeInsets.zero,
-                    clipBehavior: Clip.antiAlias,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(
-                        color: framing == value
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).colorScheme.outlineVariant,
+                  _ExportFramingCard(
+                    value: value,
+                    selected: framing == value,
+                    subtitle: switch (value) {
+                      ExportFraming.original => context.bheText('不裁切，比竖屏快'),
+                      ExportFraming.portrait916 when _sourceAlreadyPortrait =>
+                        _sourceAlreadyPortraitHint(context),
+                      ExportFraming.portrait916 => context.bheText(
+                        '需逐帧生成，比原比例慢且费电',
                       ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        ExcludeSemantics(
-                          child: ClipRect(
-                            child: CustomPaint(
-                              size: const Size(0, 44),
-                              painter: _PortraitFramingDiagram(
-                                cropped: value == ExportFraming.portrait916,
-                              ),
-                            ),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          child: _ChoiceRow(
-                            title: context.bheText(_framingLabel(value)),
-                            subtitle: switch (value) {
-                              ExportFraming.original => context.bheText(
-                                '不裁切，比竖屏快',
-                              ),
-                              ExportFraming.portrait916
-                                  when _sourceAlreadyPortrait =>
-                                _sourceAlreadyPortraitHint(context),
-                              ExportFraming.portrait916 => context.bheText(
-                                '需逐帧生成，比原比例慢且费电',
-                              ),
-                            },
-                            selected: framing == value,
-                            onTap:
-                                blocked ||
-                                    (value == ExportFraming.portrait916 &&
-                                        _sourceAlreadyPortrait)
-                                ? null
-                                : () => _selectFraming(value),
-                          ),
-                        ),
-                      ],
-                    ),
+                    },
+                    onTap:
+                        blocked ||
+                            (value == ExportFraming.portrait916 &&
+                                _sourceAlreadyPortrait)
+                        ? null
+                        : () => _selectFraming(value),
                   ),
               ];
-              return limits.maxWidth >= 325 &&
-                      MediaQuery.textScalerOf(context).scale(14) < 21
+              final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+              return limits.maxWidth >= 325 * math.max(1, textScale)
                   ? Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -330,8 +337,8 @@ class _ExportViewState extends State<_ExportView> {
           const SizedBox(height: 12),
           _ExportSettingsRow(
             key: const ValueKey('export-history'),
-            icon: LucideIcons.history,
             title: context.bheText('导出历史'),
+            inset: 0,
             onTap: () => Navigator.of(context).push<void>(
               MaterialPageRoute(
                 builder: (_) => _ExportHistoryPage(state: state),
@@ -341,8 +348,8 @@ class _ExportViewState extends State<_ExportView> {
           if (candidates.isNotEmpty)
             _ExportSettingsRow(
               key: const ValueKey('export-stats'),
-              icon: Icons.bar_chart_rounded,
               title: context.bheText('比赛数据'),
+              inset: 0,
               onTap: () => Navigator.of(context).push<void>(
                 MaterialPageRoute(
                   builder: (_) => _ExportStatsPage(state: state),
@@ -459,29 +466,131 @@ class _ExportLayout extends StatelessWidget {
 class _ExportSettingsRow extends StatelessWidget {
   const _ExportSettingsRow({
     super.key,
-    required this.icon,
     required this.title,
+    this.inset = 16,
     this.subtitle,
     required this.onTap,
   });
-  final IconData icon;
+  final double inset;
   final String title;
   final String? subtitle;
   final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) => Card(
-    child: ListTile(
-      leading: Icon(icon, size: 20),
-      title: Text(title),
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListTile(
+      contentPadding: EdgeInsets.symmetric(horizontal: inset),
+      title: Text(
+        title,
+        style: subtitle == null ? null : theme.textTheme.bodySmall,
+      ),
       subtitle: subtitle == null
           ? null
-          : Text(subtitle!, maxLines: 2, overflow: TextOverflow.ellipsis),
+          : Text(subtitle!, style: theme.textTheme.titleMedium),
       trailing: const Icon(LucideIcons.chevronRight, size: 18),
       enabled: onTap != null,
       onTap: onTap,
-    ),
-  );
+    );
+  }
+}
+
+class _ExportFramingCard extends StatelessWidget {
+  const _ExportFramingCard({
+    required this.value,
+    required this.selected,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final ExportFraming value;
+  final bool selected;
+  final String subtitle;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final disabledColor = onTap == null ? theme.disabledColor : null;
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: selected
+              ? theme.colorScheme.primary
+              : theme.colorScheme.outlineVariant,
+        ),
+      ),
+      child: Semantics(
+        selected: selected,
+        enabled: onTap != null,
+        child: InkWell(
+          onTap: onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ExcludeSemantics(
+                child: ClipRect(
+                  child: CustomPaint(
+                    size: const Size(0, 56),
+                    painter: _PortraitFramingDiagram(
+                      cropped: value == ExportFraming.portrait916,
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          selected
+                              ? LucideIcons.circleCheck
+                              : LucideIcons.circle,
+                          size: 16,
+                          color: selected
+                              ? theme.colorScheme.primary
+                              : BhePalette.textTertiary,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            context.bheText(
+                              value == ExportFraming.portrait916
+                                  ? '竖屏 9:16'
+                                  : _framingLabel(value),
+                            ),
+                            semanticsLabel: context.bheText(
+                              _framingLabel(value),
+                            ),
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              color: disabledColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: disabledColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ExportScopeSheet extends StatefulWidget {

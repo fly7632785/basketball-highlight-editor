@@ -35,6 +35,7 @@ class _ExportTaskPage extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               children: [
                 Card(
+                  margin: EdgeInsets.zero,
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
@@ -562,13 +563,15 @@ class _ExportResultPageState extends State<_ExportResultPage> {
                           ? l10n.mobileExportSaved
                           : null;
                       return Card(
+                        margin: const EdgeInsets.only(bottom: 8),
                         child: ListTile(
                           key: ValueKey('export-file-$index'),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                          ),
+                          horizontalTitleGap: 8,
                           leading: Semantics(
-                            label: [
-                              title,
-                              ?status,
-                            ].join(', '),
+                            label: [title, ?status].join(', '),
                             child: Checkbox(
                               value: enabled && !_unchecked.contains(index),
                               onChanged: !enabled || fileActionsBusy
@@ -764,10 +767,7 @@ class _ExportFailureNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => _InlineNotice(
-    message: [
-      ?title,
-      context.bheText(failure.message),
-    ].join('\n'),
+    message: [?title, context.bheText(failure.message)].join('\n'),
     error: true,
     action: TextButton(
       onPressed: () =>

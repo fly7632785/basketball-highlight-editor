@@ -125,7 +125,10 @@ String? _translateDynamic(String source) {
     r'^将导出 (\d+) 个视频 · 共 (\d+) 段$',
   ).firstMatch(source);
   if (groupedExport != null) {
-    return 'Will export ${groupedExport[1]} videos · ${groupedExport[2]} clips';
+    final videos = groupedExport[1]!;
+    final clips = groupedExport[2]!;
+    return 'Will export $videos ${videos == '1' ? 'video' : 'videos'}'
+        ' · $clips ${clips == '1' ? 'clip' : 'clips'}';
   }
   for (final (pattern, translate) in _mobileCountCopy) {
     final match = pattern.firstMatch(source);
@@ -1195,6 +1198,7 @@ const _englishText = <String, String>{
   '播放进度': 'Playback progress',
   '画面': 'Picture',
   '原比例': 'Original aspect',
+  '竖屏 9:16': 'Portrait 9:16',
   '竖屏 9:16（跟球）': 'Portrait 9:16 (follow ball)',
   '导出中': 'Exporting',
   '导出结果': 'Export results',

@@ -182,7 +182,7 @@ void main() {
     }
   });
 
-  testWidgets('legacy unreviewed clips are in the default export range', (
+  testWidgets('export defaults to goals and merge, then restores choices', (
     tester,
   ) async {
     final f = MobileVideoFixture();
@@ -194,36 +194,20 @@ void main() {
         () => f.file('original.mp4', 'original'),
       );
       f.state.project = f.project(file!.path).copyWith(candidates: [_clips[0]]);
-      await tester.pumpWidget(BheMobileApp(appState: f.state));
-      await tester.pump();
-      await tester.tap(find.byTooltip('Export').first);
-      await tester.pump();
-      expect(
-        find.text('Will export 1 clip · Clip total 0:02'),
-        findsOneWidget,
-      );
-      await openExportScope(tester);
-      expect(
-        tester
-            .widget<FilterChip>(find.byKey(const Key('export-tier-goal')))
-            .selected,
-        isTrue,
-      );
-      expect(
-        tester
-            .widget<FilterChip>(find.byKey(const Key('export-tier-uncertain')))
-            .selected,
-        isTrue,
-      );
-      expect(
-        tester
-            .widget<FilterChip>(find.byKey(const Key('export-tier-excluded')))
-            .selected,
-        isFalse,
-      );
-      await tester.tap(find.byKey(const Key('export-tier-uncertain')));
-      await tester.pump();
-      await finishExportSettings(tester, 'Done');
+
+      Future<void> open() async {
+        await tester.pumpWidget(BheMobileApp(appState: f.state));
+        await tester.pump();
+        await tester.tap(find.byTooltip('Export').first);
+        await settleExportRoute(tester);
+      }
+
+      bool tierSelected(String name) => tester
+          .widget<FilterChip>(find.byKey(Key('export-tier-$name')))
+          .selected;
+
+      await open();
+      expect(find.text('One merged video'), findsOneWidget);
       expect(find.text('No clips to export'), findsOneWidget);
       expect(
         tester
@@ -233,6 +217,22 @@ void main() {
             .onPressed,
         isNull,
       );
+
+      await openExportScope(tester);
+      expect(tierSelected('goal'), isTrue);
+      expect(tierSelected('uncertain'), isFalse);
+      expect(tierSelected('excluded'), isFalse);
+      await tester.tap(find.byKey(const Key('export-tier-uncertain')));
+      await finishExportSettings(tester, 'Done');
+      await chooseExportMode(tester, 'One video per clip', 'Done');
+
+      await tester.pumpWidget(const SizedBox());
+      await open();
+      expect(find.text('One video per clip'), findsOneWidget);
+      expect(find.text('Will export 1 clip · Clip total 0:02'), findsOneWidget);
+      await openExportScope(tester);
+      expect(tierSelected('goal'), isTrue);
+      expect(tierSelected('uncertain'), isTrue);
     } finally {
       await tester.pumpWidget(const SizedBox());
       await tester.runAsync(f.close);

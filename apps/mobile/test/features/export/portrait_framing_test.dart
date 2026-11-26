@@ -128,6 +128,12 @@ _openExport(
     find.byTooltip(locale.languageCode == 'zh' ? '导出' : 'Export').first,
   );
   await _advance(tester);
+  final zh = locale.languageCode == 'zh';
+  await chooseExportMode(
+    tester,
+    zh ? '每段一个视频' : 'One video per clip',
+    zh ? '完成' : 'Done',
+  );
   return (root: root, fixture: fixture, media: media);
 }
 
@@ -139,7 +145,7 @@ Future<void> _openPicture(WidgetTester tester, {bool zh = false}) async {
 }
 
 Future<void> _choosePortrait(WidgetTester tester) async {
-  final portrait = find.text('Portrait 9:16 (follow ball)');
+  final portrait = find.text('Portrait 9:16');
   await _scrollTo(tester, portrait);
   await tester.tap(portrait);
   await _advance(tester);
@@ -196,15 +202,12 @@ void main() {
         locale: Locale(language),
       );
       final zh = language == 'zh';
-      final title = find.text(
-        zh ? '竖屏 9:16（跟球）' : 'Portrait 9:16 (follow ball)',
-      );
+      final title = find.text(zh ? '竖屏 9:16' : 'Portrait 9:16');
       await _scrollTo(tester, title);
-      final row = tester.widget<ListTile>(
-        find.ancestor(of: title, matching: find.byType(ListTile)),
+      final card = tester.widget<InkWell>(
+        find.ancestor(of: title, matching: find.byType(InkWell)),
       );
-      expect(row.enabled, isFalse);
-      expect(row.onTap, isNull);
+      expect(card.onTap, isNull);
       expect(find.text(hint), findsOneWidget);
       if (!zh) _assertEnglish(tester);
       await _capture(tester, app.root, 'l531-disabled-$language');
@@ -231,7 +234,7 @@ void main() {
     await _scrollTo(tester, find.text('Picture'));
     expect(find.text('Original aspect'), findsOneWidget);
     await _choosePortrait(tester);
-    expect(find.text('Portrait 9:16 (follow ball)'), findsOneWidget);
+    expect(find.text('Portrait 9:16'), findsOneWidget);
     expect(
       find.textContaining('Will export 2 portrait videos'),
       findsOneWidget,
