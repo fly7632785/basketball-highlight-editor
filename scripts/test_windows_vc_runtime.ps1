@@ -53,8 +53,30 @@ function Set-TestPeLinkerVersion($Path, [byte]$Minor) {
 
 $Temp = Join-Path ([IO.Path]::GetTempPath()) ('bhe-vc-runtime-' + [guid]::NewGuid())
 try {
+    [void](New-Item -ItemType Directory -Path $Temp)
+    & {
+        function Invoke-WebRequest($Uri, $OutFile, [switch]$UseBasicParsing) {
+            [IO.File]::WriteAllText($OutFile, 'invalid redist')
+        }
+        function Start-Process { throw 'The unverified installer was launched.' }
+        try {
+            Get-PinnedWindowsVcRuntime $Temp
+        } catch {
+            if ($_.Exception.Message -ne 'Microsoft VC_redist.x64.exe SHA-256 mismatch.') { throw }
+            return
+        }
+        throw 'Expected a checksum mismatch for the downloaded installer.'
+    }
+
+    function Get-PinnedWindowsVcRuntime($Workspace) {
+        $files = @{}
+        foreach ($file in (Get-ChildItem -LiteralPath $sourceDirectory -File)) { $files[$file.Name] = $file.FullName }
+        return $files
+    }
+
     $Compiler = Join-Path $Temp 'Visual Studio/VC/Tools/MSVC/14.42.34433/bin/Hostx64/x64/cl.exe'
-    $Redist = Join-Path $Temp 'Visual Studio/VC/Redist/MSVC/14.42.34438/x64/Microsoft.VC143.CRT'
+    $Redist = Join-Path $Temp 'Runtime 14.42'
+    $sourceDirectory = $Redist
     $App = Join-Path $Temp 'BHE'
     $Python = Join-Path $Temp 'stage/python'
     $Nested = Join-Path $Python 'Lib/site-packages/torch/lib'
@@ -69,6 +91,7 @@ try {
     $new = '14.42.34438.0'
     $old = '14.29.30135.0'
     $newer = '14.44.35211.0'
+    $officialVersion = '14.52.37029.0'
     $rootCopy = Join-Path $Python 'vcruntime140.dll'
     $nestedCopy = Join-Path $Nested 'msvcp140_codecvt_ids.dll'
     [IO.File]::WriteAllText($rootCopy, $old)
@@ -91,7 +114,7 @@ try {
     [IO.File]::WriteAllText($missing, $new)
     foreach ($bundled in @($rootCopy, $nestedCopy, (Join-Path $App 'vcruntime140.dll'))) {
         [IO.File]::WriteAllText($bundled, $newer)
-        Assert-PackagingFails '*older*14.44.35211.0*Visual Studio Installer*'
+        Assert-PackagingFails '*older*14.44.35211.0*pinned Microsoft x64 redistributable*'
         if ((Get-Content -LiteralPath $bundled -Raw) -ne $newer -or (Test-Path (Join-Path $App 'msvcp140.dll'))) {
             throw 'Rejected redist changed the staged package'
         }
@@ -100,15 +123,15 @@ try {
 
     $extension = Join-Path $Nested 'cv2.pyd'
     Set-TestPeLinkerVersion $extension 44
-    Assert-PackagingFails '*older*14.44.0.0*cv2.pyd*Visual Studio Installer*'
+    Assert-PackagingFails '*older*14.44.0.0*cv2.pyd*pinned Microsoft x64 redistributable*'
     $ffmpeg = Join-Path $Bin 'ffmpeg.exe'
     Set-TestPeLinkerVersion $ffmpeg 45
-    Assert-PackagingFails '*older*14.45.0.0*ffmpeg.exe*Visual Studio Installer*'
+    Assert-PackagingFails '*older*14.45.0.0*ffmpeg.exe*pinned Microsoft x64 redistributable*'
     Set-TestPeLinkerVersion $ffmpeg 44
 
-    # Installing the requested redistributable in the same VS instance unblocks the build.
     [IO.File]::WriteAllText($rootCopy, $newer)
-    $updatedRedist = $Redist.Replace('14.42.34438', '14.44.35211')
+    $updatedRedist = Join-Path $Temp 'Runtime 14.44'
+    $sourceDirectory = $updatedRedist
     [void](New-Item -ItemType Directory -Path $updatedRedist -Force)
     foreach ($dll in $required + 'concrt140.dll') {
         [IO.File]::WriteAllText((Join-Path $updatedRedist $dll), $newer)
@@ -117,7 +140,7 @@ try {
     # pandas 3.1.1 imports VCRUNTIME140 and requires a newer redist than 14.44.
     $writer = Join-Path $Pandas 'writers.pyd'
     Set-TestPeLinkerVersion $writer 51
-    Assert-PackagingFails '*older*14.51.0.0*writers.pyd*Visual Studio Installer*'
+    Assert-PackagingFails '*older*14.51.0.0*writers.pyd*pinned Microsoft x64 redistributable*'
     if ((Get-Content -LiteralPath $nestedCopy -Raw) -ne $old -or
         (Test-Path -LiteralPath (Join-Path $App 'msvcp140.dll'))) {
         throw 'Rejected pandas runtime changed the staged package'
@@ -127,21 +150,34 @@ try {
     # The official Pillow 13.0.0 wheel imports VCRUNTIME140 and has linker 14.51.
     $imaging = Join-Path $Python '_imaging.pyd'
     Set-TestPeLinkerVersion $imaging 51
-    Assert-PackagingFails '*older*14.51.0.0*_imaging.pyd*Visual Studio Installer*'
-    # A fixed Pillow built with linker 14.44 can satisfy the same gate.
-    Set-TestPeLinkerVersion $imaging 44
+    Assert-PackagingFails '*older*14.51.0.0*_imaging.pyd*pinned Microsoft x64 redistributable*'
 
+    $official = Join-Path $Temp 'Microsoft VC redist'
+    [void](New-Item -ItemType Directory -Path $official)
+    foreach ($dll in $required + 'concrt140.dll') {
+        [IO.File]::WriteAllText((Join-Path $official $dll), $officialVersion)
+    }
+    $sourceDirectory = $official
+    # Even the pinned official source must not downgrade a future bundled copy.
+    [IO.File]::WriteAllText($rootCopy, '14.53.0.0')
+    Assert-PackagingFails '*older*14.53.0.0*bundled*vcruntime140.dll*pinned Microsoft x64 redistributable*'
+    if ((Get-Content -LiteralPath $rootCopy -Raw) -ne '14.53.0.0' -or
+        (Test-Path -LiteralPath (Join-Path $App 'msvcp140.dll'))) {
+        throw 'Pinned source changed the staged package after a version rejection.'
+    }
+    [IO.File]::WriteAllText($rootCopy, $newer)
     # A newer linker alone does not imply that the PE uses the VC runtime.
-    Set-TestPeLinkerVersion (Join-Path $Python 'no_vc_import.pyd') 52
+    Set-TestPeLinkerVersion (Join-Path $Python 'no_vc_import.pyd') 53
     Install-WindowsVcRuntime -CompilerPath $Compiler -AppDir $App -PythonDir $Python
     foreach ($dir in @($App, $Python)) {
         foreach ($dll in $required) {
-            if ((Get-Content -LiteralPath (Join-Path $dir $dll) -Raw) -ne $newer) { throw "Incorrect $dir/$dll" }
+            if ((Get-Content -LiteralPath (Join-Path $dir $dll) -Raw) -ne $officialVersion) { throw "Incorrect $dir/$dll" }
         }
         if (Test-Path (Join-Path $dir 'concrt140.dll')) { throw 'Unused redist was copied' }
     }
-    if ((Get-Content -LiteralPath $nestedCopy -Raw) -ne $newer) { throw 'Nested runtime was not replaced' }
+    if ((Get-Content -LiteralPath $nestedCopy -Raw) -ne $officialVersion) { throw 'Nested runtime was not replaced' }
     $notice = Get-Content -LiteralPath (Join-Path $App 'THIRD_PARTY_NOTICES_VC_RUNTIME.txt') -Encoding UTF8
+    if (($notice -join "`n") -notmatch [regex]::Escape($officialVersion)) { throw 'Notice does not identify the pinned runtime version' }
     $listed = @($notice | Where-Object { $_ -match '^\S+\.dll$' })
     if (Compare-Object ($required | Sort-Object) ($listed | Sort-Object)) { throw 'Notice does not list the packaged DLLs' }
     Write-Output 'Windows VC runtime: dependency closure, version gates and app-local replacement passed.'
