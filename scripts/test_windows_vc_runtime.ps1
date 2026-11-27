@@ -2,6 +2,14 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'install_windows_vc_runtime.ps1')
 
+# Preserve at least the first fixed Pillow release from GHSA-78g4-xqwv-q3g8.
+$pillowConstraint = @(Select-String -LiteralPath (Join-Path $PSScriptRoot '../requirements-windows-x64-constraints.txt') `
+    -Pattern '^pillow\s*(?:>=|==)\s*(?<version>\d+\.\d+\.\d+)\s*$')
+if ($pillowConstraint.Count -ne 1 -or
+    [version]($pillowConstraint[0].Matches[0].Groups['version'].Value) -lt [version]'13.0.0') {
+    throw 'Windows release must require Pillow 13.0.0 or newer (GHSA-78g4-xqwv-q3g8).'
+}
+
 function Get-VcRuntimeDependencies($Dumpbin, $Path) {
     switch ([IO.Path]::GetFileName($Path)) {
         'BHE.exe' { 'MSVCP140.dll' }
@@ -9,6 +17,7 @@ function Get-VcRuntimeDependencies($Dumpbin, $Path) {
         'cv2.pyd' { 'msvcp140_2.dll' }
         'ffmpeg.exe' { 'msvcp140.dll' }
         'writers.pyd' { 'VCRUNTIME140.dll' }
+        '_imaging.pyd' { 'VCRUNTIME140.dll' }
         'no_vc_import.pyd' { 'python311.dll'; 'kernel32.dll' }
         'msvcp140_2.dll' { 'msvcp140_1.dll' }
     }
@@ -114,6 +123,13 @@ try {
         throw 'Rejected pandas runtime changed the staged package'
     }
     Set-TestPeLinkerVersion $writer 44
+
+    # The official Pillow 13.0.0 wheel imports VCRUNTIME140 and has linker 14.51.
+    $imaging = Join-Path $Python '_imaging.pyd'
+    Set-TestPeLinkerVersion $imaging 51
+    Assert-PackagingFails '*older*14.51.0.0*_imaging.pyd*Visual Studio Installer*'
+    # A fixed Pillow built with linker 14.44 can satisfy the same gate.
+    Set-TestPeLinkerVersion $imaging 44
 
     # A newer linker alone does not imply that the PE uses the VC runtime.
     Set-TestPeLinkerVersion (Join-Path $Python 'no_vc_import.pyd') 52
