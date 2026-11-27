@@ -381,10 +381,11 @@ jobs:
           $ErrorActionPreference = "Stop"
           $python = Join-Path $env:PYTHON_ROOT "python.exe"
           & $python -m pip install --no-cache-dir --upgrade pip
-          & $python -m pip install --no-cache-dir -r requirements.txt
+          & $python -m pip install --no-cache-dir -c requirements-windows-x64-constraints.txt -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw "Windows Python runtime dependencies failed to install" }
           # DirectML 加速包(24MB):让桌面端在有独显/核显的机器上走 ONNX Runtime。
           # 装不上不应该阻断整条发布链路,CPU 路径仍然可用。
-          & $python -m pip install --no-cache-dir -r requirements-dml.txt
+          & $python -m pip install --no-cache-dir -c requirements-windows-x64-constraints.txt -r requirements-dml.txt
           if ($LASTEXITCODE -ne 0) { Write-Warning "onnxruntime-directml install failed; DML will fall back to CPU" }
           & $python -c "import cv2, numpy, pandas, psutil, torch, ultralytics; print('runtime imports: OK')"
           & $python -c "import onnxruntime; print('onnxruntime', onnxruntime.__version__, onnxruntime.get_available_providers())"
