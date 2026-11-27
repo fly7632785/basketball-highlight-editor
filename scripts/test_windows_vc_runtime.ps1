@@ -55,17 +55,37 @@ $Temp = Join-Path ([IO.Path]::GetTempPath()) ('bhe-vc-runtime-' + [guid]::NewGui
 try {
     [void](New-Item -ItemType Directory -Path $Temp)
     & {
-        function Invoke-WebRequest($Uri, $OutFile, [switch]$UseBasicParsing) {
-            [IO.File]::WriteAllText($OutFile, 'invalid redist')
+        function Invoke-WebRequest($Uri, $OutFile, [switch]$UseBasicParsing, $TimeoutSec, $OperationTimeoutSeconds, $ErrorAction) {
+            $status = $scenario.Status[$request.Count]
+            $request.Count++
+            $request.Timeout = $TimeoutSec
+            if ($status -eq 200) {
+                [IO.File]::WriteAllText($OutFile, 'invalid redist')
+                return
+            }
+            if ($status -eq 0) { throw [Net.WebException]::new('Request timed out', [Net.WebExceptionStatus]::Timeout) }
+            $exception = [Exception]::new("HTTP $status")
+            $exception | Add-Member -NotePropertyName Response -NotePropertyValue ([pscustomobject]@{ StatusCode = $status })
+            throw $exception
         }
+        function Start-Sleep($Seconds) {}
         function Start-Process { throw 'The unverified installer was launched.' }
-        try {
-            Get-PinnedWindowsVcRuntime $Temp
-        } catch {
-            if ($_.Exception.Message -ne 'Microsoft VC_redist.x64.exe SHA-256 mismatch.') { throw }
-            return
+        $scenarios = @(
+            @{ Status = @(503, 429, 200); Error = '*SHA-256 mismatch*' },
+            @{ Status = @(429, 503, 429); Error = '*after 3 attempts*HTTP 429*' },
+            @{ Status = @(404); Error = 'HTTP 404' },
+            @{ Status = @(408); Error = 'HTTP 408' },
+            @{ Status = @(0, 200); Error = '*SHA-256 mismatch*' },
+            @{ Status = @(200); Error = '*SHA-256 mismatch*' }
+        )
+        foreach ($scenario in $scenarios) {
+            $request = @{ Count = 0; Timeout = 0 }
+            $message = $null
+            try { Get-PinnedWindowsVcRuntime $Temp } catch { $message = $_.Exception.Message }
+            if ($message -notlike $scenario.Error -or $request.Count -ne $scenario.Status.Count -or $request.Timeout -ne 90) {
+                throw "Download test ($($scenario.Status -join ', ')) used $($request.Count) requests: $message"
+            }
         }
-        throw 'Expected a checksum mismatch for the downloaded installer.'
     }
 
     function Get-PinnedWindowsVcRuntime($Workspace) {

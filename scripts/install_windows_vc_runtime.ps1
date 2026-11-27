@@ -27,11 +27,46 @@ function Get-VcRuntimeLinkerVersion([string]$Path) {
     }
 }
 
+function Save-WindowsVcRedistributable([string]$Uri, [string]$OutFile, [int]$TimeoutSeconds = 90) {
+    $timeout = @{ TimeoutSec = $TimeoutSeconds }
+    if ($PSVersionTable.PSVersion -ge [version]'7.4') {
+        $timeout.OperationTimeoutSeconds = $TimeoutSeconds
+    }
+
+    $maxAttempts = 3
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -ErrorAction Stop @timeout
+            return
+        } catch {
+            $exception = $_.Exception
+            $response = $exception.PSObject.Properties['Response']
+            $status = if ($response -and $response.Value) { [int]$response.Value.StatusCode } else { 0 }
+            $retry = $status -eq 429 -or ($status -ge 500 -and $status -lt 600)
+            if ($status -eq 0) {
+                # Windows PowerShell reports WebExceptionStatus; PowerShell 7 can wrap TimeoutException.
+                $retry = $_.CategoryInfo.Category -eq [Management.Automation.ErrorCategory]::OperationTimeout
+                while ($exception -and -not $retry) {
+                    $retry = $exception -is [TimeoutException] -or
+                        ($exception -is [Net.WebException] -and $exception.Status -eq [Net.WebExceptionStatus]::Timeout)
+                    $exception = $exception.InnerException
+                }
+            }
+            if (-not $retry) { throw }
+            if ($attempt -eq $maxAttempts) {
+                throw "Microsoft VC redistributable download failed after $attempt attempts. $($_.Exception.Message)"
+            }
+            Write-Warning "Microsoft VC redistributable download attempt $attempt of $maxAttempts failed. $($_.Exception.Message) Retrying."
+            Start-Sleep -Seconds (2 * $attempt)
+        }
+    }
+}
+
 function Get-PinnedWindowsVcRuntime([string]$Workspace) {
     # Microsoft Visual C++ v14 x64 Redistributable, 14.52.37029.0.
     $uri = 'https://download.visualstudio.microsoft.com/download/pr/78d061c5-9ef3-42ab-98ed-3309d1095dc4/9C02C9ED120F671B900E6B9471D890E3B2414117A7E53F4AE2E855466FA2B7C9/VC_redist.x64.exe'
     $installer = Join-Path $Workspace 'VC_redist.x64.exe'
-    Invoke-WebRequest -Uri $uri -OutFile $installer -UseBasicParsing
+    Save-WindowsVcRedistributable -Uri $uri -OutFile $installer
     if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash -ne '9c02c9ed120f671b900e6b9471d890e3b2414117a7e53f4ae2e855466fa2b7c9') {
         throw 'Microsoft VC_redist.x64.exe SHA-256 mismatch.'
     }
