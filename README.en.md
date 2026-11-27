@@ -45,6 +45,8 @@ Current desktop release: [v0.1.16](https://github.com/fly7632785/basketball-high
 | Windows 10 / 11 | [x64 .zip](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.16/BHE-windows-x64-v0.1.16.zip) | Extract the archive; see [setup notes](docs/GETTING_STARTED.en.md). |
 | Android | [arm64-v8a .apk](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.16/BHE-android-arm64-v8a-v0.1.16-debug-signed.apk) | v0.1.16 test build for sideloading. Allow installation from unknown sources. |
 
+Windows ZIPs built with the updated packaging script bundle unmodified Microsoft Visual C++ runtime files. See `THIRD_PARTY_NOTICES_VC_RUNTIME.txt` in the extracted folder for their source and applicable terms.
+
 On a Snapdragon 8 Elite Gen 5 phone, a 10-minute video took about 4.5 minutes to analyze; other devices differ. See the v0.1.9 notes below. iPhone can play, review and export, but cannot analyze yet.
 
 <a id="quick-start-desktop"></a>

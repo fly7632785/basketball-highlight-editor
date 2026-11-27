@@ -45,6 +45,8 @@ BHE 在自己的电脑或安卓手机上分析，先把疑似进球排好队，�
 | Windows 10 / 11 | [x64 .zip](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.16/BHE-windows-x64-v0.1.16.zip) | 下载后解压；安装与兼容性见[说明](docs/GETTING_STARTED.md)。 |
 | Android | [arm64-v8a .apk](https://github.com/fly7632785/basketball-highlight-editor/releases/download/v0.1.16/BHE-android-arm64-v8a-v0.1.16-debug-signed.apk) | v0.1.16 侧载测试包，需允许安装未知来源应用。 |
 
+使用新版打包脚本构建的 Windows ZIP 原样随附微软 Visual C++ 运行库，来源及适用条款见解压后的 `THIRD_PARTY_NOTICES_VC_RUNTIME.txt`。
+
 骁龙 8 至尊版第五代手机分析 10 分钟视频约需 4.5 分钟；其他设备耗时不同，参见下方 v0.1.9 更新说明。iPhone 当前可播放、审核和导出，不能分析。
 
 <a id="开始使用"></a>

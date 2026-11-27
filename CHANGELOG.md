@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows 打包会在运行库版本过低时停止，新的 ZIP 原样随附微软 Visual C++ 运行库及来源和再分发说明。
+
 ## [0.1.16] - 待发版日
 
 ### Added
