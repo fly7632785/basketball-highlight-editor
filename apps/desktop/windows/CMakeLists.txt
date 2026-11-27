@@ -2,6 +2,9 @@
 cmake_minimum_required(VERSION 3.14)
 project(desktop LANGUAGES CXX)
 
+# The release script takes app-local runtime DLLs from this compiler's VS instance.
+file(WRITE "${CMAKE_BINARY_DIR}/bhe-msvc-compiler.txt" "${CMAKE_CXX_COMPILER}")
+
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 set(BINARY_NAME "BHE")

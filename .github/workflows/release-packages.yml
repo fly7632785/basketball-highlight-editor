@@ -338,12 +338,13 @@ jobs:
         with:
           ref: ${{ needs.release-plan.outputs.source_ref }}
 
-      - name: Validate Windows updater
+      - name: Validate Windows updater and VC runtime packaging
         shell: powershell
         run: |
           ./scripts/test_windows_update_inventory.ps1
           ./scripts/test_windows_update.ps1
           ./scripts/test_windows_patch_inventory.ps1
+          ./scripts/test_windows_vc_runtime.ps1
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2

@@ -13,7 +13,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$PythonRuntime,
     [string]$Ffmpeg,
-    [string]$Ffprobe
+    [string]$Ffprobe,
+    [string]$AppReleaseDir,
+    [string]$MsvcCompiler
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,6 +49,11 @@ Copy-Item -Force "$Root\models\bball_model.pt" "$Out\models\"
 Copy-Item -Force "$Root\docs\architecture\SQLITE_SCHEMA_V1.sql" "$Out\docs\architecture\"
 Copy-Item -Force $Ffmpeg "$Out\bin\ffmpeg.exe"
 Copy-Item -Force $Ffprobe "$Out\bin\ffprobe.exe"
+
+if ($AppReleaseDir) {
+    . "$PSScriptRoot\install_windows_vc_runtime.ps1"
+    Install-WindowsVcRuntime -CompilerPath $MsvcCompiler -AppDir $AppReleaseDir -PythonDir "$Out\python"
+}
 
 # 桌面端 DirectML 走 ONNX Runtime;它需要动态 batch 的模型,和移动端的
 # 固定 batch 模型不是同一个文件。仓库里没有就现场导出,导出失败只告警:

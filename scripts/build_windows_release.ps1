@@ -21,12 +21,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path "$PSScriptRoot\..").Path
 
-$prepareArgs = @{ OutPath = $RuntimeOut }
-if ($PythonRuntime) { $prepareArgs.PythonRuntime = $PythonRuntime }
-if ($Ffmpeg) { $prepareArgs.Ffmpeg = $Ffmpeg }
-if ($Ffprobe) { $prepareArgs.Ffprobe = $Ffprobe }
-& powershell -File "$Root\scripts\prepare_windows_runtime.ps1" @prepareArgs
-
 Push-Location "$Root\apps\desktop"
 try {
     # Keep platform hotfix tags compatible with the updater's numeric version parser.
@@ -44,10 +38,21 @@ try {
     Pop-Location
 }
 
-$ReleaseDir = "$Root\apps\desktop\build\windows\x64\runner\Release"
+$BuildDir = "$Root\apps\desktop\build\windows\x64"
+$ReleaseDir = "$BuildDir\runner\Release"
 if (-not (Test-Path "$ReleaseDir\BHE.exe")) {
     Write-Error "BHE.exe not found in $ReleaseDir"
 }
+
+$prepareArgs = @{
+    OutPath = $RuntimeOut
+    AppReleaseDir = $ReleaseDir
+    MsvcCompiler = Get-Content -LiteralPath "$BuildDir\bhe-msvc-compiler.txt" -Raw -Encoding UTF8
+}
+if ($PythonRuntime) { $prepareArgs.PythonRuntime = $PythonRuntime }
+if ($Ffmpeg) { $prepareArgs.Ffmpeg = $Ffmpeg }
+if ($Ffprobe) { $prepareArgs.Ffprobe = $Ffprobe }
+& "$Root\scripts\prepare_windows_runtime.ps1" @prepareArgs
 
 $AppRuntime = "$ReleaseDir\runtime"
 if (Test-Path $AppRuntime) { Remove-Item -Recurse -Force $AppRuntime }
