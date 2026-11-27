@@ -7,6 +7,9 @@ function Get-VcRuntimeDependencies($Dumpbin, $Path) {
         'BHE.exe' { 'MSVCP140.dll' }
         'python.exe' { 'vcruntime140.dll' }
         'cv2.pyd' { 'msvcp140_2.dll' }
+        'ffmpeg.exe' { 'msvcp140.dll' }
+        'writers.pyd' { 'VCRUNTIME140.dll' }
+        'no_vc_import.pyd' { 'python311.dll'; 'kernel32.dll' }
         'msvcp140_2.dll' { 'msvcp140_1.dll' }
     }
 }
@@ -47,7 +50,8 @@ try {
     $Python = Join-Path $Temp 'stage/python'
     $Nested = Join-Path $Python 'Lib/site-packages/torch/lib'
     $Bin = Join-Path $Temp 'stage/bin'
-    [void](New-Item -ItemType Directory -Force -Path (Split-Path $Compiler), $Redist, $App, $Nested, $Bin)
+    $Pandas = Join-Path $Python 'Lib/site-packages/pandas/_libs'
+    [void](New-Item -ItemType Directory -Force -Path (Split-Path $Compiler), $Redist, $App, $Nested, $Bin, $Pandas)
     foreach ($file in @($Compiler, (Join-Path (Split-Path $Compiler) 'dumpbin.exe'),
             (Join-Path $App 'BHE.exe'), (Join-Path $Python 'python.exe'), (Join-Path $Nested 'cv2.pyd'))) {
         Set-TestPeLinkerVersion $file 42
@@ -100,6 +104,19 @@ try {
     foreach ($dll in $required + 'concrt140.dll') {
         [IO.File]::WriteAllText((Join-Path $updatedRedist $dll), $newer)
     }
+
+    # pandas 3.1.1 imports VCRUNTIME140 and requires a newer redist than 14.44.
+    $writer = Join-Path $Pandas 'writers.pyd'
+    Set-TestPeLinkerVersion $writer 51
+    Assert-PackagingFails '*older*14.51.0.0*writers.pyd*Visual Studio Installer*'
+    if ((Get-Content -LiteralPath $nestedCopy -Raw) -ne $old -or
+        (Test-Path -LiteralPath (Join-Path $App 'msvcp140.dll'))) {
+        throw 'Rejected pandas runtime changed the staged package'
+    }
+    Set-TestPeLinkerVersion $writer 44
+
+    # A newer linker alone does not imply that the PE uses the VC runtime.
+    Set-TestPeLinkerVersion (Join-Path $Python 'no_vc_import.pyd') 52
     Install-WindowsVcRuntime -CompilerPath $Compiler -AppDir $App -PythonDir $Python
     foreach ($dir in @($App, $Python)) {
         foreach ($dll in $required) {

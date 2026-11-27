@@ -64,7 +64,9 @@ function Install-WindowsVcRuntime([string]$CompilerPath, [string]$AppDir, [strin
     $required = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') + @($bundledVc.Name)
     foreach ($binary in $packageFiles) {
         if ($binary.Extension -in '.exe', '.dll', '.pyd' -and $binary.Name -notmatch $vcDll) {
-            $required += @(Get-VcRuntimeDependencies $dumpbin $binary.FullName | Where-Object { $_ -match $vcDll })
+            $imports = @(Get-VcRuntimeDependencies $dumpbin $binary.FullName | Where-Object { $_ -match $vcDll })
+            $required += $imports
+            if (-not ($imports -match '^(?:msvcp|vcruntime)140')) { continue }
             $version = Get-VcRuntimeLinkerVersion $binary.FullName
             if ($version -gt $minimum) {
                 $minimum = $version
@@ -73,7 +75,7 @@ function Install-WindowsVcRuntime([string]$CompilerPath, [string]$AppDir, [strin
         }
     }
 
-    $installHint = "Use Visual Studio Installer to install or update the x64 C++ redistributable files to $minimum or newer in the Visual Studio instance used to build BHE ($redistRoot)."
+    $installHint = "Update the Windows build runner or use Visual Studio Installer to install x64 C++ redistributable files version $minimum or newer in the Visual Studio instance used to build BHE ($redistRoot)."
     $redist = if (Test-Path -LiteralPath $redistRoot -PathType Container) {
         Get-ChildItem -LiteralPath $redistRoot -Directory |
             Where-Object { $_.Name -match '^14\.\d+\.\d+(?:\.\d+)?$' } |
