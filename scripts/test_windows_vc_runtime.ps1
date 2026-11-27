@@ -25,21 +25,37 @@ function Assert-PackagingFails($Message) {
     throw "Expected packaging to fail with: $Message"
 }
 
+function Set-TestPeLinkerVersion($Path, [byte]$Minor) {
+    $header = [byte[]]::new(0x9c)
+    $header[0] = 0x4d
+    $header[1] = 0x5a
+    $header[0x3c] = 0x80
+    $header[0x80] = 0x50
+    $header[0x81] = 0x45
+    $header[0x98] = 0x0b
+    $header[0x99] = 0x02
+    $header[0x9a] = 14
+    $header[0x9b] = $Minor
+    [IO.File]::WriteAllBytes($Path, $header)
+}
+
 $Temp = Join-Path ([IO.Path]::GetTempPath()) ('bhe-vc-runtime-' + [guid]::NewGuid())
 try {
-    $Compiler = Join-Path $Temp 'Visual Studio/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe'
-    $Redist = Join-Path $Temp 'Visual Studio/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT'
+    $Compiler = Join-Path $Temp 'Visual Studio/VC/Tools/MSVC/14.42.34433/bin/Hostx64/x64/cl.exe'
+    $Redist = Join-Path $Temp 'Visual Studio/VC/Redist/MSVC/14.42.34438/x64/Microsoft.VC143.CRT'
     $App = Join-Path $Temp 'BHE'
     $Python = Join-Path $Temp 'stage/python'
     $Nested = Join-Path $Python 'Lib/site-packages/torch/lib'
-    [void](New-Item -ItemType Directory -Force -Path (Split-Path $Compiler), $Redist, $App, $Nested)
+    $Bin = Join-Path $Temp 'stage/bin'
+    [void](New-Item -ItemType Directory -Force -Path (Split-Path $Compiler), $Redist, $App, $Nested, $Bin)
     foreach ($file in @($Compiler, (Join-Path (Split-Path $Compiler) 'dumpbin.exe'),
             (Join-Path $App 'BHE.exe'), (Join-Path $Python 'python.exe'), (Join-Path $Nested 'cv2.pyd'))) {
-        [IO.File]::WriteAllText($file, '')
+        Set-TestPeLinkerVersion $file 42
     }
     $required = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140_2.dll', 'msvcp140_1.dll', 'msvcp140_codecvt_ids.dll')
-    $new = '14.44.35211.0'
+    $new = '14.42.34438.0'
     $old = '14.29.30135.0'
+    $newer = '14.44.35211.0'
     $rootCopy = Join-Path $Python 'vcruntime140.dll'
     $nestedCopy = Join-Path $Nested 'msvcp140_codecvt_ids.dll'
     [IO.File]::WriteAllText($rootCopy, $old)
@@ -51,23 +67,50 @@ try {
     }
 
     Assert-PackagingFails '*msvcp140_1.dll*missing*'
-    foreach ($version in @($old, '14.44.35206.0')) {
+    foreach ($version in @($old, '14.42.34432.0')) {
         [IO.File]::WriteAllText($missing, $version)
-        Assert-PackagingFails '*msvcp140_1.dll*older*14.44.35207.0*'
+        Assert-PackagingFails '*msvcp140_1.dll*older*14.42.34433.0*'
     }
     if ((Get-Content $rootCopy -Raw) -ne $old -or (Test-Path (Join-Path $App 'msvcp140.dll'))) {
         throw 'Validation failure changed the staged package'
     }
 
     [IO.File]::WriteAllText($missing, $new)
+    foreach ($bundled in @($rootCopy, $nestedCopy, (Join-Path $App 'vcruntime140.dll'))) {
+        [IO.File]::WriteAllText($bundled, $newer)
+        Assert-PackagingFails '*older*14.44.35211.0*Visual Studio Installer*'
+        if ((Get-Content -LiteralPath $bundled -Raw) -ne $newer -or (Test-Path (Join-Path $App 'msvcp140.dll'))) {
+            throw 'Rejected redist changed the staged package'
+        }
+        [IO.File]::WriteAllText($bundled, $old)
+    }
+
+    $extension = Join-Path $Nested 'cv2.pyd'
+    Set-TestPeLinkerVersion $extension 44
+    Assert-PackagingFails '*older*14.44.0.0*cv2.pyd*Visual Studio Installer*'
+    $ffmpeg = Join-Path $Bin 'ffmpeg.exe'
+    Set-TestPeLinkerVersion $ffmpeg 45
+    Assert-PackagingFails '*older*14.45.0.0*ffmpeg.exe*Visual Studio Installer*'
+    Set-TestPeLinkerVersion $ffmpeg 44
+
+    # Installing the requested redistributable in the same VS instance unblocks the build.
+    [IO.File]::WriteAllText($rootCopy, $newer)
+    $updatedRedist = $Redist.Replace('14.42.34438', '14.44.35211')
+    [void](New-Item -ItemType Directory -Path $updatedRedist -Force)
+    foreach ($dll in $required + 'concrt140.dll') {
+        [IO.File]::WriteAllText((Join-Path $updatedRedist $dll), $newer)
+    }
     Install-WindowsVcRuntime -CompilerPath $Compiler -AppDir $App -PythonDir $Python
     foreach ($dir in @($App, $Python)) {
         foreach ($dll in $required) {
-            if ((Get-Content -LiteralPath (Join-Path $dir $dll) -Raw) -ne $new) { throw "Incorrect $dir/$dll" }
+            if ((Get-Content -LiteralPath (Join-Path $dir $dll) -Raw) -ne $newer) { throw "Incorrect $dir/$dll" }
         }
         if (Test-Path (Join-Path $dir 'concrt140.dll')) { throw 'Unused redist was copied' }
     }
-    if ((Get-Content -LiteralPath $nestedCopy -Raw) -ne $new) { throw 'Nested runtime was not replaced' }
+    if ((Get-Content -LiteralPath $nestedCopy -Raw) -ne $newer) { throw 'Nested runtime was not replaced' }
+    $notice = Get-Content -LiteralPath (Join-Path $App 'THIRD_PARTY_NOTICES_VC_RUNTIME.txt') -Encoding UTF8
+    $listed = @($notice | Where-Object { $_ -match '^\S+\.dll$' })
+    if (Compare-Object ($required | Sort-Object) ($listed | Sort-Object)) { throw 'Notice does not list the packaged DLLs' }
     Write-Output 'Windows VC runtime: dependency closure, version gates and app-local replacement passed.'
 } finally {
     if (Test-Path $Temp) { Remove-Item -LiteralPath $Temp -Recurse -Force }

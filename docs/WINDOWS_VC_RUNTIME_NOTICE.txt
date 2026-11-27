@@ -1,0 +1,16 @@
+Microsoft Visual C++ x64 Runtime / 微软 Visual C++ x64 运行库
+
+The files listed below are provided by Microsoft. They come from the x64 redistributable directories under VC\Redist\MSVC in Microsoft Visual Studio and are distributed unmodified solely with this application. The applicable Microsoft terms govern these files.
+
+以下文件由微软提供，来自 Microsoft Visual Studio 的 VC\Redist\MSVC 下的 x64 可再分发目录。文件仅以原样随本程序分发，适用微软条款。
+
+Microsoft Visual Studio license directory / 微软 Visual Studio 许可条款目录
+https://visualstudio.microsoft.com/license-terms/
+
+Microsoft Visual C++ 2015–2022 Runtime license terms / 微软 Visual C++ 2015–2022 运行库许可条款
+https://visualstudio.microsoft.com/license-terms/vs2022-cruntime/
+
+Visual Studio 2022 redistributable files / Visual Studio 2022 可再分发文件清单
+https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution#visual-c-runtime-files
+
+Files included in this package / 随包文件
