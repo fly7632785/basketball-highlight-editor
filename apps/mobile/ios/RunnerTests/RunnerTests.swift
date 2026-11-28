@@ -14,6 +14,56 @@ class RunnerTests: XCTestCase {
 }
 
 final class PortraitVideoTests: XCTestCase {
+  func testExporterFollowsSourceCadenceUpTo60FPS() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let plan = try PortraitClipPlan(startMs: 0, endMs: 50, keyframes: [
+      PortraitKeyframe(tMs: 0, cxNorm: 0.5),
+    ])
+    for (ticks, expected) in [(2500, 2500), (2000, 2000), (1001, 1001), (1000, 1000), (500, 1000)] {
+      let url = directory.appendingPathComponent("source-\(ticks).mov")
+      let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+      let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264,
+        AVVideoWidthKey: 64,
+        AVVideoHeightKey: 36,
+      ])
+      input.mediaTimeScale = 60_000
+      let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: 64,
+        kCVPixelBufferHeightKey as String: 36,
+      ])
+      writer.movieTimeScale = 60_000
+      writer.add(input)
+      XCTAssertTrue(writer.startWriting())
+      writer.startSession(atSourceTime: .zero)
+      let pool = try XCTUnwrap(adaptor.pixelBufferPool)
+      var pixelBuffer: CVPixelBuffer?
+      XCTAssertEqual(CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer), kCVReturnSuccess)
+      let frame = try XCTUnwrap(pixelBuffer)
+      let deadline = Date().addingTimeInterval(10)
+      for index in 0..<8 {
+        while !input.isReadyForMoreMediaData && writer.status == .writing && Date() < deadline {
+          Thread.sleep(forTimeInterval: 0.001)
+        }
+        let presentationTime = CMTime(value: Int64(index * ticks), timescale: 60_000)
+        XCTAssertTrue(adaptor.append(frame, withPresentationTime: presentationTime))
+      }
+      input.markAsFinished()
+      let written = expectation(description: "Wrote \(ticks)-tick fixture")
+      writer.finishWriting { written.fulfill() }
+      wait(for: [written], timeout: 10)
+      XCTAssertEqual(writer.status, .completed)
+      let exporter = try PortraitVideo.makeExporter(
+        asset: AVURLAsset(url: url), output: directory.appendingPathComponent("portrait-\(ticks).mp4"), plan: plan
+      )
+      let actual = try XCTUnwrap(exporter.videoComposition?.frameDuration)
+      XCTAssertEqual(CMTimeCompare(actual, CMTime(value: Int64(expected), timescale: 60_000)), 0, "Source cadence \(ticks)")
+    }
+  }
+
   func testRotatedGeometryRescalesDetectorBoxesToDisplayPixels() {
     let geometry = PortraitGeometry(
       size: CGSize(width: 3840, height: 2160),

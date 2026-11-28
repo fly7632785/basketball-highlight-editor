@@ -71,7 +71,6 @@ struct PortraitKeyframe {
 
 struct PortraitClipPlan {
   static let renderSize = CGSize(width: 1080, height: 1920)
-  static let frameDuration = CMTime(value: 1, timescale: 30)
 
   struct Ramp {
     let range: CMTimeRange
@@ -180,6 +179,19 @@ struct PortraitMergeClip {
 }
 
 enum PortraitVideo {
+  private static func frameDuration(for track: AVAssetTrack) -> CMTime {
+    let minimum = track.minFrameDuration
+    let cap = CMTime(value: 1, timescale: 60)
+    if minimum.isNumeric && minimum.value > 0 {
+      return CMTimeMaximum(minimum, cap)
+    }
+    let rate = Double(track.nominalFrameRate)
+    if rate.isFinite && rate > 0 {
+      return CMTime(seconds: 1 / min(rate, 60), preferredTimescale: 60_000)
+    }
+    return CMTime(value: 1, timescale: 30)
+  }
+
   static func configureSDR(_ composition: AVMutableVideoComposition) {
     // The built-in compositor converts HDR pixels into the requested working
     // space before compositing, including when the output buffers are 8-bit.
@@ -226,7 +238,7 @@ enum PortraitVideo {
     instruction.layerInstructions = [layer]
     let composition = AVMutableVideoComposition()
     composition.renderSize = PortraitClipPlan.renderSize
-    composition.frameDuration = PortraitClipPlan.frameDuration
+    composition.frameDuration = frameDuration(for: track)
     composition.instructions = [instruction]
     configureSDR(composition)
 
@@ -258,8 +270,8 @@ enum PortraitVideo {
       let asset = AVURLAsset(url: clip.url)
       let source = try validatedVideoTrack(in: asset)
       let range = source.timeRange
-      // The encoder rounds the rendered duration to its 30 fps frame cadence.
-      let tolerance = CMTimeAdd(PortraitClipPlan.frameDuration, CMTime(value: 1, timescale: 1000))
+      // The rendered duration is rounded to this clip's frame cadence.
+      let tolerance = CMTimeAdd(frameDuration(for: source), CMTime(value: 1, timescale: 1000))
       let durationError = CMTimeAbsoluteValue(CMTimeSubtract(range.duration, clip.expectedDuration))
       guard source.preferredTransform.isIdentity, range.duration.isNumeric,
             CMTimeCompare(range.duration, .zero) > 0,
