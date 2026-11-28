@@ -1,4 +1,5 @@
 import io
+from fractions import Fraction
 from pathlib import Path
 import shutil
 import subprocess
@@ -37,9 +38,9 @@ def test_clip_command_rejects_invalid_range():
 
 @pytest.mark.parametrize("mode", ["separate", "merge"])
 def test_export_without_h264_encoders_falls_back_for_clips_and_merge(tmp_path, monkeypatch, mode):
-    monkeypatch.setattr(export, '_audio_layouts', lambda paths: [None] * len(paths))
-    monkeypatch.setattr(export, '_uniform_frame_rate', lambda paths: None)
-    monkeypatch.setattr(export, '_merged_duration_ok', lambda *a, **k: True)
+    monkeypatch.setattr(export, '_probe_merge_clip', lambda path: export.MergeClip(
+        path, ('mpeg4',), (Fraction(0),), Fraction(1), None, False,
+    ))
     monkeypatch.setattr(export.platform, "system", lambda: "Linux")
     attempts = []
 
@@ -61,7 +62,7 @@ def test_export_without_h264_encoders_falls_back_for_clips_and_merge(tmp_path, m
     )
     expected = ["libx264", "libopenh264", "mpeg4"]
     if mode == "merge":
-        expected += ["copy", "mpeg4"]
+        expected += ["mpeg4"]
     assert attempts == expected
     assert all(Path(path).is_file() for path in result["files"])
 
@@ -81,12 +82,10 @@ def test_hardware_encoders_get_a_bitrate():
 
 @pytest.mark.parametrize("mode", ["separate", "merge"])
 def test_windows_tries_gpu_encoders_and_keeps_the_one_that_works(tmp_path, monkeypatch, mode):
-    monkeypatch.setattr(export, '_audio_layouts', lambda paths: [None] * len(paths))
-    monkeypatch.setattr(export, '_uniform_frame_rate', lambda paths: None)
-    monkeypatch.setattr(export, '_merged_duration_ok', lambda *a, **k: True)
+    monkeypatch.setattr(export, '_probe_merge_clip', lambda path: export.MergeClip(
+        path, ('mpeg4',), (Fraction(0),), Fraction(1), None, False,
+    ))
     monkeypatch.setattr(export.platform, "system", lambda: "Windows")
-    # The fake clip bytes below cannot be probed; this test exercises codec fallback.
-    monkeypatch.setattr(export, "_compatible_color_streams", lambda paths: True)
     attempts = []
 
     def fake_ffmpeg(command, output_path, **kwargs):
@@ -109,7 +108,7 @@ def test_windows_tries_gpu_encoders_and_keeps_the_one_that_works(tmp_path, monke
     )
     expected = ["h264_nvenc", "h264_qsv", "h264_amf", "h264_amf"]
     if mode == "merge":
-        expected += ["copy", "h264_amf"]
+        expected += ["h264_amf"]
     assert attempts == expected
 
 
@@ -439,9 +438,9 @@ def test_validate_output_file_rejects_a_directory_target(tmp_path: Path):
 
 
 def test_merge_writes_mp4_when_the_saved_name_has_no_extension(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(export, '_audio_layouts', lambda paths: [None] * len(paths))
-    monkeypatch.setattr(export, '_uniform_frame_rate', lambda paths: None)
-    monkeypatch.setattr(export, '_merged_duration_ok', lambda *a, **k: True)
+    monkeypatch.setattr(export, '_probe_merge_clip', lambda path: export.MergeClip(
+        path, ('mpeg4',), (Fraction(0),), Fraction(1), None, True,
+    ))
     def fake_ffmpeg(command, output_path, **kwargs):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"video")
@@ -619,19 +618,17 @@ def test_merge_never_touches_a_concat_txt_from_the_user(tmp_path: Path, monkeypa
     manifest = Path(merge_command[manifest_index])
     assert manifest.parent == out
     assert manifest.name.startswith(".bhe-concat-") and manifest.suffix == ".txt"
-    # 除清单路径外，快路径参数与修复前一致。
-    assert [part for index, part in enumerate(merge_command) if index != manifest_index] == [
-        merge_command[0], "-y", "-hide_banner", "-loglevel", "error",
-        "-f", "concat", "-safe", "0", "-i", "-c", "copy", str(final),
-    ]
+    assert merge_command[merge_command.index("-c:v") + 1] == "copy"
+    assert merge_command[merge_command.index("-c:a") + 1] == "aac"
 
 
-def test_frame_rate_is_unified_only_when_clips_differ():
-    clip = {"fps": 59.94006}
-    assert export._merge_frame_rate([{"fps": 60.0}, clip], {"fps": 60.0}) is None
-    assert export._merge_frame_rate([{"fps": 60.0}, clip], clip) == "60/1"
-    assert export._merge_frame_rate([clip, {"fps": 60.0}], {"fps": 60.0}) == "60000/1001"
-    assert export._merge_frame_rate([{"fps": 60.0}], {}) is None
+def test_mixed_rates_repeat_only_clips_below_the_highest_rate():
+    slow, nt, high = ({"fps": rate} for rate in (30.0, 59.94, 60.0))
+    clips = [slow, nt, high]
+    assert export._merge_frame_rate(clips, slow) == "60/1"
+    assert export._merge_frame_rate(clips, nt) is None
+    assert export._merge_frame_rate(clips, high) is None
+    assert export._merge_frame_rate([slow, nt], slow) == "60000/1001"
     command = build_clip_command(Path("s.mp4"), 0, 1000, Path("o.mp4"), "libx264", frame_rate="60/1")
     assert command[-3:] == ["-r", "60/1", "o.mp4"]
     assert "-r" not in build_clip_command(Path("s.mp4"), 0, 1000, Path("o.mp4"), "libx264")

@@ -1,3 +1,4 @@
+from fractions import Fraction
 from pathlib import Path
 import json
 import re
@@ -94,17 +95,17 @@ def test_capability_check_cached_and_missing_filter_is_safe(monkeypatch):
 
 
 def test_mixed_incompatible_streams_force_reencode_without_second_tonemap(monkeypatch,tmp_path):
-    monkeypatch.setattr(export, '_audio_layouts', lambda paths: [None] * len(paths))
-    monkeypatch.setattr(export, '_uniform_frame_rate', lambda paths: None)
-    monkeypatch.setattr(export, '_merged_duration_ok', lambda *a, **k: True)
+    monkeypatch.setattr(export, '_probe_merge_clip', lambda path: export.MergeClip(
+        path, ('mpeg4',), (Fraction(0),), Fraction(1), None, False,
+    ))
     calls=[]
     monkeypatch.setattr(export, '_compatible_color_streams', lambda paths: False)
     monkeypatch.setattr(export, 'video_codecs', lambda: ['mpeg4'])
     def run(command, output_path, **kwargs):
         calls.append(command);output_path.parent.mkdir(parents=True,exist_ok=True);output_path.write_bytes(b'fake')
     monkeypatch.setattr(export, 'run_atomic_ffmpeg', run)
-    candidates=[{'source_path':str(tmp_path/'a'),'event_time_ms':500,'review_start_ms':0,'review_end_ms':1000,'tonemap':True},
-                {'source_path':str(tmp_path/'b'),'event_time_ms':1500,'review_start_ms':1000,'review_end_ms':2000,'tonemap':False}]
+    candidates=[{'source_path':str(tmp_path/'a'),'event_time_ms':500,'review_start_ms':0,'review_end_ms':1000,'tonemap':True,'fps':30},
+                {'source_path':str(tmp_path/'b'),'event_time_ms':1500,'review_start_ms':1000,'review_end_ms':2000,'tonemap':False,'fps':30}]
     export.export_goal_clips(candidates,tmp_path/'out','merge')
     assert any('tonemap=tonemap=hable' in arg for arg in calls[0])
     assert not any('tonemap=tonemap=hable' in arg for arg in calls[1])
@@ -246,6 +247,6 @@ def test_real_untagged_sdr_merge_uses_copy_without_color_temp(tmp_path):
         fields = json.loads(data.stdout)['streams'][0]
         assert all(fields.get(key) in (None, 'unknown', 'unspecified')
                    for key in ('color_range', 'color_space', 'color_transfer', 'color_primaries'))
-    assert commands[-1][-3:-1] == ['-c', 'copy']
+    assert commands[-1][commands[-1].index('-c:v') + 1] == 'copy'
     assert not any('bhe-color-' in str(prefix) for prefix in temporary_prefixes)
     assert not list((tmp_path / 'out').glob('bhe-color-*'))
