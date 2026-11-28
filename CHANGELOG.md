@@ -2,13 +2,29 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，版本遵循语义化版本约定。
 
-## [Unreleased]
+## [0.1.17] - 2026-11-28
 
 ### Fixed
 
-- Windows 打包会在运行库版本过低时停止，新的 ZIP 原样随附微软 Visual C++ 运行库及来源和再分发说明。
+- 修复部分 Windows 电脑选择文件时闪退的问题，安装包已随附所需的微软 Visual C++ 运行库。
+- 修复桌面端合并导出时片段衔接处出现的短暂停顿。
+- 桌面端合并不同帧率的片段时，使用源片段中的最高帧率档位。
+- 修复 Android 合并导出时，含 B 帧的视频在剪点附近出现的画面缺失和衔接不顺。
+- iPhone 竖屏导出跟随源视频帧率，最高每秒 60 帧。
+- 修复画面中有多个篮球时，竖屏导出镜头跟错球的问题。
 
-## [0.1.16] - 待发版日
+#### English
+
+##### Fixed
+
+- Fixed a crash when choosing files on some Windows PCs. The download now includes the required Microsoft Visual C++ runtime.
+- Fixed brief pauses between clips in merged exports on desktop.
+- Desktop exports that merge clips with different frame rates now use the highest source frame-rate tier.
+- Fixed missing frames and choppy joins near cut points in merged Android exports of videos containing B-frames.
+- Portrait exports on iPhone now follow the source frame rate, up to 60 frames per second.
+- Fixed portrait exports following the wrong ball when multiple basketballs are visible.
+
+## [0.1.16] - 2026-11-25
 
 ### Added
 
