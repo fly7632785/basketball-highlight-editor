@@ -15,8 +15,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        id: setup-python
+        with:
+          python-version: "3.11"
+          architecture: x64
       - name: Test the pinned Microsoft redistributable with native Windows tools
         shell: powershell
+        env:
+          PYTHON_FIXTURE_EXE: ${{ steps.setup-python.outputs.python-path }}
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           # Match the v143 toolset used by the windows-2022 release job.
@@ -26,8 +33,10 @@ jobs:
             Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
           if (-not $toolset) { throw 'The MSVC 14.44 toolset directory was not found.' }
           $compiler = Join-Path $toolset.FullName 'bin/Hostx64/x64/cl.exe'
-          $fixtureExe = (Get-Command python.exe -CommandType Application).Source
-          ./scripts/test_windows_vc_runtime_native.ps1 -CompilerPath $compiler -FixtureExe $fixtureExe
+          if (-not $env:PYTHON_FIXTURE_EXE -or -not (Test-Path -LiteralPath $env:PYTHON_FIXTURE_EXE -PathType Leaf)) {
+            throw 'setup-python did not provide a Python executable for the Windows packaging test.'
+          }
+          ./scripts/test_windows_vc_runtime_native.ps1 -CompilerPath $compiler -FixtureExe $env:PYTHON_FIXTURE_EXE
 
   windows-updater:
     runs-on: windows-latest
