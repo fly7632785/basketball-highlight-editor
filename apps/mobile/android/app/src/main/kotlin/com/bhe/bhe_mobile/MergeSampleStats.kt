@@ -8,8 +8,7 @@ internal class MergeClipWindow(
     val endUs: Long,
     val outputBaseUs: Long,
 ) {
-    fun includes(sampleTimeUs: Long, isVideo: Boolean): Boolean =
-        sampleTimeUs < endUs && (isVideo || sampleTimeUs >= startUs)
+    fun includes(sampleTimeUs: Long): Boolean = sampleTimeUs in startUs until endUs
 
     fun nextOutputBaseUs(nextVideoPtsUs: Long?): Long {
         if (nextVideoPtsUs == null) throw MergeRangeUnavailable("无法定位合并片段末尾的下一帧")

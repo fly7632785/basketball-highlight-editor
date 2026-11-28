@@ -4,6 +4,7 @@ import com.bhe.bhe_mobile.diagnostics.AppDiagnostics
 import com.bhe.bhe_mobile.diagnostics.NativeFailureDetails
 import android.content.ContentValues
 import android.graphics.Bitmap
+import android.media.MediaCodecList
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
@@ -694,21 +695,24 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
+    private fun exportSourceTracks(extractor: MediaExtractor): List<ExportSourceTrack> =
+        (0 until extractor.trackCount).mapNotNull { index ->
+            val format = extractor.getTrackFormat(index)
+            format.getString(MediaFormat.KEY_MIME)?.let { mime ->
+                val hasSamples = if (mime.startsWith("video/")) {
+                    extractor.selectTrack(index)
+                    try {
+                        extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                        extractor.sampleTrackIndex == index && extractor.sampleSize > 0
+                    } finally { extractor.unselectTrack(index) }
+                } else true
+                ExportSourceTrack(index, mime, DolbyVisionFormat.profile(format), hasSamples)
+            }
+        }
+
     private fun addExportableTracks(extractor: MediaExtractor, muxer: MediaMuxer): ExportTrackSelection =
         ExportTrackPolicy.select(
-            (0 until extractor.trackCount).mapNotNull { index ->
-                val format = extractor.getTrackFormat(index)
-                format.getString(MediaFormat.KEY_MIME)?.let { mime ->
-                    val hasSamples = if (mime.startsWith("video/")) {
-                        extractor.selectTrack(index)
-                        try {
-                            extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
-                            extractor.sampleTrackIndex == index && extractor.sampleSize > 0
-                        } finally { extractor.unselectTrack(index) }
-                    } else true
-                    ExportSourceTrack(index, mime, DolbyVisionFormat.profile(format), hasSamples)
-                }
-            },
+            exportSourceTracks(extractor),
             addTrack = { index -> muxer.addTrack(DolbyVisionFormat.forExport(extractor.getTrackFormat(index))) },
             onSkipped = { track, error ->
                 Log.w("BHE-Export", "skipping audio track ${track.index}: ${track.mime}", error)
@@ -1167,6 +1171,64 @@ class MainActivity : FlutterActivity() {
                 if (cancelled.get()) throw InterruptedException("合并导出已取消")
                 transcoded = DolbyExportSource.transcodeIfNeeded(applicationContext, inputPath, cancelled)
                 val sourcePath = transcoded?.absolutePath ?: inputPath
+                val source = MediaExtractor()
+                val renderedSelection = try {
+                    VideoInput.open(source, sourcePath)
+                    val tracks = exportSourceTracks(source)
+                    val videoIndex = ExportTrackPolicy.chosenVideoIndex(tracks)
+                        ?: throw MergeRangeUnavailable("视频没有可读取的视频轨道")
+                    val cuts = clips.map { OriginalMergeCut.read(source, videoIndex, it, cancelled) }
+                    if (cuts.all(OriginalMergeCut::canCopy)) {
+                        null
+                    } else {
+                        val video = tracks.first { it.index == videoIndex }
+                        val outputMime = when (video.mime) {
+                            "video/hevc", DolbyVisionPolicy.MIME -> "video/hevc"
+                            else -> "video/avc"
+                        }
+                        val audio = tracks.filter { it.mime.startsWith("audio/") }
+                        val decoders = MediaCodecList(MediaCodecList.ALL_CODECS)
+                        val canDecodeAudio = audio.any { decoders.findDecoderForFormat(source.getTrackFormat(it.index)) != null }
+                        val appendAudio = audio.size > (if (canDecodeAudio) 1 else 0)
+                        val encoded = if (appendAudio) MergeOutputFiles.create(destination) else temporary
+                        val skipped = try {
+                            val selected = PortraitMedia(applicationContext).mergeOriginal(
+                                sourcePath, cuts, outputMime, canDecodeAudio, encoded, cancelled,
+                            )
+                            val writtenAudio = selected?.let { format ->
+                                val matches = audio.filter { it.mime == format.sampleMimeType }
+                                matches.firstOrNull {
+                                    source.getTrackFormat(it.index).getInteger(MediaFormat.KEY_TRACK_ID, -1).toString() == format.id
+                                } ?: matches.firstOrNull {
+                                    source.getTrackFormat(it.index).getInteger(MediaFormat.KEY_IS_DEFAULT, 0) != 0
+                                } ?: matches.firstOrNull()
+                            }
+                            val remaining = audio.filter { it != writtenAudio }
+                            if (appendAudio) {
+                                OriginalMergeAudio.append(source, encoded, temporary, cuts, remaining, cancelled)
+                            } else remaining
+                        } finally {
+                            if (appendAudio) encoded.delete()
+                        }
+                        ExportTrackSelection(emptyMap(), skipped) to cuts.sumOf(OriginalMergeCut::videoSamples)
+                    }
+                } finally {
+                    source.release()
+                }
+                if (renderedSelection != null) {
+                    val (selection, expectedSamples) = renderedSelection
+                    currentTransaction.publish { file ->
+                        val facts = AndroidMergeMediaInspector.inspect(file, cancelled)
+                        MergeMediaFinalizer.requireSingleVideoTrack(facts.videoTracks)
+                        MergeMediaFinalizer.requireVideoSamples(facts.readableVideoSamples)
+                        check(facts.readableVideoSamples == expectedSamples) { "合并结果视频样本不完整" }
+                    }
+                    AppDiagnostics.event("export.completed")
+                    completion = { result.success(exportResult(outputPath, selection) + mapOf(
+                        "mergedOverlapCount" to plan.mergedOverlapCount, "committed" to true,
+                    )) }
+                    return@Thread
+                }
                 val firstExtractor = MediaExtractor()
                 val currentMuxer = try {
                     VideoInput.open(firstExtractor, sourcePath)
@@ -1227,7 +1289,7 @@ class MainActivity : FlutterActivity() {
                                 break
                             }
                             val muxTrack = trackMap[sourceTrack]
-                            if (muxTrack != null && window.includes(sampleTime, isVideo)) {
+                            if (muxTrack != null && window.includes(sampleTime)) {
                                 if (isVideo && intervalStats.samples == 0L && sampleTime != clipStartUs) {
                                     throw MergeRangeUnavailable("无法从合并片段的视频起点读取")
                                 }

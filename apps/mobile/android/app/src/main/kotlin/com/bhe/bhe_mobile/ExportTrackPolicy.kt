@@ -13,7 +13,7 @@ internal object ExportTrackPolicy {
 
     // Export a single video track. Prefer the readable profile 8 track, whose
     // samples are remuxed as HEVC, over extractor-provided duplicate tracks.
-    private fun chosenVideoIndex(tracks: List<ExportSourceTrack>): Int? {
+    fun chosenVideoIndex(tracks: List<ExportSourceTrack>): Int? {
         val videos = tracks.filter { it.mime.startsWith("video/") && it.hasSamples }
         if (videos.isEmpty()) return null
         return (videos.firstOrNull { DolbyVisionPolicy.hasHevcBase(it.mime, it.dolbyProfile) }
