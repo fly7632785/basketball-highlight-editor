@@ -169,6 +169,96 @@ void main() {
     expect(plan.hasBallTrack, isTrue);
   });
 
+  group('portrait selection after incomplete shot evidence', () {
+    const rim = PortraitDetection(cx: 1000, cy: 575, w: 50, h: 50, conf: .9);
+    const rimHint = Roi(
+      left: 975 / 1920,
+      top: 550 / 1440,
+      right: 1025 / 1920,
+      bottom: 600 / 1440,
+    );
+    PortraitDetection ball(double x, [double y = 420]) =>
+        PortraitDetection(cx: x, cy: y, w: 24, h: 24, conf: .9);
+
+    test('reacquires the ball after a long manual gap', () {
+      final plan = PortraitPlanner.plan(
+        frameWidth: 1920,
+        frameHeight: 1440,
+        startMs: 0,
+        endMs: 9000,
+        samples: [
+          for (var i = 0; i < 90; i++)
+            PortraitTrackSample(
+              tMs: i * 100,
+              balls: [if (i < 18) ball(500) else if (i >= 45) ball(1450)],
+              rims: [],
+            ),
+        ],
+      );
+      expect(plan.keyframes[5].cxNorm * 1920, lessThan(650));
+      expect(plan.keyframes.last.cxNorm * 1920, greaterThan(1250));
+    });
+
+    test('keeps an observed ball when the event time is early', () {
+      final plan = PortraitPlanner.plan(
+        frameWidth: 1920,
+        frameHeight: 1440,
+        startMs: 0,
+        endMs: 4000,
+        eventMs: 2200,
+        eventRim: rimHint,
+        samples: [
+          for (var i = 0; i < 40; i++)
+            PortraitTrackSample(
+              tMs: 100 * i,
+              balls: [
+                if (i < 20)
+                  ball(1550)
+                else
+                  ball(
+                    (1550 - 50 * (i - 19)).clamp(1000, 1550).toDouble(),
+                    i < 29 ? 420 : 490 + 30.0 * (i - 29),
+                  ),
+              ],
+              rims: [rim],
+            ),
+        ],
+      );
+      expect(plan.trackingCoverage, greaterThan(.5));
+      expect((plan.keyframes[18].cxNorm * 1920 - 1550).abs(), lessThan(405));
+    });
+
+    test('prefers a stable current rim when no ball is visible', () {
+      final plan = PortraitPlanner.plan(
+        frameWidth: 1920,
+        frameHeight: 1440,
+        startMs: 0,
+        endMs: 6000,
+        eventMs: 3000,
+        eventRim: const Roi(
+          left: 475 / 1920,
+          top: 550 / 1440,
+          right: 525 / 1920,
+          bottom: 600 / 1440,
+        ),
+        samples: [
+          for (var i = 0; i < 60; i++)
+            PortraitTrackSample(
+              tMs: 100 * i,
+              balls: [],
+              rims: const [
+                PortraitDetection(cx: 1450, cy: 575, w: 50, h: 50, conf: .9),
+              ],
+            ),
+        ],
+      );
+      expect(
+        plan.keyframes.map((frame) => frame.cxNorm * 1920),
+        everyElement(closeTo(1450, 1e-8)),
+      );
+    });
+  });
+
   test('with no reliable ball, uses rim then screen center', () {
     final plan = _plan(_track((i) => i == 3 ? 600 : null));
     expect(plan.hasBallTrack, isFalse);

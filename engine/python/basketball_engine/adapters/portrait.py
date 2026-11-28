@@ -294,14 +294,11 @@ def compose_portrait(balls, hoops, width, height, goal_seconds, *, people=None, 
     if ball_candidates is None:
         ball_candidates = [[Ball.from_box(b)] if b is not None and plausible_ball(b,width) else []
                            for b in balls] or [[]]
-    if local_balls is not None:
-        ball_candidates = [[*(Ball.from_box(box) for box in local), *full]
-                           for local, full in zip(local_balls, ball_candidates)]
     hints = event_rims or {}
     events = [(round(goal * 1000), hints.get(round(goal * 1000))) for goal in sorted(set(goals))]
     rims = [Ball.from_box(box) for _, box in _hoop_candidates(hoops, width, crop_width)]
-    shots = select_shots(((i * period, options) for i, options in enumerate(ball_candidates)),
-                         rims, min(width, height * 9 / 16), events)
+    frames = [(i * period, options) for i, options in enumerate(ball_candidates)]
+    shots = select_shots(frames, rims, min(width, height * 9 / 16), events, width, local_balls)
     switches = [(a.time + b.time) / 2 for a, b in zip(shots, shots[1:])]
     shot_index = [bisect_right(switches, i * period) for i in range(len(ball_candidates))]
     tracks = [{point.time // period: point.ball.box for point in shot.track} for shot in shots]
@@ -511,7 +508,9 @@ class PortraitTracker:
                     progress_callback("portrait_tracking", .5 * (index + 1) / count)
             crop_width, _ = _crop_size(width,height)
             regions = _rim_regions(_hoop_candidates(hoop_frames,width,crop_width), width, height)
+            local_balls = None
             if regions:
+                local_balls = [[] for _ in ball_frames]
                 for index, frame in self._sample_frames(capture,start,count,fps,cancel_check):
                     local_hoops = []
                     for x1,y1,x2,y2 in regions:
@@ -524,7 +523,7 @@ class PortraitTracker:
                             if name in {"hoop", "rim"}:
                                 local_hoops.append(bounds)
                             elif name in {"ball", "basketball"} and plausible_ball(bounds,width):
-                                ball_frames[index].append(Ball.from_box(bounds, float(box.conf[0])))
+                                local_balls[index].append(Ball.from_box(bounds, float(box.conf[0])))
                     hoop_frames[index] = local_hoops + hoop_frames[index]
                     if progress_callback:
                         progress_callback("portrait_tracking", .5 + .5 * (index+1) / count)
@@ -547,7 +546,8 @@ class PortraitTracker:
                     rims[relative] = Ball(float(stored["x"]), float(stored["y"]) + .2 * rim_height,
                                           rim_width, rim_height, 0.)
             self.last_composition = compose_portrait([], hoop_frames, width, height, goals,
-                                                     people=people, ball_candidates=ball_frames, event_rims=rims)
+                                                     people=people, local_balls=local_balls,
+                                                     ball_candidates=ball_frames, event_rims=rims)
             return self.last_composition["filter"]
         finally:
             capture.release()

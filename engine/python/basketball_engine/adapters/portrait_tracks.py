@@ -122,9 +122,38 @@ def _event_rims(rims, hint):
     return matches or [hint]
 
 
-def select_shots(frames, rims, crop, events):
-    tracks = _tracks(frames, crop)
-    first_track = tracks[0] if tracks else []
+def _manual_track(tracks):
+    observations = sorted((point.time, track_id, point)
+                          for track_id, track in enumerate(tracks) for point in track)
+    selected = []
+    active = None
+    for time, track_id, point in observations:
+        if not selected or track_id == active or time - selected[-1].time > MAX_TRACK_GAP_MS:
+            selected.append(point)
+            active = track_id
+    return selected
+
+
+def _baseline_track(frames, width):
+    selected = []
+    for time, balls in frames:
+        if not balls:
+            continue
+        previous = selected[-1].ball.x if selected else None
+
+        def score(ball):
+            distance = abs(ball.x - previous) if previous is not None else 0
+            return ball.confidence - .25 * distance / width, ball.x, ball.box
+
+        selected.append(TrackPoint(time, max(balls, key=score)))
+    return selected
+
+
+def select_shots(frames, rims, crop, events, width, local_balls=None):
+    track_frames = ([(time, local + full) for (time, full), local in zip(frames, local_balls)]
+                    if local_balls is not None else frames)
+    tracks = _tracks(track_frames, crop)
+    baseline = None
     shots = []
     for time, hint in events or [(None, None)]:
         candidates = _event_rims(rims, hint)
@@ -157,7 +186,14 @@ def select_shots(frames, rims, crop, events):
         if choice := best_crossing or best_point:
             shots.append(choice[1])
         else:
-            rim = candidates[0] if candidates else None
-            # A calibrated shot can only be claimed by a track near its rim.
-            shots.append(Shot(time, rim, first_track if hint is None else [], []))
+            rim = rims[0] if rims else hint
+            if time is None:
+                track = _manual_track(tracks)
+            else:
+                # Event metadata can drift. Use the original full-frame
+                # selection when the detections do not support the event.
+                if baseline is None:
+                    baseline = _baseline_track(frames, width)
+                track = baseline
+            shots.append(Shot(time, rim, track, []))
     return shots

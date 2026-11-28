@@ -9,6 +9,7 @@ from engine.python.basketball_engine.adapters import export
 from engine.python.basketball_engine.adapters.portrait import (
     _crowd_observations, clean_observations, compose_portrait, portrait_filter, PortraitTracker, SAMPLE_FPS,
 )
+from engine.python.basketball_engine.adapters.portrait_tracks import Ball
 from engine.python.basketball_engine.adapters.analysis import PipelineCancelled
 
 
@@ -283,7 +284,7 @@ def test_crossings_choose_sustained_real_rim_and_guard_without_a_confirmed_goal(
     balls = [false_ball]*75
     local = [[] for _ in balls]
     for i, y in [(18, 387), (20, 414), (22, 446)]:
-        local[i] = [[1490, y-10, 1510, y+10]]
+        local[i] = [Ball(1500, y, 20, 20, .9)]
     players = [[500, 530, 555, 690], [620, 550, 680, 710]]
     plan = compose_portrait(balls,rims,1920,1080,[],people=[players]*75,local_balls=local)
     assert plan['rim'] == rim
@@ -369,3 +370,35 @@ def test_portrait_tracker_keeps_the_ball_that_scored(monkeypatch, occluded):
                        review_start_ms=0, review_end_ms=10000))
     assert max(tracker.last_composition["centers"]) < 650
     assert tracker.last_composition["crossings"] == pytest.approx([3.], abs=.11)
+
+
+def test_portrait_reacquires_the_ball_after_a_long_manual_gap():
+    samples = [_ball(500)] * 18 + [None] * 27 + [_ball(1450)] * 45
+    plan = compose_portrait(samples, [], 1920, 1440, [])
+
+    assert plan["centers"][5] < 650
+    assert plan["centers"][-1] > 1250
+
+
+def test_portrait_keeps_an_observed_ball_when_the_event_time_is_early():
+    rim = [975, 550, 1025, 600]
+    samples = [
+        Ball(1550, 420, 24, 24, .9) if i < 20
+        else Ball(max(1000, 1550 - 50 * (i - 19)), 420 if i < 29 else 490 + 30 * (i - 29),
+                  24, 24, .9)
+        for i in range(40)
+    ]
+    plan = compose_portrait([], [[rim]] * len(samples), 1920, 1440, [2.2],
+                            ball_candidates=[[ball] for ball in samples],
+                            event_rims={2200: Ball.from_box(rim)})
+
+    assert plan["tracking_coverage"] > .5
+    assert abs(plan["centers"][18] - 1550) < plan["crop_width"] / 2
+
+
+def test_portrait_prefers_a_stable_current_rim_when_no_ball_is_visible():
+    rim = [1425, 550, 1475, 600]
+    plan = compose_portrait([None] * 60, [[rim]] * 60, 1920, 1440, [3],
+                            event_rims={3000: Ball.from_box([475, 550, 525, 600])})
+
+    assert plan["centers"] == pytest.approx([1450] * 60)

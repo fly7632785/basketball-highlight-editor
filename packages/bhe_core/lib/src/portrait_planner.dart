@@ -84,13 +84,11 @@ abstract final class PortraitPlanner {
         if (sample.tMs >= startMs && sample.tMs <= endMs) sample.tMs: sample,
     };
     final times = {startMs, endMs, ...inRange.keys}.toList()..sort();
-    final tracks = _ballTracks(times, inRange, width, frameHeight, half * 2);
-    final rims = _stableRims(
-      times.map((time) => inRange[time]).whereType<PortraitTrackSample>(),
-      width,
-      frameHeight,
-      half * 2,
-    );
+    final orderedSamples = times
+        .map((time) => inRange[time])
+        .whereType<PortraitTrackSample>();
+    final frames = _ballFrames(orderedSamples, width, frameHeight);
+    final rims = _stableRims(orderedSamples, width, frameHeight, half * 2);
     final event = eventMs != null && eventMs >= startMs && eventMs <= endMs
         ? eventMs
         : null;
@@ -103,7 +101,7 @@ abstract final class PortraitPlanner {
             h: (eventRim.bottom - eventRim.top) * frameHeight,
             conf: 0,
           );
-    final (track, rim) = _selectShot(tracks, rims, event, hint);
+    final (track, rim) = _selectShot(frames, half * 2, rims, event, hint);
     final observations = [for (final (time, ball) in track) (time, ball.cx)];
     final clean = [
       for (var i = 0; i < observations.length; i++)

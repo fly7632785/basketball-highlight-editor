@@ -7,18 +7,20 @@ const _crossingWindowMs = 450;
 
 typedef _TrackPoint = (int, PortraitDetection);
 typedef _Shot = (List<_TrackPoint>, PortraitDetection?);
+typedef _BallFrame = (int, List<PortraitDetection>);
 
 double _distance(double dx, double dy) => math.sqrt(dx * dx + dy * dy);
 
 List<PortraitDetection> _uniqueBalls(List<PortraitDetection> boxes) {
-  boxes.sort((a, b) {
-    final score = b.conf.compareTo(a.conf);
-    if (score != 0) return score;
-    final x = a.cx.compareTo(b.cx);
-    return x != 0 ? x : a.cy.compareTo(b.cy);
-  });
+  final sorted = [...boxes]
+    ..sort((a, b) {
+      final score = b.conf.compareTo(a.conf);
+      if (score != 0) return score;
+      final x = a.cx.compareTo(b.cx);
+      return x != 0 ? x : a.cy.compareTo(b.cy);
+    });
   final kept = <PortraitDetection>[];
-  for (final ball in boxes) {
+  for (final ball in sorted) {
     final size = math.min(ball.w, ball.h);
     if (kept.any(
       (other) =>
@@ -32,26 +34,30 @@ List<PortraitDetection> _uniqueBalls(List<PortraitDetection> boxes) {
   return kept;
 }
 
-List<List<_TrackPoint>> _ballTracks(
-  List<int> times,
-  Map<int, PortraitTrackSample> samples,
+List<_BallFrame> _ballFrames(
+  Iterable<PortraitTrackSample> samples,
   double width,
   int height,
-  double crop,
-) {
+) => [
+  for (final sample in samples)
+    (
+      sample.tMs,
+      [
+        for (final ball in sample.balls)
+          if (PortraitPlanner._valid(ball, width, height) &&
+              ball.w / ball.h >= .6 &&
+              ball.w / ball.h <= 1.6 &&
+              math.max(ball.w, ball.h) <= .08 * width)
+            ball,
+      ],
+    ),
+];
+
+List<List<_TrackPoint>> _ballTracks(List<_BallFrame> frames, double crop) {
   final tracks = <List<_TrackPoint>>[];
   final active = <int>[];
-  for (final time in times) {
-    final sample = samples[time];
-    if (sample == null) continue;
-    final balls = _uniqueBalls([
-      for (final ball in sample.balls)
-        if (PortraitPlanner._valid(ball, width, height) &&
-            ball.w / ball.h >= .6 &&
-            ball.w / ball.h <= 1.6 &&
-            math.max(ball.w, ball.h) <= .08 * width)
-          ball,
-    ]);
+  for (final (time, boxes) in frames) {
+    final balls = _uniqueBalls(boxes);
     active.removeWhere((id) => time - tracks[id].last.$1 > _maxTrackGapMs);
     final matches = <(double, int, int)>[];
     for (final id in active) {
@@ -103,6 +109,58 @@ List<List<_TrackPoint>> _ballTracks(
   ];
 }
 
+List<_TrackPoint> _manualTrack(List<List<_TrackPoint>> tracks) {
+  final observations =
+      [
+        for (final (id, track) in tracks.indexed)
+          for (final point in track) (id, point),
+      ]..sort((a, b) {
+        final time = a.$2.$1.compareTo(b.$2.$1);
+        return time != 0 ? time : a.$1.compareTo(b.$1);
+      });
+  final selected = <_TrackPoint>[];
+  int? active;
+  for (final (id, point) in observations) {
+    if (selected.isEmpty ||
+        id == active ||
+        point.$1 - selected.last.$1 > _maxTrackGapMs) {
+      selected.add(point);
+      active = id;
+    }
+  }
+  return selected;
+}
+
+List<_TrackPoint> _baselineTrack(List<_BallFrame> frames, double crop) {
+  final selected = <_TrackPoint>[];
+  for (final (time, boxes) in frames) {
+    if (boxes.isEmpty) continue;
+    PortraitDetection? strongest, nearby;
+    final elapsed = selected.isEmpty
+        ? PortraitPlanner._supportMs + 1
+        : time - selected.last.$1;
+    final previous = elapsed <= PortraitPlanner._supportMs
+        ? selected.last.$2
+        : null;
+    var radius = PortraitPlanner._observationRadius(crop, elapsed);
+    for (final ball in boxes) {
+      if (strongest == null || ball.conf > strongest.conf) strongest = ball;
+      if (previous != null) {
+        final distance = _distance(
+          ball.cx - previous.cx,
+          ball.cy - previous.cy,
+        );
+        if (distance < radius) {
+          radius = distance;
+          nearby = ball;
+        }
+      }
+    }
+    selected.add((time, nearby ?? strongest!));
+  }
+  return selected;
+}
+
 double _rimPlane(PortraitDetection rim) => rim.cy - .2 * rim.h;
 
 Iterable<double> _crossings(
@@ -143,11 +201,14 @@ Iterable<double> _crossings(
 }
 
 _Shot _selectShot(
-  List<List<_TrackPoint>> tracks,
+  List<_BallFrame> frames,
+  double crop,
   List<PortraitDetection> rims,
   int? time,
   PortraitDetection? hint,
 ) {
+  final tracks = _ballTracks(frames, crop);
+  final currentRim = rims.firstOrNull;
   if (hint != null) {
     rims = [
       for (final rim in rims)
@@ -197,10 +258,12 @@ _Shot _selectShot(
       }
     }
   }
+  // Event metadata can drift. Fall back to the original selection when the
+  // ball observations do not support the event.
   return (crossingChoice ?? pointChoice)?.$3 ??
       (
-        hint == null ? tracks.firstOrNull ?? const [] : const [],
-        rims.firstOrNull,
+        time == null ? _manualTrack(tracks) : _baselineTrack(frames, crop),
+        currentRim ?? hint,
       );
 }
 
