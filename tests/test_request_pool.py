@@ -17,8 +17,12 @@ from engine.python.basketball_engine.storage import ProjectStore
 
 
 class Input:
-    def __init__(self): self.items = queue.Queue()
+    def __init__(self):
+        self.items = queue.Queue()
+        self.started = threading.Event()
+
     def __iter__(self):
+        self.started.set()
         while (item := self.items.get()) is not None:
             yield json.dumps(item) + '\n'
     def send(self, response_id, command, **payload):
@@ -64,11 +68,16 @@ def running(monkeypatch, tmp_path):
     monkeypatch.setattr(server.sys, 'stdout', output)
     thread = threading.Thread(target=server.main)
     thread.start()
-    yield service, input_, output, entered, release, video
-    release.set()
-    input_.items.put(None)
-    thread.join(8)
-    assert not thread.is_alive()
+    try:
+        # The input pump starts after the server captures stdout. Pytest swaps
+        # stdout when the fixture yields and the test body starts.
+        assert input_.started.wait(3)
+        yield service, input_, output, entered, release, video
+    finally:
+        release.set()
+        input_.items.put(None)
+        thread.join(8)
+        assert not thread.is_alive()
 
 
 def test_slow_link_leaves_loop_responsive_and_bounded(running, tmp_path):
