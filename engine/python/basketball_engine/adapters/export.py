@@ -565,7 +565,7 @@ class MergeTimingError(OSError):
 def _probe_merge_clip(path: Path, **probe_options) -> MergeClip:
     result = _run_export_probe(
         [resolve_media_tool("ffprobe"), "-v", "error", "-show_data_hash", "sha256",
-         "-show_entries", "stream=index,codec_type,start_time,duration,sample_rate,channel_layout,"
+         "-show_entries", "stream=index,codec_type,start_time,duration,start_pts,duration_ts,sample_rate,channel_layout,"
          + ",".join(_VIDEO_FORMAT_FIELDS) + ":packet=stream_index,pts,duration,flags",
          "-of", "json", str(path)],
         timeout=60, **probe_options,
@@ -581,13 +581,22 @@ def _probe_merge_clip(path: Path, **probe_options) -> MergeClip:
         for packet in data["packets"]
         if packet["stream_index"] == video["index"] and "D" not in packet["flags"]
     )
-    if (not packets or packets[-1][1] <= 0
-            or any(right[0] <= left[0] for left, right in zip(packets, packets[1:]))):
+    if not packets or any(right[0] <= left[0] for left, right in zip(packets, packets[1:])):
         raise MergeTimingError()
+    last_pts, last_duration, _ = packets[-1]
+    if last_duration <= 0:
+        # ffprobe omits unknown packet durations. Prefer the video track's end,
+        # then use the last presentation interval when the track has no tail.
+        if "duration_ts" in video and "start_pts" in video:
+            last_duration = int(video["start_pts"]) + int(video["duration_ts"]) - last_pts
+        if last_duration <= 0 and len(packets) > 1:
+            last_duration = last_pts - packets[-2][0]
+        if last_duration <= 0:
+            raise MergeTimingError()
     return MergeClip(
         path, {field: video.get(field) for field in _VIDEO_FORMAT_FIELDS},
         tuple(packet[0] * time_base for packet in packets),
-        (packets[-1][0] + packets[-1][1]) * time_base, audio, "K" in packets[0][2],
+        (last_pts + last_duration) * time_base, audio, "K" in packets[0][2],
     )
 
 
@@ -603,8 +612,13 @@ def _merge_command(
     graph = []
     if manifest is not None:
         command += ["-f", "concat", "-safe", "0", "-i", str(manifest)]
-    if manifest is None or audio:
-        command += [arg for clip in clips for arg in ("-i", str(clip.path))]
+    for clip, offset in zip(clips, offsets):
+        if manifest is None:
+            # FFmpeg 8.0's setpts clears frame durations. Shift input timestamps
+            # so the muxer still has a duration for the final frame.
+            command += ["-itsoffset", _seconds(offset - clip.pts[0]), "-i", str(clip.path)]
+        elif audio:
+            command += ["-i", str(clip.path)]
     if manifest is None:
         width, height, _ = clips[0].geometry
         fit = ""
@@ -618,9 +632,10 @@ def _merge_command(
             fit += f",pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
         elif normalize_color:
             fit = "scale=in_range=auto:out_range=tv,format=yuv420p,"
-        for index, offset in enumerate(offsets):
-            graph.append(f"[{index}:v:0]{fit}settb=1/{MERGE_VIDEO_TIMESCALE},"
-                         f"setpts=PTS-STARTPTS+{round(offset * MERGE_VIDEO_TIMESCALE)}[v{index}]")
+        for index in range(len(clips)):
+            # Interleave uses AVTB and rescales PTS only. Match its clock for
+            # both timestamps and durations before feeding it frames.
+            graph.append(f"[{index}:v:0]{fit}settb=AVTB[v{index}]")
         video_inputs = "".join(f"[v{index}]" for index in range(len(clips)))
         graph.append(f"{video_inputs}interleave=n={len(clips)}[video]")
     if audio:
@@ -632,7 +647,8 @@ def _merge_command(
                 source = f"anullsrc=r={rate}:cl={layout}"
             else:
                 input_index = index + int(manifest is not None)
-                source = (f"[{input_index}:a:0]asetpts=PTS-({_seconds(clip.pts[0])})/TB,"
+                video_start = clip.pts[0] if manifest is not None else offsets[index]
+                source = (f"[{input_index}:a:0]asetpts=PTS-({_seconds(video_start)})/TB,"
                           f"atrim=start=0:end={_seconds(clip.duration)},"
                           f"aresample={rate}:async=1:first_pts=0,"
                           f"aformat=channel_layouts={layout},"
@@ -703,7 +719,7 @@ def _merge_encoded_clips(
                     tolerance += muxer_time_base / 2
                 rounded_offset += Fraction(_seconds(clip.duration))
             else:
-                # The filter clock and the muxer each round to their nearest tick.
+                # A re-encoded clip's input clock and the muxer round to their nearest tick.
                 tolerance = Fraction(1, 2 * MERGE_VIDEO_TIMESCALE) + muxer_time_base / 2
             if any(abs(next(actual_pts) - pts - shift) > tolerance for pts in clip.pts):
                 raise MergeTimingError()

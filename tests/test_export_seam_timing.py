@@ -11,20 +11,39 @@ from engine.python.basketball_engine.adapters import export
 from tests.test_export_adapter import _ffmpeg_or_skip, _fps_source
 
 
-def _packets(path):
+def _packet_pts(path):
     _, ffprobe = _ffmpeg_or_skip()
     data = json.loads(subprocess.check_output([
         ffprobe, '-v', 'error', '-select_streams', 'v:0',
-        '-show_entries', 'stream=time_base:packet=pts,duration,flags', '-of', 'json', str(path),
+        '-show_entries', 'stream=time_base:packet=pts,flags', '-of', 'json', str(path),
     ]))
     base = Fraction(data['streams'][0]['time_base'])
-    return sorted((int(packet['pts']) * base, int(packet['duration']) * base)
+    return sorted(int(packet['pts']) * base
                   for packet in data['packets'] if 'D' not in packet['flags'])
 
 
 def _candidate(path, fps):
     return dict(source_path=str(path), review_start_ms=0, review_end_ms=2000,
                 event_time_ms=1000, fps=fps, has_audio=True)
+
+
+@pytest.mark.parametrize('stream_end, expected_end', [(280, 280), (250, 290)])
+def test_merge_probe_recovers_missing_last_duration(tmp_path, monkeypatch, stream_end, expected_end):
+    data = {
+        'streams': [{'index': 0, 'codec_type': 'video', 'time_base': '1/1000',
+                     'start_pts': 100, 'duration_ts': stream_end - 100}],
+        'packets': [
+            {'stream_index': 0, 'pts': 90, 'flags': 'KD_'},
+            {'stream_index': 0, 'pts': 100, 'flags': 'K__'},
+            {'stream_index': 0, 'pts': 250, 'flags': '___'},
+            {'stream_index': 0, 'pts': 140, 'duration': 70, 'flags': '___'},
+            {'stream_index': 0, 'pts': 210, 'duration': 40, 'flags': '___'},
+        ],
+    }
+    monkeypatch.setattr(export, '_run_export_probe', lambda *args, **kwargs: json.dumps(data))
+    clip = export._probe_merge_clip(tmp_path / 'clip.mp4')
+    assert clip.pts == tuple(Fraction(pts, 1000) for pts in (100, 140, 210, 250))
+    assert clip.end == Fraction(expected_end, 1000)
 
 
 def test_merge_uses_video_end_at_seam_with_longer_audio(tmp_path):
@@ -36,10 +55,10 @@ def test_merge_uses_video_end_at_seam_with_longer_audio(tmp_path):
             '-f', 'lavfi', '-i', 'sine=r=48000:d=2', '-c:v', 'libx264', '-c:a', 'aac', str(path),
         ], check=True)
     result = export.export_goal_clips([_candidate(path, 30) for path in paths], tmp_path / 'out', 'merge')
-    packets = _packets(result['files'][0])
-    assert len(packets) == 113
+    pts = _packet_pts(result['files'][0])
+    assert len(pts) == 113
     assert all(abs(right - left - Fraction(1, 30)) < Fraction(1, 60000)
-               for (left, _), (right, _) in zip(packets, packets[1:]))
+               for left, right in zip(pts, pts[1:]))
 
 
 @pytest.mark.parametrize('rates,expected_counts', [
@@ -50,10 +69,13 @@ def test_merge_frame_rate_preserves_high_rate_clips(tmp_path, rates, expected_co
     candidates = [_candidate(_fps_source(tmp_path, f'source{index}', rate, 60000), float(Fraction(rate)))
                   for index, rate in enumerate(rates)]
     result = export.export_goal_clips(candidates, tmp_path / 'out', 'merge')
-    assert tuple(len(_packets(path)) for path in result['clip_files']) == expected_counts
+    assert tuple(len(_packet_pts(path)) for path in result['clip_files']) == expected_counts
     if rates[0] != '30':
-        packets = _packets(result['files'][0])
-        assert {duration for _, duration in packets} >= {Fraction(1, 60), Fraction(1001, 60000)}
+        pts = _packet_pts(result['files'][0])
+        first_clip_intervals = [right - left for left, right in zip(pts[:120], pts[1:121])]
+        final_clip_intervals = [right - left for left, right in zip(pts[120:], pts[121:])]
+        assert first_clip_intervals == [Fraction(1001, 60000)] * 120
+        assert final_clip_intervals == [Fraction(1, 60)] * 119
 
 
 @pytest.mark.parametrize('ratios', [('1/1', '4/3'), ('4/3', '1/1')])
@@ -75,7 +97,7 @@ def test_merge_preserves_display_geometry_across_different_sample_aspect_ratios(
         '-show_entries', 'stream=width,height,sample_aspect_ratio', '-of', 'json', output,
     ]))
     assert info['streams'] == [{'width': 160, 'height': 90, 'sample_aspect_ratio': '1:1'}]
-    assert len(_packets(output)) == 120
+    assert len(_packet_pts(output)) == 120
     for index, ratio in enumerate(ratios):
         pixels = subprocess.check_output([
             ffmpeg, '-v', 'error', '-ss', str(.5 + 2 * index), '-i', output,
@@ -99,10 +121,10 @@ def test_many_fractional_clips_keep_all_video_packets(tmp_path):
     part = _fractional_part(tmp_path)
     output = tmp_path / 'merged.mp4'
     export._merge_encoded_clips([part] * 90, output, ['libx264'], False, None, None)
-    packets = _packets(output)
-    assert len(packets) == 90 * 31
+    pts = _packet_pts(output)
+    assert len(pts) == 90 * 31
     assert all(abs(right - left - Fraction(1001, 30000)) <= Fraction(1, 60000)
-               for (left, _), (right, _) in zip(packets, packets[1:]))
+               for left, right in zip(pts, pts[1:]))
 
 
 def test_invalid_copy_is_encoded_with_the_same_timeline(tmp_path, monkeypatch):
@@ -128,7 +150,7 @@ def test_invalid_copy_is_encoded_with_the_same_timeline(tmp_path, monkeypatch):
     monkeypatch.setattr(export, '_probe_merge_clip', corrupt_copy_metadata)
     export._merge_encoded_clips([part] * 2, output, ['libx264'], False, None, None)
     assert attempts == ['copy', 'libx264']
-    assert len(_packets(output)) == 62
+    assert len(_packet_pts(output)) == 62
 
 
 def test_cancel_interrupts_running_packet_probe(tmp_path, monkeypatch):

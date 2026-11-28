@@ -195,8 +195,9 @@ def test_real_mixed_ranges_are_normalized(monkeypatch, tmp_path, reverse):
     assert not export._compatible_color_streams([Path(p) for p in result['clip_files']])
     output = result['files'][0]
     metadata = json.loads(run([ffprobe, '-v', 'error', '-select_streams', 'v:0',
-        '-show_entries', 'stream=color_range,color_space,color_transfer,color_primaries',
+        '-show_entries', 'stream=color_range,color_space,color_transfer,color_primaries,duration',
         '-of', 'json', output]).stdout)['streams'][0]
+    assert Fraction(metadata.pop('duration')) == 2
     assert metadata == {'color_range': 'tv', 'color_space': 'bt709',
                         'color_transfer': 'bt709', 'color_primaries': 'bt709'}
     def levels(at):
