@@ -62,6 +62,58 @@ function Save-WindowsVcRedistributable([string]$Uri, [string]$OutFile, [int]$Tim
     }
 }
 
+function Export-WindowsVcBurnContainer([string]$Installer, [string]$Cabinet) {
+    $reader = [IO.BinaryReader]::new([IO.File]::OpenRead($Installer))
+    try {
+        $reader.BaseStream.Position = 0x3c
+        $peOffset = $reader.ReadUInt32()
+        $reader.BaseStream.Position = $peOffset
+        if ($reader.ReadUInt32() -ne 0x4550) { throw 'Invalid redistributable PE signature.' }
+        $reader.BaseStream.Position = $peOffset + 6
+        $sectionCount = $reader.ReadUInt16()
+        $reader.BaseStream.Position = $peOffset + 20
+        $sectionTable = $peOffset + 24 + $reader.ReadUInt16()
+        for ($i = 0; $i -lt $sectionCount; $i++) {
+            $section = $sectionTable + 40 * $i
+            $reader.BaseStream.Position = $section
+            if ([Text.Encoding]::ASCII.GetString($reader.ReadBytes(8)) -ne '.wixburn') { continue }
+            $reader.BaseStream.Position = $section + 20
+            $reader.BaseStream.Position = $reader.ReadUInt32()
+            if ($reader.ReadUInt32() -ne 0x00f14300 -or $reader.ReadUInt32() -ne 2) {
+                throw 'Unsupported WiX Burn header.'
+            }
+
+            # WiX Burn v2 stores the stub, original signature and CAB sizes in .wixburn.
+            $reader.BaseStream.Position += 16
+            $stubSize = $reader.ReadUInt32()
+            $reader.BaseStream.Position += 4
+            $signatureOffset = $reader.ReadUInt32()
+            $signatureSize = $reader.ReadUInt32()
+            if ($reader.ReadUInt32() -ne 1 -or $reader.ReadUInt32() -ne 2) {
+                throw 'Expected a WiX Burn bundle with a UX cabinet and one attached cabinet.'
+            }
+            $uxSize = $reader.ReadUInt32()
+            $attachedSize = $reader.ReadUInt32()
+            $reader.BaseStream.Position = if ($signatureOffset) { $signatureOffset + $signatureSize } else { $stubSize + $uxSize }
+            $attached = $reader.ReadBytes($attachedSize)
+            if ($attached.Length -ne $attachedSize -or $attached.Length -lt 4 -or
+                [Text.Encoding]::ASCII.GetString($attached, 0, 4) -ne 'MSCF') {
+                throw 'Invalid attached WiX Burn cabinet.'
+            }
+            [IO.File]::WriteAllBytes($Cabinet, $attached)
+            return
+        }
+        throw 'Redistributable is missing its .wixburn section.'
+    } finally {
+        $reader.Dispose()
+    }
+}
+
+function Expand-WindowsVcCabinet([string]$Cabinet, [string]$Directory) {
+    & (Join-Path $env:SystemRoot 'System32/expand.exe') $Cabinet '-F:*' $Directory | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Cabinet extraction failed for $Cabinet (exit $LASTEXITCODE)." }
+}
+
 function Get-PinnedWindowsVcRuntime([string]$Workspace) {
     # Microsoft Visual C++ v14 x64 Redistributable, 14.52.37029.0.
     $uri = 'https://download.visualstudio.microsoft.com/download/pr/78d061c5-9ef3-42ab-98ed-3309d1095dc4/9C02C9ED120F671B900E6B9471D890E3B2414117A7E53F4AE2E855466FA2B7C9/VC_redist.x64.exe'
@@ -71,27 +123,41 @@ function Get-PinnedWindowsVcRuntime([string]$Workspace) {
         throw 'Microsoft VC_redist.x64.exe SHA-256 mismatch.'
     }
 
-    # Layout copies the installer payloads without installing the system runtime.
     $layout = Join-Path $Workspace 'layout'
     $payload = Join-Path $Workspace 'payload'
     [void](New-Item -ItemType Directory -Path $layout, $payload)
-    $layoutProcess = Start-Process -FilePath $installer -WorkingDirectory $layout -Wait -PassThru `
-        -ArgumentList @('/layout', ('"{0}"' -f $layout), '/quiet', '/norestart')
-    if ($layoutProcess.ExitCode -ne 0) { throw "Microsoft VC redistributable layout failed (exit $($layoutProcess.ExitCode))." }
+    try {
+        # Expand the verified bundle's container directly. Burn's payloads may have opaque names.
+        $bundle = Join-Path $Workspace 'attached.cab'
+        Export-WindowsVcBurnContainer -Installer $installer -Cabinet $bundle
+        Expand-WindowsVcCabinet -Cabinet $bundle -Directory $layout
+        $cabinetHash = '596629040fda9c7eb2b15d809199bf691e7a61d12e8e400f2e94e3871866e9a3'
+        $cabinets = @(Get-ChildItem -LiteralPath $layout -Recurse -Force -File | Where-Object {
+            (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash -eq $cabinetHash
+        })
+        if ($cabinets.Count -ne 1) {
+            throw "Expected one SHA-256 match for the Microsoft x64 minimum-runtime cabinet, found $($cabinets.Count)."
+        }
+        $cabinet = Join-Path $Workspace 'x64-runtime.cab'
+        Copy-Item -LiteralPath $cabinets[0].FullName -Destination $cabinet
+        Expand-WindowsVcCabinet -Cabinet $cabinet -Directory $payload
 
-    # The pinned bundle's x64 minimum-runtime cabinet also contains vcomp140.dll.
-    $cabinet = Join-Path $layout 'packages/vcRuntimeMinimum_amd64/cab1.cab'
-    if ((Get-FileHash -LiteralPath $cabinet -Algorithm SHA256).Hash -ne '596629040fda9c7eb2b15d809199bf691e7a61d12e8e400f2e94e3871866e9a3') {
-        throw 'Microsoft x64 minimum-runtime cabinet SHA-256 mismatch.'
+        $files = @{}
+        foreach ($file in (Get-ChildItem -LiteralPath $payload -File -Filter '*.dll_amd64')) {
+            $files[($file.Name -replace '_amd64$', '')] = $file.FullName
+        }
+        if (-not ($files.ContainsKey('vcruntime140.dll') -and $files.ContainsKey('msvcp140.dll'))) {
+            throw 'The verified runtime cabinet did not extract vcruntime140.dll and msvcp140.dll.'
+        }
+        return $files
+    } catch {
+        Write-Host "Microsoft redistributable extraction tree ($Workspace):"
+        Get-ChildItem -LiteralPath $Workspace -Recurse -Force | ForEach-Object {
+            $entry = $_.FullName.Substring($Workspace.Length + 1)
+            if ($_.PSIsContainer) { Write-Host "  $entry/" } else { Write-Host "  $entry ($($_.Length) bytes)" }
+        }
+        throw
     }
-    & (Join-Path $env:SystemRoot 'System32/expand.exe') $cabinet '-F:*' $payload | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "Microsoft x64 runtime cabinet extraction failed (exit $LASTEXITCODE)." }
-
-    $files = @{}
-    foreach ($file in (Get-ChildItem -LiteralPath $payload -File -Filter '*.dll_amd64')) {
-        $files[($file.Name -replace '_amd64$', '')] = $file.FullName
-    }
-    return $files
 }
 
 function Install-WindowsVcRuntime([string]$CompilerPath, [string]$AppDir, [string]$PythonDir) {

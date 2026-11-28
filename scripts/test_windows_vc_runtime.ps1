@@ -69,7 +69,7 @@ try {
             throw $exception
         }
         function Start-Sleep($Seconds) {}
-        function Start-Process { throw 'The unverified installer was launched.' }
+        function Export-WindowsVcBurnContainer { throw 'The unverified installer was read.' }
         $scenarios = @(
             @{ Status = @(503, 429, 200); Error = '*SHA-256 mismatch*' },
             @{ Status = @(429, 503, 429); Error = '*after 3 attempts*HTTP 429*' },
