@@ -9,6 +9,26 @@ permissions:
   contents: read
 
 jobs:
+  windows-vc-runtime:
+    name: Windows VC runtime packaging
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test the pinned Microsoft redistributable with native Windows tools
+        shell: powershell
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          # Match the v143 toolset used by the windows-2022 release job.
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.14.44.17.14.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $vs) { throw 'Visual Studio with the MSVC 14.44 toolset was not found.' }
+          $toolset = Get-ChildItem -LiteralPath (Join-Path $vs 'VC/Tools/MSVC') -Directory -Filter '14.44.*' |
+            Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (-not $toolset) { throw 'The MSVC 14.44 toolset directory was not found.' }
+          $compiler = Join-Path $toolset.FullName 'bin/Hostx64/x64/cl.exe'
+          $fixtureExe = (Get-Command python.exe -CommandType Application).Source
+          ./scripts/test_windows_vc_runtime_native.ps1 -CompilerPath $compiler -FixtureExe $fixtureExe
+
   windows-updater:
     runs-on: windows-latest
     steps:
