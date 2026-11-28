@@ -58,9 +58,9 @@ def test_same_audio_uses_video_stream_copy(tmp_path, monkeypatch):
 def test_bad_merged_packets_do_not_replace_existing_target(tmp_path, monkeypatch):
     destination = tmp_path / 'highlights.mp4'
     destination.write_bytes(b'previous')
-    def probe(path):
+    def probe(path, **kwargs):
         points = (Fraction(0),) if path.name.startswith('goal_') else (Fraction(0), Fraction(1, 2))
-        return export.MergeClip(path, ('mpeg4',), points, Fraction(1), None, True)
+        return export.MergeClip(path, {'codec_name': 'mpeg4', 'time_base': '1/60000'}, points, Fraction(1), None, True)
     monkeypatch.setattr(export, '_probe_merge_clip', probe)
     def fake(command, output_path, **kwargs):
         if 'validate_output' in kwargs:

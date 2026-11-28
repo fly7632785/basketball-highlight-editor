@@ -95,11 +95,11 @@ def test_capability_check_cached_and_missing_filter_is_safe(monkeypatch):
 
 
 def test_mixed_incompatible_streams_force_reencode_without_second_tonemap(monkeypatch,tmp_path):
-    monkeypatch.setattr(export, '_probe_merge_clip', lambda path: export.MergeClip(
-        path, ('mpeg4',), (Fraction(0),), Fraction(1), None, False,
+    monkeypatch.setattr(export, '_probe_merge_clip', lambda path, **kwargs: export.MergeClip(
+        path, {'codec_name': 'mpeg4', 'time_base': '1/60000'}, (Fraction(0),), Fraction(1), None, False,
     ))
     calls=[]
-    monkeypatch.setattr(export, '_compatible_color_streams', lambda paths: False)
+    monkeypatch.setattr(export, '_compatible_color_streams', lambda paths, **kwargs: False)
     monkeypatch.setattr(export, 'video_codecs', lambda: ['mpeg4'])
     def run(command, output_path, **kwargs):
         calls.append(command);output_path.parent.mkdir(parents=True,exist_ok=True);output_path.write_bytes(b'fake')

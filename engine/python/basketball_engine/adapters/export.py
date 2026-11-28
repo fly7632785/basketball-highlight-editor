@@ -468,12 +468,55 @@ def _frame_rate_text(fps: float) -> str:
     return f"{ratio.numerator}/{ratio.denominator}"
 
 
-def _source_frame_rate(path: Path) -> float:
-    stream = subprocess.run(
+def _check_export_cancelled(cancel_check) -> None:
+    if cancel_check and cancel_check():
+        raise PipelineCancelled("JOB_CANCELLED")
+
+
+def _run_export_probe(command: list[str], timeout: int, cancel_check=None, process_callback=None) -> str:
+    options = dict(stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace")
+    if cancel_check is None and process_callback is None:
+        return subprocess.run(command, check=True, capture_output=True, timeout=timeout, **options).stdout
+
+    _check_export_cancelled(cancel_check)
+    if os.name == "nt":
+        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+    else:
+        options["start_new_session"] = True
+    deadline = time.monotonic() + timeout
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options) as process:
+        try:
+            if process_callback:
+                process_callback(process)
+            while True:
+                _check_export_cancelled(cancel_check)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.05, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            _check_export_cancelled(cancel_check)
+            if process.returncode:
+                raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
+            return stdout
+        finally:
+            try:
+                if process.poll() is None:
+                    terminate_process(process)
+            finally:
+                if process_callback:
+                    process_callback(None)
+
+
+def _source_frame_rate(path: Path, **probe_options) -> float:
+    stream = _run_export_probe(
         [resolve_media_tool("ffprobe"), "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=r_frame_rate", "-of", "default=nw=1:nk=1", str(path)],
-        check=True, capture_output=True, text=True, timeout=15,
-    ).stdout.strip()
+        timeout=15, **probe_options,
+    ).strip()
     return float(Fraction(stream))
 
 
@@ -495,7 +538,7 @@ _VIDEO_FORMAT_FIELDS = (
 @dataclass(frozen=True)
 class MergeClip:
     path: Path
-    video_format: tuple
+    video_format: dict
     pts: tuple[Fraction, ...]
     end: Fraction
     audio: dict | None
@@ -505,19 +548,32 @@ class MergeClip:
     def duration(self) -> Fraction:
         return self.end - self.pts[0]
 
+    @property
+    def geometry(self) -> tuple:
+        return tuple(self.video_format.get(field) for field in ("width", "height", "sample_aspect_ratio"))
 
-def _probe_merge_clip(path: Path) -> MergeClip:
-    result = subprocess.run(
+    @property
+    def time_base(self) -> Fraction:
+        return Fraction(self.video_format["time_base"])
+
+
+class MergeTimingError(OSError):
+    def __init__(self) -> None:
+        super().__init__("合并成品流或时长校验失败")
+
+
+def _probe_merge_clip(path: Path, **probe_options) -> MergeClip:
+    result = _run_export_probe(
         [resolve_media_tool("ffprobe"), "-v", "error", "-show_data_hash", "sha256",
          "-show_entries", "stream=index,codec_type,start_time,duration,sample_rate,channel_layout,"
          + ",".join(_VIDEO_FORMAT_FIELDS) + ":packet=stream_index,pts,duration,flags",
          "-of", "json", str(path)],
-        check=True, capture_output=True, text=True, timeout=60,
+        timeout=60, **probe_options,
     )
-    data = json.loads(result.stdout)
+    data = json.loads(result)
     video = next((stream for stream in data["streams"] if stream["codec_type"] == "video"), None)
     if video is None:
-        raise OSError("合并成品流或时长校验失败")
+        raise MergeTimingError()
     audio = next((stream for stream in data["streams"] if stream["codec_type"] == "audio"), None)
     time_base = Fraction(video["time_base"])
     packets = sorted(
@@ -527,9 +583,9 @@ def _probe_merge_clip(path: Path) -> MergeClip:
     )
     if (not packets or packets[-1][1] <= 0
             or any(right[0] <= left[0] for left, right in zip(packets, packets[1:]))):
-        raise OSError("合并成品流或时长校验失败")
+        raise MergeTimingError()
     return MergeClip(
-        path, tuple(video.get(field) for field in _VIDEO_FORMAT_FIELDS),
+        path, {field: video.get(field) for field in _VIDEO_FORMAT_FIELDS},
         tuple(packet[0] * time_base for packet in packets),
         (packets[-1][0] + packets[-1][1]) * time_base, audio, "K" in packets[0][2],
     )
@@ -550,9 +606,20 @@ def _merge_command(
     if manifest is None or audio:
         command += [arg for clip in clips for arg in ("-i", str(clip.path))]
     if manifest is None:
+        width, height, _ = clips[0].geometry
+        fit = ""
+        if any(clip.geometry != clips[0].geometry for clip in clips[1:]):
+            # Fit the displayed shape into the common canvas before declaring
+            # square pixels. Replacing only SAR would stretch anamorphic media.
+            fit = (f"scale=w='max(2,2*round(min({width},{height}*dar)/2))':"
+                   f"h='max(2,2*round(min({height},{width}/dar)/2))'")
+            if normalize_color:
+                fit += ":in_range=auto:out_range=tv,format=yuv420p"
+            fit += f",pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
+        elif normalize_color:
+            fit = "scale=in_range=auto:out_range=tv,format=yuv420p,"
         for index, offset in enumerate(offsets):
-            color = "scale=in_range=auto:out_range=tv,format=yuv420p," if normalize_color else ""
-            graph.append(f"[{index}:v:0]{color}settb=1/{MERGE_VIDEO_TIMESCALE},"
+            graph.append(f"[{index}:v:0]{fit}settb=1/{MERGE_VIDEO_TIMESCALE},"
                          f"setpts=PTS-STARTPTS+{round(offset * MERGE_VIDEO_TIMESCALE)}[v{index}]")
         video_inputs = "".join(f"[v{index}]" for index in range(len(clips)))
         graph.append(f"{video_inputs}interleave=n={len(clips)}[video]")
@@ -594,7 +661,8 @@ def _merge_encoded_clips(
     files: list[Path], output: Path, codecs: list[str], normalize_color: bool,
     cancel_check, process_callback,
 ) -> Fraction:
-    clips = [_probe_merge_clip(path) for path in files]
+    probe_options = dict(cancel_check=cancel_check, process_callback=process_callback)
+    clips = [_probe_merge_clip(path, **probe_options) for path in files]
     offsets = []
     end = Fraction(0)
     for clip in clips:
@@ -610,21 +678,36 @@ def _merge_encoded_clips(
         clip.starts_with_keyframe and clip.video_format == clips[0].video_format for clip in clips
     )
 
-    def validate(path: Path) -> None:
-        finished = _probe_merge_clip(path)
-        expected = [pts - clip.pts[0] + offset
-                    for clip, offset in zip(clips, offsets) for pts in clip.pts]
-        tick = Fraction(1, MERGE_VIDEO_TIMESCALE)
+    def validate(path: Path, copied: bool = False) -> None:
+        finished = _probe_merge_clip(path, **probe_options)
         audio_tolerance = Fraction(1024, audio[0]) if audio else 0
-        if (len(finished.pts) != len(expected)
-                or any(abs(actual - target) > tick for actual, target in zip(finished.pts, expected))
+        if (len(finished.pts) != sum(len(clip.pts) for clip in clips)
                 or abs(finished.end - end) > clips[-1].end - clips[-1].pts[-1]
                 or (audio and (finished.audio is None
                                or abs(Fraction(finished.audio["start_time"])) > audio_tolerance
                                or abs(Fraction(finished.audio["duration"]) - end) > audio_tolerance))):
-            raise OSError("合并成品流或时长校验失败")
+            raise MergeTimingError()
 
-    kwargs = dict(cancel_check=cancel_check, process_callback=process_callback, validate_output=validate)
+        rounded_offset = Fraction(0)
+        actual_pts = iter(finished.pts)
+        muxer_time_base = finished.time_base
+        for clip, offset in zip(clips, offsets):
+            _check_export_cancelled(cancel_check)
+            shift = offset - clip.pts[0]
+            if copied:
+                # FFconcat sums the microsecond duration literals, subtracts
+                # the rounded inpoint and then rescales to the packet clock.
+                manifest_shift = rounded_offset - Fraction(_seconds(clip.pts[0]))
+                tolerance = abs(manifest_shift - shift) + clip.time_base / 2
+                if clip.time_base != muxer_time_base:
+                    tolerance += muxer_time_base / 2
+                rounded_offset += Fraction(_seconds(clip.duration))
+            else:
+                # The filter clock and the muxer each round to their nearest tick.
+                tolerance = Fraction(1, 2 * MERGE_VIDEO_TIMESCALE) + muxer_time_base / 2
+            if any(abs(next(actual_pts) - pts - shift) > tolerance for pts in clip.pts):
+                raise MergeTimingError()
+
     if copy_video:
         manifest = output.parent / f".bhe-concat-{uuid4().hex}.txt"
         try:
@@ -634,18 +717,24 @@ def _merge_encoded_clips(
                 "".join(concat_manifest_entry(clip.path) + f"inpoint {_seconds(clip.pts[0])}\n"
                         f"duration {_seconds(clip.duration)}\n" for clip in clips), encoding="utf-8",
             )
-            run_atomic_ffmpeg(_merge_command(clips, offsets, output, manifest, audio, False, None), output, **kwargs)
+            run_atomic_ffmpeg(
+                _merge_command(clips, offsets, output, manifest, audio, False, None), output,
+                validate_output=lambda path: validate(path, copied=True), **probe_options,
+            )
+        except MergeTimingError as exc:
+            log_diagnostic(f"merge copy failed timing validation, re-encoding: {exc}")
+        else:
+            return end
         finally:
             manifest.unlink(missing_ok=True)
-    else:
-        run_encoded_ffmpeg(
-            lambda codec: _merge_command(clips, offsets, output, None, audio, normalize_color, codec),
-            output, codecs, **kwargs,
-        )
+    run_encoded_ffmpeg(
+        lambda codec: _merge_command(clips, offsets, output, None, audio, normalize_color, codec),
+        output, codecs, validate_output=validate, **probe_options,
+    )
     return end
 
 
-def validate_media_file(path: Path) -> None:
+def validate_media_file(path: Path, **probe_options) -> None:
     if not path.is_file() or path.stat().st_size <= 0:
         raise OSError(f"导出文件为空: {path}")
     command = [
@@ -655,17 +744,14 @@ def validate_media_file(path: Path) -> None:
     ]
     for attempt, timeout in enumerate((15, 60)):
         try:
-            result = subprocess.run(
-                command, check=True, capture_output=True, stdin=subprocess.DEVNULL,
-                text=True, encoding="utf-8", errors="replace", timeout=timeout,
-            )
+            result = _run_export_probe(command, timeout, **probe_options)
             break
         except subprocess.TimeoutExpired:
             if attempt:
                 raise
             log_diagnostic("export validation ffprobe timed out after 15s; retrying once (60s)")
     try:
-        duration = float(result.stdout.strip())
+        duration = float(result.strip())
     except ValueError as exc:
         raise OSError(f"导出文件时长无效: {path}") from exc
     if duration <= 0:
@@ -691,6 +777,7 @@ def run_atomic_ffmpeg(
     # 临时文件名之外再显式指定封装格式，双保险。
     atomic_command = [*command[:-1], "-f", CONTAINER_BY_SUFFIX[suffix], str(temporary)]
     try:
+        _check_export_cancelled(cancel_check)
         popen_kwargs = {
             "stdin": subprocess.DEVNULL,
             "stderr": subprocess.PIPE,
@@ -723,8 +810,7 @@ def run_atomic_ffmpeg(
                     terminate_process(process)
                     raise PipelineCancelled("JOB_CANCELLED")
                 time.sleep(0.05)
-            if cancel_check and cancel_check():
-                raise PipelineCancelled("JOB_CANCELLED")
+            _check_export_cancelled(cancel_check)
             if process.returncode != 0:
                 if reader is not None:
                     reader.join(timeout=2)
@@ -738,9 +824,10 @@ def run_atomic_ffmpeg(
                 process_callback(None)
             if stderr_stream is not None:
                 stderr_stream.close()
-        validate_media_file(temporary)
+        validate_media_file(temporary, cancel_check=cancel_check, process_callback=process_callback)
         if validate_output:
             validate_output(temporary)
+        _check_export_cancelled(cancel_check)
         temporary.replace(output_path)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         log_failed_command("media command failed", atomic_command, getattr(exc, "returncode", None))
@@ -787,18 +874,18 @@ def merge_overlapping_candidates(candidates, *, keep_portrait_events=False):
     return merged
 
 
-def _compatible_color_streams(paths: list[Path]) -> bool:
+def _compatible_color_streams(paths: list[Path], **probe_options) -> bool:
     """Mixed-source concat must not stream-copy incompatible color streams."""
     streams = []
     try:
         for path in paths:
-            result = subprocess.run(
+            result = _run_export_probe(
                 [resolve_media_tool("ffprobe"), "-v", "error", "-select_streams", "v:0",
                  "-show_entries", "stream=codec_name,pix_fmt,width,height,color_space,color_transfer,color_primaries,color_range",
                  "-of", "json", str(path)],
-                check=True, capture_output=True, text=True, timeout=15,
+                timeout=15, **probe_options,
             )
-            stream = json.loads(result.stdout)["streams"][0]
+            stream = json.loads(result)["streams"][0]
             fields = ("codec_name", "pix_fmt", "width", "height", "color_space", "color_transfer", "color_primaries", "color_range")
             values = tuple(stream.get(field) for field in fields)
             if any(value in (None, "unknown", "unspecified") for value in values):
@@ -833,6 +920,7 @@ def export_goal_clips(
         merged_overlap_count = len(candidates) - len(merged)
         candidates = merged
     started = time.perf_counter()
+    probe_options = dict(cancel_check=cancel_check, process_callback=process_callback)
     output_dir.mkdir(parents=True, exist_ok=True)
     files: list[Path] = []
     created_files: list[Path] = []
@@ -855,7 +943,7 @@ def export_goal_clips(
             if candidate.get("fps"):
                 source_rates[path] = candidate["fps"]
         for path in {candidate["source_path"] for candidate in candidates} - source_rates.keys():
-            source_rates[path] = _source_frame_rate(Path(path))
+            source_rates[path] = _source_frame_rate(Path(path), **probe_options)
         candidates = [{**candidate, "fps": source_rates[candidate["source_path"]]} for candidate in candidates]
     else:
         source_rates = {}
@@ -910,7 +998,7 @@ def export_goal_clips(
             mixed_color = any(c.get("tonemap") for c in candidates) and any(
                 not c.get("tonemap") for c in candidates
             )
-            normalize_color = mixed_color and not _compatible_color_streams(files)
+            normalize_color = mixed_color and not _compatible_color_streams(files, **probe_options)
             duration = _merge_encoded_clips(files, merged_path, codecs, normalize_color, cancel_check, process_callback)
             total_ms = round(duration * 1000)
             if not merged_existed:

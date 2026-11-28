@@ -38,8 +38,8 @@ def test_clip_command_rejects_invalid_range():
 
 @pytest.mark.parametrize("mode", ["separate", "merge"])
 def test_export_without_h264_encoders_falls_back_for_clips_and_merge(tmp_path, monkeypatch, mode):
-    monkeypatch.setattr(export, '_probe_merge_clip', lambda path: export.MergeClip(
-        path, ('mpeg4',), (Fraction(0),), Fraction(1), None, False,
+    monkeypatch.setattr(export, '_probe_merge_clip', lambda path, **kwargs: export.MergeClip(
+        path, {'codec_name': 'mpeg4', 'time_base': '1/60000'}, (Fraction(0),), Fraction(1), None, False,
     ))
     monkeypatch.setattr(export.platform, "system", lambda: "Linux")
     attempts = []
@@ -82,8 +82,8 @@ def test_hardware_encoders_get_a_bitrate():
 
 @pytest.mark.parametrize("mode", ["separate", "merge"])
 def test_windows_tries_gpu_encoders_and_keeps_the_one_that_works(tmp_path, monkeypatch, mode):
-    monkeypatch.setattr(export, '_probe_merge_clip', lambda path: export.MergeClip(
-        path, ('mpeg4',), (Fraction(0),), Fraction(1), None, False,
+    monkeypatch.setattr(export, '_probe_merge_clip', lambda path, **kwargs: export.MergeClip(
+        path, {'codec_name': 'mpeg4', 'time_base': '1/60000'}, (Fraction(0),), Fraction(1), None, False,
     ))
     monkeypatch.setattr(export.platform, "system", lambda: "Windows")
     attempts = []
@@ -264,7 +264,7 @@ def test_run_atomic_ffmpeg_stops_running_process_when_cancelled(tmp_path: Path, 
         run_atomic_ffmpeg(
             ["ffmpeg", "-y", str(output)],
             output,
-            cancel_check=lambda: True,
+            cancel_check=lambda: bool(processes),
             process_callback=callbacks.append,
         )
 
@@ -438,8 +438,8 @@ def test_validate_output_file_rejects_a_directory_target(tmp_path: Path):
 
 
 def test_merge_writes_mp4_when_the_saved_name_has_no_extension(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(export, '_probe_merge_clip', lambda path: export.MergeClip(
-        path, ('mpeg4',), (Fraction(0),), Fraction(1), None, True,
+    monkeypatch.setattr(export, '_probe_merge_clip', lambda path, **kwargs: export.MergeClip(
+        path, {'codec_name': 'mpeg4', 'time_base': '1/60000'}, (Fraction(0),), Fraction(1), None, True,
     ))
     def fake_ffmpeg(command, output_path, **kwargs):
         output_path.parent.mkdir(parents=True, exist_ok=True)

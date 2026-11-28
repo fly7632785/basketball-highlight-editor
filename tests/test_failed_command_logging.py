@@ -42,7 +42,7 @@ def test_analysis_failure_records_argv_and_stage(tmp_path, capsys):
 
 
 def test_success_does_not_log_argv(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(export, 'validate_media_file', lambda _: None)
+    monkeypatch.setattr(export, 'validate_media_file', lambda _, **kwargs: None)
     output = tmp_path / 'out.mp4'
     export.run_atomic_ffmpeg([
         sys.executable, '-c', "import sys; from pathlib import Path; Path(sys.argv[-1]).write_bytes(b'video')",
