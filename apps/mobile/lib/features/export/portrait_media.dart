@@ -36,6 +36,7 @@ extension NativePortraitExport on NativeMediaExportEngine {
     required VideoInfo video,
     required List<Candidate> candidates,
     required String outputDirectory,
+    Roi? rim,
     String projectName = 'Project',
     String? mergedPath,
     int? batchGroup,
@@ -125,7 +126,7 @@ extension NativePortraitExport on NativeMediaExportEngine {
           eventMs: candidate.eventMs,
         );
         _checkPortraitCancelled(run);
-        final plan = _decodePortraitTrack(raw, candidate);
+        final plan = _decodePortraitTrack(raw, candidate, rim);
         yield PortraitExportProgress(
           progress: (clipStep + 2) / steps,
           step: PortraitExportStep.render,
@@ -317,6 +318,7 @@ void _checkPortraitCancelled(_ExportRun run) {
 PortraitPlan _decodePortraitTrack(
   Map<String, Object?>? raw,
   Candidate candidate,
+  Roi? rim,
 ) {
   if (raw == null ||
       raw['frameWidth'] is! int ||
@@ -339,6 +341,8 @@ PortraitPlan _decodePortraitTrack(
     frameHeight: raw['frameHeight'] as int,
     startMs: candidate.startMs,
     endMs: candidate.endMs,
+    eventMs: candidate.reason == 'manual' ? null : candidate.eventMs,
+    eventRim: rim,
     samples: [
       for (final sample in raw['samples'] as List)
         PortraitTrackSample(

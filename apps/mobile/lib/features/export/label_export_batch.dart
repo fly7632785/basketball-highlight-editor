@@ -69,6 +69,7 @@ extension MobileLabelExport on MobileAppState {
               ? _portraitEngine.exportPortrait(
                   video: project.video!,
                   candidates: ordered,
+                  rim: project.rimRoi,
                   outputDirectory: batch.path,
                   mergedPath: path,
                   batchGroup: index + 1,

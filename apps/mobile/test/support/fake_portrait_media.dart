@@ -15,6 +15,7 @@ class FakePortraitMedia {
   int? failAtMs;
   String? failMergeGroup;
   bool? isHdr = false;
+  List<Map<String, Object>>? portraitSamples;
 
   void install() => TestDefaultBinaryMessengerBinding
       .instance
@@ -49,19 +50,27 @@ class FakePortraitMedia {
         return {
           'frameWidth': 1920,
           'frameHeight': 1080,
-          'samples': [
-            for (var t = start; t < end; t += 100)
-              {
-                'tMs': t,
-                'balls': [
-                  if (start != 1000)
-                    {'cx': 1100.0, 'cy': 460.0, 'w': 22, 'h': 22, 'conf': .9},
-                ],
-                'rims': [
-                  {'cx': 1200, 'cy': 460, 'w': 70, 'h': 30, 'conf': .9},
-                ],
-              },
-          ],
+          'samples':
+              portraitSamples ??
+              [
+                for (var t = start; t < end; t += 100)
+                  {
+                    'tMs': t,
+                    'balls': [
+                      if (start != 1000)
+                        {
+                          'cx': 1100.0,
+                          'cy': 460.0,
+                          'w': 22,
+                          'h': 22,
+                          'conf': .9,
+                        },
+                    ],
+                    'rims': [
+                      {'cx': 1200, 'cy': 460, 'w': 70, 'h': 30, 'conf': .9},
+                    ],
+                  },
+              ],
         };
       case 'cancelExport':
         final gate = holdSample;

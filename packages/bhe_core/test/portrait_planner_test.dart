@@ -90,6 +90,41 @@ void main() {
     );
   });
 
+  test(
+    'keeps the selected ball through an occlusion with a visible second ball',
+    () {
+      final plan = _plan([
+        for (var i = 0; i < 40; i++)
+          PortraitTrackSample(
+            tMs: _start + i * 100,
+            balls: [
+              if (i < 10 || i >= 23)
+                const PortraitDetection(
+                  cx: 450,
+                  cy: 490,
+                  w: 20,
+                  h: 20,
+                  conf: .7,
+                ),
+              if (i >= 10)
+                const PortraitDetection(
+                  cx: 1350,
+                  cy: 490,
+                  w: 20,
+                  h: 20,
+                  conf: .95,
+                ),
+            ],
+            rims: [],
+          ),
+      ]);
+      expect(
+        plan.keyframes.map((point) => point.cxNorm * 1920),
+        everyElement(closeTo(450, 1e-8)),
+      );
+    },
+  );
+
   test('limits speed and acceleration across unequal sample intervals', () {
     final plan = _plan([
       for (var i = 0; i < 40; i++)

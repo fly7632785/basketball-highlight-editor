@@ -92,6 +92,56 @@ void main() {
     },
   );
 
+  test('portrait follows the ball at the event and calibrated rim', () async {
+    const clip = Candidate(
+      id: 'shot',
+      startMs: 1000,
+      endMs: 8500,
+      eventMs: 4000,
+      reviewed: true,
+    );
+    fixture.state.project = fixture.state.project.copyWith(
+      candidates: [clip],
+      rimRoi: const Roi(left: .27, top: .375, right: .30, bottom: .42),
+    );
+    Map<String, num> box(
+      double x,
+      double y,
+      double confidence, {
+      int width = 24,
+      int height = 24,
+    }) => {'cx': x, 'cy': y, 'w': width, 'h': height, 'conf': confidence};
+    const descent = {
+      3800: 387.0,
+      3900: 401.0,
+      4000: 414.0,
+      4100: 431.0,
+      4200: 446.0,
+    };
+    media.portraitSamples = [
+      for (var t = 1000; t < 8500; t += 100)
+        {
+          'tMs': t,
+          'balls': [
+            box(1350, descent[t - 600] ?? 560, .98),
+            if (t < 4900 || t >= 6300)
+              box(550, descent[t] ?? (t < 4000 ? 370 : 460), .7),
+          ],
+          'rims': [
+            box(1350, 425, .95, width: 60, height: 50),
+            box(550, 425, .85, width: 60, height: 50),
+          ],
+        },
+    ];
+    await fixture.state.exportClipsInScope(_goals, framing: _portrait);
+    final render = media.callsTo('exportPortraitClip').single.arguments as Map;
+    final frames = (render['keyframes'] as List).cast<Map>();
+    expect(
+      frames.map((frame) => frame['cxNorm'] as double),
+      everyElement(lessThan(.4)),
+    );
+  });
+
   test(
     'portrait export forwards a candidate at and past the source tail',
     () async {

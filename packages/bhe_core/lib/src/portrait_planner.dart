@@ -1,5 +1,9 @@
 import 'dart:math' as math;
 
+import 'models.dart';
+
+part 'portrait_tracks.dart';
+
 enum ExportFraming { original, portrait916 }
 
 class PortraitDetection {
@@ -66,6 +70,8 @@ abstract final class PortraitPlanner {
     required int startMs,
     required int endMs,
     required Iterable<PortraitTrackSample> samples,
+    int? eventMs,
+    Roi? eventRim,
   }) {
     if (frameWidth < 2 || frameHeight < 2 || startMs < 0 || startMs >= endMs) {
       throw ArgumentError('Invalid portrait source dimensions or clip range');
@@ -78,53 +84,31 @@ abstract final class PortraitPlanner {
         if (sample.tMs >= startMs && sample.tMs <= endMs) sample.tMs: sample,
     };
     final times = {startMs, endMs, ...inRange.keys}.toList()..sort();
-    final observations = <(int, double)>[];
-    PortraitDetection? previousBall;
-    for (final t in times) {
-      final sample = inRange[t];
-      if (sample == null) continue;
-      PortraitDetection? strongest, nearby;
-      final elapsed = observations.isEmpty
-          ? _supportMs + 1
-          : t - observations.last.$1;
-      final previous = elapsed <= _supportMs ? previousBall : null;
-      var nearestDistance = _observationRadius(half * 2, elapsed);
-      for (final ball in sample.balls) {
-        // Desktop bounds for a plausible ball box. Partially visible balls
-        // at the source edges can still provide a center.
-        if (!_valid(ball, width, frameHeight) ||
-            ball.w / ball.h < .6 ||
-            ball.w / ball.h > 1.6 ||
-            math.max(ball.w, ball.h) > .08 * width) {
-          continue;
-        }
-        if (strongest == null || ball.conf > strongest.conf) strongest = ball;
-        // Keep a recent track when a distant detection briefly ranks higher.
-        if (previous != null) {
-          final dx = ball.cx - previous.cx, dy = ball.cy - previous.cy;
-          final distance = math.sqrt(dx * dx + dy * dy);
-          if (distance < nearestDistance) {
-            nearestDistance = distance;
-            nearby = ball;
-          }
-        }
-      }
-      final selected = nearby ?? strongest;
-      if (selected != null) {
-        observations.add((t, selected.cx));
-        previousBall = selected;
-      }
-    }
-    final clean = [
-      for (var i = 0; i < observations.length; i++)
-        if (_supportedObservation(observations, i, half * 2)) observations[i],
-    ];
-    final rim = _stableRim(
-      times.map((t) => inRange[t]).whereType<PortraitTrackSample>(),
+    final tracks = _ballTracks(times, inRange, width, frameHeight, half * 2);
+    final rims = _stableRims(
+      times.map((time) => inRange[time]).whereType<PortraitTrackSample>(),
       width,
       frameHeight,
       half * 2,
     );
+    final event = eventMs != null && eventMs >= startMs && eventMs <= endMs
+        ? eventMs
+        : null;
+    final hint = event == null || eventRim == null
+        ? null
+        : PortraitDetection(
+            cx: (eventRim.left + eventRim.right) * width / 2,
+            cy: (eventRim.top + eventRim.bottom) * frameHeight / 2,
+            w: (eventRim.right - eventRim.left) * width,
+            h: (eventRim.bottom - eventRim.top) * frameHeight,
+            conf: 0,
+          );
+    final (track, rim) = _selectShot(tracks, rims, event, hint);
+    final observations = [for (final (time, ball) in track) (time, ball.cx)];
+    final clean = [
+      for (var i = 0; i < observations.length; i++)
+        if (_supportedObservation(observations, i, half * 2)) observations[i],
+    ];
     final targets = <double>[];
     var last = width / 2;
     var next = 0;
@@ -148,7 +132,7 @@ abstract final class PortraitPlanner {
       } else if (right != null && fromRight <= _supportMs) {
         last = right.$2;
       } else if (rim != null) {
-        last = rim;
+        last = rim.cx;
       }
       targets.add(bound(last));
     }
@@ -323,7 +307,7 @@ abstract final class PortraitPlanner {
         (left - right).abs() >= .25 * crop;
   }
 
-  static double? _stableRim(
+  static List<PortraitDetection> _stableRims(
     Iterable<PortraitTrackSample> samples,
     double width,
     int height,
@@ -331,37 +315,66 @@ abstract final class PortraitPlanner {
   ) {
     // Count distinct timestamps, so multiple overlapping detections in the
     // same frame do not establish a persistent rim on their own.
-    final groups = <(PortraitDetection, Map<int, double>)>[];
+    final groups = <(PortraitDetection, Map<int, PortraitDetection>)>[];
     for (final sample in samples) {
       for (final rim in sample.rims) {
         if (!_valid(rim, width, height) ||
+            rim.cx - rim.w / 2 < 0 ||
+            rim.cx + rim.w / 2 > width ||
             rim.w / rim.h < .75 ||
             rim.w / rim.h > 6 ||
             rim.w < .008 * width ||
             rim.w > math.min(.12 * width, crop)) {
           continue;
         }
-        final radius = math.min(.035 * width, math.max(.016 * width, rim.w));
-        final group = groups.indexWhere((group) {
-          final dx = rim.cx - group.$1.cx, dy = rim.cy - group.$1.cy;
-          return dx * dx + dy * dy <= radius * radius;
-        });
+        var nearest = math.min(.035 * width, math.max(.016 * width, rim.w));
+        var group = -1;
+        for (var index = 0; index < groups.length; index++) {
+          final anchor = groups[index].$1;
+          final distance = _distance(rim.cx - anchor.cx, rim.cy - anchor.cy);
+          if (distance <= nearest && (group < 0 || distance < nearest)) {
+            nearest = distance;
+            group = index;
+          }
+        }
         if (group < 0) {
-          groups.add((rim, {sample.tMs: rim.cx}));
+          groups.add((rim, {sample.tMs: rim}));
         } else {
-          groups[group].$2.putIfAbsent(sample.tMs, () => rim.cx);
+          groups[group].$2.putIfAbsent(sample.tMs, () => rim);
         }
       }
     }
-    Map<int, double>? best;
-    for (final (_, positions) in groups) {
-      if (positions.length > (best?.length ?? 0)) best = positions;
+    final support = <(double, PortraitDetection)>[];
+    for (final (_, boxes) in groups) {
+      if (boxes.length < math.max(3, (.025 * samples.length).ceil())) continue;
+      final left = _median(boxes.values.map((box) => box.cx - box.w / 2));
+      final top = _median(boxes.values.map((box) => box.cy - box.h / 2));
+      final right = _median(boxes.values.map((box) => box.cx + box.w / 2));
+      final bottom = _median(boxes.values.map((box) => box.cy + box.h / 2));
+      final rim = PortraitDetection(
+        cx: (left + right) / 2,
+        cy: (top + bottom) / 2,
+        w: right - left,
+        h: bottom - top,
+        conf: 0,
+      );
+      final jitter = _median(
+        boxes.values.map((box) => _distance(box.cx - rim.cx, box.cy - rim.cy)),
+      );
+      support.add((boxes.length / (1 + jitter / rim.w), rim));
     }
-    if (best == null ||
-        best.length < math.max(3, (.025 * samples.length).ceil())) {
-      return null;
-    }
-    final xs = best.values.toList()..sort();
-    return (xs[(xs.length - 1) ~/ 2] + xs[xs.length ~/ 2]) / 2;
+    support.sort((a, b) {
+      final score = b.$1.compareTo(a.$1);
+      if (score != 0) return score;
+      final left = (b.$2.cx - b.$2.w / 2).compareTo(a.$2.cx - a.$2.w / 2);
+      if (left != 0) return left;
+      return (b.$2.cy - b.$2.h / 2).compareTo(a.$2.cy - a.$2.h / 2);
+    });
+    return [for (final (_, rim) in support) rim];
+  }
+
+  static double _median(Iterable<double> values) {
+    final sorted = values.toList()..sort();
+    return (sorted[(sorted.length - 1) ~/ 2] + sorted[sorted.length ~/ 2]) / 2;
   }
 }

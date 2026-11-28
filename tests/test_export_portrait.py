@@ -315,3 +315,57 @@ def test_tail_extrapolates_from_recent_track_instead_of_falling_back_to_hoop():
     plan = compose_portrait(balls,[[rim]]*len(balls),1920,1080,[])
     assert plan['sources'][-1] == 'tail'
     assert plan['centers'][-1] > plan['centers'][41]+100
+
+
+@pytest.mark.parametrize("occluded", [False, True])
+def test_portrait_tracker_keeps_the_ball_that_scored(monkeypatch, occluded):
+    from basketball_highlight.onnx_detector import Box, Result
+
+    class Frame:
+        def __init__(self, index):
+            self.index = index
+            self.left = 0
+            self.top = 0
+
+        def __getitem__(self, crop):
+            frame = Frame(self.index)
+            frame.top, frame.left = (axis.start for axis in crop)
+            return frame
+
+    class Model:
+        def predict(self, frame, **kwargs):
+            i = frame.index
+            shots = {28: 387, 29: 401, 30: 414, 31: 431, 32: 446}
+            boxes = [(1, .9, (520, 400, 580, 450))]
+            if not occluded or not 45 <= i < 63:
+                y = shots.get(i, 600 if i > 32 or i < 23 else 380)
+                boxes.append((0, .75, (538, y - 12, 562, y + 12)))
+            if i >= 43:
+                boxes.append((0, .98, (1338, 592, 1362, 616)))
+            return [Result([
+                Box(kind, confidence, [x1 - frame.left, y1 - frame.top,
+                                       x2 - frame.left, y2 - frame.top])
+                for kind, confidence, (x1, y1, x2, y2) in boxes
+                if frame.left <= x1 and frame.top <= y1
+                and (frame.left == 0 or x1 < frame.left + 400)
+            ], {0: "ball", 1: "rim"})]
+
+    class Capture:
+        def isOpened(self):
+            return True
+
+        def get(self, key):
+            return {3: 1920, 4: 1080, 5: 30}[key]
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr("cv2.VideoCapture", lambda *_: Capture())
+    tracker = PortraitTracker.__new__(PortraitTracker)
+    tracker.model = Model()
+    tracker.device = "cpu"
+    monkeypatch.setattr(tracker, "_sample_frames", lambda *_: enumerate(map(Frame, range(100))))
+    tracker.track(dict(source_path="source.mp4", event_time_ms=3000,
+                       review_start_ms=0, review_end_ms=10000))
+    assert max(tracker.last_composition["centers"]) < 650
+    assert tracker.last_composition["crossings"] == pytest.approx([3.], abs=.11)
