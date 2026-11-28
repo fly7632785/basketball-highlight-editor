@@ -90,6 +90,41 @@ void main() {
     );
   });
 
+  test(
+    'keeps the selected ball through an occlusion with a visible second ball',
+    () {
+      final plan = _plan([
+        for (var i = 0; i < 40; i++)
+          PortraitTrackSample(
+            tMs: _start + i * 100,
+            balls: [
+              if (i < 10 || i >= 23)
+                const PortraitDetection(
+                  cx: 450,
+                  cy: 490,
+                  w: 20,
+                  h: 20,
+                  conf: .7,
+                ),
+              if (i >= 10)
+                const PortraitDetection(
+                  cx: 1350,
+                  cy: 490,
+                  w: 20,
+                  h: 20,
+                  conf: .95,
+                ),
+            ],
+            rims: [],
+          ),
+      ]);
+      expect(
+        plan.keyframes.map((point) => point.cxNorm * 1920),
+        everyElement(closeTo(450, 1e-8)),
+      );
+    },
+  );
+
   test('limits speed and acceleration across unequal sample intervals', () {
     final plan = _plan([
       for (var i = 0; i < 40; i++)
@@ -134,6 +169,96 @@ void main() {
     expect(plan.hasBallTrack, isTrue);
   });
 
+  group('portrait selection after incomplete shot evidence', () {
+    const rim = PortraitDetection(cx: 1000, cy: 575, w: 50, h: 50, conf: .9);
+    const rimHint = Roi(
+      left: 975 / 1920,
+      top: 550 / 1440,
+      right: 1025 / 1920,
+      bottom: 600 / 1440,
+    );
+    PortraitDetection ball(double x, [double y = 420]) =>
+        PortraitDetection(cx: x, cy: y, w: 24, h: 24, conf: .9);
+
+    test('reacquires the ball after a long manual gap', () {
+      final plan = PortraitPlanner.plan(
+        frameWidth: 1920,
+        frameHeight: 1440,
+        startMs: 0,
+        endMs: 9000,
+        samples: [
+          for (var i = 0; i < 90; i++)
+            PortraitTrackSample(
+              tMs: i * 100,
+              balls: [if (i < 18) ball(500) else if (i >= 45) ball(1450)],
+              rims: [],
+            ),
+        ],
+      );
+      expect(plan.keyframes[5].cxNorm * 1920, lessThan(650));
+      expect(plan.keyframes.last.cxNorm * 1920, greaterThan(1250));
+    });
+
+    test('keeps an observed ball when the event time is early', () {
+      final plan = PortraitPlanner.plan(
+        frameWidth: 1920,
+        frameHeight: 1440,
+        startMs: 0,
+        endMs: 4000,
+        eventMs: 2200,
+        eventRim: rimHint,
+        samples: [
+          for (var i = 0; i < 40; i++)
+            PortraitTrackSample(
+              tMs: 100 * i,
+              balls: [
+                if (i < 20)
+                  ball(1550)
+                else
+                  ball(
+                    (1550 - 50 * (i - 19)).clamp(1000, 1550).toDouble(),
+                    i < 29 ? 420 : 490 + 30.0 * (i - 29),
+                  ),
+              ],
+              rims: [rim],
+            ),
+        ],
+      );
+      expect(plan.trackingCoverage, greaterThan(.5));
+      expect((plan.keyframes[18].cxNorm * 1920 - 1550).abs(), lessThan(405));
+    });
+
+    test('prefers a stable current rim when no ball is visible', () {
+      final plan = PortraitPlanner.plan(
+        frameWidth: 1920,
+        frameHeight: 1440,
+        startMs: 0,
+        endMs: 6000,
+        eventMs: 3000,
+        eventRim: const Roi(
+          left: 475 / 1920,
+          top: 550 / 1440,
+          right: 525 / 1920,
+          bottom: 600 / 1440,
+        ),
+        samples: [
+          for (var i = 0; i < 60; i++)
+            PortraitTrackSample(
+              tMs: 100 * i,
+              balls: [],
+              rims: const [
+                PortraitDetection(cx: 1450, cy: 575, w: 50, h: 50, conf: .9),
+              ],
+            ),
+        ],
+      );
+      expect(
+        plan.keyframes.map((frame) => frame.cxNorm * 1920),
+        everyElement(closeTo(1450, 1e-8)),
+      );
+    });
+  });
+
   test('with no reliable ball, uses rim then screen center', () {
     final plan = _plan(_track((i) => i == 3 ? 600 : null));
     expect(plan.hasBallTrack, isFalse);
@@ -143,6 +268,67 @@ void main() {
       isTrue,
     );
     expect(_plan([]).keyframes.map((frame) => frame.cxNorm), [.5, .5]);
+  });
+
+  group('portrait retains the shot basket with a competing ball', () {
+    const rim = PortraitDetection(cx: 500, cy: 575, w: 52, h: 44, conf: .9);
+    const rightRim = PortraitDetection(
+      cx: 1450,
+      cy: 575,
+      w: 52,
+      h: 44,
+      conf: .9,
+    );
+    const right = PortraitDetection(cx: 1450, cy: 335, w: 24, h: 24, conf: .94);
+    const hint = Roi(
+      left: 474 / 1920,
+      top: 553 / 1440,
+      right: 526 / 1920,
+      bottom: 597 / 1440,
+    );
+    PortraitDetection left(double y, double confidence) =>
+        PortraitDetection(cx: 500, cy: y, w: 24, h: 24, conf: confidence);
+
+    test('keeps a detected crossing when the event time is early', () {
+      const descent = {29: 510.0, 30: 550.0, 31: 604.0, 32: 640.0};
+      final plan = PortraitPlanner.plan(
+        frameWidth: 1920,
+        frameHeight: 1440,
+        startMs: 0,
+        endMs: 6400,
+        eventMs: 2200,
+        eventRim: hint,
+        samples: [
+          for (var i = 0; i < 64; i++)
+            PortraitTrackSample(
+              tMs: i * 100,
+              balls: [right, if (descent[i] case final y?) left(y, .98)],
+              rims: [rightRim, if (i % 3 == 0) rim],
+            ),
+        ],
+      );
+      expect((plan.keyframes[30].cxNorm * 1920 - 500).abs(), lessThan(405));
+    });
+
+    test('holds the basket when the shot ball is missing', () {
+      final plan = PortraitPlanner.plan(
+        frameWidth: 1920,
+        frameHeight: 1440,
+        startMs: 0,
+        endMs: 6400,
+        eventMs: 3200,
+        eventRim: hint,
+        samples: [
+          for (var i = 0; i < 64; i++)
+            PortraitTrackSample(
+              tMs: i * 100,
+              balls: [right, if (i < 22 || i >= 43) left(510, .55)],
+              rims: [rim],
+            ),
+        ],
+      );
+      expect((plan.keyframes[32].cxNorm * 1920 - 500).abs(), lessThan(405));
+    });
   });
 
   test('keeps crop windows inside the image at both edges', () {

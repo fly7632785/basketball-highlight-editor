@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import math
 import os
+from bisect import bisect_right
 from pathlib import Path
 
 from .analysis import PipelineCancelled
+from .portrait_tracks import Ball, RIM_GUARD_LEAD_MS, RIM_GUARD_TRAIL_MS, select_shots
 
 SAMPLE_FPS = 10
 MAX_SPEED = .6  # crop widths / second
@@ -150,35 +152,6 @@ def _hoop_candidates(frames, width, crop_width):
     return sorted(candidates, reverse=True)
 
 
-def _rim_crossings(boxes_by_frame, rim):
-    """Find descending ball sequences through the rim, including unlabelled shots."""
-    x, _ = _center(rim)
-    w, h = rim[2]-rim[0], rim[3]-rim[1]
-    # A detection of the rim often covers the net as well. Use its upper
-    # portion as the crossing plane, and require evidence below it.
-    plane = rim[1] + .3*h
-    nearby = [[(bx,by,box) for box in boxes for bx,by in [_center(box)]
-               if abs(bx-x) <= w and plane-1.6*h <= by <= plane+1.8*h]
-              for boxes in boxes_by_frame]
-    crossings = {}
-    last = -SAMPLE_FPS
-    for i, boxes in enumerate(nearby):
-        if i-last < SAMPLE_FPS:
-            continue
-        for bx,by,box in boxes:
-            if abs(bx-x) > .75*w or not (plane-.55*h <= by <= plane+.6*h):
-                continue
-            before = next(((t,b) for t in range(i-1,max(-1,i-6),-1) for px,py,b in nearby[t]
-                           if abs(px-bx) <= w and py <= min(plane,by-.15*h)), None)
-            after = next(((t,b) for t in range(i+1,min(len(nearby),i+6)) for px,py,b in nearby[t]
-                          if abs(px-bx) <= w and py >= max(plane+.45*h,by+.25*h)), None)
-            if before and after:
-                crossings[i] = dict((before,(i,box),after))
-                last = i
-                break
-    return crossings
-
-
 def _rim_regions(candidates, width, height):
     """Bound the extra inference to up to three persistent hoop neighbourhoods."""
     boxes = [box for _,box in candidates[:3]]
@@ -293,12 +266,23 @@ def _pan_path(target, ball, sources, width, crop_width, fallback, hoop_bounds):
     if hoop_bounds is not None:
         guarded, lower, upper = hoop_bounds
         required = offsets[guarded]
-        weight = min(weight, np.min((upper-fallback)/required[required>0],initial=1.),
-                     np.min((lower-fallback)/required[required<0],initial=1.))
+        common_lower, common_upper = max(lower), min(upper)
+        if common_lower > common_upper:
+            # Distinct baskets do not share a feasible stationary reference.
+            # The projected path above already includes each shot's bounds.
+            return path.tolist(), fast.tolist()
+        anchor = np.clip(fallback, common_lower, common_upper)
+        offsets = path - anchor
+        required = offsets[guarded]
+        positive, negative = required > 0, required < 0
+        weight = min(weight, np.min((upper[positive]-anchor)/required[positive],initial=1.),
+                     np.min((lower[negative]-anchor)/required[negative],initial=1.))
+        fallback = anchor
     return (fallback+weight*offsets).tolist(), fast.tolist()
 
 
-def compose_portrait(balls, hoops, width, height, goal_seconds, *, people=None, local_balls=None):
+def compose_portrait(balls, hoops, width, height, goal_seconds, *, people=None, local_balls=None,
+                     ball_candidates=None, event_rims=None):
     """Pick a local target, smooth the pan and constrain it near each shot."""
     import numpy as np
 
@@ -306,30 +290,33 @@ def compose_portrait(balls, hoops, width, height, goal_seconds, *, people=None, 
     if crop_width < 2 or crop_height < 2:
         raise ValueError("INVALID_PORTRAIT_DIMENSIONS")
     goals = [goal_seconds] if isinstance(goal_seconds,(float,int)) else goal_seconds
-    balls = [b if b is not None and plausible_ball(b,width) else None for b in balls] or [None]
-    options = [[b] if b else [] for b in balls]
-    if local_balls is not None:
-        options = [local + full for local,full in zip(local_balls,options)]
-    rim, crossings = None, {}
-    best = (0, 0.)
-    for support, candidate in _hoop_candidates(hoops,width,crop_width):
-        hits = _rim_crossings(options,candidate)
-        score = (len(hits),support)
-        if score > best:
-            best, rim, crossings = score, candidate, hits
-    for points in crossings.values():
-        for i,box in points.items():
-            balls[i] = box
+    period = 1000 // SAMPLE_FPS
+    if ball_candidates is None:
+        ball_candidates = [[Ball.from_box(b)] if b is not None and plausible_ball(b,width) else []
+                           for b in balls] or [[]]
+    hints = event_rims or {}
+    events = [(round(goal * 1000), hints.get(round(goal * 1000))) for goal in sorted(set(goals))]
+    rims = [Ball.from_box(box) for _, box in _hoop_candidates(hoops, width, crop_width)]
+    frames = [(i * period, options) for i, options in enumerate(ball_candidates)]
+    shots = select_shots(frames, rims, min(width, height * 9 / 16), events, width, local_balls)
+    switches = [(a.time + b.time) / 2 for a, b in zip(shots, shots[1:])]
+    shot_index = [bisect_right(switches, i * period) for i in range(len(ball_candidates))]
+    tracks = [{point.time // period: point.ball.box for point in shot.track} for shot in shots]
+    balls = [tracks[j].get(i) for i, j in enumerate(shot_index)]
+    rim_boxes = [shot.rim.box if shot.rim is not None else None for shot in shots]
+    rim = rim_boxes[0]
+    shot_crossings = [{round(time / period) for time in shot.crossings} for shot in shots]
+    crossings = set().union(*shot_crossings)
+    crossing_points = {
+        i for j, times in enumerate(shot_crossings) for cross in times
+        for i in range(max(0, cross - 2), min(len(balls), cross + 3))
+        if shot_index[i] == j and balls[i] is not None
+    }
     clean = clean_observations([_center(b)[0] if b is not None else None for b in balls],crop_width)
-    # A geometric crossing's recovery points take precedence over a distant
-    # full-frame false positive, both at the crossing and in its small gaps.
-    for points in crossings.values():
-        first, last = min(points), max(points)
-        for i in range(first,last+1):
-            clean[i] = _center(points[i])[0] if i in points else None
+    for i in crossing_points:
+        clean[i] = _center(balls[i])[0]
     half = crop_width/2
     anchor = min(width-half,max(half,_center(rim)[0] if rim else width/2))
-    rim_width = rim[2] - rim[0] if rim else 0.
     observed = np.asarray([x is not None for x in clean],dtype=int)
     indices = np.arange(len(clean))
     start = np.maximum(0,indices-15)
@@ -344,14 +331,18 @@ def compose_portrait(balls, hoops, width, height, goal_seconds, *, people=None, 
     recent = []
     hold_until = -1
     last_observation = None
-    inferred = set(crossings)
-    crossing_points = {i for points in crossings.values() for i in points}
     last = anchor
     for i,(ok,x,crowd) in enumerate(zip(good,ball_targets,crowds)):
+        active_rim = rim_boxes[shot_index[i]]
+        rim_width = active_rim[2] - active_rim[0] if active_rim else 0.
+        rim_center = _center(active_rim) if active_rim else None
+        if i and shot_index[i] != shot_index[i-1]:
+            hold_until, last_observation = -1, None
+            recent.clear()
         raw = clean[i]
         trusted = raw is not None and (ok or i in crossing_points)
         point = _center(balls[i]) if trusted else None
-        near = point is not None and rim is not None and math.dist(point,_center(rim)) <= 2*rim_width
+        near = point is not None and rim_center is not None and math.dist(point,rim_center) <= 2*rim_width
         continuous = (point is not None and last_observation is not None
                       and i-last_observation[0] <= 2
                       and math.dist(point,last_observation[1]) <= .15*crop_width)
@@ -359,10 +350,10 @@ def compose_portrait(balls, hoops, width, height, goal_seconds, *, people=None, 
         # when a competing full-frame ball appears on the other side.
         if near:
             hold_until = i + 2*SAMPLE_FPS
-        if i in inferred:
+        if i in shot_crossings[shot_index[i]]:
             hold_until = max(hold_until,i + 2*SAMPLE_FPS)
         if i <= hold_until and not (near or continuous or i in crossing_points):
-            source, last = "hoop", anchor
+            source, last = "hoop", rim_center[0]
         elif (ok and x is not None) or near or i in crossing_points:
             source, last = "ball", x
             if trusted:
@@ -377,23 +368,32 @@ def compose_portrait(balls, hoops, width, height, goal_seconds, *, people=None, 
         elif crowd is not None:
             source, last = "crowd", crowd
         else:
-            source, last = "hoop", anchor if rim else last
+            source, last = "hoop", rim_center[0] if rim_center else last
         targets.append(last)
         sources.append(source)
     hoop_bounds = None
     guarded = np.zeros(len(clean),dtype=bool)
-    if rim and (goals or crossings):
-        for goal in [*goals, *(i/SAMPLE_FPS for i in crossings)]:
-            guarded |= (indices >= math.floor((goal-1.5)*SAMPLE_FPS)) & (indices <= math.ceil((goal+2.)*SAMPLE_FPS))
-        margin = min(crop_width*.06,(crop_width-rim_width)/2)
-        lower = min(width-half,max(half,rim[2]-half+margin))
-        upper = max(half,min(width-half,rim[0]+half-margin))
-        hoop_bounds = guarded,lower,upper
+    lower, upper = np.full(len(clean), half), np.full(len(clean), width-half)
+    for i, (shot, box) in enumerate(zip(shots, rim_boxes)):
+        if box is None:
+            continue
+        margin = min(crop_width*.06,(crop_width-(box[2]-box[0]))/2)
+        times = [round(t / period) for t in shot.crossings]
+        if shot.time is not None:
+            times.append(shot.time / period)
+        for t in times:
+            window = ((indices >= math.floor(t - RIM_GUARD_LEAD_MS / period))
+                      & (indices <= math.ceil(t + RIM_GUARD_TRAIL_MS / period)) & (np.asarray(shot_index) == i))
+            guarded |= window
+            lower[window] = min(width-half,max(half,box[2]-half+margin))
+            upper[window] = max(half,min(width-half,box[0]+half-margin))
+    if np.any(guarded):
+        hoop_bounds = guarded, lower[guarded], upper[guarded]
     centers, fast = _pan_path(targets,clean,sources,width,crop_width,anchor,hoop_bounds)
     return {"mode":"crop", "filter":portrait_filter(centers,width,height),
             "crop_width":crop_width, "crop_height":crop_height, "crop_y":(height-crop_height)/2,
             "centers":centers, "rim":rim, "tracking_coverage":float(observed.mean()),
-            "sources":sources, "fast":fast, "crossings":[i/SAMPLE_FPS for i in crossings],
+            "sources":sources, "fast":fast, "crossings":[i/SAMPLE_FPS for i in sorted(crossings)],
             "guarded":guarded.tolist()}
 
 
@@ -481,8 +481,7 @@ class PortraitTracker:
             start = candidate["review_start_ms"] / 1000
             duration = (candidate["review_end_ms"] - candidate["review_start_ms"]) / 1000
             count = max(1, math.ceil(duration * SAMPLE_FPS))
-            previous = None
-            ball_boxes, hoop_frames, people = [], [], []
+            ball_frames, hoop_frames, people = [], [], []
             person_model = getattr(self, "person_model", None)
             for index, frame in self._sample_frames(capture, start, count, fps, cancel_check):
                 result = self.model.predict(frame, device=self.device, conf=.15, imgsz=640,
@@ -492,19 +491,12 @@ class PortraitTracker:
                 for box in result.boxes:
                     name = result.names[int(box.cls[0])]
                     xyxy = box.xyxy[0].tolist()
-                    x = (xyxy[0] + xyxy[2]) / 2
                     if name in {"ball", "basketball"} and plausible_ball(xyxy, width):
-                        score = float(box.conf[0])
-                        if previous is not None:
-                            score -= .25 * abs(x - previous) / width
-                        balls.append((score, x, xyxy))
+                        balls.append(Ball.from_box(xyxy, float(box.conf[0])))
                     elif name in {"hoop", "rim"}:
                         hoops.append(xyxy)
                 hoop_frames.append(hoops)
-                value = max(balls)[1] if balls else None
-                if value is not None:
-                    previous = value
-                ball_boxes.append(max(balls)[2] if balls else None)
+                ball_frames.append(balls)
                 persons = None
                 if person_model is not None and index % PEOPLE_STRIDE == 0:
                     detected = person_model.predict(frame, device=self.person_device, conf=.25, imgsz=640,
@@ -516,8 +508,9 @@ class PortraitTracker:
                     progress_callback("portrait_tracking", .5 * (index + 1) / count)
             crop_width, _ = _crop_size(width,height)
             regions = _rim_regions(_hoop_candidates(hoop_frames,width,crop_width), width, height)
-            local_balls = [[] for _ in ball_boxes]
+            local_balls = None
             if regions:
+                local_balls = [[] for _ in ball_frames]
                 for index, frame in self._sample_frames(capture,start,count,fps,cancel_check):
                     local_hoops = []
                     for x1,y1,x2,y2 in regions:
@@ -530,7 +523,7 @@ class PortraitTracker:
                             if name in {"hoop", "rim"}:
                                 local_hoops.append(bounds)
                             elif name in {"ball", "basketball"} and plausible_ball(bounds,width):
-                                local_balls[index].append(bounds)
+                                local_balls[index].append(Ball.from_box(bounds, float(box.conf[0])))
                     hoop_frames[index] = local_hoops + hoop_frames[index]
                     if progress_callback:
                         progress_callback("portrait_tracking", .5 + .5 * (index+1) / count)
@@ -540,10 +533,21 @@ class PortraitTracker:
                 raise PipelineCancelled("JOB_CANCELLED")
             single_event = None if candidate.get("manual") else candidate.get("event_time_ms")
             events = candidate.get("portrait_events_ms", [single_event])
-            goals = [(event - candidate["review_start_ms"]) / 1000
-                     for event in events if event is not None]
-            self.last_composition = compose_portrait(ball_boxes, hoop_frames, width, height, goals,
-                                                     people=people, local_balls=local_balls)
+            stored_rims = candidate.get("portrait_event_rims", {single_event: candidate.get("rim")})
+            goals, rims = [], {}
+            for event in events:
+                if event is None or not candidate["review_start_ms"] <= event <= candidate["review_end_ms"]:
+                    continue
+                relative = event - candidate["review_start_ms"]
+                goals.append(relative / 1000)
+                if stored := stored_rims.get(event):
+                    rim_width = float(stored["width"])
+                    rim_height = float(stored.get("height", rim_width * .6))
+                    rims[relative] = Ball(float(stored["x"]), float(stored["y"]) + .2 * rim_height,
+                                          rim_width, rim_height, 0.)
+            self.last_composition = compose_portrait([], hoop_frames, width, height, goals,
+                                                     people=people, local_balls=local_balls,
+                                                     ball_candidates=ball_frames, event_rims=rims)
             return self.last_composition["filter"]
         finally:
             capture.release()

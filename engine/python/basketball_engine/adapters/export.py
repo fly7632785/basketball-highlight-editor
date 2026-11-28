@@ -870,6 +870,13 @@ def merge_overlapping_candidates(candidates, *, keep_portrait_events=False):
                 for event in candidate.get("portrait_events_ms", [candidate.get("event_time_ms")])
                 if event is not None
             })
+            combined["portrait_event_rims"] = {
+                event: rim for _, candidate in group if not candidate.get("manual")
+                for event, rim in candidate.get("portrait_event_rims", {
+                    candidate.get("event_time_ms"): candidate.get("rim"),
+                }).items()
+                if event is not None and rim is not None
+            }
         merged.append(combined)
     return merged
 

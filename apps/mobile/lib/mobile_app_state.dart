@@ -2671,6 +2671,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
           ? _portraitEngine.exportPortrait(
               video: video,
               candidates: candidates,
+              rim: project.rimRoi,
               outputDirectory: outputDirectory,
               projectName: project.name,
             )
@@ -2777,6 +2778,7 @@ class MobileAppState extends ChangeNotifier with MobileDiagnosticState {
           ? _portraitEngine.exportPortrait(
               video: video,
               candidates: candidates,
+              rim: project.rimRoi,
               outputDirectory: batchDirectory.path,
               mergedPath: outputPath,
             )

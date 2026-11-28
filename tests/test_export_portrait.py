@@ -9,6 +9,7 @@ from engine.python.basketball_engine.adapters import export
 from engine.python.basketball_engine.adapters.portrait import (
     _crowd_observations, clean_observations, compose_portrait, portrait_filter, PortraitTracker, SAMPLE_FPS,
 )
+from engine.python.basketball_engine.adapters.portrait_tracks import Ball
 from engine.python.basketball_engine.adapters.analysis import PipelineCancelled
 
 
@@ -283,7 +284,7 @@ def test_crossings_choose_sustained_real_rim_and_guard_without_a_confirmed_goal(
     balls = [false_ball]*75
     local = [[] for _ in balls]
     for i, y in [(18, 387), (20, 414), (22, 446)]:
-        local[i] = [[1490, y-10, 1510, y+10]]
+        local[i] = [Ball(1500, y, 20, 20, .9)]
     players = [[500, 530, 555, 690], [620, 550, 680, 710]]
     plan = compose_portrait(balls,rims,1920,1080,[],people=[players]*75,local_balls=local)
     assert plan['rim'] == rim
@@ -315,3 +316,127 @@ def test_tail_extrapolates_from_recent_track_instead_of_falling_back_to_hoop():
     plan = compose_portrait(balls,[[rim]]*len(balls),1920,1080,[])
     assert plan['sources'][-1] == 'tail'
     assert plan['centers'][-1] > plan['centers'][41]+100
+
+
+@pytest.mark.parametrize("occluded", [False, True])
+def test_portrait_tracker_keeps_the_ball_that_scored(monkeypatch, occluded):
+    from basketball_highlight.onnx_detector import Box, Result
+
+    class Frame:
+        def __init__(self, index):
+            self.index = index
+            self.left = 0
+            self.top = 0
+
+        def __getitem__(self, crop):
+            frame = Frame(self.index)
+            frame.top, frame.left = (axis.start for axis in crop)
+            return frame
+
+    class Model:
+        def predict(self, frame, **kwargs):
+            i = frame.index
+            shots = {28: 387, 29: 401, 30: 414, 31: 431, 32: 446}
+            boxes = [(1, .9, (520, 400, 580, 450))]
+            if not occluded or not 45 <= i < 63:
+                y = shots.get(i, 600 if i > 32 or i < 23 else 380)
+                boxes.append((0, .75, (538, y - 12, 562, y + 12)))
+            if i >= 43:
+                boxes.append((0, .98, (1338, 592, 1362, 616)))
+            return [Result([
+                Box(kind, confidence, [x1 - frame.left, y1 - frame.top,
+                                       x2 - frame.left, y2 - frame.top])
+                for kind, confidence, (x1, y1, x2, y2) in boxes
+                if frame.left <= x1 and frame.top <= y1
+                and (frame.left == 0 or x1 < frame.left + 400)
+            ], {0: "ball", 1: "rim"})]
+
+    class Capture:
+        def isOpened(self):
+            return True
+
+        def get(self, key):
+            return {3: 1920, 4: 1080, 5: 30}[key]
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr("cv2.VideoCapture", lambda *_: Capture())
+    tracker = PortraitTracker.__new__(PortraitTracker)
+    tracker.model = Model()
+    tracker.device = "cpu"
+    monkeypatch.setattr(tracker, "_sample_frames", lambda *_: enumerate(map(Frame, range(100))))
+    tracker.track(dict(source_path="source.mp4", event_time_ms=3000,
+                       review_start_ms=0, review_end_ms=10000))
+    assert max(tracker.last_composition["centers"]) < 650
+    assert tracker.last_composition["crossings"] == pytest.approx([3.], abs=.11)
+
+
+def test_portrait_reacquires_the_ball_after_a_long_manual_gap():
+    samples = [_ball(500)] * 18 + [None] * 27 + [_ball(1450)] * 45
+    plan = compose_portrait(samples, [], 1920, 1440, [])
+
+    assert plan["centers"][5] < 650
+    assert plan["centers"][-1] > 1250
+
+
+def test_portrait_keeps_an_observed_ball_when_the_event_time_is_early():
+    rim = [975, 550, 1025, 600]
+    samples = [
+        Ball(1550, 420, 24, 24, .9) if i < 20
+        else Ball(max(1000, 1550 - 50 * (i - 19)), 420 if i < 29 else 490 + 30 * (i - 29),
+                  24, 24, .9)
+        for i in range(40)
+    ]
+    plan = compose_portrait([], [[rim]] * len(samples), 1920, 1440, [2.2],
+                            ball_candidates=[[ball] for ball in samples],
+                            event_rims={2200: Ball.from_box(rim)})
+
+    assert plan["tracking_coverage"] > .5
+    assert abs(plan["centers"][18] - 1550) < plan["crop_width"] / 2
+
+
+def test_portrait_prefers_a_stable_current_rim_when_no_ball_is_visible():
+    rim = [1425, 550, 1475, 600]
+    plan = compose_portrait([None] * 60, [[rim]] * 60, 1920, 1440, [3],
+                            event_rims={3000: Ball.from_box([475, 550, 525, 600])})
+
+    assert plan["centers"] == pytest.approx([1450] * 60)
+
+
+@pytest.mark.parametrize("local_only", [False, True])
+def test_portrait_keeps_detected_crossing_when_event_time_is_offset(local_only):
+    left = Ball(500, 575, 52, 44, .9)
+    right = Ball(1450, 575, 52, 44, .9)
+    event = 5000 if local_only else 2200
+    passage = (
+        {i: 455 + 19 * (i - 13) for i in range(13, 23)}
+        if local_only else {29: 510, 30: 550, 31: 604, 32: 640}
+    )
+    full, local = [], []
+    for i in range(76):
+        shot = [Ball(500, passage[i], 24, 24, .98)] if i in passage else []
+        full.append([Ball(1450, 335, 24, 24, .94)] + ([] if local_only else shot))
+        local.append(shot if local_only else [])
+    plan = compose_portrait(
+        [], [[left.box] if local_only else [right.box, left.box]] * len(full),
+        1920, 1440, [event / 1000], ball_candidates=full, local_balls=local,
+        event_rims={event: left},
+    )
+    frame = 19 if local_only else 30
+    assert abs(plan["centers"][frame] - 500) < 405
+    assert plan["crossings"] == pytest.approx([1.9 if local_only else 3.0], abs=.11)
+
+
+def test_portrait_holds_the_basket_when_the_shot_ball_is_missing():
+    left = Ball(500, 575, 52, 44, .9)
+    samples = [
+        [Ball(1450, 335, 24, 24, .94)]
+        + ([Ball(500, 510, 24, 24, .55)] if i < 22 or i >= 43 else [])
+        for i in range(64)
+    ]
+    plan = compose_portrait([], [[left.box]] * len(samples), 1920, 1440, [3.2],
+                            ball_candidates=samples, event_rims={3200: left})
+
+    assert abs(plan["centers"][32] - 500) < 405
+    assert plan["sources"][32] == "hoop"
