@@ -270,6 +270,67 @@ void main() {
     expect(_plan([]).keyframes.map((frame) => frame.cxNorm), [.5, .5]);
   });
 
+  group('portrait retains the shot basket with a competing ball', () {
+    const rim = PortraitDetection(cx: 500, cy: 575, w: 52, h: 44, conf: .9);
+    const rightRim = PortraitDetection(
+      cx: 1450,
+      cy: 575,
+      w: 52,
+      h: 44,
+      conf: .9,
+    );
+    const right = PortraitDetection(cx: 1450, cy: 335, w: 24, h: 24, conf: .94);
+    const hint = Roi(
+      left: 474 / 1920,
+      top: 553 / 1440,
+      right: 526 / 1920,
+      bottom: 597 / 1440,
+    );
+    PortraitDetection left(double y, double confidence) =>
+        PortraitDetection(cx: 500, cy: y, w: 24, h: 24, conf: confidence);
+
+    test('keeps a detected crossing when the event time is early', () {
+      const descent = {29: 510.0, 30: 550.0, 31: 604.0, 32: 640.0};
+      final plan = PortraitPlanner.plan(
+        frameWidth: 1920,
+        frameHeight: 1440,
+        startMs: 0,
+        endMs: 6400,
+        eventMs: 2200,
+        eventRim: hint,
+        samples: [
+          for (var i = 0; i < 64; i++)
+            PortraitTrackSample(
+              tMs: i * 100,
+              balls: [right, if (descent[i] case final y?) left(y, .98)],
+              rims: [rightRim, if (i % 3 == 0) rim],
+            ),
+        ],
+      );
+      expect((plan.keyframes[30].cxNorm * 1920 - 500).abs(), lessThan(405));
+    });
+
+    test('holds the basket when the shot ball is missing', () {
+      final plan = PortraitPlanner.plan(
+        frameWidth: 1920,
+        frameHeight: 1440,
+        startMs: 0,
+        endMs: 6400,
+        eventMs: 3200,
+        eventRim: hint,
+        samples: [
+          for (var i = 0; i < 64; i++)
+            PortraitTrackSample(
+              tMs: i * 100,
+              balls: [right, if (i < 22 || i >= 43) left(510, .55)],
+              rims: [rim],
+            ),
+        ],
+      );
+      expect((plan.keyframes[32].cxNorm * 1920 - 500).abs(), lessThan(405));
+    });
+  });
+
   test('keeps crop windows inside the image at both edges', () {
     const half = 1080 * 9 / 16 / 2 / 1920;
     for (final x in [0.0, 1920.0]) {

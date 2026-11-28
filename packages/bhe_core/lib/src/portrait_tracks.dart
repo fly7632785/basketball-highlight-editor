@@ -4,6 +4,8 @@ part of 'portrait_planner.dart';
 const _maxTrackGapMs = 2000;
 const _eventWindowMs = 650;
 const _crossingWindowMs = 450;
+const _rimGuardLeadMs = 1500;
+const _rimGuardTrailMs = 2000;
 
 typedef _TrackPoint = (int, PortraitDetection);
 typedef _Shot = (List<_TrackPoint>, PortraitDetection?);
@@ -163,6 +165,32 @@ List<_TrackPoint> _baselineTrack(List<_BallFrame> frames, double crop) {
 
 double _rimPlane(PortraitDetection rim) => rim.cy - .2 * rim.h;
 
+PortraitDetection? _contestedRim(
+  List<_BallFrame> frames,
+  List<PortraitDetection> rims,
+  int time,
+  double crop,
+) {
+  final start = time - _rimGuardLeadMs, end = time + _rimGuardTrailMs;
+  for (final rim in rims) {
+    final plane = _rimPlane(rim), near = 2 * rim.w;
+    final distant = math.max(near, (crop - rim.w) / 2);
+    var support = 0;
+    for (final (at, balls) in frames) {
+      if (at < start || at > end) continue;
+      if (balls.any(
+            (ball) =>
+                (ball.cx - rim.cx).abs() <= near &&
+                (ball.cy - plane).abs() <= 2 * rim.h,
+          ) &&
+          balls.any((ball) => (ball.cx - rim.cx).abs() > distant)) {
+        if (++support == 2) return rim;
+      }
+    }
+  }
+  return null;
+}
+
 Iterable<double> _crossings(
   List<_TrackPoint> track,
   PortraitDetection rim,
@@ -234,14 +262,11 @@ _Shot _selectShot(
         continue;
       }
       for (final crossing in crossings) {
-        final delta = (crossing - time).abs();
-        if (delta <= _eventWindowMs) {
-          crossingChoice = _preferred(crossingChoice, (
-            delta,
-            -track.length,
-            (track, rim),
-          ));
-        }
+        crossingChoice = _preferred(crossingChoice, (
+          (crossing - time).abs(),
+          -track.length,
+          (track, rim),
+        ));
       }
       for (final (at, ball) in track) {
         final delta = (at - time).abs();
@@ -258,13 +283,32 @@ _Shot _selectShot(
       }
     }
   }
-  // Event metadata can drift. Fall back to the original selection when the
-  // ball observations do not support the event.
-  return (crossingChoice ?? pointChoice)?.$3 ??
-      (
-        time == null ? _manualTrack(tracks) : _baselineTrack(frames, crop),
-        currentRim ?? hint,
-      );
+  final crossingInWindow =
+      crossingChoice != null &&
+      (time == null || crossingChoice.$1 <= _eventWindowMs);
+  final choice = crossingInWindow
+      ? crossingChoice
+      : pointChoice ?? crossingChoice;
+  if (choice != null) return choice.$3;
+  if (time == null) return (_manualTrack(tracks), currentRim ?? hint);
+  if (_contestedRim(frames, rims, time, crop) case final contested?) {
+    // If the shot ball disappears, an unrelated ball cannot pull the crop
+    // away from the basket during the shot.
+    final room = (crop - contested.w) / 2;
+    final guarded = [
+      for (final (at, balls) in frames)
+        (
+          at,
+          at >= time - _rimGuardLeadMs && at <= time + _rimGuardTrailMs
+              ? balls
+                    .where((ball) => (ball.cx - contested.cx).abs() <= room)
+                    .toList()
+              : balls,
+        ),
+    ];
+    return (_baselineTrack(guarded, crop), contested);
+  }
+  return (_baselineTrack(frames, crop), currentRim ?? hint);
 }
 
 (num, num, _Shot) _preferred(

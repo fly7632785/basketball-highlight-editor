@@ -402,3 +402,41 @@ def test_portrait_prefers_a_stable_current_rim_when_no_ball_is_visible():
                             event_rims={3000: Ball.from_box([475, 550, 525, 600])})
 
     assert plan["centers"] == pytest.approx([1450] * 60)
+
+
+@pytest.mark.parametrize("local_only", [False, True])
+def test_portrait_keeps_detected_crossing_when_event_time_is_offset(local_only):
+    left = Ball(500, 575, 52, 44, .9)
+    right = Ball(1450, 575, 52, 44, .9)
+    event = 5000 if local_only else 2200
+    passage = (
+        {i: 455 + 19 * (i - 13) for i in range(13, 23)}
+        if local_only else {29: 510, 30: 550, 31: 604, 32: 640}
+    )
+    full, local = [], []
+    for i in range(76):
+        shot = [Ball(500, passage[i], 24, 24, .98)] if i in passage else []
+        full.append([Ball(1450, 335, 24, 24, .94)] + ([] if local_only else shot))
+        local.append(shot if local_only else [])
+    plan = compose_portrait(
+        [], [[left.box] if local_only else [right.box, left.box]] * len(full),
+        1920, 1440, [event / 1000], ball_candidates=full, local_balls=local,
+        event_rims={event: left},
+    )
+    frame = 19 if local_only else 30
+    assert abs(plan["centers"][frame] - 500) < 405
+    assert plan["crossings"] == pytest.approx([1.9 if local_only else 3.0], abs=.11)
+
+
+def test_portrait_holds_the_basket_when_the_shot_ball_is_missing():
+    left = Ball(500, 575, 52, 44, .9)
+    samples = [
+        [Ball(1450, 335, 24, 24, .94)]
+        + ([Ball(500, 510, 24, 24, .55)] if i < 22 or i >= 43 else [])
+        for i in range(64)
+    ]
+    plan = compose_portrait([], [[left.box]] * len(samples), 1920, 1440, [3.2],
+                            ball_candidates=samples, event_rims={3200: left})
+
+    assert abs(plan["centers"][32] - 500) < 405
+    assert plan["sources"][32] == "hoop"

@@ -7,7 +7,7 @@ from bisect import bisect_right
 from pathlib import Path
 
 from .analysis import PipelineCancelled
-from .portrait_tracks import Ball, select_shots
+from .portrait_tracks import Ball, RIM_GUARD_LEAD_MS, RIM_GUARD_TRAIL_MS, select_shots
 
 SAMPLE_FPS = 10
 MAX_SPEED = .6  # crop widths / second
@@ -382,8 +382,8 @@ def compose_portrait(balls, hoops, width, height, goal_seconds, *, people=None, 
         if shot.time is not None:
             times.append(shot.time / period)
         for t in times:
-            window = ((indices >= math.floor(t-1.5*SAMPLE_FPS))
-                      & (indices <= math.ceil(t+2*SAMPLE_FPS)) & (np.asarray(shot_index) == i))
+            window = ((indices >= math.floor(t - RIM_GUARD_LEAD_MS / period))
+                      & (indices <= math.ceil(t + RIM_GUARD_TRAIL_MS / period)) & (np.asarray(shot_index) == i))
             guarded |= window
             lower[window] = min(width-half,max(half,box[2]-half+margin))
             upper[window] = max(half,min(width-half,box[0]+half-margin))

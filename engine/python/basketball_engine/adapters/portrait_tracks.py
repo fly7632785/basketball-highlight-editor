@@ -7,6 +7,8 @@ from dataclasses import dataclass
 MAX_TRACK_GAP_MS = 2000
 EVENT_WINDOW_MS = 650
 CROSSING_WINDOW_MS = 450
+RIM_GUARD_LEAD_MS = 1500
+RIM_GUARD_TRAIL_MS = 2000
 
 
 @dataclass(frozen=True)
@@ -149,6 +151,24 @@ def _baseline_track(frames, width):
     return selected
 
 
+def _contested_rim(frames, rims, time, crop):
+    start, end = time - RIM_GUARD_LEAD_MS, time + RIM_GUARD_TRAIL_MS
+    for rim in rims:
+        plane = _plane(rim)
+        near = 2 * rim.width
+        distant = max(near, (crop - rim.width) / 2)
+        support = 0
+        for at, balls in frames:
+            if not start <= at <= end:
+                continue
+            if (any(abs(ball.x - rim.x) <= near and abs(ball.y - plane) <= 2 * rim.height
+                    for ball in balls) and any(abs(ball.x - rim.x) > distant for ball in balls)):
+                support += 1
+                if support == 2:
+                    return rim
+    return None
+
+
 def select_shots(frames, rims, crop, events, width, local_balls=None):
     track_frames = ([(time, local + full) for (time, full), local in zip(frames, local_balls)]
                     if local_balls is not None else frames)
@@ -170,11 +190,9 @@ def select_shots(frames, rims, crop, events, width, local_balls=None):
                 if time is None:
                     continue
                 for crossing in crossings:
-                    delta = abs(crossing - time)
-                    if delta <= EVENT_WINDOW_MS:
-                        score = (delta, -len(track))
-                        if best_crossing is None or score < best_crossing[0]:
-                            best_crossing = score, Shot(time, rim, track, [crossing])
+                    score = (abs(crossing - time), -len(track))
+                    if best_crossing is None or score < best_crossing[0]:
+                        best_crossing = score, Shot(time, rim, track, [crossing])
                 for point in track:
                     delta = abs(point.time - time)
                     dx, dy = abs(point.ball.x - rim.x), abs(point.ball.y - plane)
@@ -183,12 +201,24 @@ def select_shots(frames, rims, crop, events, width, local_balls=None):
                                  -len(track))
                         if best_point is None or score < best_point[0]:
                             best_point = score, Shot(time, rim, track, [])
-        if choice := best_crossing or best_point:
+        # A verified crossing can recover a shot whose timestamp is off.
+        crossing_in_window = best_crossing and (time is None or best_crossing[0][0] <= EVENT_WINDOW_MS)
+        choice = best_crossing if crossing_in_window else best_point or best_crossing
+        if choice:
             shots.append(choice[1])
         else:
             rim = rims[0] if rims else hint
             if time is None:
                 track = _manual_track(tracks)
+            elif contested := _contested_rim(track_frames, candidates, time, crop):
+                # Conflicting balls are visible at the basket. Keep the crop
+                # on that side through the shot, even if the ball disappears.
+                rim = contested
+                room = (crop - rim.width) / 2
+                guarded = [(at, [ball for ball in balls if abs(ball.x - rim.x) <= room]
+                            if time - RIM_GUARD_LEAD_MS <= at <= time + RIM_GUARD_TRAIL_MS else balls)
+                           for at, balls in frames]
+                track = _baseline_track(guarded, width)
             else:
                 # Event metadata can drift. Use the original full-frame
                 # selection when the detections do not support the event.
