@@ -7,6 +7,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MergeSampleStatsTest {
+    @Test fun reorderedLeadingVideoSamplesAreOutsideTheSharedCut() {
+        val window = MergeClipWindow(startUs = 9_100_000, endUs = 10_000_000, outputBaseUs = 0)
+        assertFalse(window.includes(9_096_000))
+        assertTrue(window.includes(9_100_000))
+    }
+
     private fun facts(readable: Long, tracks: List<MergeTrackFacts> = emptyList()) =
         MergeMediaFacts(videoTracks = 1, durationMs = 2000, readableVideoSamples = readable, tracks = tracks)
 
@@ -23,8 +29,8 @@ class MergeSampleStatsTest {
     @Test fun seamKeepsTheLastVideoFrameDurationAndIncreasingPresentationTimes() {
         val first = MergeClipWindow(startUs = 18_000_000, endUs = 25_211_000, outputBaseUs = 0)
         val lastPts = mergeSamplePtsUs(25_200_000, first.startUs, first.outputBaseUs)
-        assertTrue(first.includes(25_200_000, isVideo = true))
-        assertFalse(first.includes(25_216_667, isVideo = true))
+        assertTrue(first.includes(25_200_000))
+        assertFalse(first.includes(25_216_667))
         val second = MergeClipWindow(73_000_000, 77_186_000, first.nextOutputBaseUs(25_216_667))
         val outputPts = listOf(
             lastPts,
@@ -36,10 +42,10 @@ class MergeSampleStatsTest {
 
     @Test fun audioUsesTheVideoAnchorWithoutClampingEarlierAudioOntoIt() {
         val window = MergeClipWindow(startUs = 73_000_000, endUs = 77_186_000, outputBaseUs = 7_216_667)
-        assertFalse(window.includes(72_996_000, isVideo = false))
-        assertTrue(window.includes(73_000_000, isVideo = false))
-        assertTrue(window.includes(73_003_537, isVideo = false))
-        assertFalse(window.includes(77_186_000, isVideo = false))
+        assertFalse(window.includes(72_996_000))
+        assertTrue(window.includes(73_000_000))
+        assertTrue(window.includes(73_003_537))
+        assertFalse(window.includes(77_186_000))
         val videoPts = mergeSamplePtsUs(window.startUs, window.startUs, window.outputBaseUs)
         val audioPts = mergeSamplePtsUs(73_003_537, window.startUs, window.outputBaseUs)
         assertEquals(window.outputBaseUs, videoPts)

@@ -8,24 +8,35 @@ import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.util.Size
 import androidx.media3.common.C
+import androidx.media3.common.Format
+import androidx.media3.common.GlObjectsProvider
+import androidx.media3.common.GlTextureInfo
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.Clock
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.GlEffect
+import androidx.media3.effect.GlShaderProgram
 import androidx.media3.effect.MatrixTransformation
+import androidx.media3.effect.PassthroughShaderProgram
 import androidx.media3.effect.Presentation
+import androidx.media3.transformer.AssetLoader
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultDecoderFactory
 import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.ExoPlayerAssetLoader
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.roundToInt
 
 internal data class PortraitMediaRange(val path: String, val startMs: Long, val endMs: Long) {
@@ -71,6 +82,46 @@ internal data class PortraitSource(
 
 @UnstableApi
 internal class PortraitMedia(private val context: Context) {
+    fun mergeOriginal(
+        path: String, cuts: List<OriginalMergeCut>, videoMime: String, hasAudio: Boolean,
+        output: File, cancelled: AtomicBoolean,
+    ): Format? {
+        fun item(cut: OriginalMergeCut, endUs: Long?) = MediaItem.Builder()
+            .setUri(VideoInput.uri(path))
+            .setClippingConfiguration(MediaItem.ClippingConfiguration.Builder()
+                .setStartPositionUs(cut.startUs)
+                .setEndPositionUs(endUs ?: C.TIME_END_OF_SOURCE)
+                .build())
+            .build()
+
+        var endOnOutput = 0L
+        val video = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO)).addItems(cuts.map { cut ->
+            endOnOutput += cut.durationUs
+            EditedMediaItem.Builder(item(cut, cut.decodeEndUs))
+                .setRemoveAudio(true)
+                .setEffects(Effects(emptyList(), listOf(DecodedVideoCut(cut.durationUs, endOnOutput))))
+                .build()
+        }).build()
+        val sequences = mutableListOf(video)
+        if (hasAudio) {
+            sequences += EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).addItems(cuts.map { cut ->
+                EditedMediaItem.Builder(item(cut, cut.endUs)).setRemoveVideo(true).build()
+            }).build()
+        }
+        val selectedAudio = AtomicReference<Format>()
+        val loader = ExoPlayerAssetLoader.Factory(context, DefaultDecoderFactory.Builder(context).build(), Clock.DEFAULT)
+        val inspectTracks = AssetLoader.Factory { edited, looper, listener, settings ->
+            loader.createAssetLoader(edited, looper, object : AssetLoader.Listener by listener {
+                override fun onTrackAdded(inputFormat: Format, supportedOutputTypes: Int): Boolean {
+                    if (MimeTypes.isAudio(inputFormat.sampleMimeType)) selectedAudio.compareAndSet(null, inputFormat)
+                    return listener.onTrackAdded(inputFormat, supportedOutputTypes)
+                }
+            }, settings)
+        }
+        transform(Composition.Builder(sequences).build(), output, cancelled, {}, videoMime, inspectTracks)
+        return selectedAudio.get()
+    }
+
     fun render(
         range: PortraitMediaRange,
         timeline: PortraitTimeline,
@@ -185,6 +236,8 @@ internal class PortraitMedia(private val context: Context) {
         output: File,
         cancelled: AtomicBoolean,
         progress: (Int) -> Unit,
+        videoMime: String = MimeTypes.VIDEO_H264,
+        assetLoader: AssetLoader.Factory? = null,
     ) {
         val handler = Handler(Looper.getMainLooper())
         val finished = CountDownLatch(1)
@@ -217,8 +270,8 @@ internal class PortraitMedia(private val context: Context) {
         handler.post {
             try {
                 requirePortraitActive(cancelled)
-                val active = Transformer.Builder(context)
-                    .setVideoMimeType(MimeTypes.VIDEO_H264)
+                val builder = Transformer.Builder(context)
+                    .setVideoMimeType(videoMime)
                     .setAudioMimeType(MimeTypes.AUDIO_AAC)
                     .setEncoderFactory(DefaultEncoderFactory.Builder(context).setEnableFallback(false).build())
                     .addListener(object : Transformer.Listener {
@@ -230,7 +283,9 @@ internal class PortraitMedia(private val context: Context) {
                             failure = error
                             finished.countDown()
                         }
-                    }).build()
+                    })
+                if (assetLoader != null) builder.setAssetLoaderFactory(assetLoader)
+                val active = builder.build()
                 transformer = active
                 active.start(composition, output.absolutePath)
                 handler.post(poll)
@@ -248,6 +303,25 @@ internal class PortraitMedia(private val context: Context) {
         failure?.let { throw it }
         progress(100)
     }
+}
+
+@UnstableApi
+private class DecodedVideoCut(private val durationUs: Long, private val endOnOutputUs: Long) : GlEffect {
+    override fun getDurationAfterEffectApplied(inputDurationUs: Long): Long = durationUs
+
+    override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
+        object : PassthroughShaderProgram() {
+            override fun queueInputFrame(provider: GlObjectsProvider, texture: GlTextureInfo, presentationTimeUs: Long) {
+                // Reference pictures beyond the cut must reach the decoder, but
+                // they must not become visible in the merged file.
+                if (presentationTimeUs < endOnOutputUs) {
+                    super.queueInputFrame(provider, texture, presentationTimeUs)
+                } else {
+                    inputListener.onInputFrameProcessed(texture)
+                    inputListener.onReadyToAcceptInputFrame()
+                }
+            }
+        }
 }
 
 internal fun requirePortraitActive(cancelled: AtomicBoolean) {
